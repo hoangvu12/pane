@@ -6,7 +6,8 @@ WASI 0.3 interfaces; a component that imports WASI 0.2 (for example through
 Rust's standard library on `wasm32-wasip2`) is rejected with an explanation.
 
 - `pane-guest`: Rust bindings for the contract. `no_std`, so only WASI 0.3 is
-  imported; it supplies the allocator, a trapping panic handler,
+  imported; it supplies the allocator, a panic handler that logs the panic
+  and traps, print and log macros ([printing and logging](#printing-and-logging)),
   `cabi_realloc` and `memcmp`/`bcmp` (which string comparisons need).
 - `sample-rust`, `sample-js`, `sample-ts`: the same sample command in Rust,
   JavaScript and TypeScript. All three show the same items, the same form and
@@ -469,7 +470,8 @@ string, as a failure toast. Resolving with a value, such as `null` from an
 Rust; a list Pane cannot read (a title that is not text, say) is the
 command's failure, not a crash. npm dependencies are bundled into the component; the samples use
 [Zod](https://zod.dev) 4.6.5 (`zod/mini`) and show its validation failure as a
-normal error. Only ECMAScript built-ins are available, not Node.js or browser
+normal error. Only ECMAScript built-ins and `console`
+([printing and logging](#printing-and-logging)) are available, not Node.js or browser
 APIs; WASI 0.3 imports declared by [the world](js/wit/world.wit) (currently
 `wasi:clocks/monotonic-clock`, and `wasi:http/client` for a command whose
 bundle imports it) are imported by name;
@@ -678,6 +680,44 @@ into several calls (an action that does one part and saves where it got
 to), or run it in a [native helper](#native-helpers), which runs for as long
 as its work takes while other extensions' calls are served. The settings
 samples' **Stop responding** item shows the limit in each language.
+
+## Printing and logging
+
+What a command writes to standard output and standard error goes to its
+package's **extension log**, with Pane's own messages about the package
+(its crashes with their backtraces, calls that stopped responding, pauses,
+and while it is developed each build and reload) between its lines:
+
+- **Rust:** `pane_guest::debug!`, `info!`, `warn!` and `error!` log a line
+  with its level, formatted as `format!` formats; `pane_guest::println!` and
+  `eprintln!` (and `print!`, `eprint!`) print one without a level. A panic's
+  message and location are logged as an error before the guest traps
+  ([`pane_guest::log`](pane-guest/src/log.rs)). Logging waits for Pane to
+  take the line, which it does at once; it works in a command's calls, not
+  in a custom view's `Drop`.
+- **JavaScript and TypeScript:** `console.debug`, `log`, `info`, `warn`,
+  `error`, `trace` and `assert`, formatting their arguments roughly as Node
+  does (an `Error` with its stack). What a handler throws is logged too,
+  with its stack, as well as being the error the command answers with
+  ([`guests/js/console.js`](js/console.js)).
+
+Debug and info lines go to standard output, warnings and errors to standard
+error. A line may start with its level as `<7>` (debug), `<6>` (info), `<4>`
+(warning) or `<3>` (error), which the SDKs write; an untagged line is info
+on standard output and an error on standard error.
+
+Logging is never a hazard to Pane or the disk: a line longer than 4 KiB is
+cut, with a note of how much was; a package writing more than 1,000 lines
+in a second loses the rest of that second, and Pane notes how many it
+dropped. While a package is developed, Pane keeps its most recent 5,000
+lines, appends every line to `extension.log` in its development folder
+under Pane's data folder (rotated at 5 MiB, keeping one earlier file as
+`extension.log.1`), and the log starts afresh with each development
+session. A package that is not developed keeps only its most recent 500
+lines (or 256 KiB) in memory, for diagnostics: they are never written to
+disk or sent anywhere, and go when Pane quits or the package is
+uninstalled. The settings samples' **Write to the log** and **Flood the
+log** items show both in each language.
 
 ## Actions for some operating systems only
 
@@ -2399,7 +2439,9 @@ package with Retry and does not restore the earlier code; the next save that
 builds recovers it; its components are then copied where `pane.json` names
 them. Saving again while a build runs makes that build obsolete: it is never
 reloaded, and the folder is built again (after three in a row, Pane waits
-for the next save). **Stop developing <title>**, disabling or uninstalling
+for the next save). The package's [extension log](#printing-and-logging) is
+kept in `extension.log` beside the build's log while it is developed.
+**Stop developing <title>**, disabling or uninstalling
 the package, or quitting Pane ends it and kills a running build with the
 processes it started. Only that installation is
 affected: a copy of the package installed from another folder keeps its own

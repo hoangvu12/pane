@@ -7,6 +7,7 @@
 // envelope (`render` and `handle-event`, docs/list-tree.md); the SDK's
 // adapter (adapt.js) writes the tree and runs the actions, so a command
 // never sees the JSON or the callback ids.
+/// <reference path="./console.d.ts" />
 /// <reference path="./wasi.d.ts" />
 /// <reference path="./commands.d.ts" />
 /// <reference path="./feedback-host.d.ts" />

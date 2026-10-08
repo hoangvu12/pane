@@ -23,10 +23,11 @@
 //! files of a folder with [`files`], search as the
 //! user types into its own search field with [`search`], make web
 //! requests with [`http`] and keep clipboard history with
-//! [`clipboard_history`]. The crate is
-//! `no_std` so the component imports only WASI 0.3 interfaces; it supplies the
-//! allocator and a panic handler that traps, which the host reports as a
-//! runtime error.
+//! [`clipboard_history`]. It prints and logs to its package's extension log
+//! with [`info!`], [`warn!`], [`println!`] and the like ([`log`]). The crate
+//! is `no_std` so the component imports only WASI 0.3 interfaces; it supplies
+//! the allocator and a panic handler that logs the panic and traps, which the
+//! host reports as a runtime error.
 //!
 //! Without `std` no libc is linked, so the crate also supplies what the
 //! compiler and the component runtime call into libc or `std` for:
@@ -501,7 +502,81 @@ pub mod service {
 }
 
 pub mod http;
+pub mod log;
 pub mod programs;
+
+/// Logs a line at debug level to the package's extension log, formatted as
+/// [`alloc::format!`] formats (see [`log`]).
+#[macro_export]
+macro_rules! debug {
+    ($($arg:tt)*) => {
+        $crate::log::log($crate::log::Level::Debug, ::core::format_args!($($arg)*))
+    };
+}
+
+/// Logs a line at info level to the package's extension log (see [`log`]).
+#[macro_export]
+macro_rules! info {
+    ($($arg:tt)*) => {
+        $crate::log::log($crate::log::Level::Info, ::core::format_args!($($arg)*))
+    };
+}
+
+/// Logs a warning to the package's extension log (see [`log`]).
+#[macro_export]
+macro_rules! warn {
+    ($($arg:tt)*) => {
+        $crate::log::log($crate::log::Level::Warn, ::core::format_args!($($arg)*))
+    };
+}
+
+/// Logs an error to the package's extension log (see [`log`]).
+#[macro_export]
+macro_rules! error {
+    ($($arg:tt)*) => {
+        $crate::log::log($crate::log::Level::Error, ::core::format_args!($($arg)*))
+    };
+}
+
+/// Prints to standard output: a line of the package's extension log at info
+/// level, which this call ends (see [`log`]).
+#[macro_export]
+macro_rules! print {
+    ($($arg:tt)*) => {
+        $crate::log::print($crate::log::Output::Stdout, ::core::format_args!($($arg)*))
+    };
+}
+
+/// Prints a line to standard output (see [`print!`]).
+#[macro_export]
+macro_rules! println {
+    () => {
+        $crate::print!("")
+    };
+    ($($arg:tt)*) => {
+        $crate::print!($($arg)*)
+    };
+}
+
+/// Prints to standard error: a line of the package's extension log at error
+/// level, which this call ends (see [`log`]).
+#[macro_export]
+macro_rules! eprint {
+    ($($arg:tt)*) => {
+        $crate::log::print($crate::log::Output::Stderr, ::core::format_args!($($arg)*))
+    };
+}
+
+/// Prints a line to standard error (see [`eprint!`]).
+#[macro_export]
+macro_rules! eprintln {
+    () => {
+        $crate::eprint!("")
+    };
+    ($($arg:tt)*) => {
+        $crate::eprint!($($arg)*)
+    };
+}
 
 /// The custom view type of a command that has none: `type CustomView =
 /// NoCustomView;` in its [`Command`] implementation, with an `open_view`
@@ -521,8 +596,14 @@ impl GuestCustomView for NoCustomView {
 #[global_allocator]
 static ALLOC: dlmalloc::GlobalDlmalloc = dlmalloc::GlobalDlmalloc;
 
+/// Logs the panic's message and location to the package's extension log,
+/// then traps; a panic while logging it traps at once.
 #[panic_handler]
-fn panic(_: &core::panic::PanicInfo<'_>) -> ! {
+fn panic(info: &core::panic::PanicInfo<'_>) -> ! {
+    static PANICKED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+    if !PANICKED.swap(true, core::sync::atomic::Ordering::Relaxed) {
+        log::panicked(info);
+    }
     core::arch::wasm32::unreachable()
 }
 

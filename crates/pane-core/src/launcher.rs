@@ -1411,7 +1411,8 @@ impl Launcher {
             .as_ref()
             .and_then(|installation| updates::UpdateControls::open(&installation.dir))
             .unwrap_or_default();
-        let developing = Arc::new(Developing::new(None, None));
+        let logs = runtime.as_ref().map(Runtime::logs).unwrap_or_default();
+        let developing = Arc::new(Developing::new(None, None, logs));
         // A web image, a system icon or an application's icon that loaded
         // redraws its row: the window is told through development's shared
         // configuration, as the launcher's other background work tells it.
