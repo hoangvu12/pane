@@ -1,6 +1,6 @@
-//! A process and every process it starts, ended together: a development
-//! build ([`crate::develop`]) and a system program an extension runs
-//! ([`crate::programs`]).
+//! A process and every process it starts, ended together: a build
+//! ([`crate::Build`]) and a system program an extension runs (Pane's core's
+//! `programs`, which uses it from here).
 //!
 //! - Unix: a process group of its own, killed with `SIGKILL`. On Linux the
 //!   command also gets `SIGKILL` if the thread that started it ends (Pane's
@@ -17,7 +17,7 @@
 use std::io;
 use std::process::{Child, Command};
 
-pub(crate) struct ProcessTree {
+pub struct ProcessTree {
     #[cfg(unix)]
     group: i32,
     #[cfg(windows)]
@@ -27,19 +27,19 @@ pub(crate) struct ProcessTree {
 impl ProcessTree {
     /// Prepares a development build's `command`: a process group of its
     /// own, and no console window on Windows.
-    pub(crate) fn prepare(command: &mut Command) {
+    pub fn prepare(command: &mut Command) {
         prepare_with(command, false, false);
     }
 
     /// Prepares a system program's `command`: a process group of its own,
     /// started suspended on Windows (see [`ProcessTree::adopt_program`]),
     /// with a console window of its own there only if `console`.
-    pub(crate) fn prepare_program(command: &mut Command, console: bool) {
+    pub fn prepare_program(command: &mut Command, console: bool) {
         prepare_with(command, true, console);
     }
 
     /// The tree of `child`, started with [`ProcessTree::prepare`].
-    pub(crate) fn adopt(child: &Child) -> ProcessTree {
+    pub fn adopt(child: &Child) -> ProcessTree {
         #[cfg(unix)]
         {
             // The group `prepare` made has the child's id.
@@ -66,7 +66,7 @@ impl ProcessTree {
     /// The tree of `child`, started with [`ProcessTree::prepare_program`]:
     /// on Windows it is put in its Job Object, then let run. An error when
     /// it cannot be let run; the caller ends it then.
-    pub(crate) fn adopt_program(child: &Child) -> io::Result<ProcessTree> {
+    pub fn adopt_program(child: &Child) -> io::Result<ProcessTree> {
         let tree = ProcessTree::adopt(child);
         #[cfg(windows)]
         windows_job::resume(child.id())?;
@@ -74,7 +74,7 @@ impl ProcessTree {
     }
 
     /// Ends every process of the tree that is still running.
-    pub(crate) fn kill(&self) {
+    pub fn kill(&self) {
         #[cfg(unix)]
         if self.group > 0 {
             // SAFETY: kill(2) with a negative id signals that process group;
@@ -93,7 +93,7 @@ impl ProcessTree {
     /// tells: on Windows its Job Object holds no running process; elsewhere
     /// `false`, as a process group is not told apart from its exited,
     /// unreaped leader.
-    pub(crate) fn none_running(&self) -> bool {
+    pub fn none_running(&self) -> bool {
         #[cfg(windows)]
         {
             self.job
@@ -109,7 +109,7 @@ impl ProcessTree {
     /// Whether the tree's processes are in a Job Object (Windows), which a
     /// system may refuse; elsewhere, always (a process group).
     #[allow(dead_code)]
-    pub(crate) fn contained(&self) -> bool {
+    pub fn contained(&self) -> bool {
         #[cfg(windows)]
         {
             self.job.is_some()
@@ -164,7 +164,7 @@ fn prepare_with(command: &mut Command, suspended: bool, console: bool) {
 /// its process group keeps its id until it is, so [`ProcessTree::kill`]
 /// after this never reaches a group that took the id since, and what the
 /// program left running in its group stays reachable until it is reaped.
-pub(crate) fn exit_code(child: &mut Child) -> io::Result<Option<Option<i32>>> {
+pub fn exit_code(child: &mut Child) -> io::Result<Option<Option<i32>>> {
     #[cfg(unix)]
     {
         // SAFETY: a zeroed siginfo_t is a valid value for waitid to fill;
@@ -201,7 +201,7 @@ pub(crate) fn exit_code(child: &mut Child) -> io::Result<Option<Option<i32>>> {
 }
 
 #[cfg(windows)]
-pub(crate) mod windows_job {
+pub mod windows_job {
     use std::io;
 
     use windows::Win32::Foundation::{CloseHandle, HANDLE};

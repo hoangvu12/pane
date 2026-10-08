@@ -39,8 +39,6 @@ mod peak_memory;
 pub mod placement;
 mod platform;
 mod preferences;
-#[doc(hidden)]
-pub mod process_tree;
 mod programs;
 mod runtime;
 mod search;
@@ -88,6 +86,8 @@ pub use packages::{
     MAX_SCHEDULE_SECONDS, MIN_SCHEDULE_SECONDS, Manifest, ManifestCommand, ManifestHelper,
     ManifestOperation, ManifestSchedule, PackageError, PackageIdentity, RetainedData, SavedData,
 };
+#[doc(hidden)]
+pub use pane_build::process_tree;
 pub use pane_target::{Arch, Target};
 pub use platform::Platform;
 pub use preferences::{HELP_FILE, Preference, PreferenceKind};
