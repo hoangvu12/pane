@@ -898,11 +898,10 @@ fn listen_for_taskbar(owner: HWND) {
     let _ = unsafe { ChangeWindowMessageFilterEx(owner, created, MSGFLT_ALLOW, None) };
 }
 
-/// Writes `message` to standard error, if there is one. Unlike
-/// `eprintln!`, it cannot panic.
+/// Writes `message` to standard error, if there is one, and to Pane's log
+/// (see `crate::diagnostics`). It cannot panic.
 fn log(message: &str) {
-    use std::io::Write;
-    let _ = writeln!(std::io::stderr(), "{message}");
+    crate::diagnostics::report_line(message);
 }
 
 impl WindowsTray {

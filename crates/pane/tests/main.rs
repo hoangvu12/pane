@@ -16,6 +16,7 @@ mod arguments;
 mod command_search;
 mod compact_pins;
 mod confirmations;
+mod crash_record;
 mod default_icons;
 mod develop;
 mod extension_log;

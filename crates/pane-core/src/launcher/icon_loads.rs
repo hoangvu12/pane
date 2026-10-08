@@ -243,7 +243,7 @@ impl IconLoads {
             .spawn(move || shared.work());
         if let Err(error) = started {
             state.workers -= 1;
-            eprintln!("pane: could not start a thread loading icons: {error}");
+            crate::diagnostic!("pane: could not start a thread loading icons: {error}");
         }
     }
 
@@ -348,6 +348,17 @@ impl super::Launcher {
     }
 }
 
+/// Writes the diagnostic of a web image `url` that shows its fallback
+/// because of `why`. The image is named by the address it was asked of
+/// only: the rest of an extension's URL can carry what the user typed (a
+/// search's query), which Pane's log never holds (#133).
+fn report_fallback(url: &str, why: &str) {
+    let address =
+        http::address_of(url).unwrap_or_else(|| "an address that is not a web one".into());
+    let why = why.replace(url, &address);
+    crate::diagnostic!("pane: a web image from {address} shows its fallback: {why}");
+}
+
 /// What an icon shows while its image loads, or when it failed, if it has
 /// no fallback: a neutral image glyph in the secondary tone.
 fn placeholder() -> Icon {
@@ -387,7 +398,7 @@ impl Shared {
                 } => {
                     let loaded = self.download(&owner, &url, &folder, &generation);
                     if let Err(why) = &loaded {
-                        eprintln!("pane: the web image {url} shows its fallback: {why}");
+                        report_fallback(&url, why);
                     }
                     let load = loaded.map_or(Load::Failed, Load::Ready);
                     self.lock().web.insert((owner, url), load);
@@ -489,6 +500,25 @@ mod tests {
 
     fn loads() -> IconLoads {
         IconLoads::new(None, None, Arc::new(|| {}))
+    }
+
+    /// A web image an extension built from the user's query fails: the
+    /// log names the address it was asked of, never the query.
+    #[test]
+    fn a_failed_web_image_is_logged_by_its_address_without_the_users_query() {
+        let folder = tempfile::tempdir().unwrap();
+        let captured =
+            crate::diagnostics::capture_into(folder.path(), crate::diagnostics::Redactor::none());
+        let query = "my-secret-search";
+        let url = format!("https://images.example.com/search?q={query}");
+        report_fallback(&url, &format!("`{url}` answered nothing"));
+        report_fallback(
+            &format!("weird:{query}"),
+            &format!("`weird:{query}` is not a web address"),
+        );
+        let text = captured.text();
+        assert!(text.contains("pane: a web image from images.example.com"), "{text}");
+        assert!(!text.contains("secret"), "{text}");
     }
 
     #[test]

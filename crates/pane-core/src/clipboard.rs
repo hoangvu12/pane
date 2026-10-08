@@ -657,7 +657,7 @@ impl Sink for CaptureSink {
                     .then(|| match store.keep_image(&owner, image) {
                         Ok(kept) => Some(kept),
                         Err(error) => {
-                            eprintln!("Pane could not keep a copied image: {error}");
+                            crate::diagnostic!("Pane could not keep a copied image: {error}");
                             None
                         }
                     })

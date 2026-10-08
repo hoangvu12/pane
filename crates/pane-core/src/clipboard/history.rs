@@ -677,7 +677,7 @@ impl HistoryStore {
             && held.holds_unprotected()
             && let Err(error) = write_file(&path, held)
         {
-            eprintln!(
+            crate::diagnostic!(
                 "Pane could not protect the clipboard history in {}: {error}. It reads it as it is \
                  and tries again when it next starts.",
                 path.display()
@@ -846,7 +846,7 @@ impl HistoryStore {
                     left += 1;
                 } else if let Err(error) = fs::remove_file(&path) {
                     left += 1;
-                    eprintln!(
+                    crate::diagnostic!(
                         "Pane could not delete a clipboard image no longer kept, {}: {error}",
                         path.display()
                     );
@@ -1115,7 +1115,7 @@ impl HistoryStore {
             .name("pane-clipboard-expiry".into())
             .spawn(move || expire_until_dropped(&store, &wake));
         if let Err(error) = started {
-            eprintln!("Pane cannot expire clipboard history in the background: {error}");
+            crate::diagnostic!("Pane cannot expire clipboard history in the background: {error}");
         }
     }
 
@@ -1133,7 +1133,7 @@ impl HistoryStore {
         if let Some(pending) = pending
             && let Err(error) = self.write(pending)
         {
-            eprintln!(
+            crate::diagnostic!(
                 "Pane could not save the clipboard history in {}: {error}",
                 self.path.display()
             );
@@ -1398,6 +1398,33 @@ mod tests {
             .iter()
             .map(|item| item.text.as_str())
             .collect()
+    }
+
+    /// A history that cannot be saved is reported in Pane's log, which
+    /// never holds what was copied (#133).
+    #[test]
+    fn a_failed_save_is_logged_without_what_was_copied() {
+        let dir = tempfile::tempdir().unwrap();
+        let logs = tempfile::tempdir().unwrap();
+        let captured =
+            crate::diagnostics::capture_into(logs.path(), crate::diagnostics::Redactor::none());
+        let (store, _clock) = store_at(dir.path(), DAY);
+        // The history's file cannot be replaced: a folder holding a file
+        // stands where it goes.
+        fs::create_dir_all(dir.path().join(FILE).join("taken")).unwrap();
+        store.capture(store.deletions(), |packages, now| {
+            let history = packages
+                .get_mut(&default_owner())
+                .expect("Pane's own history");
+            history.add("my secret clipboard text", None, now);
+            true
+        });
+        let text = captured.text();
+        assert!(
+            text.contains("Pane could not save the clipboard history in"),
+            "{text}"
+        );
+        assert!(!text.contains("secret"), "{text}");
     }
 
     #[test]

@@ -1029,6 +1029,9 @@ impl LauncherWindow {
                 // window is taken.
                 crate::settings::shared(cx).update(cx, |settings, _| settings.release_tray());
                 self.launcher.release_hotkeys();
+                // A clean quit: this run's marker goes, so the next start
+                // does not say Pane quit unexpectedly (#133).
+                self.launcher.quit_cleanly();
                 cx.quit();
             }
         }
@@ -2303,6 +2306,7 @@ pub(crate) fn row_icon(id: &str) -> (IconTone, Glyph) {
         "pane.install-from-git" => (IconTone::Term, Glyph::Terminal),
         pane_core::MANAGE_EXTENSIONS => (IconTone::Command, Glyph::Blocks),
         "pane.settings" => (IconTone::Command, Glyph::Gear),
+        pane_core::UNEXPECTED_QUIT => (IconTone::Folder, Glyph::Folder),
         _ => (IconTone::Command, Glyph::Prompt),
     }
 }

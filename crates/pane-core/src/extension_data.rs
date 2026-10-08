@@ -401,7 +401,7 @@ impl KindFile {
             }
         }
         if let Some(why) = failed {
-            eprintln!(
+            crate::diagnostic!(
                 "Pane could not protect a value in {}: {why}. It is kept as it is until Pane \
                  next starts.",
                 self.path.display()
@@ -415,7 +415,7 @@ impl KindFile {
             .map_err(io::Error::other)
             .and_then(|text| write_atomically(&self.path, text.as_bytes(), kind.readers()));
         if let Err(error) = written {
-            eprintln!(
+            crate::diagnostic!(
                 "Pane could not protect the values in {}: {error}. It reads them as they are and \
                  tries again when it next starts.",
                 self.path.display()
@@ -477,7 +477,7 @@ fn start_writer(data: Weak<Mutex<DataFile>>) -> mpsc::Sender<Job> {
             }
         });
     if let Err(error) = started {
-        eprintln!("pane: could not start the thread writing extension data: {error}");
+        crate::diagnostic!("pane: could not start the thread writing extension data: {error}");
     }
     jobs
 }

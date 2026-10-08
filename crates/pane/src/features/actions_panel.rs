@@ -151,7 +151,8 @@ impl SlotKeys {
             | ResultAction::Hotkey
             | ResultAction::Alias
             | ResultAction::ConfigureCommand
-            | ResultAction::ConfigureExtension => None,
+            | ResultAction::ConfigureExtension
+            | ResultAction::DismissNotice => None,
         }
     }
 }
@@ -1120,6 +1121,13 @@ impl LauncherWindow {
                     self.focus_slot(slot, window, cx);
                 }
             }
+            // The notice that Pane quit unexpectedly last time (#133): its
+            // row leaves root search.
+            ResultAction::DismissNotice => {
+                self.close_actions(window, cx);
+                self.launcher.dismiss_crash_notice();
+                self.show_until_done(std::future::ready(()), window, cx);
+            }
         }
     }
 
@@ -1458,6 +1466,7 @@ fn action_glyph(action: ResultAction, primary: Glyph) -> Glyph {
         | ResultAction::MovePinUp
         | ResultAction::MovePinDown => Glyph::ActionPin,
         ResultAction::ConfigureCommand | ResultAction::ConfigureExtension => Glyph::Sliders,
+        ResultAction::DismissNotice => Glyph::Delete,
     }
 }
 

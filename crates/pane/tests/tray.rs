@@ -19,6 +19,7 @@ use std::time::{Duration, Instant};
 
 use gpui::{AnyWindowHandle, TestAppContext, VisualTestContext, WindowHandle, prelude::*};
 use pane::{LauncherWindow, SettingsWindow};
+use pane_core::diagnostics::{CrashRecord, SystemProcesses};
 use pane_core::hotkeys::{HotkeyError, Hotkeys, Shortcut};
 use pane_core::tray::{Tray, TrayAction, TrayError};
 use pane_core::{Launcher, PackageIdentity, Runtime, Screen, Status};
@@ -492,9 +493,15 @@ fn quit_from_the_tray_releases_the_entry_and_the_hotkey_registrations(cx: &mut T
 
     let hotkeys = Arc::new(FakeHotkeys::default());
     let system = tray();
+    // This run's crash record, as the binary opens it at start (#133): its
+    // marker says Pane is running until a clean quit removes it.
+    let record = CrashRecord::open(&data.path().join("logs"), "0.0.1", &SystemProcesses);
+    let marker = record.marker().to_path_buf();
+    assert!(marker.exists(), "the marker is written at start");
     let launcher =
         Launcher::with_packages(Runtime::start(), Vec::new(), data.path().join("extensions"))
-            .with_hotkeys(hotkeys.clone());
+            .with_hotkeys(hotkeys.clone())
+            .with_crash_record(Arc::new(record));
     init_settings(Some(data.path()), cx);
     cx.update(|cx| pane::settings::attach_tray(system.clone(), cx));
     cx.executor().allow_parking();
@@ -544,6 +551,9 @@ fn quit_from_the_tray_releases_the_entry_and_the_hotkey_registrations(cx: &mut T
         }),
         "the application's own binding is not registered"
     );
+    // And it was a clean quit: no marker is left for the next start to
+    // take for a crash.
+    assert!(!marker.exists(), "a clean quit leaves no marker");
 }
 
 #[gpui::test]
