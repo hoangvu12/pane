@@ -1165,7 +1165,10 @@ fn a_root_on_a_network_share_or_a_removable_drive_is_left_out_until_other_volume
     assert!(fixture.names("far plan").is_empty());
     assert!(fixture.names("holiday").is_empty());
     assert_eq!(fixture.names("plan"), ["plan.txt"], "the home folder is");
-    assert_eq!(*lock(&fixture.fake.watched), [fixture.home.clone()]);
+    assert_eq!(
+        *lock(&fixture.fake.watched),
+        std::slice::from_ref(&fixture.home)
+    );
 
     // Included: both are indexed; the removable drive is watched, the
     // network share never is.
@@ -1321,7 +1324,10 @@ fn the_catch_up_and_the_watch_share_one_read_of_the_folder_ids() {
         note: None,
     });
     fixture.fake.reads_folder_ids.store(true, Ordering::SeqCst);
-    fixture.fake.watches_each_folder.store(true, Ordering::SeqCst);
+    fixture
+        .fake
+        .watches_each_folder
+        .store(true, Ordering::SeqCst);
     fixture.indexer.set_users(users(&[OWNER]));
     fixture.settle();
 
@@ -1473,7 +1479,9 @@ fn an_ignore_file_in_the_home_folder_rechecks_every_folder_a_few_at_a_time() {
     assert_eq!(notes(), count);
 
     fs::write(home.join(".ignore"), "*.draft\n").unwrap();
-    fixture.fake.report(Changed::Paths(vec![home.join(".ignore")]));
+    fixture
+        .fake
+        .report(Changed::Paths(vec![home.join(".ignore")]));
     let meanwhile = home.join("Documents/meanwhile.txt");
     fs::write(&meanwhile, "x").unwrap();
     fixture.fake.report(Changed::Paths(vec![meanwhile]));

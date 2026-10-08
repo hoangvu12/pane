@@ -232,8 +232,7 @@ fn git_config_files() -> Vec<PathBuf> {
     if let Some(home) = &home {
         files.push(home.join(".gitconfig"));
     }
-    let config = set("XDG_CONFIG_HOME")
-        .or_else(|| home.as_ref().map(|home| home.join(".config")));
+    let config = set("XDG_CONFIG_HOME").or_else(|| home.as_ref().map(|home| home.join(".config")));
     if let Some(config) = config {
         files.push(config.join("git").join("config"));
     }
@@ -678,8 +677,7 @@ impl Scope {
             return known.clone();
         }
         let context = if folder == self.rules.roots[root] {
-            (!self.leaves_out_root(root))
-                .then(|| self.root_context(root, OwnFiles::read(folder)))
+            (!self.leaves_out_root(root)).then(|| self.root_context(root, OwnFiles::read(folder)))
         } else {
             let parent = folder.parent()?;
             let parent_context = self.context_at(root, parent, known)?;
@@ -898,7 +896,10 @@ mod tests {
         assert!(scope.admits_kept(&traced, false));
         assert!(!scope.admits(&traced, false, &mut Admitted::default()));
         scope.forget_kept(&home.join("other"));
-        assert!(scope.admits_kept(&traced, false), "another folder forgotten");
+        assert!(
+            scope.admits_kept(&traced, false),
+            "another folder forgotten"
+        );
         scope.forget_kept(&home.join("repo"));
         assert!(!scope.admits_kept(&traced, false));
 
@@ -1005,8 +1006,8 @@ mod tests {
             assert!(!scope.admits(root, true, &mut Admitted::default()));
             assert!(!admitted(&scope, root, "Projects/plan.txt"));
         }
-        assert_eq!(scope.kept_roots(), [home.clone()]);
-        assert_eq!(scope.watched_roots(), [home.clone()]);
+        assert_eq!(scope.kept_roots(), std::slice::from_ref(&home));
+        assert_eq!(scope.watched_roots(), std::slice::from_ref(&home));
         assert!(scope.network_roots().is_empty());
 
         // Included: both are indexed, and the share is reconciled rather
@@ -1068,8 +1069,8 @@ mod tests {
         let mounted = home.join("mounted");
 
         let scope = Scope::with_volumes(rules.clone(), volumes.clone());
-        assert_eq!(scope.kept_roots(), [home.clone()]);
-        assert_eq!(scope.roots_not_answering(), [slow.clone()]);
+        assert_eq!(scope.kept_roots(), std::slice::from_ref(&home));
+        assert_eq!(scope.roots_not_answering(), std::slice::from_ref(&slow));
         assert!(scope.leaves_out_mount(&mounted, 2, 1));
 
         rules.include_other_volumes = true;

@@ -2433,7 +2433,10 @@ mod tests {
             assert_ne!(text, other);
             fs::write(&manifest, other).unwrap();
             let (index, opened) = fixture.open();
-            assert!(matches!(opened, Opened::Rebuilt(_)), "{version}: {opened:?}");
+            assert!(
+                matches!(opened, Opened::Rebuilt(_)),
+                "{version}: {opened:?}"
+            );
             assert!(index.search(&query("march")).is_empty());
             assert_eq!(index.record(), IndexRecord::default());
             assert_eq!(index.stats().segments, 0);
@@ -2953,10 +2956,7 @@ mod tests {
         assert_eq!(oldest_run_due(&sizes, 400_000 / 32), None);
         assert_eq!(oldest_run_due(&sizes, 400_000 / 32 + 1), Some(0..3));
         assert_eq!(oldest_run_due(&[1_000, 10], TOMBSTONES_DUE), None);
-        assert_eq!(
-            oldest_run_due(&[1_000, 10], TOMBSTONES_DUE + 1),
-            Some(0..2)
-        );
+        assert_eq!(oldest_run_due(&[1_000, 10], TOMBSTONES_DUE + 1), Some(0..2));
         // The tiers come first: here none is due, as after a first index.
         assert_eq!(tier_to_merge(&sizes), None);
     }
@@ -2984,7 +2984,10 @@ mod tests {
 
         flush("after.txt");
         index.wait_for_merges();
-        assert!(index.stats().segments < MERGE_FACTOR, "merged once more due");
+        assert!(
+            index.stats().segments < MERGE_FACTOR,
+            "merged once more due"
+        );
         assert_eq!(index.search(&query("batch")).len(), MERGE_FACTOR);
         assert_eq!(names(&index.search(&query("after"))), ["after.txt"]);
     }

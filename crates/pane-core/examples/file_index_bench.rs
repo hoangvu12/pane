@@ -47,8 +47,8 @@ use std::sync::mpsc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use pane_core::file_index::{
-    self, Admitted, Category, Change, Entry, EntryKind, FileIndex, JournalRead, Meta, Opened, Query,
-    Scope, ScopeRules, WalkOptions,
+    self, Admitted, Category, Change, Entry, EntryKind, FileIndex, JournalRead, Meta, Opened,
+    Query, Scope, ScopeRules, WalkOptions,
 };
 
 /// The regression guard's ceilings (#183, `--guard`), for the run CI makes
@@ -537,7 +537,11 @@ fn main() {
             ("several segments and changes in memory", &several_warm),
         ] {
             let p95 = percentile(times, 95.0);
-            check(format!("query p95, {shape}, all kinds"), p95, GUARD_QUERY_P95);
+            check(
+                format!("query p95, {shape}, all kinds"),
+                p95,
+                GUARD_QUERY_P95,
+            );
             for kind in QueryKind::ALL {
                 let of = of_kind(&queries, times, kind);
                 if !of.is_empty() {
@@ -554,7 +558,11 @@ fn main() {
         }
         if let Some(times) = &deep_cold {
             let p95 = percentile(times, 95.0);
-            check("re-index p95, deep, nothing kept".into(), p95, GUARD_REINDEX_P95);
+            check(
+                "re-index p95, deep, nothing kept".into(),
+                p95,
+                GUARD_REINDEX_P95,
+            );
         }
         let per_entry = first.bytes as f64 / entries as f64;
         checked += 1;
@@ -1057,7 +1065,11 @@ fn deep_folder(root: &Path, scope: &Scope, sample: &[PathBuf]) -> Option<DeepFol
         }
         let rank = (with_ignore_files > 0, depth, with_ignore_files);
         let better = best.as_ref().is_none_or(|best| {
-            rank > (best.with_ignore_files > 0, best.depth, best.with_ignore_files)
+            rank > (
+                best.with_ignore_files > 0,
+                best.depth,
+                best.with_ignore_files,
+            )
         });
         if better {
             best = Some(DeepFolder {

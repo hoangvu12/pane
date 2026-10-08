@@ -64,7 +64,15 @@ pub fn reconcile(
     cancel: &AtomicBool,
 ) -> Reconciled {
     let mut pending: Vec<PathBuf> = folders.to_vec();
-    compare(index, scope, &mut pending, options, cancel, false, usize::MAX)
+    compare(
+        index,
+        scope,
+        &mut pending,
+        options,
+        cancel,
+        false,
+        usize::MAX,
+    )
 }
 
 /// Re-checks the folders `pending`, whose ignore rules may have changed
@@ -180,9 +188,7 @@ fn compare(
             }
             Err(walker::Unlisted::Unreadable | walker::Unlisted::Refused) => None,
         };
-        if !read_all
-            && scope.rules().use_ignore_files
-            && listing.as_deref().is_some_and(sets_rules)
+        if !read_all && scope.rules().use_ignore_files && listing.as_deref().is_some_and(sets_rules)
         {
             reconciled.recheck.push(folder.clone());
         }

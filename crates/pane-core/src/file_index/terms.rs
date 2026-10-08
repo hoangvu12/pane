@@ -238,7 +238,10 @@ mod tests {
         assert!(fragments(b"nab").is_empty());
         assert!(fragments(b"").is_empty());
         // Bytes, not characters: "é" is two.
-        assert_eq!(fragments("né1".as_bytes()), [key(&[b'n', 0xC3, 0xA9, b'1'])]);
+        assert_eq!(
+            fragments("né1".as_bytes()),
+            [key(&[b'n', 0xC3, 0xA9, b'1'])]
+        );
     }
 
     #[test]

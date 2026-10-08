@@ -94,8 +94,8 @@ pub(crate) fn write_unless(
     cancel: &AtomicBool,
 ) -> io::Result<()> {
     let temporary = path.with_extension("tmp");
-    let written = write_to(&temporary, docs, tombstones, cancel)
-        .and_then(|()| fs::rename(&temporary, path));
+    let written =
+        write_to(&temporary, docs, tombstones, cancel).and_then(|()| fs::rename(&temporary, path));
     if written.is_err() {
         let _ = fs::remove_file(&temporary);
     }
@@ -320,15 +320,12 @@ fn read_ids(bytes: &[u8], mut at: usize, out: &mut Vec<u32>) {
 fn key_hash(key: &[u8]) -> u64 {
     const MULTIPLY: u64 = 0x9E37_79B9_7F4A_7C15;
     let mut hash = (key.len() as u64).wrapping_mul(MULTIPLY);
-    let mut word = [0u8; 8];
-    let mut chunks = key.chunks_exact(8);
-    for chunk in &mut chunks {
-        word.copy_from_slice(chunk);
-        hash ^= u64::from_le_bytes(word);
+    let (chunks, rest) = key.as_chunks::<8>();
+    for chunk in chunks {
+        hash ^= u64::from_le_bytes(*chunk);
         hash = hash.wrapping_mul(MULTIPLY).rotate_left(29);
     }
-    let rest = chunks.remainder();
-    word = [0u8; 8];
+    let mut word = [0u8; 8];
     word[..rest.len()].copy_from_slice(rest);
     hash ^= u64::from_le_bytes(word);
     hash = hash.wrapping_mul(MULTIPLY);
