@@ -23,14 +23,16 @@ Usage:
   proc_tree.py summary <samples> <events> <summary.json> [environment.json]
       Turns the samples and the workload's event lines into one summary
       record: per phase, RSS statistics, CPU seconds and share, growth,
-      the wake-ups of the tree's threads by thread name, the window
+      the wake-ups of the tree's threads by thread name (cut to 15 bytes,
+      as Linux keeps it, on every platform), the window
       latencies the workload measured, and any extra values the events
       carried (how many extensions were installed, how many service
       cycles ran, ...).
   proc_tree.py check <summary.json> <targets.json>
       Compares the summary with the recorded targets. A null target is
-      reported as pending, not checked; a phase that was not measured,
-      or a value above its ceiling, fails.
+      reported as pending, not checked; a phase the workload's record says
+      it skipped is reported as skipped; a phase that was not measured
+      otherwise, or a value above its ceiling, fails.
   proc_tree.py selfcheck
       Runs watch, summary and check against a throwaway process with
       children of its own, so the sampling logic is checked without a
@@ -280,9 +282,18 @@ def tick_hz(entry):
     return entry.get("tick_hz") or CLK_TCK
 
 
+def thread_key(name):
+    """A thread's name as summary.json lists it: cut to its first 15 bytes,
+    as Linux keeps a thread's name (its comm), so that the Windows script's
+    whole names and Linux's cut ones list the same thread under the same
+    key ("pane-clipboard-expiry" is "pane-clipboard-" on both)."""
+    return name.encode("utf-8")[:15].decode("utf-8", "ignore")
+
+
 def wakeups(samples):
     """The wake-ups of the tree's threads across the phase, by thread name,
     or None when the samples hold no threads (a record from before #189).
+    Names are cut to 15 bytes on every platform (`thread_key`).
 
     A thread's count is its switches at its last sample in the phase less
     those at its first, when it was there at the phase's first sample of
@@ -309,7 +320,7 @@ def wakeups(samples):
                 now = (thread["switches"], thread["cpu_ticks"] / hz)
                 if key not in first:
                     first[key] = now if opening else (0, 0.0)
-                last[key] = (thread["name"],) + now
+                last[key] = (thread_key(thread["name"]),) + now
     if not threaded:
         return None
     by_name = {}
@@ -327,6 +338,7 @@ def wakeups(samples):
             record["per_second"] = round(record["count"] / seconds, 2)
     summary = {
         "counted": "voluntary context switches" if kinds == {"voluntary"} else "context switches",
+        "names": "cut to 15 bytes, as Linux keeps them",
         "total": total,
         "by_thread": by_name,
     }
@@ -431,12 +443,19 @@ def lookup(record, path):
 
 
 def check(summary, targets):
-    """Compare a summary with the targets; returns the failure lines."""
-    problems, pending, passed = [], [], []
+    """Compare a summary with the targets; returns the failure lines. A
+    phase the workload's record says it skipped (its environment's
+    "skipped", as measure-linux.sh writes it when the hidden phase's
+    payloads are absent) is reported as skipped, not as not measured."""
+    problems, pending, passed, skipped = [], [], [], []
+    skips = set(summary.get("environment", {}).get("skipped", ()))
     for phase, metrics in targets["targets"].items():
         record = summary.get("phases", {}).get(phase)
         if record is None:
-            problems.append(f"{phase}: not measured")
+            if phase in skips:
+                skipped.append(f"{phase}: skipped by the workload")
+            else:
+                problems.append(f"{phase}: not measured")
             continue
         for path, ceiling in flatten("", metrics):
             name = f"{phase}.{path}"
@@ -454,6 +473,8 @@ def check(summary, targets):
         print(f"ok      {line}")
     for line in pending:
         print(f"pending {line}")
+    for line in skipped:
+        print(f"skipped {line}")
     for line in problems:
         print(f"FAIL    {line}")
     return problems
@@ -484,6 +505,7 @@ def wakeup_problems():
     woken = wakeups(samples)
     expected = {
         "counted": "voluntary context switches",
+        "names": "cut to 15 bytes, as Linux keeps them",
         "total": 2 + 100 + 7 + 1 + 100,
         "per_second": round(210 / 4, 2),
         "by_thread": {
@@ -495,6 +517,14 @@ def wakeup_problems():
         return [f"the wake-ups were not counted as expected: {woken} != {expected}"]
     if wakeups([entry(0.0, 10, []), entry(1.0, 0, [])]) is not None:
         return ["samples without threads were given wake-ups"]
+    # A whole name, as the Windows script reads it, and Linux's cut one
+    # are the same thread's.
+    whole = [
+        entry(0.0, 10, [thread(10, "pane-clipboard-expiry", 5, 0)]),
+        entry(1.0, 10, [thread(10, "pane-clipboard-expiry", 6, 0)]),
+    ]
+    if list(wakeups(whole)["by_thread"]) != ["pane-clipboard-"]:
+        return [f"a long thread name was not cut to 15 bytes: {wakeups(whole)}"]
     return []
 
 
@@ -580,10 +610,13 @@ def selfcheck():
                         "one": {"rss_kb": {"max": 2_000_000}, "cpu_share": None},
                         "two": {"rss_kb": {"max": 1}},
                         "gone": {"growth_kb": 1},
+                        "left": {"growth_kb": 1},
                     }
                 },
                 handle,
             )
+        # The workload skipped "left": reported so, and not failed.
+        summary["environment"] = {"skipped": ["left"]}
         import io
         import contextlib
 
@@ -596,6 +629,9 @@ def selfcheck():
             problems.append(f"an unmeasured phase was not reported: {failures}")
         if "one.cpu_share: pending" not in printed.getvalue():
             problems.append(f"a null target was not pending: {printed.getvalue()!r}")
+        if any(failure.startswith("left") for failure in failures) \
+                or "skipped left" not in printed.getvalue():
+            problems.append(f"a skipped phase was not reported as skipped: {failures}")
         if problems:
             for problem in problems:
                 print(f"FAIL    {problem}")

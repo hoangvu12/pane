@@ -28,9 +28,10 @@
 //!
 //! An icon's fingerprint covers the file its picture is read from as well
 //! as its source ([`super::sources_fingerprint`]): a packaged app's
-//! manifest and the logos chosen from it; a shortcut and its own icon
-//! location, or else its target (an update rewrites the target program,
-//! not the shortcut); an internet shortcut and its `IconFile`; a ClickOnce
+//! manifest and the logos chosen from it; a shortcut, its own icon
+//! location if it names one, and its target, to which extraction falls
+//! back (an update rewrites the target program, not the shortcut); an
+//! internet shortcut and its `IconFile`; a ClickOnce
 //! reference and its deployed program.
 //!
 //! Everything runs on the worker's thread, with COM initialized as a
@@ -91,8 +92,9 @@ pub(super) fn fingerprint(source: &str) -> Option<String> {
 }
 
 /// The files other than `source` itself whose pictures its icon is drawn
-/// from (see the module docs): a shortcut's (`.lnk`) own icon location, or
-/// else its target; an internet shortcut's (`.url`) `IconFile`; a ClickOnce
+/// from (see the module docs): a shortcut's (`.lnk`) own icon location and
+/// its target, to which extraction falls back; an internet shortcut's
+/// (`.url`) `IconFile`; a ClickOnce
 /// reference's (`.appref-ms`) deployed program. None for a program, or for
 /// a source that cannot be read.
 fn picture_files(source: &str) -> Vec<PathBuf> {
@@ -108,11 +110,17 @@ fn picture_files(source: &str) -> Vec<PathBuf> {
         let Ok(link) = read_link(Path::new(source)) else {
             return Vec::new();
         };
-        match link.icon_location {
-            Some((file, _)) => vec![PathBuf::from(file)],
-            None if !link.target.is_empty() => vec![PathBuf::from(link.target)],
-            None => Vec::new(),
+        // The target too when an icon location is named: extraction falls
+        // back to the target when that location yields no picture.
+        let mut files: Vec<PathBuf> = link
+            .icon_location
+            .map(|(file, _)| PathBuf::from(file))
+            .into_iter()
+            .collect();
+        if !link.target.is_empty() {
+            files.push(PathBuf::from(link.target));
         }
+        files
     } else if has_extension("url") {
         std::fs::read(source)
             .ok()

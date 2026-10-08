@@ -1310,6 +1310,10 @@ fn a_reading_of_a_screen_left_or_a_package_stopped_runs_nothing() {
     // even the status of the screen now shown.
     launcher.back();
     assert!(launcher.view().query().is_some());
+    // The view closed: what was made for it goes (#192), and is made
+    // again once it opens.
+    let made = launcher.clipboard_records_made();
+    assert!(launcher.clipboard_history().is_none());
     let status = launcher.view().status;
     assert!(launcher.copy_clipboard_record(&view, &id).is_err());
     assert!(launcher.delete_clipboard_record(&view, &id).is_err());
@@ -1325,6 +1329,7 @@ fn a_reading_of_a_screen_left_or_a_package_stopped_runs_nothing() {
     // reading made before can no longer act.
     open(&launcher, COMMAND);
     let view = launcher.clipboard_history().unwrap();
+    assert_eq!(launcher.clipboard_records_made(), made + 1);
     let identity = PackageIdentity::default_extension("clipboard-history");
     block_on(launcher.set_enabled(&identity, false));
     assert!(launcher.clipboard_history().is_none());
@@ -1412,9 +1417,26 @@ fn a_clean_quit_writes_the_copies_that_wait() {
     let pane = Pane::new();
     ahead_of_the_system(&pane);
     let launcher = pane.start();
+    written(&launcher);
+    let before = launcher.clipboard_history_writes();
+    let copied = std::time::Instant::now();
     assert!(pane.clipboard.copy("copied just before quitting", None));
+    let waiting = launcher.clipboard_history_writes();
+    let quit_after = copied.elapsed();
     launcher.quit_cleanly();
     assert_eq!(kept_on_disk(&pane), ["copied just before quitting"]);
+    // Quit within the batching delay (500 ms after the copy was kept, so
+    // after `copied`), the batch could not have been written by the
+    // store's thread: the quit wrote it. (A machine so slow that the delay
+    // passed proves nothing here, and is not failed for it.)
+    if quit_after < std::time::Duration::from_millis(500) {
+        assert_eq!(waiting, before, "the copy waited in its batch");
+        assert_eq!(
+            launcher.clipboard_history_writes(),
+            before + 1,
+            "the clean quit wrote it"
+        );
+    }
 
     drop(launcher);
     let launcher = pane.restart();

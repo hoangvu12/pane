@@ -237,14 +237,20 @@ mod windows {
         let updated = fingerprint(&link);
         assert_ne!(updated, before, "the target's update is seen");
 
-        // With an icon location of its own, that file is followed.
+        // With an icon location of its own, that file is followed, and the
+        // target still is: extraction falls back to it when the location
+        // yields no picture.
         let icon = dir.path().join("small.ico");
         small_icon(&icon);
         shortcut(&link, &program, Some(&icon));
         let with_icon = fingerprint(&link);
         assert!(with_icon.contains("small.ico"), "{with_icon}");
+        assert!(with_icon.contains("tool.exe"), "{with_icon}");
         grow(&icon, 4);
-        assert_ne!(fingerprint(&link), with_icon, "the icon file changed");
+        let icon_grown = fingerprint(&link);
+        assert_ne!(icon_grown, with_icon, "the icon file changed");
+        grow(&program, 16);
+        assert_ne!(fingerprint(&link), icon_grown, "the target changed");
     }
 
     #[test]

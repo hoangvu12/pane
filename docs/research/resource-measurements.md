@@ -28,10 +28,14 @@ One documented workload, run by
 the same runner, with the same guests and the same Pane binary as the smoke
 ([the Linux baseline](../platforms/linux.md)). It requires what
 `scripts/smoke-linux.sh` requires (Xvfb, xdotool, Pillow, a Vulkan driver)
-plus the guests built (`cargo xtask ci`) and the default extensions'
-payloads in `target/dist/artifacts` (`cargo xtask package-linux --dev`,
-which CI's smoke, run just before the workload in the same job, leaves
-there). The phases are fixed; their durations are the defaults (each has a
+plus the guests built (`cargo xtask ci`) and, for the hidden phases only,
+the default extensions' payloads in `target/dist/artifacts` (`cargo xtask
+package-linux --dev`, which CI's smoke, run just before the workload in the
+same job, leaves there). Without them the hidden phases are skipped, said
+so on standard error and in `record.json` (`"skipped": ["hidden-idle"]`),
+and `proc_tree.py check` reports `hidden-idle` as skipped rather than
+failing; the other phases run and are checked as before. The phases are
+fixed; their durations are the defaults (each has a
 `PANE_MEASURE_*` environment override for a quick run, recorded in
 `record.json`):
 
@@ -87,8 +91,9 @@ The output folder holds, beside the workload's screenshots:
 `proc_tree.py selfcheck` checks the sampling logic without a display
 against a `sleep` process with children of its own (both tree-walk paths,
 the summary's window/extra merging, the threads counted by name, the
-wake-up arithmetic on hand-made samples, and the check's
-pending/breach/unmeasured behaviour); the workload runs it first. Sampling
+wake-up arithmetic on hand-made samples, a long name cut to 15 bytes, and
+the check's pending/breach/unmeasured/skipped behaviour); the workload runs
+it first. Sampling
 is Linux only: `/proc` is where it reads. The Windows script writes samples
 of the same shape itself (below); `summary` and `check` read either.
 
@@ -100,6 +105,7 @@ were woken over the phase:
 ```json
 "wakeups": {
   "counted": "voluntary context switches",
+  "names": "cut to 15 bytes, as Linux keeps them",
   "total": 6600,
   "per_second": 110.0,
   "by_thread": {
@@ -129,7 +135,10 @@ together: `pane-extension-runtime` (the runtime thread itself) and
 `pane-extension-check` both as `pane-extension-`, and
 `pane-applications`, `pane-application-icons` and
 `pane-application-changes` all as `pane-applicatio`. A thread nobody named
-carries the process's name (`pane`). On Windows, names are whole.
+carries the process's name (`pane`). Windows keeps a thread's whole name;
+`proc_tree.py summary` cuts every name to its first 15 bytes before it
+counts, on both platforms (`"names"` in `wakeups` says so), so a Windows
+and a Linux `summary.json` list the same thread under the same key.
 
 ## The Windows script
 
@@ -177,7 +186,14 @@ back if anything changed it. It quits only the Pane it started (closing its
 window, then stopping it if it does not quit), and removes the scratch
 folder, which holds what Clipboard History recorded during the run
 (`-KeepScratch` keeps it). While it runs, the scratch Pane shows its tray
-icon and takes the default hotkeys if no other Pane holds them.
+icon and takes the default hotkeys if no other Pane holds them. When the
+user's own Pane (or any other `pane` process) runs, the script warns
+before it starts and records how many there were
+(`otherPaneProcesses`); it never touches them, but a second Pane's tray
+icon, hotkeys and clipboard watch share the machine with the scratch one,
+so a run with none is the one to record. The C# sampler is compiled
+under a name made from a digest of its source, so the script can run
+again in the same PowerShell session, after a change to it too.
 
 On Windows a thread's count is every context switch to it
 (`SYSTEM_THREAD_INFORMATION.ContextSwitches`), voluntary or not; for a
@@ -308,9 +324,23 @@ not edit the issue.
   `continuing-work` phases' start, recorded in their samples.
 - `hidden-idle` follows a first setup: the defaults were acquired in the
   same run, so what a start does once (the applications' icons) may still
-  run after the settling, and is counted there by thread. Its development
-  build may also offer an update to Pane itself, when the served payloads
-  name a newer package (CI's smoke leaves one); nothing is downloaded.
+  run after the settling, and is counted there by thread. No update of
+  Pane itself is offered there: the Linux workload serves the payloads with
+  an index whose `application` entry is left out (CI's smoke leaves a newer
+  package named in it). The Windows script serves `target/dist/artifacts`
+  as it is, so a newer package named there is offered (a root row and a
+  word on the status line; nothing is downloaded).
 - Wake-ups are counted at the sample cadence: a thread that ends between
-  two samples loses the switches since its last one. On Linux, names that
-  share their first 15 bytes are one entry (above).
+  two samples loses the switches since its last one. Names that share their
+  first 15 bytes are one entry, on both platforms (above).
+- On Windows the scratch `LOCALAPPDATA` moves more than Pane's cache and
+  log: the ClickOnce store (`%LOCALAPPDATA%\Apps\2.0`), where Pane finds a
+  ClickOnce application's icon (`applications/icons/click_once.rs`), and
+  the folder Windows makes for each packaged application
+  (`%LOCALAPPDATA%\Packages`), which Pane watches for a package's folder
+  appearing or going (`applications/start_menu.rs`), are the scratch
+  folder's, which holds neither. So the Windows `hidden-idle` leaves out
+  what those two cost on a user's own Pane: the ClickOnce icon lookups,
+  and the wake-ups of the watch on the user's `Packages` folder, which on
+  a real profile holds a folder per installed package. The Start menu
+  folders and the desktop are the user's own, as for any Pane.

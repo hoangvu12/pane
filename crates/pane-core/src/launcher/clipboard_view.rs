@@ -47,7 +47,7 @@ use std::borrow::Cow;
 use std::fmt;
 use std::future::Future;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use super::own_actions::COPIED;
 use super::{Launcher, Screen, State, Status, owner};
@@ -412,12 +412,13 @@ pub(super) struct Projected {
 }
 
 impl Projected {
-    /// What was made of `owner`'s history, shared, if it was made at the
-    /// history's count of changes `changes`.
-    fn shared(&self, owner: &str, changes: u64) -> Option<Shown> {
+    /// What was made of `owner`'s history, shared, if it was made from the
+    /// store `store` (`HistoryStore::id`) at its count of changes
+    /// `changes`.
+    fn shared(&self, store: u64, owner: &str, changes: u64) -> Option<Shown> {
         self.made
             .as_ref()
-            .filter(|made| made.changes == changes && made.owner == owner)
+            .filter(|made| made.store == store && made.changes == changes && made.owner == owner)
             .map(|made| made.shown.clone())
     }
 
@@ -426,10 +427,18 @@ impl Projected {
         self.times += 1;
         self.made = Some(made);
     }
+
+    /// Lets go of what was made: the view closed.
+    fn forget(&mut self) {
+        self.made = None;
+    }
 }
 
 /// The view's records and the history's choices, at a count of changes.
 struct Projection {
+    /// The store it was read from (`HistoryStore::id`): each store counts
+    /// its changes from 0.
+    store: u64,
     /// The owner whose history it is.
     owner: String,
     /// The history's count of changes it was made at
@@ -451,9 +460,24 @@ struct Shown {
 impl Shown {
     /// No records, and why: the history cannot be read.
     fn unreadable(reason: String) -> Shown {
+        Shown::without(Vec::<ClipboardRecord>::new().into(), reason)
+    }
+
+    /// No records, and why: the package's code stopped. Read again at
+    /// every reading, so its records are one list shared by them all, and
+    /// the window, which redraws once the records are another list, does
+    /// not redraw for it.
+    fn refused(reason: String) -> Shown {
+        static NONE: OnceLock<Arc<[ClipboardRecord]>> = OnceLock::new();
+        let records = NONE.get_or_init(|| Vec::<ClipboardRecord>::new().into());
+        Shown::without(records.clone(), reason)
+    }
+
+    /// `records`, holding none, and why.
+    fn without(records: Arc<[ClipboardRecord]>, reason: String) -> Shown {
         let history = PackageHistory::default();
         Shown {
-            records: Vec::<ClipboardRecord>::new().into(),
+            records,
             unreadable: Some(reason),
             capture: history.capture,
             retention_seconds: history.retention(),
@@ -475,6 +499,7 @@ impl Projection {
             Ok(history) => history,
             Err(reason) => {
                 return Projection {
+                    store: store.id(),
                     owner: owner.to_owned(),
                     changes,
                     shown: Shown::unreadable(reason),
@@ -515,6 +540,7 @@ impl Projection {
             })
             .collect();
         Projection {
+            store: store.id(),
             owner: owner.to_owned(),
             changes,
             shown: Shown {
@@ -753,8 +779,13 @@ impl Launcher {
     /// only once the history changed; until then every reading shares them
     /// and copies nothing of the history (#192).
     pub fn clipboard_history(&self) -> Option<ClipboardHistoryView> {
-        let state = self.lock();
-        let (identity, data) = self.verified_clipboard(&state)?;
+        let mut state = self.lock();
+        let Some((identity, data)) = self.verified_clipboard(&state) else {
+            // The view closed (the window asks as the screen changes): what
+            // was made for it is let go of, and made again once it opens.
+            state.clipboard_records.forget();
+            return None;
+        };
         let epoch = state.screen_epoch;
         let title = state.view.title.clone();
         let component = state.open.clone()?;
@@ -770,7 +801,10 @@ impl Launcher {
         let (now, shown) = match data.clipboard_history() {
             Ok(store) => {
                 let changes = store.changes();
-                let kept = self.lock().clipboard_records.shared(owner, changes);
+                let kept = self
+                    .lock()
+                    .clipboard_records
+                    .shared(store.id(), owner, changes);
                 let shown = match kept {
                     Some(shown) => shown,
                     None => {
@@ -785,7 +819,7 @@ impl Launcher {
                 (store.now(), shown)
             }
             // Code that stopped reads nothing: nothing is kept of it.
-            Err(refusal) => (0, Shown::unreadable(refusal)),
+            Err(refusal) => (0, Shown::refused(refusal)),
         };
         Some(ClipboardHistoryView {
             owner: identity,
@@ -1525,6 +1559,38 @@ fn platform_offset(_at: u64) -> Option<i64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #192: while the package's code stopped, every reading shares one
+    /// list of no records, so the window's watch, which compares the
+    /// lists, does not redraw every second.
+    #[test]
+    fn readings_refused_share_their_records() {
+        let first = Shown::refused("stopped".into());
+        let second = Shown::refused("stopped".into());
+        assert!(Arc::ptr_eq(&first.records, &second.records));
+        assert!(first.records.is_empty());
+        assert_eq!(second.unreadable.as_deref(), Some("stopped"));
+    }
+
+    /// #192: what was made of one store's history is not shared with a
+    /// reading of another's at the same count of changes, and goes once
+    /// the view closes.
+    #[test]
+    fn records_are_shared_only_for_the_store_they_were_made_from() {
+        let mut projected = Projected::default();
+        projected.keep(Projection {
+            store: 1,
+            owner: "own".into(),
+            changes: 3,
+            shown: Shown::unreadable("none".into()),
+        });
+        assert!(projected.shared(1, "own", 3).is_some());
+        assert!(projected.shared(2, "own", 3).is_none());
+        assert!(projected.shared(1, "other", 3).is_none());
+        assert!(projected.shared(1, "own", 4).is_none());
+        projected.forget();
+        assert!(projected.shared(1, "own", 3).is_none());
+    }
 
     #[test]
     fn links_and_colors_are_recognized_from_the_whole_text() {

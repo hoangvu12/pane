@@ -607,17 +607,38 @@ mod platform {
     //! theme ([`super::theme`]). An entry's fingerprint is its own with the
     //! file its icon resolves to in the themes now.
     use std::path::{Path, PathBuf};
+    use std::sync::{Arc, Mutex, PoisonError};
+    use std::time::{Duration, Instant};
 
-    use super::theme::{IconThemes, entry_icon, entry_icon_file};
+    use super::theme::{IconThemes, ThemeLookup, entry_icon, entry_icon_file_in};
     use super::{Extracted, sources_fingerprint};
     use crate::system_icons::SystemIcon;
 
+    /// How long the themes read for fingerprints are kept ([`themes`]).
+    const THEMES_KEPT: Duration = Duration::from_secs(2);
+
     pub(super) fn fingerprint(source: &str) -> Option<String> {
         let entry = Path::new(source);
-        let pictures: Vec<PathBuf> = entry_icon_file(entry, &IconThemes::from_env())
-            .into_iter()
-            .collect();
+        let pictures: Vec<PathBuf> = entry_icon_file_in(entry, &themes()).into_iter().collect();
         sources_fingerprint(entry, &pictures)
+    }
+
+    /// The user's icon themes as read for fingerprints, kept
+    /// [`THEMES_KEPT`]: a batch, and the start's look at every
+    /// application, read the user's configuration and the themes' indexes
+    /// once, not once per application. A theme changed is seen once they
+    /// are read again.
+    fn themes() -> Arc<ThemeLookup> {
+        static KEPT: Mutex<Option<(Instant, Arc<ThemeLookup>)>> = Mutex::new(None);
+        let mut kept = KEPT.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some((read, themes)) = kept.as_ref()
+            && read.elapsed() < THEMES_KEPT
+        {
+            return themes.clone();
+        }
+        let themes = Arc::new(IconThemes::from_env().lookup());
+        *kept = Some((Instant::now(), themes.clone()));
+        themes
     }
 
     pub(super) fn extract(source: &str) -> Result<Extracted, String> {
@@ -962,8 +983,8 @@ impl Shared {
     }
 
     /// The worker: reads the index, then runs batch after batch, rows on
-    /// screen first, until nothing is left, resting after a background
-    /// batch that extracted.
+    /// screen first, until nothing is left, resting after every background
+    /// batch.
     fn work(&self) {
         if !self.lock().loaded {
             let index = self.load();
@@ -1017,7 +1038,9 @@ impl Shared {
             if extracted {
                 (self.changed)();
             }
-            if background && extracted {
+            // Every background batch rests, one that only read fingerprints
+            // too: the start's look at every application is not a busy loop.
+            if background {
                 std::thread::sleep(BACKGROUND_REST);
             }
         }

@@ -588,6 +588,16 @@ impl HistoryJson {
             .collect()
     }
 
+    /// Whether an item of `owner` holds the image with `digest`.
+    fn names_image(&self, owner: &str, digest: &str) -> bool {
+        self.packages.get(owner).is_some_and(|history| {
+            history
+                .items
+                .iter()
+                .any(|item| item.image.as_ref().is_some_and(|image| image.digest == digest))
+        })
+    }
+
     /// Decrypts every item read protected ([`Item::open`]).
     fn open_items(&mut self) {
         for history in self.packages.values_mut() {
@@ -679,6 +689,18 @@ pub(crate) const WRITE_DELAY: Duration = Duration::from_millis(500);
 /// expiry on disk by at most this much (what is read is always expired).
 const MAX_EXPIRY_WAIT: Duration = Duration::from_secs(3600);
 
+/// The longest the store's thread waits before trying again a write that
+/// failed ([`retry_delay`]).
+const MAX_RETRY_DELAY: Duration = Duration::from_secs(60);
+
+/// How long the store's thread waits before trying again a write that
+/// failed, after `failed` failures in a row: [`WRITE_DELAY`], doubled with
+/// each failure after the first, at most [`MAX_RETRY_DELAY`].
+fn retry_delay(failed: u32) -> Duration {
+    let doubled = 2u32.saturating_pow(failed.saturating_sub(1).min(16));
+    WRITE_DELAY.saturating_mul(doubled).min(MAX_RETRY_DELAY)
+}
+
 /// The file as Pane last read or changed it.
 struct State {
     file: Result<HistoryJson, String>,
@@ -701,10 +723,19 @@ struct State {
     /// When the changes not written yet are written by the store's thread,
     /// while some wait ([`WRITE_DELAY`] after the first).
     due: Option<Instant>,
+    /// How many writes failed in a row: the store's thread tries again
+    /// after a pause that doubles with each ([`retry_delay`]).
+    failed_writes: u32,
 }
+
+/// Gives every store opened its own [`HistoryStore::id`].
+static NEXT_STORE: AtomicU64 = AtomicU64::new(1);
 
 /// Every package's clipboard history, kept in one file.
 pub(crate) struct HistoryStore {
+    /// Tells this store from every other opened in this process, whose
+    /// count of changes also began at 0 ([`HistoryStore::id`]).
+    id: u64,
     path: PathBuf,
     /// The folder of the kept images' PNGs ([`IMAGES_DIR`]).
     images: PathBuf,
@@ -773,6 +804,7 @@ impl HistoryStore {
             }
         }
         HistoryStore {
+            id: NEXT_STORE.fetch_add(1, Ordering::Relaxed),
             path,
             images: dir.join(IMAGES_DIR),
             pending_images: Mutex::new(HashSet::new()),
@@ -783,6 +815,7 @@ impl HistoryStore {
                 deletions: 0,
                 images_went: false,
                 due: None,
+                failed_writes: 0,
             }),
             written: Mutex::new(0),
             clock: Mutex::new(Arc::new(SystemClock)),
@@ -992,6 +1025,13 @@ impl HistoryStore {
         version
     }
 
+    /// Identifies this store among those opened in this process: a count
+    /// of changes ([`HistoryStore::changes`]) means something only with
+    /// the store it was read from, since each store's begins at 0.
+    pub fn id(&self) -> u64 {
+        self.id
+    }
+
     /// The history of `owner` as [`HistoryStore::get`] reads it, with the
     /// count of changes ([`HistoryStore::changes`]) it was read at.
     pub fn get_counted(&self, owner: &str) -> (u64, Result<PackageHistory, String>) {
@@ -1161,10 +1201,10 @@ impl HistoryStore {
             };
             (changed, expired)
         };
-        if changed || expired {
-            self.queue();
-        }
-        if changed {
+        // The thread is told once: of the batch, and of a copy, which may
+        // change when the next item expires.
+        let first = (changed || expired) && self.batch();
+        if first || changed {
             self.wake.poke();
         }
     }
@@ -1250,21 +1290,25 @@ impl HistoryStore {
     /// of its own while this store is kept: whenever an item expires (or
     /// at least every [`MAX_EXPIRY_WAIT`]), whether its package runs or
     /// not, and [`WRITE_DELAY`] after a change waits to be written. The
-    /// thread ends once the store is dropped. Until it runs, every change
-    /// is written at once.
+    /// thread ends once the store is dropped. Until it runs, and if it
+    /// ended (as by a panic), every change is written at once.
     pub fn keep_expiring(self: &Arc<Self>) {
         let store = Arc::downgrade(self);
         let wake = self.wake.clone();
+        // Noted before it starts, so that its end, however early, is noted
+        // after.
+        self.wake.run();
         let started = std::thread::Builder::new()
             .name("pane-clipboard-expiry".into())
-            .spawn(move || expire_until_dropped(&store, &wake));
-        match started {
-            Ok(_) => self.wake.run(),
-            Err(error) => {
-                crate::diagnostic!(
-                    "Pane cannot expire clipboard history in the background: {error}"
-                );
-            }
+            .spawn(move || {
+                let _ended = Ended(&wake);
+                expire_until_dropped(&store, &wake);
+            });
+        if let Err(error) = started {
+            self.wake.ended();
+            crate::diagnostic!(
+                "Pane cannot expire clipboard history in the background: {error}"
+            );
         }
     }
 
@@ -1329,21 +1373,26 @@ impl HistoryStore {
     /// after the first change not written yet, with every change made
     /// meanwhile; at once while that thread does not run.
     fn queue(&self) {
-        if !self.wake.running() {
-            self.flush();
-            return;
-        }
-        let first = {
-            let mut state = self.lock();
-            let first = state.due.is_none();
-            if first {
-                state.due = Some(Instant::now() + WRITE_DELAY);
-            }
-            first
-        };
-        if first {
+        if self.batch() {
             self.wake.poke();
         }
+    }
+
+    /// What [`HistoryStore::queue`] does but telling the store's thread:
+    /// returns whether it is to be told, the change being the first of its
+    /// batch. Writes at once, and returns `false`, while the thread does
+    /// not run.
+    fn batch(&self) -> bool {
+        if !self.wake.running() {
+            self.flush();
+            return false;
+        }
+        let mut state = self.lock();
+        let first = state.due.is_none();
+        if first {
+            state.due = Some(Instant::now() + WRITE_DELAY);
+        }
+        first
     }
 
     /// Writes the batch, if its time came; returns when the batch waiting
@@ -1404,12 +1453,31 @@ impl HistoryStore {
                 *written = change;
                 self.writes.fetch_add(1, Ordering::Relaxed);
                 self.protected.fetch_add(*sealed, Ordering::Relaxed);
+                self.lock().failed_writes = 0;
                 if prune {
                     self.prune_images(Some(&file));
                 }
             }
-            // The next write prunes them.
-            Err(_) => self.lock().images_went |= prune,
+            Err(_) => {
+                // Tried again by the store's thread, if it runs, so that
+                // what failed is not left only in memory: after a pause
+                // that doubles with each failure in a row. (Without it,
+                // the next change, command or clean quit writes it.)
+                let running = self.wake.running();
+                {
+                    let mut state = self.lock();
+                    // The next write prunes them.
+                    state.images_went |= prune;
+                    state.failed_writes = state.failed_writes.saturating_add(1);
+                    if running {
+                        let retry = Instant::now() + retry_delay(state.failed_writes);
+                        state.due = Some(state.due.map_or(retry, |due| due.min(retry)));
+                    }
+                }
+                if running {
+                    self.wake.poke();
+                }
+            }
         }
         outcome.map(|_| ())
     }
@@ -1478,6 +1546,17 @@ fn expire_until_dropped(store: &Weak<HistoryStore>, wake: &Wake) {
     }
 }
 
+/// Notes, when dropped, that the expiry thread ended, as it does once the
+/// store is dropped, and also if it panicked: [`HistoryStore::queue`] then
+/// writes every change at once rather than waiting for it.
+struct Ended<'a>(&'a Wake);
+
+impl Drop for Ended<'_> {
+    fn drop(&mut self) {
+        self.0.ended();
+    }
+}
+
 /// Wakes the expiry thread when the time the next item expires may have
 /// changed or a batch waits to be written, and stops it.
 #[derive(Default)]
@@ -1522,6 +1601,13 @@ impl Wake {
     /// Notes that the thread was started.
     fn run(&self) {
         self.lock().running = true;
+    }
+
+    /// Notes that the thread ended, or could not start: every change is
+    /// written at once from now on.
+    fn ended(&self) {
+        self.lock().running = false;
+        self.condvar.notify_all();
     }
 
     /// Whether the thread runs: it was started and the store is kept.
@@ -1597,11 +1683,17 @@ impl State {
             .file
             .as_mut()
             .expect("only a file that could be read is changed");
-        // Whether it takes an image away: only then are PNGs pruned.
-        let images = (!self.images_went).then(|| file.images());
+        // Whether it takes an image away: only then are PNGs pruned. The
+        // images held before are gathered only when some item holds one
+        // (most copies are text), and looked for after without gathering
+        // them again.
+        let images = (!self.images_went && file.items().any(|item| item.image.is_some()))
+            .then(|| file.images());
         change(file);
         if let Some(images) = images {
-            self.images_went = !images.is_subset(&file.images());
+            self.images_went = images
+                .iter()
+                .any(|(owner, digest)| !file.names_image(owner, digest));
         }
         self.changes += 1;
         self.version += 1;
@@ -1754,6 +1846,45 @@ mod tests {
             "{text}"
         );
         assert!(!text.contains("secret"), "{text}");
+    }
+
+    /// #192: a batched write that failed is tried again by the store's
+    /// thread, so the copy is not left only in memory; and once that thread
+    /// ended, a change is written at once again.
+    #[test]
+    fn a_failed_batched_write_is_tried_again() {
+        assert_eq!(retry_delay(1), WRITE_DELAY);
+        assert_eq!(retry_delay(2), WRITE_DELAY * 2);
+        assert_eq!(retry_delay(u32::MAX), MAX_RETRY_DELAY);
+        let dir = tempfile::tempdir().unwrap();
+        let (store, _) = store_at(dir.path(), DAY);
+        store.keep_expiring();
+        let own = default_owner();
+        let taken = dir.path().join(FILE).join("taken");
+        fs::create_dir_all(&taken).unwrap();
+        store.capture(store.deletions(), |packages, now| {
+            let history = packages.get_mut(&own).expect("its fresh history");
+            history.add("kept through a failure", None, now);
+            true
+        });
+        // The batch's write ends, failing.
+        store.wake.wait_write(0, Duration::from_secs(300));
+        assert_eq!(store.writes(), 0, "nothing could be written yet");
+        fs::remove_dir_all(dir.path().join(FILE)).unwrap();
+        assert!(store.wait_written(Duration::from_secs(300)), "tried again");
+        assert_eq!(store.writes(), 1);
+        let items = &on_disk(dir.path())["packages"][&own]["items"];
+        assert_eq!(items[0]["text"], "kept through a failure");
+
+        // The thread ended: the next copy is written before `capture`
+        // returns.
+        store.wake.ended();
+        store.capture(store.deletions(), |packages, now| {
+            let history = packages.get_mut(&own).expect("its history");
+            history.add("written at once", None, now);
+            true
+        });
+        assert_eq!(store.writes(), 2);
     }
 
     #[test]

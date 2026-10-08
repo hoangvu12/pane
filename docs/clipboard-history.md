@@ -441,17 +441,23 @@ capture stays local by default all the same.
   copy keeps, and what expires, is written by the history's own thread
   500 ms after the first change not written yet (`WRITE_DELAY`, proposed),
   together with every change made meanwhile, so a burst of copies is one
-  write. A change a command or the view makes (deleting, clearing, pausing
+  write. A write that fails is reported in Pane's log and tried again by
+  that thread, 500 ms later, then after a pause that doubles with each
+  failure in a row, at most a minute, so a change is not left only in
+  memory; should that thread end (it panicked), every change is written at
+  once again. A change a command or the view makes (deleting, clearing, pausing
   or resuming, a retention, the disabled applications) and the removal of
   a package's history are written before the call returns, with whatever
   waited, since a failure to write is reported to them. A clean quit (the
   tray's or menu bar's Quit, closing the launcher's window) and the system
   ending the session (`WM_ENDSESSION` on Windows, the termination
-  notification on macOS) write what waits first, and so does counting the
-  saved data for an uninstall. **A copy made less than 500 ms before a
-  crash can be lost**, and so can one made just before Pane is ended by a
-  signal on Linux or macOS, which removes only Pane's crash marker
-  ([pausing](pausing.md)); what was written before stays.
+  notification on macOS, SIGTERM, SIGHUP or SIGINT on Linux and macOS)
+  write what waits first, and so does counting the saved data for an
+  uninstall. A signal gives that write at most 2 seconds before Pane ends
+  ([pausing](pausing.md)). **A copy made less than 500 ms before a crash
+  can be lost**, and so can one made just before SIGKILL or a signal whose
+  clean quit did not end within those 2 seconds; what was written before
+  stays.
 - The Clipboard History view reads shared records (#192): the launcher
   makes them from the history once per change of it — a copy kept, a
   deletion, a choice changed, an expiry, each counted by the history — and

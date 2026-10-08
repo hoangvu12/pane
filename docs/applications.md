@@ -345,8 +345,9 @@ The host extracts and keeps the icons (ADR 0038,
   when each was extracted. The fingerprint is the path, size and
   modification time of the application's source and of the file its
   picture is read from, since an update often rewrites only that file:
-  - Windows: a shortcut and its own icon location, or else its target
-    program (an update rewrites the program, not the shortcut); an
+  - Windows: a shortcut, its own icon location if it names one, and its
+    target program, to which extraction falls back when that location
+    yields no picture (an update rewrites the program, not the shortcut); an
     internet shortcut and its `IconFile`; a ClickOnce reference and its
     deployed program; a program alone; a packaged app's manifest and the
     logo files chosen from it.
@@ -377,7 +378,11 @@ The host extracts and keeps the icons (ADR 0038,
   icon a row on screen wants goes first: drawn from the cache at once when
   its fingerprint has not changed (an old one is then extracted again in
   the background), and extracted at once when it has. The worker rests
-  after each background batch that extracted. A failed extraction is
+  after each background batch, one that only read fingerprints too, so the
+  start's look at every application is not a busy loop. On Linux the
+  fingerprints read the user's icon themes (the configuration naming the
+  theme and each theme's `index.theme`) once for every look within 2
+  seconds, not once per application. A failed extraction is
   remembered until the next start, and the row keeps its placeholder (or
   the icon kept from before). Disabling the Applications extension drops
   its applications from the refresh with its results. Extraction never
@@ -541,7 +546,8 @@ and returns `open-application(id)`; only the adapter differs.
   a 16-pixel image is drawn by a fallback filling its box, and its
   fingerprint follows the shortcut; a shortcut's fingerprint changes when
   its target program is updated in place, the shortcut untouched, and,
-  with an icon location of its own, when that icon file changes; an inbox
+  with an icon location of its own, when that icon file or the target
+  changes; an inbox
   packaged app (Calculator or Settings) yields its light and dark logos,
   its fingerprint covering its manifest and the logo drawn. On macOS,
   Calculator's bundle icon is at least 256 pixels, its fingerprint

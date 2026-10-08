@@ -272,8 +272,13 @@ pub(crate) struct InFlight(Arc<Watch>);
 
 impl Drop for InFlight {
     fn drop(&mut self) {
-        // Never panics, even while the thread unwinds from a crash.
+        // Never panics while the thread unwinds from a crash; otherwise a
+        // debug build (the tests) says so when a call is let go of twice.
         let mut polls = self.0.polls();
+        debug_assert!(
+            polls.calls > 0 || std::thread::panicking(),
+            "a request in flight was counted out twice"
+        );
         polls.calls = polls.calls.saturating_sub(1);
     }
 }
@@ -1263,6 +1268,19 @@ mod tests {
     /// computes without ever waiting. Every one is still ticked, so it
     /// yields, and is stopped once it computed for its limit; a lost
     /// wake-up would leave it computing for ever.
+    ///
+    /// A smoke test, not a proof. What rules a lost wake-up out is the
+    /// lock discipline of [`Watch::wait`] and [`Watch::call`]: the ticker
+    /// checks that no call is in flight, notes that it waits and goes to
+    /// wait under the lock `call` counts a call under (the condition
+    /// variable lets go of it only once the ticker waits), so a call
+    /// counted before the check is seen by it, and one counted after finds
+    /// the ticker noted as waiting and wakes it. The even rounds start a
+    /// call only once the ticker is seen waiting, so they exercise the
+    /// wake-up of a ticker already asleep; the odd rounds start one at
+    /// varied moments around the tick after the last call, which may or
+    /// may not land between the check and the wait. Neither forces that
+    /// interleaving.
     #[test]
     fn a_call_starting_as_the_ticker_goes_to_wait_is_still_stopped_within_its_limit() {
         const CALLS: u32 = 60;

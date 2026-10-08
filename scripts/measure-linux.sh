@@ -18,9 +18,15 @@
 # one screenshot check), a Vulkan driver, and for Settings, where the
 # lifecycle's reloads and disables happen (#168), dbus-launch (dbus-x11),
 # at-spi2-core, python3-gi and gir1.2-atspi-2.0; plus the guests built
-# (`cargo xtask ci` or `cargo xtask guests`) and the default extensions'
-# payloads in target/dist/artifacts (`cargo xtask package-linux --dev`,
-# which CI's smoke run, before this one, leaves there). The binary measured
+# (`cargo xtask ci` or `cargo xtask guests`) and, for the hidden phase
+# only, the default extensions' payloads in target/dist/artifacts (`cargo
+# xtask package-linux --dev`, which CI's smoke run, before this one, leaves
+# there): without them that phase is skipped, said so on standard error
+# and in record.json ("skipped"), and the other phases run and are checked
+# as before. The hidden phase serves those payloads with an index whose
+# `application` entry is left out, so the measured Pane is offered no
+# update of its own (the smoke leaves a 99.0.0 package named there). The
+# binary measured
 # is the one given (target/debug/pane by default, the smoke's; record.json
 # records the profile: a release build reaches for the not-yet-deployed
 # artifact source at start, so the release profile's workload waits for
@@ -61,8 +67,12 @@ default_extensions=(calculator applications quicklinks files clipboard-history)
 artifacts=target/dist/artifacts
 
 [ -x "$pane" ] || { echo "no pane binary at $pane (cargo build -p pane)"; exit 1; }
-[ -f "$artifacts/pane-defaults.json" ] \
-  || { echo "$artifacts holds no default extensions (cargo xtask package-linux --dev)"; exit 1; }
+# The hidden phase needs the default extensions' payloads; the rest does not.
+skipped=
+if [ ! -f "$artifacts/pane-defaults.json" ]; then
+  echo "SKIPPED the hidden phase (#189): $artifacts holds no default extensions (cargo xtask package-linux --dev)" >&2
+  skipped=hidden-idle
+fi
 for package in "${unused_packages[@]}" sample-service sample-schedule; do
   [ -f "target/guests/packages/$package/pane.json" ] || { echo "target/guests/packages/$package is missing (cargo xtask guests)"; exit 1; }
 done
@@ -81,11 +91,14 @@ export PANE_DATA_DIR=$out/data
 profile=release; case "$pane" in *debug*) profile=debug;; esac
 python3 - "$out/record.json" "$pane" "$profile" "$idle_seconds" "$unused_seconds" \
   "$service_seconds" "$calculator_runs" "$warm_restarts" "$reloads" "$disables" \
-  "$sample_seconds" "$hidden_seconds" "$settle_seconds" <<'PY'
+  "$sample_seconds" "$hidden_seconds" "$settle_seconds" "$skipped" <<'PY'
 import json, os, subprocess, sys
 (out, pane, profile, idle, unused, service, calculator, warm, reloads, disables, cadence,
- hidden, settle) = sys.argv[1:]
+ hidden, settle, skipped) = sys.argv[1:]
 record = {
+    # Phases the workload skipped, their inputs absent: `proc_tree.py check`
+    # reports them as skipped rather than as not measured.
+    "skipped": skipped.split() if skipped else [],
     "format": 1,
     "date": subprocess.run(["date", "-Is"], capture_output=True, text=True).stdout.strip(),
     "os": open("/etc/os-release", encoding="utf-8").read(),
@@ -442,14 +455,35 @@ stop_pane
 # hidden while the setup runs; the phase starts once the five defaults are
 # recorded and Pane has settled for PANE_MEASURE_SETTLE_SECONDS. Whatever
 # still runs then (the applications' icons, say) is part of the phase, and
-# the per-thread wake-ups and CPU in summary.json say whose it is.
+# the per-thread wake-ups and CPU in summary.json say whose it is. The
+# payloads are served from a folder of links to them beside an index
+# without its `application` entry: the smoke leaves a newer Pane package
+# named there, and an update offered would be no part of idling. Skipped
+# without the payloads (see above); its lines are left unindented.
+if [ -z "$skipped" ]; then
 set_phase hidden-setup
 main_data=$PANE_DATA_DIR
 export PANE_DATA_DIR=$out/hidden-data
 mkdir -p "$out/hidden-home"
-export PANE_TEST_FILE_INDEX_HOME=$(cd "$out/hidden-home" && pwd)
+file_index_home=$(cd "$out/hidden-home" && pwd)
+export PANE_TEST_FILE_INDEX_HOME=$file_index_home
+hidden_artifacts=$out/hidden-artifacts
+rm -rf "$hidden_artifacts"
+mkdir -p "$hidden_artifacts"
+artifacts_path=$(cd "$artifacts" && pwd)
+for payload in "$artifacts_path"/*; do
+  [ "$(basename "$payload")" = pane-defaults.json ] || ln -s "$payload" "$hidden_artifacts/"
+done
+python3 - "$artifacts/pane-defaults.json" "$hidden_artifacts/pane-defaults.json" <<'PY'
+import json, sys
+with open(sys.argv[1], encoding="utf-8") as handle:
+    index = json.load(handle)
+index.pop("application", None)   # no update of Pane's own is offered
+with open(sys.argv[2], "w", encoding="utf-8") as handle:
+    json.dump(index, handle, indent=2)
+PY
 rm -f "$out/artifact-server.port"
-python3 "$here/artifact_server.py" "$artifacts" "$out/artifact-server.port" 2>>"$out/artifact-server.log" &
+python3 "$here/artifact_server.py" "$hidden_artifacts" "$out/artifact-server.port" 2>>"$out/artifact-server.log" &
 artifact_server_pid=$!
 for _ in $(seq 600); do [ -s "$out/artifact-server.port" ] && break; kill -0 "$artifact_server_pid" 2>/dev/null || break; sleep 0.1; done
 [ -s "$out/artifact-server.port" ] || { echo "the local artifact source did not start (see $out/artifact-server.log)"; exit 1; }
@@ -467,9 +501,14 @@ note default_extensions "${#default_extensions[@]}"
 sleep "$hidden_seconds"
 if viewable "$window"; then echo "the launcher showed itself during the hidden phase"; exit 1; fi
 stop_pane
-kill "$artifact_server_pid"; wait "$artifact_server_pid" 2>/dev/null || true; artifact_server_pid=
+# The server may have ended already: under `set -e` a failed kill must not
+# end the workload.
+kill "$artifact_server_pid" 2>/dev/null || true
+wait "$artifact_server_pid" 2>/dev/null || true
+artifact_server_pid=
 unset PANE_ARTIFACTS PANE_TEST_FILE_INDEX_HOME
 export PANE_DATA_DIR=$main_data
+fi   # the hidden phase
 
 # 5. Installed but unused: the seven packages, none of them invoked. The
 # applications extension's host-side scan of desktop entries runs, as it

@@ -32,8 +32,12 @@
 # value afterwards and puts it back if anything changed it). The scratch
 # profile, which holds whatever Clipboard History recorded during the run,
 # is removed at the end (-KeepScratch keeps it). It quits only the Pane it
-# started. While it runs, the scratch Pane also shows its tray icon and
-# takes the default hotkeys if no other Pane holds them.
+# started, and warns when another Pane (the user's own) runs. While it
+# runs, the scratch Pane also shows its tray icon and takes the default
+# hotkeys if no other Pane holds them. The scratch LOCALAPPDATA also moves
+# the ClickOnce store and %LOCALAPPDATA%\Packages, whose watch is then of
+# an empty folder: their cost is not in the number (see
+# docs/research/resource-measurements.md).
 #
 # It runs only with the user's consent: the measured machine is the user's
 # own. Requires 64-bit PowerShell (5.1 or 7), Python 3 on PATH, the Pane
@@ -97,7 +101,11 @@ foreach ($file in $samples, $events, $recordPath, $summaryPath) {
     [System.IO.File]::WriteAllText($file, "", $utf8)
 }
 
-Add-Type @'
+# The sampler, compiled once per session under a name made from a digest
+# of its source: Add-Type cannot define a type again, so a run after the
+# source changed, in the same PowerShell session, compiles the new one
+# under its own name rather than failing.
+$sampler = @'
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -109,7 +117,7 @@ using System.Text;
 // the processes under a root (each started after its parent, so a reused
 // parent id is not taken for the parent), their CPU time in 100 ns units
 // and working set, and every thread's context switches, CPU time and name.
-public static class PaneMeasure {
+public static class PaneMeasure__DIGEST__ {
     [DllImport("ntdll.dll")]
     static extern int NtQuerySystemInformation(int infoClass, IntPtr info, int length, out int returned);
     [DllImport("kernel32.dll")]
@@ -321,6 +329,12 @@ public static class PaneMeasure {
     }
 }
 '@
+$digest = [System.Security.Cryptography.SHA256]::Create().ComputeHash($utf8.GetBytes($sampler))
+$typeName = "PaneMeasure" + (-join ($digest[0..7] | ForEach-Object { $_.ToString("x2") }))
+if (-not ($typeName -as [type])) {
+    Add-Type -TypeDefinition $sampler.Replace("PaneMeasure__DIGEST__", $typeName)
+}
+$measure = $typeName -as [type]
 
 function Write-Line($file, $line) { [System.IO.File]::AppendAllText($file, $line + "`n", $utf8) }
 function Write-Event($phase, $key, $value) {
@@ -350,8 +364,8 @@ function Sample-For($phase, $seconds, [scriptblock]$done, [switch]$Hidden) {
     $deadline = [DateTime]::UtcNow.AddSeconds($seconds)
     while ($true) {
         if ($script:pane.HasExited) { throw "Pane exited during the measurement (see stderr.log)" }
-        Write-Line $samples ([PaneMeasure]::Sample($phase, $script:pane.Id))
-        if ($Hidden -and [PaneMeasure]::IsWindowVisible($script:window)) { throw "the launcher showed itself during the hidden phase" }
+        Write-Line $samples ($measure::Sample($phase, $script:pane.Id))
+        if ($Hidden -and $measure::IsWindowVisible($script:window)) { throw "the launcher showed itself during the hidden phase" }
         if ($done -and (& $done)) { return $true }
         if ([DateTime]::UtcNow -ge $deadline) { return $false }
         Start-Sleep -Milliseconds ([int]($SampleSeconds * 1000))
@@ -362,16 +376,16 @@ function Sample-For($phase, $seconds, [scriptblock]$done, [switch]$Hidden) {
 # hides the launcher).
 function Post-Escape {
     $escape = [IntPtr]::new(0x1B)
-    [PaneMeasure]::PostMessage($script:window, 0x0100, $escape, [IntPtr]::new(0x00010001L)) | Out-Null   # WM_KEYDOWN
+    $measure::PostMessage($script:window, 0x0100, $escape, [IntPtr]::new(0x00010001L)) | Out-Null   # WM_KEYDOWN
     Start-Sleep -Milliseconds 50
-    [PaneMeasure]::PostMessage($script:window, 0x0101, $escape, [IntPtr]::new(0xC0010001L)) | Out-Null   # WM_KEYUP
+    $measure::PostMessage($script:window, 0x0101, $escape, [IntPtr]::new(0xC0010001L)) | Out-Null   # WM_KEYUP
 }
 function Wait-Hidden($milliseconds) {
     for ($waited = 0; $waited -lt $milliseconds; $waited += 100) {
-        if (-not [PaneMeasure]::IsWindowVisible($script:window)) { return $true }
+        if (-not $measure::IsWindowVisible($script:window)) { return $true }
         Start-Sleep -Milliseconds 100
     }
-    return (-not [PaneMeasure]::IsWindowVisible($script:window))
+    return (-not $measure::IsWindowVisible($script:window))
 }
 # Hides the launcher after its one show: the posted Escape, then, only if
 # Pane's own window is the foreground window, a typed one. Nothing is ever
@@ -379,7 +393,7 @@ function Wait-Hidden($milliseconds) {
 function Hide-Launcher {
     Post-Escape
     if (Wait-Hidden 3000) { return "posted Escape" }
-    if ([PaneMeasure]::GetForegroundWindow() -eq $script:window) {
+    if ($measure::GetForegroundWindow() -eq $script:window) {
         Add-Type -AssemblyName System.Windows.Forms
         [System.Windows.Forms.SendKeys]::SendWait("{ESC}")
         if (Wait-Hidden 3000) { return "typed Escape" }
@@ -391,7 +405,7 @@ function Stop-ScratchPane {
     # Closing the launcher's window quits Pane, which removes its tray icon
     # and releases its hotkeys; a Pane that does not quit is stopped.
     if ($script:window -ne [IntPtr]::Zero) {
-        [PaneMeasure]::PostMessage($script:window, 0x0010, [IntPtr]::Zero, [IntPtr]::Zero) | Out-Null   # WM_CLOSE
+        $measure::PostMessage($script:window, 0x0010, [IntPtr]::Zero, [IntPtr]::Zero) | Out-Null   # WM_CLOSE
     }
     if (-not $script:pane.WaitForExit(10000)) {
         Stop-Process -Id $script:pane.Id -Force
@@ -435,6 +449,11 @@ $record = [ordered]@{
     loginRegistrationRestored = $false
     hiddenBy = $null
     scratchKept = [bool]$KeepScratch
+}
+# Another Pane (the user's own) is never touched, but it shares the tray,
+# the hotkeys and the clipboard with the scratch Pane: said loudly.
+if ($record.otherPaneProcesses -gt 0) {
+    Write-Warning ("{0} other pane process(es) run, the user's own Pane perhaps. This script never touches them, but they share the tray, the hotkeys and the clipboard with the scratch Pane: quit them for a run worth recording." -f $record.otherPaneProcesses)
 }
 try {
     $answer = & git rev-parse HEAD

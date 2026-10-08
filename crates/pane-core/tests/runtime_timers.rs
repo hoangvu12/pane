@@ -2,7 +2,11 @@
 //! call runs (#190), through the launcher's public interface, with the
 //! settings sample from `cargo xtask guests`. With nothing in flight both
 //! wait, and neither ticks nor looks; a call starting wakes both, they tick
-//! and look while it runs, and they wait again once it was answered. What
+//! and look while it runs, and they wait again once it was answered; a
+//! continuing service's cycle, which Pane sends itself, wakes them the same
+//! way, with the service sample. Every request sent to the runtime thread
+//! counts as in flight (`supervisor`'s `send`), so a search, a schedule's
+//! run and closing a view are not checked one by one here. What
 //! they do while a call runs (stopping a computing guest after its limit,
 //! giving up on a stuck thread, timing schedules and services) is checked,
 //! unchanged, by the `unresponsive`, `pausing`, `stopping`, `runtime_crash`,
@@ -19,7 +23,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use futures::executor::block_on;
-use pane_core::{Launcher, Runtime, Screen, Status, Timers};
+use pane_core::{Launcher, PackageIdentity, Runtime, Screen, Status, Timers};
 
 #[path = "support/feedback.rs"]
 mod feedback;
@@ -160,4 +164,61 @@ fn the_runtime_timers_wait_while_no_call_runs_and_wake_for_one() {
         (answered.ticks, answered.looks),
         "they ran after the call was answered"
     );
+}
+
+/// How many cycles the Service sample installed from `folder` has run, kept
+/// in its content in `data`, or 0 before the first.
+fn cycles(data: &Path, folder: &Path) -> u64 {
+    let Ok(text) = fs::read_to_string(data.join("extensions/content.json")) else {
+        return 0;
+    };
+    let Ok(file) = serde_json::from_str::<serde_json::Value>(&text) else {
+        return 0; // replaced at that moment: read again
+    };
+    let key = PackageIdentity::local(folder).unwrap().key();
+    file["packages"][&key]["cycles"]
+        .as_str()
+        .and_then(|count| count.parse().ok())
+        .unwrap_or(0)
+}
+
+/// A continuing service's cycle is a request in flight too, sent by Pane
+/// itself rather than by the user: the timers wake for each cycle (the
+/// Service sample asks for one a second, by the system's clock here) and
+/// wait again between them.
+#[test]
+fn the_runtime_timers_wake_for_each_service_cycle_and_wait_between_them() {
+    let sources = tempfile::tempdir().unwrap();
+    let data = tempfile::tempdir().unwrap();
+    let runtime = Runtime::start().unwrap();
+    let launcher =
+        Launcher::with_packages(Ok(runtime.clone()), vec![], data.path().join("extensions"));
+    let folder = package("sample-service", &sources.path().join("sample-service"));
+    block_on(launcher.install_package(&folder));
+    assert_eq!(
+        launcher.view().status,
+        Status::Result("Installed Service sample".into())
+    );
+
+    // Between two cycles: both wait.
+    let between = until(&runtime, "the timers never waited between cycles", waiting);
+    let counted = cycles(data.path(), &folder);
+    // The next cycle wakes both: they tick and look.
+    let woken = until(&runtime, "a service cycle did not wake the timers", |timers| {
+        timers.ticks > between.ticks && timers.looks > between.looks
+    });
+    // Answered, they wait again until the cycle after it.
+    until(
+        &runtime,
+        "the timers did not wait again once the cycle was answered",
+        |timers| waiting(timers) && timers.ticks >= woken.ticks,
+    );
+    let started = Instant::now();
+    while cycles(data.path(), &folder) <= counted {
+        assert!(
+            started.elapsed() < LONG,
+            "no service cycle ran while the timers woke"
+        );
+        thread::sleep(Duration::from_millis(50));
+    }
 }

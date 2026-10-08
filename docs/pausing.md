@@ -484,10 +484,19 @@ is sent anywhere: there is no telemetry, no crash upload and no minidump.
   version. A clean quit removes it: the tray's or menu bar's Quit, closing
   the launcher's window, and the system ending the session (GPUI's quit
   hooks run for `WM_ENDSESSION` on Windows and the termination notification
-  on macOS; SIGTERM, SIGINT and SIGHUP remove it on Linux and macOS before
-  ending Pane as they always did). A clean quit also writes the clipboard
-  history that waits in a batch (#192, [clipboard history](clipboard-history.md#ownership-and-deletion));
-  the signals do not. At the next start each marker found is
+  on macOS; SIGTERM, SIGINT and SIGHUP on Linux and macOS). A clean quit
+  also writes the clipboard history that waits in a batch (#192,
+  [clipboard history](clipboard-history.md#ownership-and-deletion)). For
+  the signals, the handler only writes a byte to a pipe; the thread
+  `pane-signals`, woken by it, runs the clean quit on a thread of its own,
+  waits for it at most 2 seconds, removes the marker whether it ended or
+  not, and ends Pane with the signal's own default action, as it always
+  ended. A signal received meanwhile (the session's end sends SIGTERM and
+  SIGHUP together) changes nothing. Should the pipe or that thread not
+  exist, the handler removes the marker itself and ends Pane at once,
+  writing nothing of the batch. The signals run only that clean quit, not
+  the app's other quit hooks (the tray, the hotkeys, the runtime's
+  helpers). At the next start each marker found is
   checked against the system's process table (on Windows the process's
   exit code and creation time, on Linux `/proc/<id>/stat`, on macOS the
   process's BSD information): a process that no longer runs, or a process
