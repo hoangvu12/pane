@@ -59,6 +59,11 @@ futures.workspace = true
 fst = "0.4"
 memmap2 = "0.9"
 ignore = "0.4"
+# Decoding PNG images (MIT OR Apache-2.0, already in the tree through
+# GPUI's `image`): putting a kept clipboard image back as a bitmap
+# (`CF_DIB`) beside its PNG on Windows (#167), and cropping an
+# application's icon to its visible content on every system (#172).
+png = "0.18"
 
 # Listing the Apps folder, reading what a shortcut opens (its target,
 # arguments and AppUserModelID property, through the shortcut interface and
@@ -78,11 +83,7 @@ ignore = "0.4"
 # app's install folder through the package functions, a shortcut's icon
 # location and icon resources.
 [target.'cfg(windows)'.dependencies]
-# Putting a kept clipboard image back as a bitmap (`CF_DIB`) beside its PNG
-# (#167): its pixels, decoded (MIT OR Apache-2.0, already in the tree
-# through GPUI's `image`).
-png = "0.18"
-windows = { workspace = true, features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_Security", "Win32_Security_Authorization", "Win32_Storage_FileSystem", "Win32_Storage_Packaging_Appx", "Win32_System_ApplicationInstallationAndServicing", "Win32_System_Com", "Win32_System_Com_StructuredStorage", "Win32_System_DataExchange", "Win32_System_Diagnostics_ToolHelp", "Win32_System_IO", "Win32_System_Ioctl", "Win32_System_JobObjects", "Win32_System_LibraryLoader", "Win32_System_Memory", "Win32_System_ProcessStatus", "Win32_System_Registry", "Win32_System_Threading", "Win32_System_Variant", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_Shell", "Win32_UI_Shell_Common", "Win32_UI_Shell_PropertiesSystem", "Win32_UI_WindowsAndMessaging"] }
+windows = { workspace = true, features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_Security", "Win32_Security_Authorization", "Win32_Storage_FileSystem", "Win32_Storage_Packaging_Appx", "Win32_System_ApplicationInstallationAndServicing", "Win32_System_Com", "Win32_System_Com_StructuredStorage", "Win32_System_DataExchange", "Win32_System_Diagnostics_ToolHelp", "Win32_System_IO", "Win32_System_Ioctl", "Win32_System_JobObjects", "Win32_System_LibraryLoader", "Win32_System_Memory", "Win32_System_ProcessStatus", "Win32_System_Registry", "Win32_System_Threading", "Win32_System_Variant", "Win32_System_WindowsProgramming", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_Shell", "Win32_UI_Shell_Common", "Win32_UI_Shell_PropertiesSystem", "Win32_UI_WindowsAndMessaging"] }
 
 # Global hotkeys on X11 (key grabs on the root window) and the X11
 # clipboard of clipboard history (XFIXES selection events, selection

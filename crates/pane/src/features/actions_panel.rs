@@ -446,7 +446,7 @@ pub(crate) fn clipboard_entries(
                     )),
                 ),
                 ClipboardAction::Delete => (
-                    Glyph::WindowClose,
+                    Glyph::Delete,
                     Some((
                         crate::features::clipboard_history::delete_keys(),
                         CapStyle::Regular,

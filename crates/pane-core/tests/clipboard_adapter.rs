@@ -7,9 +7,9 @@
 //! it runs only where `PANE_TEST_REAL_CLIPBOARD=1` is set, as CI's Windows
 //! runner does, never by default on a developer's computer. It uses only
 //! text it puts on the clipboard itself (each starting with a prefix of its
-//! own), and keeps only reports of that text, or withheld reports of this
-//! process's own marked copies; anything else on the clipboard meanwhile is
-//! dropped unseen. Its marked copies also say `CanIncludeInClipboardHistory`
+//! own), and keeps only reports of that text, withheld reports of this
+//! process's own marked copies, files named with its prefix and 2×2
+//! images; anything else on the clipboard meanwhile is dropped unseen. Its marked copies also say `CanIncludeInClipboardHistory`
 //! 0 where the check allows, so Windows' own clipboard history (Win+V) keeps
 //! them neither, and it never says a copy may be synced
 //! (`CanUploadToCloudClipboard` 1). Other systems have no adapter yet
@@ -70,11 +70,22 @@ impl Sink for Ours {
             .is_some_and(|source| program_file_name(source).to_lowercase() == self.program);
         let ours = match &observation.content {
             Content::Text(text) => text.starts_with(&self.prefix),
-            // Its text was never read: only this process's own copy can be
-            // told apart, by its owner. So are its images and files (#167).
-            Content::Withheld | Content::Image(_) | Content::Files(_) | Content::TooLarge => {
-                from_here
+            // Files this test copies are named with its prefix.
+            Content::Files(paths) => {
+                !paths.is_empty()
+                    && paths.iter().all(|path| {
+                        path.file_name()
+                            .is_some_and(|name| name.to_string_lossy().starts_with(&self.prefix))
+                    })
             }
+            // An image has no text to tell it by: this test's are 2×2, or
+            // owned by its window. What `write_image` puts on the clipboard
+            // has no owner by the time the listener reads it most times (its
+            // window goes as the write ends), so is told by its size (#167).
+            Content::Image(image) => from_here || (image.width, image.height) == (2, 2),
+            // Its text was never read: only this process's own copy can be
+            // told apart, by its owner.
+            Content::Withheld | Content::TooLarge => from_here,
             Content::Other => false,
         };
         if ours {

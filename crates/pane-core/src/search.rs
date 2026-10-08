@@ -387,7 +387,8 @@ mod alternate_tests {
     fn blank_alternates_and_keywords_find_nothing() {
         let keys = [Keys::new("Firefox", None, None)
             .with_alternates(&strings(&["", "  "]), &strings(&[" "]))];
-        assert!(matches("x", &keys).is_empty());
+        // A letter the title lacks: the blanks match it no more than any.
+        assert!(matches("q", &keys).is_empty());
         assert_eq!(matches("fire", &keys), [0]);
     }
 }

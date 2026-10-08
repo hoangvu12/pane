@@ -107,7 +107,6 @@ pub(crate) fn create_owner_only_dir(dir: &Path) -> io::Result<()> {
 mod owner_only {
     use std::fs::File;
     use std::io;
-    use std::os::windows::ffi::OsStrExt;
     use std::os::windows::io::FromRawHandle;
     use std::path::Path;
 
@@ -178,7 +177,7 @@ mod owner_only {
     pub(crate) fn create_dir(path: &Path) -> io::Result<()> {
         use ::windows::Win32::Storage::FileSystem::CreateDirectoryW;
         let sddl = format!("D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;{})", user_sid()?);
-        let sddl: Vec<u16> = sddl.encode_utf16().chain([0]).collect();
+        let sddl = crate::util::wide(&sddl);
         let mut descriptor = PSECURITY_DESCRIPTOR::default();
         // SAFETY: `sddl` is NUL-terminated; the descriptor is freed below.
         unsafe {
@@ -195,7 +194,7 @@ mod owner_only {
             lpSecurityDescriptor: descriptor.0,
             bInheritHandle: false.into(),
         };
-        let wide: Vec<u16> = path.as_os_str().encode_wide().chain([0]).collect();
+        let wide = crate::util::wide(path);
         // SAFETY: `wide` is NUL-terminated and `attributes` valid for the
         // call.
         let created = unsafe { CreateDirectoryW(PCWSTR(wide.as_ptr()), Some(&attributes)) };
@@ -209,7 +208,7 @@ mod owner_only {
     /// only.
     pub(super) fn create_new(path: &Path) -> io::Result<File> {
         let sddl = format!("D:P(A;;FA;;;SY)(A;;FA;;;{})", user_sid()?);
-        let sddl: Vec<u16> = sddl.encode_utf16().chain([0]).collect();
+        let sddl = crate::util::wide(&sddl);
         let mut descriptor = PSECURITY_DESCRIPTOR::default();
         // SAFETY: `sddl` is NUL-terminated; the descriptor is freed below.
         unsafe {
@@ -226,7 +225,7 @@ mod owner_only {
             lpSecurityDescriptor: descriptor.0,
             bInheritHandle: false.into(),
         };
-        let wide: Vec<u16> = path.as_os_str().encode_wide().chain([0]).collect();
+        let wide = crate::util::wide(path);
         // SAFETY: `wide` is NUL-terminated and `attributes` valid for the
         // call; the handle is owned by the returned file.
         let created = unsafe {
@@ -325,8 +324,7 @@ mod tests {
         };
         use ::windows::Win32::Security::{DACL_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR};
         use ::windows::core::{PCWSTR, PWSTR};
-        use std::os::windows::ffi::OsStrExt;
-        let wide: Vec<u16> = path.as_os_str().encode_wide().chain([0]).collect();
+        let wide = crate::util::wide(path);
         let mut descriptor = PSECURITY_DESCRIPTOR::default();
         // SAFETY: `wide` is NUL-terminated; the descriptor is freed below.
         let status = unsafe {

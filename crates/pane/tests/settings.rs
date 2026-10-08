@@ -1702,6 +1702,23 @@ fn until_text(cx: &mut VisualTestContext, text: &str) {
     }
 }
 
+/// Runs the window until it has drawn the element with debug selector
+/// `selector`: a line of text, which the accessibility tree does not hold.
+fn until_drawn(cx: &mut VisualTestContext, selector: &'static str) {
+    let deadline = Instant::now() + Duration::from_secs(60);
+    loop {
+        cx.run_until_parked();
+        if cx.debug_bounds(selector).is_some() {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "timed out waiting for {selector:?} to be drawn"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
 /// A development builder that fakes a build: it copies the guest that the
 /// folder's `source.txt` names, or fails when the source names an error, as
 /// `develop.rs`'s does, so a build can fail in the background without any
@@ -2312,7 +2329,7 @@ fn an_extension_is_installed_from_a_folder_through_the_plus_menu(cx: &mut TestAp
         assert!(options.directories && !options.files && !options.multiple);
         Some(vec![chosen])
     });
-    until_text(&mut settings_cx, "Version: 1.0.0");
+    until_drawn(&mut settings_cx, "extension-detail-Version: 1.0.0");
     click_row(&mut settings_cx, "extension-row-Install");
     until_text(&mut settings_cx, "Installed Hello");
     assert!(
@@ -2355,7 +2372,10 @@ fn the_npm_and_git_sources_ask_for_their_package_on_the_page(cx: &mut TestAppCon
     }
     settings_cx.simulate_input("Not A Package!");
     click_row(&mut settings_cx, "extension-install-show");
-    until_text(&mut settings_cx, "Cannot install Not A Package!");
+    until_text(
+        &mut settings_cx,
+        "`Not A Package!` is not an npm package name",
+    );
     click_row(&mut settings_cx, "extension-back");
 
     // Git: the same field asks for a repository.
@@ -2368,6 +2388,43 @@ fn the_npm_and_git_sources_ask_for_their_package_on_the_page(cx: &mut TestAppCon
         ),
         "the field asks for a repository"
     );
+}
+
+#[gpui::test]
+fn the_window_keeps_its_keys_once_the_install_field_has_gone(cx: &mut TestAppContext) {
+    let data = tempfile::tempdir().unwrap();
+    cx.executor().allow_parking();
+    cx.update(pane::bind_keys);
+    let launcher =
+        Launcher::with_packages(Runtime::start(), vec![], data.path().join("extensions"));
+    let (_launcher, cx) =
+        cx.add_window_view(|window, cx| LauncherWindow::new(launcher, window, cx));
+    let (_settings, mut settings_cx) = open_extensions(cx);
+
+    // The field has the keyboard, then goes once Show Package previews
+    // what it named: the keyboard is the window's again, so its close
+    // shortcut closes it (release run 37725624283's smokes pressed it
+    // there, and it reached nothing).
+    click_row(&mut settings_cx, "extensions-add");
+    click_row(&mut settings_cx, "extensions-add-Install from npm…");
+    settings_cx.simulate_input("Not A Package!");
+    click_row(&mut settings_cx, "extension-install-show");
+    until_text(
+        &mut settings_cx,
+        "`Not A Package!` is not an npm package name",
+    );
+    assert!(
+        settings_cx
+            .debug_bounds("extension-install-field")
+            .is_none()
+    );
+    settings_cx.simulate_keystrokes(if cfg!(target_os = "macos") {
+        "cmd-w"
+    } else {
+        "ctrl-w"
+    });
+    cx.run_until_parked();
+    assert!(settings_windows(cx).is_empty(), "Settings closed");
 }
 
 #[gpui::test]

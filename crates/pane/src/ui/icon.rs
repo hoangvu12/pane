@@ -15,7 +15,8 @@
 //!
 //! The Windows titlebar's close, minimize and maximize marks (see the
 //! Settings window's custom titlebar) stay `pane/`'s thin marks whatever
-//! the set, and the Pane mark (`mark-*.svg`) is Pane's own.
+//! the set, as does the Actions panel's Delete cross on every system, and
+//! the Pane mark (`mark-*.svg`) is Pane's own.
 //!
 //! The glyphs are embedded at compile time with `include_bytes!` — no
 //! runtime file lookup, no `AssetSource` registration; `svg().data(bytes)`
@@ -117,6 +118,10 @@ pub(crate) enum Glyph {
     Reset,
     /// A keyboard: a key binding recorder's record mark.
     Record,
+    /// A cross: the Actions panel's Delete entry on a clipboard record
+    /// (#166) — `pane/`'s close mark on every system, since the set in
+    /// use has no cross.
+    Delete,
     /// The Windows titlebar's close mark.
     #[cfg(target_os = "windows")]
     WindowClose,
@@ -158,6 +163,7 @@ impl Glyph {
         Glyph::Plus,
         Glyph::Reset,
         Glyph::Record,
+        Glyph::Delete,
     ];
 
     /// The embedded SVG bytes for this glyph.
@@ -189,6 +195,7 @@ impl Glyph {
             Glyph::Plus => glyph_svg!("plus"),
             Glyph::Reset => glyph_svg!("reset"),
             Glyph::Record => glyph_svg!("record"),
+            Glyph::Delete => include_bytes!("../../assets/icons/pane/window-close.svg"),
             #[cfg(target_os = "windows")]
             Glyph::WindowClose => include_bytes!("../../assets/icons/pane/window-close.svg"),
             #[cfg(target_os = "windows")]

@@ -23,7 +23,7 @@ use pane_core::develop::Toolchains;
 use pane_core::icons::encode_png;
 use pane_core::system_icons::SystemIcon;
 use pane_core::{IconSource, Launcher, ResultAction, Runtime, Screen, SlotChange};
-use settle::settle;
+use settle::{settle, until};
 use tempfile::TempDir;
 
 /// How long extraction may take on a slow machine.
@@ -182,6 +182,20 @@ fn launcher(window: &Entity<LauncherWindow>, cx: &mut VisualTestContext) -> Laun
     cx.read_entity(window, |window, _| window.launcher().clone())
 }
 
+/// Types `query` and runs the window until it drew Firefox's row: the
+/// Applications provider lists it after the query's own results, so the
+/// window may first settle on a frame without it.
+fn search_firefox(
+    window: &Entity<LauncherWindow>,
+    cx: &mut VisualTestContext,
+    query: &str,
+) -> pane_core::LauncherView {
+    cx.simulate_input(query);
+    until(window, cx, |view| {
+        view.rows.iter().any(|row| row.title == "Firefox")
+    })
+}
+
 /// The file names of Firefox's light and dark icons, once kept.
 fn icon_files(launcher: &Launcher) -> (String, String) {
     let deadline = Instant::now() + LOADED;
@@ -207,8 +221,7 @@ fn icon_files(launcher: &Launcher) -> (String, String) {
 fn an_applications_row_draws_its_own_icon_bare_where_its_placeholder_was(cx: &mut TestAppContext) {
     let icons = HeldIcons::closed();
     let (window, cx, _folders) = window(cx, "dark", &icons);
-    cx.simulate_input("fire");
-    settle(&window, cx);
+    search_firefox(&window, cx, "fire");
 
     assert!(drawn(cx, "row-Firefox"));
     assert!(
@@ -244,8 +257,7 @@ fn an_applications_row_draws_its_own_icon_bare_where_its_placeholder_was(cx: &mu
 fn an_applications_row_draws_its_light_icon_in_the_light_theme(cx: &mut TestAppContext) {
     let icons = HeldIcons::closed();
     let (window, cx, _folders) = window(cx, "light", &icons);
-    cx.simulate_input("fire");
-    settle(&window, cx);
+    search_firefox(&window, cx, "fire");
     icons.open();
     let (light, dark) = icon_files(&launcher(&window, cx));
     until_drawn(cx, &format!("icon-Firefox-image-{light}"));
@@ -258,8 +270,7 @@ fn a_pinned_applications_slot_draws_its_icon(cx: &mut TestAppContext) {
     let icons = HeldIcons::closed();
     icons.open();
     let (window, cx, _folders) = window(cx, "dark", &icons);
-    cx.simulate_input("fire");
-    let view = settle(&window, cx);
+    let view = search_firefox(&window, cx, "fire");
     let launcher = launcher(&window, cx);
     let at = view
         .rows
@@ -285,8 +296,7 @@ fn an_applications_icon_is_decorative_to_assistive_technology(cx: &mut TestAppCo
     let icons = HeldIcons::closed();
     icons.open();
     let (window, cx, _folders) = window(cx, "dark", &icons);
-    cx.simulate_input("fire");
-    settle(&window, cx);
+    search_firefox(&window, cx, "fire");
     let (_, dark) = icon_files(&launcher(&window, cx));
     until_drawn(cx, &format!("icon-Firefox-image-{dark}"));
 

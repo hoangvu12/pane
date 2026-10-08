@@ -379,9 +379,35 @@ fn the_card_edits_every_type_with_its_control_and_saves_on_change(cx: &mut TestA
     click(&mut settings, "preference-toggle-verbose");
     assert_eq!(opened.value("verbose").as_deref(), Some("false"));
 
-    // A dropdown is a segmented choice.
-    click(&mut settings, "preference-option-units-imperial");
+    // A dropdown is a select, as Settings' own choices are: its trigger, a
+    // combo box named by the preference, shows the value in force (the
+    // default here) and opens the options under a search field; choosing
+    // one saves it, and the trigger shows it.
+    let trigger = node(&nodes(&mut settings), "ComboBox", "Units");
+    assert_eq!(trigger["value"].as_str(), Some("Metric"), "{trigger:#?}");
+    click(&mut settings, "preference-select-units");
+    assert!(
+        settings
+            .debug_bounds("preference-select-units-query")
+            .is_some(),
+        "the popup's search field shows"
+    );
+    let trigger = node(&nodes(&mut settings), "ComboBox", "Units");
+    assert_eq!(trigger["expanded"].as_bool(), Some(true), "{trigger:#?}");
+    click(&mut settings, "preference-select-units-imperial");
     assert_eq!(opened.value("units").as_deref(), Some("imperial"));
+    // The popup's exit runs to its end, so nothing of it covers the rows
+    // clicked next.
+    wait::settle_frames(&mut settings);
+    assert!(
+        settings
+            .debug_bounds("preference-select-units-popup")
+            .is_none(),
+        "the popup closed"
+    );
+    let trigger = node(&nodes(&mut settings), "ComboBox", "Units");
+    assert_eq!(trigger["value"].as_str(), Some("Imperial"), "{trigger:#?}");
+    assert_eq!(trigger["expanded"].as_bool(), Some(false), "{trigger:#?}");
 
     // Text is a field, saved as it is typed.
     click(&mut settings, "preference-field-greeting");

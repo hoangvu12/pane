@@ -106,8 +106,8 @@ pub const APP_VERSION: &str = match option_env!("PANE_PACKAGE_VERSION") {
 /// The default extensions are the calculator, applications, quicklinks,
 /// files and clipboard history ([#60](https://github.com/hoangvu12/pane/issues/60),
 /// the user's recorded choice), in every build: all five enabled by
-/// default and each individually disableable, with clipboard history's
-/// capture still off until the user turns it on. The samples are no
+/// default and each individually disableable, clipboard history recording
+/// what is copied from the first start (#166, ADR 0042). The samples are no
 /// default extension (#162): a contributor installs one by hand with
 /// `pane --install <folder>`. An install that acquired the helper sample
 /// as a default before keeps it as an ordinary installed package, which
@@ -127,11 +127,11 @@ pub fn default_extensions() -> Vec<pane_core::DefaultExtension> {
             title: "Quicklinks".into(),
         },
         pane_core::DefaultExtension {
-            id: "files".into(),
+            id: pane_core::search_files::FILES.into(),
             title: "Files".into(),
         },
         pane_core::DefaultExtension {
-            id: "clipboard-history".into(),
+            id: pane_core::clipboard_view::CLIPBOARD_HISTORY.into(),
             title: "Clipboard History".into(),
         },
     ]
@@ -355,8 +355,8 @@ mod tests {
                 "calculator",
                 "applications",
                 "quicklinks",
-                "files",
-                "clipboard-history"
+                pane_core::search_files::FILES,
+                pane_core::clipboard_view::CLIPBOARD_HISTORY
             ]
         );
     }

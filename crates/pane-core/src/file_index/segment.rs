@@ -552,7 +552,7 @@ impl Iterator for SegmentIter<'_> {
         if self.next >= self.segment.count {
             return None;
         }
-        if self.next % BLOCK == 0 {
+        if self.next.is_multiple_of(BLOCK) {
             self.key.clear();
         }
         let (seq, meta) = self.segment.decode(&mut self.at, &mut self.key)?;

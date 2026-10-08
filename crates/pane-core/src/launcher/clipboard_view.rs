@@ -145,13 +145,14 @@ fn is_link(text: &str) -> bool {
         && !rest.is_empty()
 }
 
-/// Whether `text` (trimmed) is one colour value: a hex colour of 3, 4, 6
-/// or 8 digits after `#`, or a CSS `rgb`, `rgba`, `hsl` or `hsla` function
-/// of three or four numbers (with `%` or `deg`, separated by commas,
-/// spaces or a slash).
+/// Whether `text` (trimmed) is one colour value: a hex colour of 3, 6 or 8
+/// digits after `#` (`#rgb`, `#rrggbb`, `#rrggbbaa`; four digits stay
+/// text), or a CSS `rgb`, `rgba`, `hsl` or `hsla` function of three or
+/// four numbers (with `%` or `deg`, separated by commas, spaces or a
+/// slash).
 fn is_color(text: &str) -> bool {
     if let Some(hex) = text.strip_prefix('#') {
-        return matches!(hex.len(), 3 | 4 | 6 | 8) && hex.chars().all(|c| c.is_ascii_hexdigit());
+        return matches!(hex.len(), 3 | 6 | 8) && hex.chars().all(|c| c.is_ascii_hexdigit());
     }
     let lower = text.to_lowercase();
     let Some((function, rest)) = lower.split_once('(') else {

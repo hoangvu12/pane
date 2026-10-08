@@ -68,9 +68,16 @@ pub struct WalkReport {
     /// Entries the rules left out (a folder counts once, not its contents).
     pub excluded: u64,
     /// Folders that could not be listed: they are indexed, their contents
-    /// are not. At most the first 100 are named.
+    /// are not. At most the first 100 are named. A folder macOS's privacy
+    /// protection refused is counted apart ([`WalkReport::refused`]).
     pub unreadable: u64,
     pub unreadable_folders: Vec<PathBuf>,
+    /// Folders macOS's privacy protection did not let Pane read (Desktop,
+    /// Documents, Downloads, a removable or network volume), told from the
+    /// system's answer (see `privacy`): indexed, their contents not. At most
+    /// the first 100 are named.
+    pub refused: u64,
+    pub refused_folders: Vec<PathBuf>,
     /// Folders that did not answer within [`WalkOptions::hung_after`]:
     /// indexed, their contents skipped for this walk. At most the first 100
     /// are named.
@@ -86,6 +93,8 @@ pub struct WalkReport {
 pub(crate) enum Unlisted {
     /// The system refused or failed to list it.
     Unreadable,
+    /// macOS's privacy protection refused Pane (see `privacy`).
+    Refused,
     /// It did not answer in time.
     Hung,
 }
@@ -133,22 +142,32 @@ pub(crate) fn list_within(
     lister: &mut Option<Lister>,
 ) -> Result<Vec<Listed>, Unlisted> {
     let Some(limit) = options.hung_after else {
-        return list(path, volume).map_err(|_| Unlisted::Unreadable);
+        return list(path, volume).map_err(|error| unlisted(&error));
     };
     if lister.is_none() {
         *lister = Lister::start(options.background);
     }
     let Some(helper) = lister.as_ref() else {
         // No thread to spare: listed here, as long as it takes.
-        return list(path, volume).map_err(|_| Unlisted::Unreadable);
+        return list(path, volume).map_err(|error| unlisted(&error));
     };
     if helper.asks.send((path.to_path_buf(), volume)).is_err() {
         *lister = None;
-        return list(path, volume).map_err(|_| Unlisted::Unreadable);
+        return list(path, volume).map_err(|error| unlisted(&error));
     }
-    match helper.answers.recv_timeout(limit) {
+    let asleep = super::power::asleep_since_start();
+    let mut answer = helper.answers.recv_timeout(limit);
+    // The computer slept while it waited: the sleep is no time the folder
+    // took to answer, so it is given its limit again, awake (the limit
+    // counts awake time only).
+    if matches!(answer, Err(RecvTimeoutError::Timeout))
+        && super::power::asleep_since_start().saturating_sub(asleep) >= super::power::NOTICED
+    {
+        answer = helper.answers.recv_timeout(limit);
+    }
+    match answer {
         Ok(Ok(listing)) => Ok(listing),
-        Ok(Err(_)) => Err(Unlisted::Unreadable),
+        Ok(Err(error)) => Err(unlisted(&error)),
         Err(RecvTimeoutError::Timeout) => {
             // Left behind; the next folder gets a helper of its own.
             *lister = None;
@@ -158,6 +177,16 @@ pub(crate) fn list_within(
             *lister = None;
             Err(Unlisted::Unreadable)
         }
+    }
+}
+
+/// Why a folder the system did not list was not: macOS's privacy
+/// protection refused it, or it could not be read.
+fn unlisted(error: &io::Error) -> Unlisted {
+    if super::privacy::refused_by_privacy(error) {
+        Unlisted::Refused
+    } else {
+        Unlisted::Unreadable
     }
 }
 
@@ -217,6 +246,7 @@ struct Shared<'a> {
     excluded: AtomicU64,
     ceiling: AtomicBool,
     unreadable: Mutex<(u64, Vec<PathBuf>)>,
+    refused: Mutex<(u64, Vec<PathBuf>)>,
     hung: Mutex<(u64, Vec<PathBuf>)>,
 }
 
@@ -299,6 +329,7 @@ fn run(
         excluded: AtomicU64::new(0),
         ceiling: AtomicBool::new(false),
         unreadable: Mutex::new((0, Vec::new())),
+        refused: Mutex::new((0, Vec::new())),
         hung: Mutex::new((0, Vec::new())),
     };
     std::thread::scope(|threads| {
@@ -322,6 +353,10 @@ fn run(
         .unreadable
         .into_inner()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let (refused, refused_folders) = shared
+        .refused
+        .into_inner()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let (hung, hung_folders) = shared
         .hung
         .into_inner()
@@ -332,6 +367,8 @@ fn run(
         excluded: shared.excluded.into_inner(),
         unreadable,
         unreadable_folders,
+        refused,
+        refused_folders,
         hung,
         hung_folders,
         ceiling_reached: shared.ceiling.into_inner(),
@@ -401,6 +438,7 @@ fn list_job(shared: &Shared<'_>, job: Job, lister: &mut Option<Lister>) -> (Vec<
         Err(why) => {
             let counted = match why {
                 Unlisted::Unreadable => &shared.unreadable,
+                Unlisted::Refused => &shared.refused,
                 Unlisted::Hung => &shared.hung,
             };
             let mut counted = counted
@@ -608,7 +646,7 @@ pub(crate) fn list(path: &Path, volume: u64) -> io::Result<Vec<Listed>> {
 mod windows {
     use std::ffi::OsString;
     use std::io;
-    use std::os::windows::ffi::{OsStrExt, OsStringExt};
+    use std::os::windows::ffi::OsStringExt;
     use std::path::Path;
 
     use ::windows::Win32::Foundation::{CloseHandle, HANDLE};
@@ -649,7 +687,7 @@ mod windows {
     }
 
     fn open(path: &Path, access: u32) -> io::Result<Handle> {
-        let wide: Vec<u16> = path.as_os_str().encode_wide().chain([0]).collect();
+        let wide = crate::util::wide(path);
         // SAFETY: `wide` is NUL-terminated; the handle is closed by `Handle`.
         let handle = unsafe {
             CreateFileW(

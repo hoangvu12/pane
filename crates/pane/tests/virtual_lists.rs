@@ -6,6 +6,10 @@
 //! requests no icon. The ignored benchmark at the end measures
 //! keystroke-to-frame latency in root search and the frame time of
 //! scrolling, which the ticket's results comment records on Windows.
+//! Settings' long lists draw only the rows near the page's view, as the
+//! Shortcuts page does: the File Search page's is tested with its fixture
+//! (`file_search_settings`), the Extensions group's sidebar entries and an
+//! extension's Commands share the same `PageWindow`.
 
 #[path = "../../pane-core/tests/support/image_server.rs"]
 mod image_server;
@@ -27,8 +31,15 @@ use serde_json::json;
 use settle::settle;
 use tempfile::TempDir;
 
-/// How many rows the long list has.
+/// How many root commands the long list has.
 const ROWS: usize = 10_000;
+
+/// How many rows root search lists over them with a blank query: the
+/// commands, then Pane's own "Settings…" row, always listed last (#72).
+const LISTED: usize = ROWS + 1;
+
+/// The title of the last row root search lists: Pane's "Settings…".
+const LAST: &str = "Settings…";
 
 /// The title of root command `index`: zero-padded, so root search's order
 /// is the commands' order.
@@ -112,7 +123,8 @@ fn fitting(height: gpui::Pixels) -> usize {
 fn a_ten_thousand_row_list_draws_only_the_rows_in_view(cx: &mut TestAppContext) {
     let (window, cx) = open(cx, commands(ROWS, title));
     let view = settle(&window, cx);
-    assert_eq!(view.rows.len(), ROWS);
+    assert_eq!(view.rows.len(), LISTED);
+    assert_eq!(view.rows[LISTED - 1].title, LAST);
     assert_eq!(view.selected, Some(0));
 
     let list = cx.debug_bounds("rows").expect("the list is rendered");
@@ -129,7 +141,9 @@ fn a_ten_thousand_row_list_draws_only_the_rows_in_view(cx: &mut TestAppContext) 
         cx.debug_bounds(selector(&format!("row-{}", title(ROWS - 1))))
             .is_none()
     );
+    assert!(cx.debug_bounds(selector(&format!("row-{LAST}"))).is_none());
     assert!(!drawn.contains(&(ROWS - 1)));
+    assert!(!drawn.contains(&(LISTED - 1)));
 }
 
 /// Up and Down move the selection a row and Page Down and Page Up a page
@@ -169,20 +183,18 @@ fn the_keys_keep_the_selection_in_view_and_reach_both_ends(cx: &mut TestAppConte
     assert!(row_is_visible(cx, &title(20)), "Page Up keeps it in view");
 
     // The last row: Page Down stops there.
-    cx.read_entity(&window, |window, _| window.launcher().select(ROWS - 3));
+    cx.read_entity(&window, |window, _| window.launcher().select(LISTED - 3));
     redraw(&window, cx);
     cx.simulate_keystrokes("pagedown");
-    assert_eq!(selected(&window, cx), Some(ROWS - 1));
+    assert_eq!(selected(&window, cx), Some(LISTED - 1));
     redraw(&window, cx);
-    assert!(
-        row_is_visible(cx, &title(ROWS - 1)),
-        "the last row is reached"
-    );
+    assert!(row_is_visible(cx, LAST), "the last row is reached");
+    assert!(row_is_visible(cx, &title(ROWS - 1)));
     assert!(drawn_rows(&window, cx).len() <= most);
     cx.simulate_keystrokes("down");
     assert_eq!(
         selected(&window, cx),
-        Some(ROWS - 1),
+        Some(LISTED - 1),
         "and Down stays there"
     );
 
@@ -223,7 +235,7 @@ fn assistive_technology_still_hears_the_lists_size_and_the_selected_row(cx: &mut
     assert!(!options.is_empty(), "the drawn rows say the list's size");
     assert!(options.len() < 30, "{} options drawn", options.len());
     for option in &options {
-        assert_eq!(option["aria"]["size_of_set"], ROWS, "{option}");
+        assert_eq!(option["aria"]["size_of_set"], LISTED, "{option}");
     }
     let focused = ["active_descendant_focus", "gpui_focus"]
         .iter()
@@ -232,7 +244,7 @@ fn assistive_technology_still_hears_the_lists_size_and_the_selected_row(cx: &mut
     let focused = focused.expect("a focused node");
     assert_eq!(focused["aria"]["label"], title(30));
     assert_eq!(focused["aria"]["position_in_set"], 31);
-    assert_eq!(focused["aria"]["size_of_set"], ROWS);
+    assert_eq!(focused["aria"]["size_of_set"], LISTED);
 }
 
 /// The host's icon extraction, stood in for: a small PNG for any path that
@@ -267,9 +279,10 @@ fn copy_folder(from: &Path, to: &Path) {
 }
 
 /// A list's rows out of view request no icon: in a short window, the
-/// icons sample's list (#139) draws its first rows only; its file icon's
-/// row, near the end, has its system icon extracted only once the
-/// selection brings it into view, and the favicon's row, out of view too,
+/// icons sample's list (#139) draws its first rows only, and lays out
+/// the few past its view's edge; its file icon's row, near the end, has
+/// its system icon extracted only once the selection brings it into
+/// view, and the favicon's row, past the view and its overscan too,
 /// downloads nothing until then.
 #[gpui::test]
 fn rows_out_of_view_request_no_icons(cx: &mut TestAppContext) {
@@ -316,8 +329,10 @@ fn rows_out_of_view_request_no_icons(cx: &mut TestAppContext) {
     }
     let (window, cx) =
         cx.add_window_view(|window, cx| LauncherWindow::new(launcher.clone(), window, cx));
-    // Room for three or four rows.
-    cx.simulate_resize(gpui::size(px(640.), px(300.)));
+    // A command's list about 170 px high: room for three or four rows,
+    // which with the three rows' overscan the list lays out ahead of its
+    // view are still short of the favicon's row, the ninth.
+    cx.simulate_resize(gpui::size(px(640.), px(220.)));
     settle(&window, cx);
 
     cx.simulate_input("icons");
@@ -361,14 +376,9 @@ fn rows_out_of_view_request_no_icons(cx: &mut TestAppContext) {
     assert!(drawn_rows(&window, cx).contains(&file));
     assert!(launcher.wait_for_icons(Duration::from_secs(30)));
     assert!(icons.asked.load(Ordering::SeqCst) >= 1);
-    // Passing the favicon's row on the way down drew it: its download
-    // started then.
-    let favicon_drawn = drawn_rows(&window, cx).contains(&favicon);
-    assert!(
-        favicon_drawn || server.count("/favicon.ico") == 0,
-        "{:?}",
-        server.requests()
-    );
+    // The favicon's row is now in the overscan above the file's row, which
+    // the list lays out ahead: its download may have started then, once.
+    assert!(server.count("/favicon.ico") <= 1, "{:?}", server.requests());
 }
 
 /// The `p`th percentile of `samples` (sorted in place).

@@ -6,13 +6,21 @@
 //!
 //! - **Extraction** ([`IconExtractor`], [`NativeExtractor`]): on Windows the
 //!   shell's image of the application's primary source at 256 pixels,
-//!   rejecting a small icon padded into a large canvas ([`covers_enough`])
-//!   for the next source (a shortcut's own icon location, its target
-//!   program, the shell's file information icon); a packaged app's logo from
-//!   its manifest, with its light and dark variants ([`appx`]). On macOS
-//!   the workspace's icon of the bundle. On Linux the desktop entry's `Icon`
-//!   in the user's icon theme, its parents and `hicolor`, then `pixmaps`
-//!   ([`theme`]).
+//!   rejecting a small icon padded into a large canvas or framed in a
+//!   thumbnail ([`covers_enough`]) for the next source (a shortcut's own
+//!   icon location, its target program's shell image, then that program's
+//!   own icon at its largest, the shell's file information icon); a
+//!   packaged app's logo from its manifest, with its light and dark
+//!   variants ([`appx`]). On macOS the workspace's icon of the bundle. On
+//!   Linux the desktop entry's `Icon` in the user's icon theme, its parents
+//!   and `hicolor`, then `pixmaps` ([`theme`]).
+//! - **Filling its place** ([`fill_its_place`]): whatever extracted it, an
+//!   image whose content spans less than three quarters of its canvas (a
+//!   small picture padded into a large square, or framed: within a thin
+//!   frame, the pixels unlike its transparent or light fill, [`frame`]) is
+//!   cropped to the square around that content and scaled to
+//!   [`ICON_SIZE`], so every application's icon is drawn as large as the
+//!   others.
 //! - **The cache** ([`IconCache`]): image files in Pane's cache folder
 //!   ([`FOLDER`]), keyed by the application's id and a fingerprint of its
 //!   source (its path, size and modification time), each written
@@ -38,9 +46,11 @@ use std::time::{Duration, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
-use crate::system_icons::SystemIcon;
+use crate::system_icons::{ICON_SIZE, SystemIcon};
 
 pub mod appx;
+#[cfg(any(windows, test))]
+mod click_once;
 pub mod theme;
 #[cfg(windows)]
 mod windows;
@@ -66,11 +76,41 @@ pub const BATCH: usize = 8;
 /// The alpha above which a pixel is visible content ([`covers_enough`]).
 const VISIBLE_ALPHA: u8 = 16;
 
+/// How deep a frame around a thumbnail may reach into its canvas, as a
+/// fraction of its smaller side (1/16: 16 pixels of 256); its rounded
+/// corners are left out of the content within as deep ([`frame`]).
+const FRAME_DEPTH: usize = 16;
+
+/// The smallest canvas, in pixels its smaller way, looked at for a frame
+/// ([`frame`]).
+const FRAMED_FROM: usize = 64;
+
+/// How far apart two visible pixels' channels may be for them to be one
+/// colour ([`alike`]).
+const ALIKE: u8 = 24;
+
+/// The least each channel of an opaque fill inside a frame has: a light
+/// fill, as the shell's thumbnail's white ([`frame`]).
+const LIGHT: u8 = 208;
+
 /// The index of the kept icons, in [`FOLDER`].
 const INDEX: &str = "index.json";
 
-/// The index's format.
-const INDEX_VERSION: u32 = 1;
+/// The index's format, and how its images were made: 2 since they are
+/// cropped to fill their place ([`fill_its_place`]), 3 since a framed
+/// thumbnail's content is found within its frame ([`frame`]), so that the
+/// icons a Pane before that kept are extracted again.
+const INDEX_VERSION: u32 = 3;
+
+/// An icon whose visible content spans at least this share of its canvas,
+/// its larger way, fills it and is kept as it is ([`fill_its_place`]): the
+/// margins the systems' own icon grids draw (macOS's about a tenth each
+/// side) are left alone.
+const FILLS_FROM: (usize, usize) = (3, 4);
+
+/// The margin a cropped icon keeps around its content, each side, as a
+/// fraction of the content's larger span (1/32, about 3%).
+const CROP_MARGIN: usize = 32;
 
 /// How long the worker rests between two batches refreshing in the
 /// background, so that a refresh after a start never competes with what
@@ -80,24 +120,168 @@ const BACKGROUND_REST: Duration = Duration::from_millis(10);
 /// Whether an icon of `width` × `height` pixels of straight RGBA (row by
 /// row) fills its box enough to be drawn as the application's icon: one at
 /// most [`CHECKED_ABOVE`] pixels each way always does; a larger one must
-/// have visible content (pixels whose alpha is above a faint 16) spanning
-/// at least half its width or half its height. A small icon the system
-/// padded into a large canvas, a 32-pixel image in the middle of a
-/// 256-pixel square, does not: it would be drawn as a tiny picture in an
-/// empty place.
+/// have content ([`content_box`]: pixels whose alpha is above a faint 16,
+/// or within a thumbnail's frame those unlike its fill) spanning at least
+/// half its width or half its height. A small icon the system padded into
+/// a large canvas, a 32-pixel image in the middle of a 256-pixel square,
+/// does not, nor does the shell's framed thumbnail of a program with only
+/// a small icon (that icon in the middle of a light square with a thin
+/// frame): either would be drawn as a tiny picture in an empty place.
 pub fn covers_enough(width: u32, height: u32, rgba: &[u8]) -> bool {
     if width <= CHECKED_ABOVE && height <= CHECKED_ABOVE {
         return true;
     }
     let (width, height) = (width as usize, height as usize);
-    if width == 0 || height == 0 || rgba.len() < width * height * 4 {
+    let Some(content) = content_box(width, height, rgba) else {
+        // Nothing visible at all.
         return false;
+    };
+    content.width() * 2 >= width || content.height() * 2 >= height
+}
+
+/// The box of an image's visible content, in pixels, its right and bottom
+/// edges included.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct ContentBox {
+    left: usize,
+    top: usize,
+    right: usize,
+    bottom: usize,
+}
+
+impl ContentBox {
+    fn width(&self) -> usize {
+        self.right - self.left + 1
     }
+
+    fn height(&self) -> usize {
+        self.bottom - self.top + 1
+    }
+}
+
+/// A frame around a thumbnail: the rings of pixels the shell draws at its
+/// canvas's edge (a thin line, a soft shadow) around a fill, transparent or
+/// light, that the picture sits on. Windows draws one around a program that
+/// ships only a small icon: that icon in the middle of a 256-pixel square.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Frame {
+    /// How many pixels deep the frame's rings reach, each side.
+    inset: usize,
+    /// How far from each corner, both ways, pixels are left out of the
+    /// content: a rounded frame's corners curve inside its inset.
+    corner: usize,
+    /// The fill inside the frame: what is not content.
+    fill: [u8; 4],
+}
+
+impl Frame {
+    /// Whether the pixel at `x`, `y` of a `width` × `height` canvas lies
+    /// within the frame (not in its rings or its corners).
+    fn encloses(&self, x: usize, y: usize, width: usize, height: usize) -> bool {
+        let inside = |at: usize, side: usize| at >= self.inset && at + self.inset < side;
+        let near_edge = |at: usize, side: usize| at < self.corner || at + self.corner >= side;
+        inside(x, width) && inside(y, height) && !(near_edge(x, width) && near_edge(y, height))
+    }
+
+    /// What a pixel outside the frame becomes in a cropped icon: the fill,
+    /// or nothing when the fill is transparent.
+    fn background(&self) -> [u8; 4] {
+        if self.fill[3] > VISIBLE_ALPHA {
+            self.fill
+        } else {
+            [0; 4]
+        }
+    }
+}
+
+/// Whether two pixels of straight RGBA look alike: both transparent (alpha
+/// at most [`VISIBLE_ALPHA`], whatever their colour), or both visible with
+/// every channel within [`ALIKE`].
+fn alike(one: &[u8], other: &[u8]) -> bool {
+    let (one_seen, other_seen) = (one[3] > VISIBLE_ALPHA, other[3] > VISIBLE_ALPHA);
+    if !one_seen || !other_seen {
+        return one_seen == other_seen;
+    }
+    one.iter()
+        .zip(other)
+        .take(4)
+        .all(|(one, other)| one.abs_diff(*other) <= ALIKE)
+}
+
+/// The frame around `width` × `height` straight RGBA (at least
+/// [`FRAMED_FROM`] pixels each way), if it is a framed thumbnail: the ring
+/// [`FRAME_DEPTH`]'s share of its smaller side in is of one fill,
+/// transparent or light (each channel at least [`LIGHT`], opaque), and the
+/// rings outside it are each of one colour, at least one of them unlike
+/// the fill (the frame's line), and every ring from the canvas's edge to
+/// the innermost such one visible. Only the middle half of each side of a
+/// ring is looked at, so rounded corners do not count. `None` for an icon
+/// whose picture reaches its edges, a coloured plate filling its canvas, a
+/// light plate inside a transparent margin, or a small picture padded with
+/// transparency alone.
+fn frame(width: usize, height: usize, rgba: &[u8]) -> Option<Frame> {
+    if width.min(height) < FRAMED_FROM || rgba.len() < width * height * 4 {
+        return None;
+    }
+    let depth = width.min(height) / FRAME_DEPTH;
+    let pixel = |x: usize, y: usize| &rgba[(y * width + x) * 4..(y * width + x) * 4 + 4];
+    // The one colour of the ring `at` pixels in, if it has one.
+    let ring = |at: usize| -> Option<[u8; 4]> {
+        let first: [u8; 4] = pixel(width / 2, at).try_into().ok()?;
+        let across = (width / 4..width - width / 4).flat_map(|x| [(x, at), (x, height - 1 - at)]);
+        let down = (height / 4..height - height / 4).flat_map(|y| [(at, y), (width - 1 - at, y)]);
+        across
+            .chain(down)
+            .all(|(x, y)| alike(pixel(x, y), &first))
+            .then_some(first)
+    };
+    let fill = ring(depth)?;
+    let light = fill[3] <= VISIBLE_ALPHA
+        || (fill[3] >= u8::MAX - ALIKE && fill[..3].iter().all(|channel| *channel >= LIGHT));
+    if !light {
+        return None;
+    }
+    let rings = (0..depth).map(ring).collect::<Option<Vec<_>>>()?;
+    let inset = rings
+        .iter()
+        .rposition(|colour| !alike(colour, &fill))
+        .map_or(0, |at| at + 1);
+    // The frame is drawn from the canvas's edge in, every ring of it
+    // visible: a light plate inside a transparent margin is no frame.
+    let drawn = rings[..inset]
+        .iter()
+        .all(|colour| colour[3] > VISIBLE_ALPHA);
+    (inset > 0 && drawn).then_some(Frame {
+        inset,
+        corner: depth,
+        fill,
+    })
+}
+
+/// The box of the content of `width` × `height` straight RGBA: within a
+/// thumbnail's frame ([`frame`]) the pixels unlike its fill, else the
+/// visible pixels (alpha above [`VISIBLE_ALPHA`]); `None` when there is
+/// none or `rgba` is too short for the size.
+fn content_box(width: usize, height: usize, rgba: &[u8]) -> Option<ContentBox> {
+    framed_content(width, height, rgba).map(|(content, _)| content)
+}
+
+/// The box of the content of `width` × `height` straight RGBA, and the
+/// frame it was found within, if any ([`content_box`]).
+fn framed_content(width: usize, height: usize, rgba: &[u8]) -> Option<(ContentBox, Option<Frame>)> {
+    if width == 0 || height == 0 || rgba.len() < width.checked_mul(height)?.checked_mul(4)? {
+        return None;
+    }
+    let frame = frame(width, height, rgba);
     let (mut left, mut right, mut top, mut bottom) = (width, 0, height, 0);
     for y in 0..height {
         let row = &rgba[y * width * 4..(y + 1) * width * 4];
-        for (x, pixel) in row.chunks_exact(4).enumerate() {
-            if pixel[3] > VISIBLE_ALPHA {
+        for (x, pixel) in row.as_chunks::<4>().0.iter().enumerate() {
+            let content = match &frame {
+                Some(frame) => frame.encloses(x, y, width, height) && !alike(pixel, &frame.fill),
+                None => pixel[3] > VISIBLE_ALPHA,
+            };
+            if content {
                 left = left.min(x);
                 right = right.max(x);
                 top = top.min(y);
@@ -105,11 +289,160 @@ pub fn covers_enough(width: u32, height: u32, rgba: &[u8]) -> bool {
             }
         }
     }
-    if left > right || top > bottom {
-        // Nothing visible at all.
-        return false;
+    (left <= right && top <= bottom).then_some((
+        ContentBox {
+            left,
+            top,
+            right,
+            bottom,
+        },
+        frame,
+    ))
+}
+
+/// `width` × `height` pixels of straight RGBA made to fill their place, as
+/// `size` × `size` pixels of straight RGBA: when the content
+/// ([`content_box`]) spans less than three quarters of the canvas its
+/// larger way ([`FILLS_FROM`]), a small picture padded into a large canvas
+/// or framed in a thumbnail, the square around that content, centred on it
+/// with a margin of 1/32 of its span each side ([`CROP_MARGIN`]; where the
+/// square passes the canvas's edge or a frame's rings, transparent, or the
+/// frame's opaque fill), scaled to `size` (smoothly: a small picture scaled
+/// up is a little soft). `None` when the image already fills its canvas,
+/// or shows nothing: it is kept as it is.
+pub fn fill_its_place(width: u32, height: u32, rgba: &[u8], size: u32) -> Option<Vec<u8>> {
+    let (width, height, size) = (width as usize, height as usize, size as usize);
+    let (content, frame) = framed_content(width, height, rgba)?;
+    let span = content.width().max(content.height());
+    if size == 0 || span * FILLS_FROM.1 >= width.max(height) * FILLS_FROM.0 {
+        return None;
     }
-    (right - left + 1) * 2 >= width || (bottom - top + 1) * 2 >= height
+    let side = span + 2 * (span / CROP_MARGIN);
+    // The square's top left corner, which may lie outside the canvas.
+    let origin = |low: usize, high: usize| (low + high + 1) as isize / 2 - side as isize / 2;
+    let (x0, y0) = (
+        origin(content.left, content.right),
+        origin(content.top, content.bottom),
+    );
+    let background = frame.map_or([0; 4], |frame| frame.background());
+    let mut square = background.repeat(side * side);
+    for y in 0..side {
+        let from_y = y0 + y as isize;
+        if from_y < 0 || from_y >= height as isize {
+            continue;
+        }
+        for x in 0..side {
+            let from_x = x0 + x as isize;
+            if from_x < 0 || from_x >= width as isize {
+                continue;
+            }
+            let (from_x, from_y) = (from_x as usize, from_y as usize);
+            if frame.is_some_and(|frame| !frame.encloses(from_x, from_y, width, height)) {
+                continue;
+            }
+            let from = (from_y * width + from_x) * 4;
+            let to = (y * side + x) * 4;
+            square[to..to + 4].copy_from_slice(&rgba[from..from + 4]);
+        }
+    }
+    Some(scale_square(&square, side, size))
+}
+
+/// `rgba`, `from` × `from` pixels of straight RGBA, scaled to `to` × `to`:
+/// bilinear when enlarging, the average of the pixels each one covers when
+/// shrinking, both over premultiplied alpha so transparent pixels lend no
+/// colour to the edges.
+fn scale_square(rgba: &[u8], from: usize, to: usize) -> Vec<u8> {
+    let taps = scale_taps(from, to);
+    let premultiplied: Vec<[f32; 4]> = rgba
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .map(|pixel| {
+            let alpha = f32::from(pixel[3]) / 255.0;
+            [
+                f32::from(pixel[0]) * alpha,
+                f32::from(pixel[1]) * alpha,
+                f32::from(pixel[2]) * alpha,
+                f32::from(pixel[3]),
+            ]
+        })
+        .collect();
+    // Across each row, then down each column.
+    let mut across = vec![[0f32; 4]; to * from];
+    for y in 0..from {
+        for (x, row_taps) in taps.iter().enumerate() {
+            let mut sum = [0f32; 4];
+            for &(at, weight) in row_taps {
+                for (total, value) in sum.iter_mut().zip(premultiplied[y * from + at]) {
+                    *total += value * weight;
+                }
+            }
+            across[y * to + x] = sum;
+        }
+    }
+    let mut scaled = vec![0u8; to * to * 4];
+    for (y, column_taps) in taps.iter().enumerate() {
+        for x in 0..to {
+            let mut sum = [0f32; 4];
+            for &(at, weight) in column_taps {
+                for (total, value) in sum.iter_mut().zip(across[at * to + x]) {
+                    *total += value * weight;
+                }
+            }
+            let alpha = sum[3].clamp(0.0, 255.0);
+            let out = (y * to + x) * 4;
+            if alpha > 0.0 {
+                for (colour, total) in scaled[out..out + 3].iter_mut().zip(sum) {
+                    *colour = (total * 255.0 / alpha).round().clamp(0.0, 255.0) as u8;
+                }
+            }
+            scaled[out + 3] = alpha.round() as u8;
+        }
+    }
+    scaled
+}
+
+/// For each of `to` pixels along a line scaled from `from`, the pixels it
+/// draws from and their weights (summing to one).
+fn scale_taps(from: usize, to: usize) -> Vec<Vec<(usize, f32)>> {
+    let scale = from as f32 / to as f32;
+    let last = from.saturating_sub(1);
+    (0..to)
+        .map(|out| {
+            if scale <= 1.0 {
+                // Enlarging: between the two nearest pixel centres.
+                let at = ((out as f32 + 0.5) * scale - 0.5).clamp(0.0, last as f32);
+                let low = at.floor() as usize;
+                let high = (low + 1).min(last);
+                let weight = at - low as f32;
+                vec![(low, 1.0 - weight), (high, weight)]
+            } else {
+                // Shrinking: every pixel the output one covers, by how much.
+                let start = out as f32 * scale;
+                let end = start + scale;
+                let mut taps = Vec::new();
+                let mut index = start.floor() as usize;
+                while index < from && (index as f32) < end {
+                    let covered = end.min(index as f32 + 1.0) - start.max(index as f32);
+                    if covered > 0.0 {
+                        taps.push((index, covered / scale));
+                    }
+                    index += 1;
+                }
+                taps
+            }
+        })
+        .collect()
+}
+
+/// The PNG `png` cropped and scaled to fill its place at [`ICON_SIZE`]
+/// ([`fill_its_place`]); `None` when it is kept as it is (it fills its
+/// canvas, or cannot be decoded).
+fn filled_png(png: &[u8]) -> Option<Vec<u8>> {
+    let (width, height, rgba) = crate::icons::decode_png(png)?;
+    let filled = fill_its_place(width, height, &rgba, ICON_SIZE)?;
+    crate::icons::encode_png(ICON_SIZE, ICON_SIZE, &filled)
 }
 
 /// An application's icon as its system gave it.
@@ -576,7 +909,8 @@ impl Shared {
     }
 
     /// The index in the folder: empty when there is none; deleted with
-    /// every image and rebuilt when it cannot be read. Images it does not
+    /// every image and rebuilt when it cannot be read, or is of another
+    /// [`INDEX_VERSION`] (its images made differently). Images it does not
     /// name, and icons whose images are gone, are dropped.
     fn load(&self) -> Index {
         let path = self.folder.join(INDEX);
@@ -703,9 +1037,11 @@ impl Shared {
     }
 
     /// Writes `icon` as the image `<stem>.<its kind>` in the folder,
-    /// atomically; its file name and size.
+    /// atomically, a PNG cropped to fill its place first
+    /// ([`fill_its_place`]; an SVG is kept as it is); its file name and
+    /// size.
     fn write(&self, stem: &str, icon: SystemIcon) -> Result<(String, u64), String> {
-        let bytes = match icon {
+        let mut bytes = match icon {
             SystemIcon::Png(png) => png,
             SystemIcon::File(file) => std::fs::read(&file)
                 .map_err(|error| format!("cannot read {}: {error}", file.display()))?,
@@ -714,6 +1050,11 @@ impl Shared {
             Some(kind @ ("png" | "svg")) => kind,
             _ => return Err("it is not a PNG or SVG image".into()),
         };
+        if kind == "png"
+            && let Some(filled) = filled_png(&bytes)
+        {
+            bytes = filled;
+        }
         let name = format!("{stem}.{kind}");
         crate::atomic::write_atomically(
             &self.folder.join(&name),
@@ -751,12 +1092,16 @@ impl Shared {
 }
 
 /// The next jobs: what rows on screen want first, then the background
-/// refresh of the applications listed, at most [`BATCH`].
+/// refresh of the applications listed, at most [`BATCH`]. An application
+/// is in a batch once: a row's icon wanted while its background refresh
+/// waits is extracted for the row alone (which queues the refresh again
+/// when it draws the kept icon instead).
 fn next_batch(state: &mut State) -> Vec<Job> {
-    let mut jobs = Vec::new();
+    let mut jobs: Vec<Job> = Vec::new();
+    let taken = |jobs: &[Job], id: &str| jobs.iter().any(|job| job.id == id);
     while jobs.len() < BATCH {
         if let Some(id) = state.urgent.pop_front() {
-            if state.session.get(&id) == Some(&Session::Wanted) {
+            if state.session.get(&id) == Some(&Session::Wanted) && !taken(&jobs, &id) {
                 jobs.push(Job { id, urgent: true });
             }
             continue;
@@ -764,11 +1109,12 @@ fn next_batch(state: &mut State) -> Vec<Job> {
         let Some(id) = state.background.pop_front() else {
             break;
         };
+        // A wanted icon is extracted for its row, ahead of this.
         let due = matches!(
             state.session.get(&id),
-            Some(Session::Queued | Session::Kept | Session::Wanted)
+            Some(Session::Queued | Session::Kept)
         );
-        if due && state.listed.contains(&id) {
+        if due && state.listed.contains(&id) && !taken(&jobs, &id) {
             jobs.push(Job { id, urgent: false });
         }
     }
@@ -814,7 +1160,7 @@ mod tests {
         assert!(covers_enough(256, 256, &wide));
         // Faint pixels are not content.
         let mut faint = padded(256, 32);
-        for pixel in faint.chunks_exact_mut(4) {
+        for pixel in faint.as_chunks_mut::<4>().0 {
             if pixel[3] == 0 {
                 pixel[3] = 10;
             }
@@ -822,6 +1168,240 @@ mod tests {
         assert!(!covers_enough(256, 256, &faint));
         // Too few bytes for the size given.
         assert!(!covers_enough(256, 256, &[0; 16]));
+    }
+
+    /// The box of `rgba`'s visible content, as left, top, width, height.
+    fn visible(side: usize, rgba: &[u8]) -> (usize, usize, usize, usize) {
+        let content = content_box(side, side, rgba).expect("something visible");
+        (content.left, content.top, content.width(), content.height())
+    }
+
+    #[test]
+    fn a_small_picture_padded_into_a_large_canvas_is_cropped_to_fill_its_place() {
+        // A 32-pixel picture in the middle of 256 pixels: scaled up to fill
+        // the square but for the small margin (1/32 of 32, a pixel, each
+        // side, about 8 pixels once scaled, softened by the scaling).
+        let filled = fill_its_place(256, 256, &padded(256, 32), 256).expect("cropped");
+        assert_eq!(filled.len(), 256 * 256 * 4);
+        let (left, top, width, height) = visible(256, &filled);
+        assert!((2..=10).contains(&left), "left {left}");
+        assert!((2..=10).contains(&top), "top {top}");
+        assert!((236..=252).contains(&width), "width {width}");
+        assert!((236..=252).contains(&height), "height {height}");
+        // Its colour is kept in the middle, edges never bleeding black in.
+        let middle = (128 * 256 + 128) * 4;
+        assert_eq!(&filled[middle..middle + 4], &[200, 100, 50, 255]);
+        let edge = (128 * 256 + left) * 4;
+        assert_eq!(&filled[edge..edge + 3], &[200, 100, 50]);
+
+        // A picture in a corner, touching the canvas's edges, is centred
+        // (the square passing the edges is transparent there).
+        let mut corner = vec![0u8; 256 * 256 * 4];
+        for y in 0..40 {
+            for x in 0..40 {
+                let at = (y * 256 + x) * 4;
+                corner[at..at + 4].copy_from_slice(&[0, 0, 0, 255]);
+            }
+        }
+        let filled = fill_its_place(256, 256, &corner, 256).expect("cropped");
+        let (left, top, width, height) = visible(256, &filled);
+        assert!(left.abs_diff(256 - left - width) <= 1, "{left} {width}");
+        assert!(top.abs_diff(256 - top - height) <= 1, "{top} {height}");
+        assert!(width >= 236, "width {width}");
+
+        // A wide picture keeps its proportions, centred in a square.
+        let mut wide = vec![0u8; 256 * 256 * 4];
+        for y in 120..136 {
+            for x in 64..192 {
+                wide[(y * 256 + x) * 4 + 3] = 255;
+            }
+        }
+        let filled = fill_its_place(256, 256, &wide, 256).expect("cropped");
+        let (_, _, width, height) = visible(256, &filled);
+        assert!(
+            width > 220 && (28..=36).contains(&height),
+            "{width}×{height}"
+        );
+
+        // A small canvas with a smaller picture is cropped too, and scaled
+        // to the size asked.
+        let filled = fill_its_place(32, 32, &padded(32, 16), 256).expect("cropped");
+        let (_, _, width, _) = visible(256, &filled);
+        assert!(width >= 240, "width {width}");
+
+        // A large picture is scaled down to the size asked.
+        let filled = fill_its_place(512, 512, &padded(512, 300), 256).expect("cropped");
+        let (_, _, width, _) = visible(256, &filled);
+        assert!((236..=256).contains(&width), "width {width}");
+    }
+
+    #[test]
+    fn an_icon_filling_its_canvas_or_showing_nothing_is_kept_as_it_is() {
+        assert_eq!(fill_its_place(256, 256, &padded(256, 256), 256), None);
+        assert_eq!(fill_its_place(256, 256, &padded(256, 240), 256), None);
+        // macOS's grid: content about four fifths of the canvas.
+        assert_eq!(fill_its_place(512, 512, &padded(512, 412), 256), None);
+        assert_eq!(fill_its_place(32, 32, &padded(32, 28), 256), None);
+        // A wide logo spanning the canvas's width.
+        let mut wide = vec![0u8; 256 * 256 * 4];
+        for x in 0..256 {
+            wide[(128 * 256 + x) * 4 + 3] = 255;
+        }
+        assert_eq!(fill_its_place(256, 256, &wide, 256), None);
+        // Nothing visible, or too few bytes.
+        assert_eq!(fill_its_place(256, 256, &padded(256, 0), 256), None);
+        assert_eq!(fill_its_place(256, 256, &[0; 16], 256), None);
+    }
+
+    #[test]
+    fn a_kept_png_is_cropped_and_one_filling_its_canvas_is_left_alone() {
+        let small = crate::icons::encode_png(256, 256, &padded(256, 48)).unwrap();
+        let filled = filled_png(&small).expect("cropped");
+        let (width, height, rgba) = crate::icons::decode_png(&filled).unwrap();
+        assert_eq!((width, height), (ICON_SIZE, ICON_SIZE));
+        assert!(covers_enough(width, height, &rgba));
+        let full = crate::icons::encode_png(256, 256, &padded(256, 256)).unwrap();
+        assert_eq!(filled_png(&full), None);
+        // The shell's framed thumbnail too.
+        let thumbnail = framed(256, 32, &SHELL_FRAME, [0; 4]);
+        let thumbnail = crate::icons::encode_png(256, 256, &thumbnail).unwrap();
+        let filled = filled_png(&thumbnail).expect("cropped");
+        let (width, height, rgba) = crate::icons::decode_png(&filled).unwrap();
+        assert!(covers_enough(width, height, &rgba));
+    }
+
+    /// The rings of the frame Windows draws around a program's thumbnail
+    /// when it ships only a small icon (read from ame.exe's): a soft shadow
+    /// two pixels wide, then a fading light line three pixels wide.
+    const SHELL_FRAME: [[u8; 4]; 5] = [
+        [0, 0, 0, 38],
+        [0, 0, 0, 38],
+        [255, 255, 255, 77],
+        [255, 255, 255, 51],
+        [255, 255, 255, 26],
+    ];
+
+    /// The picture's colour in [`framed`].
+    const PICTURE: [u8; 4] = [200, 100, 50, 255];
+
+    /// A `size` × `size` thumbnail: `rings` at its edges, its first colour
+    /// also rounding the corners further in (eight pixels each way), around
+    /// `fill`, with an opaque square of `content` pixels of [`PICTURE`] in
+    /// the middle.
+    fn framed(size: usize, content: usize, rings: &[[u8; 4]], fill: [u8; 4]) -> Vec<u8> {
+        let mut rgba = fill.repeat(size * size);
+        let start = (size - content) / 2;
+        for y in 0..size {
+            for x in 0..size {
+                let (across, down) = (x.min(size - 1 - x), y.min(size - 1 - y));
+                let colour = if across < 8 && down < 8 {
+                    Some(rings[0])
+                } else if (start..start + content).contains(&x)
+                    && (start..start + content).contains(&y)
+                {
+                    Some(PICTURE)
+                } else {
+                    rings.get(across.min(down)).copied()
+                };
+                if let Some(colour) = colour {
+                    let at = (y * size + x) * 4;
+                    rgba[at..at + 4].copy_from_slice(&colour);
+                }
+            }
+        }
+        rgba
+    }
+
+    #[test]
+    fn a_framed_thumbnail_s_content_is_what_its_frame_holds() {
+        // Windows' thumbnail: transparent within its frame, whose rings
+        // are all visible, so the visible pixels span the whole canvas.
+        let thumbnail = framed(256, 32, &SHELL_FRAME, [0; 4]);
+        assert_eq!(
+            frame(256, 256, &thumbnail),
+            Some(Frame {
+                inset: 5,
+                corner: 16,
+                fill: [0; 4]
+            })
+        );
+        assert_eq!(visible(256, &thumbnail), (112, 112, 32, 32));
+        assert!(!covers_enough(256, 256, &thumbnail));
+        // As it looks over white: an opaque light fill and a thin grey line.
+        let opaque = framed(256, 32, &[[200, 200, 200, 255]], [255; 4]);
+        assert_eq!(visible(256, &opaque), (112, 112, 32, 32));
+        assert!(!covers_enough(256, 256, &opaque));
+        // A larger picture in a frame covers enough.
+        assert!(covers_enough(
+            256,
+            256,
+            &framed(256, 160, &SHELL_FRAME, [0; 4])
+        ));
+    }
+
+    #[test]
+    fn a_framed_thumbnail_is_cropped_to_its_picture_without_the_frame() {
+        let filled =
+            fill_its_place(256, 256, &framed(256, 32, &SHELL_FRAME, [0; 4]), 256).expect("cropped");
+        let (left, top, width, height) = visible(256, &filled);
+        assert!((2..=10).contains(&left), "left {left}");
+        assert!((2..=10).contains(&top), "top {top}");
+        assert!((236..=252).contains(&width), "width {width}");
+        assert!((236..=252).contains(&height), "height {height}");
+        let middle = (128 * 256 + 128) * 4;
+        assert_eq!(&filled[middle..middle + 4], &PICTURE);
+        // Its corners are transparent: no frame was carried in.
+        assert_eq!(&filled[..4], &[0; 4]);
+
+        // Over an opaque light fill, the margin is that fill and no line
+        // of the frame is left.
+        let opaque = framed(256, 32, &[[200, 200, 200, 255]], [255; 4]);
+        let filled = fill_its_place(256, 256, &opaque, 256).expect("cropped");
+        assert!(
+            filled[..256 * 4]
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .all(|pixel| *pixel == [255; 4]),
+            "the top row is the fill"
+        );
+        assert_eq!(&filled[middle..middle + 4], &PICTURE);
+
+        // A picture filling three quarters of its frame is kept.
+        assert_eq!(
+            fill_its_place(256, 256, &framed(256, 220, &SHELL_FRAME, [0; 4]), 256),
+            None
+        );
+    }
+
+    #[test]
+    fn a_plate_filling_its_canvas_is_not_taken_for_a_frame() {
+        // A coloured plate edge to edge, a small glyph on it: kept.
+        let mut plate = [40u8, 90, 200, 255].repeat(256 * 256);
+        for y in 112..144 {
+            for x in 112..144 {
+                let at = (y * 256 + x) * 4;
+                plate[at..at + 4].copy_from_slice(&[255; 4]);
+            }
+        }
+        assert_eq!(frame(256, 256, &plate), None);
+        assert!(covers_enough(256, 256, &plate));
+        assert_eq!(fill_its_place(256, 256, &plate, 256), None);
+        // A white plate with no line at its edge: kept.
+        let white = framed(256, 32, &[[255; 4]], [255; 4]);
+        assert_eq!(frame(256, 256, &white), None);
+        assert_eq!(fill_its_place(256, 256, &white, 256), None);
+        // Nor a white plate inside a transparent margin.
+        let inset = framed(256, 32, &[[0; 4]; 8], [255; 4]);
+        assert_eq!(frame(256, 256, &inset), None);
+        // A dark fill inside a line is not the shell's thumbnail: kept.
+        let dark = framed(256, 32, &[[200, 200, 200, 255]], [30, 30, 30, 255]);
+        assert_eq!(frame(256, 256, &dark), None);
+        assert!(covers_enough(256, 256, &dark));
+        // A small picture padded with transparency alone has no frame.
+        assert_eq!(frame(256, 256, &padded(256, 32)), None);
+        // Nor has a small canvas.
+        assert_eq!(frame(48, 48, &framed(48, 8, &SHELL_FRAME, [0; 4])), None);
     }
 
     #[test]

@@ -33,6 +33,7 @@
 //! own size again once it leaves.
 
 use std::cell::Cell;
+use std::future::Future;
 use std::rc::Rc;
 use std::time::Duration;
 
@@ -40,8 +41,8 @@ use gpui::{
     AnyElement, App, ClickEvent, Context, Div, Entity, EntityInputHandler, Focusable, Role,
     SharedString, Task, Window, div, prelude::*, px,
 };
-use pane_core::file_index::IndexState;
-use pane_core::search_files::{FileDetails, FileType, SearchFilesView, size_label};
+use pane_core::file_index::{IndexState, size_words};
+use pane_core::search_files::{FileDetails, FileType, SearchFilesView};
 use pane_core::{LauncherView, Screen, Status};
 
 use crate::app::{KEY_CONTEXT, LauncherWindow};
@@ -53,7 +54,7 @@ use crate::ui::select::{Choice, Model, Select};
 use crate::ui::shell::{self, SectionLabel};
 use crate::ui::split_view::{self, FoundFile, InfoRow};
 use crate::ui::virtual_list::{self, ListChild, VirtualList};
-use crate::{Back, ReturnToRoot, SelectNextPage, SelectPreviousPage};
+use crate::{Back, ReturnToRoot};
 
 /// The search field's placeholder, Raycast's.
 pub(crate) const PLACEHOLDER: &str = "Search files…";
@@ -109,7 +110,7 @@ pub(crate) fn metadata(details: &FileDetails, now: u64) -> Vec<(&'static str, St
         ("Type", details.kind.clone()),
     ];
     if let Some(size) = details.size {
-        rows.push(("Size", size_label(size)));
+        rows.push(("Size", size_words(size)));
     }
     if let Some(created) = details.created {
         rows.push(("Created", when(created, now)));
@@ -128,8 +129,8 @@ pub(crate) struct SearchFiles {
     /// The type dropdown at the search field's right.
     types: Entity<Select>,
     /// The list, drawn virtually (#165): only the rows in view are laid
-    /// out and painted.
-    list: VirtualList,
+    /// out and painted. Page Down and Up move by its page.
+    pub(crate) list: VirtualList,
     /// What the list's children are drawn from, as the last frame read it.
     frame: Option<Rc<FilesFrame>>,
     /// The row the list last kept in view.
@@ -271,7 +272,7 @@ impl LauncherWindow {
         if self.launcher.search_files_view().is_some() {
             if self.files.is_none() {
                 self.files = Some(SearchFiles::new(window, cx));
-                self.fit_split(split_view::SPLIT_CLIENT, window, cx);
+                self.fit_client(split_view::SPLIT_CLIENT, window, cx);
             }
             return;
         }
@@ -280,24 +281,8 @@ impl LauncherWindow {
             Screen::Form(_) | Screen::CustomView(_)
         );
         if !kept && self.files.take().is_some() && self.clipboard.is_none() {
-            self.fit_split(shell::LAUNCHER_CLIENT, window, cx);
+            self.fit_client(shell::LAUNCHER_CLIENT, window, cx);
         }
-    }
-
-    /// Resizes the window's client to `size` and places it as the
-    /// launcher's placement does, unless it is that size already.
-    fn fit_split(
-        &mut self,
-        (width, height): (f32, f32),
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let size = gpui::size(px(width), px(height));
-        if window.viewport_size() == size {
-            return;
-        }
-        window.resize(size);
-        self.place_sized(size, window, cx);
     }
 
     /// The type dropdown chose `kind`: the list is asked again for it.
@@ -307,27 +292,23 @@ impl LauncherWindow {
             files.revealed = None;
         }
         cx.notify();
-        cx.spawn(async move |this, cx| {
-            pending.await;
-            this.update(cx, |_, cx| cx.notify()).ok();
-        })
-        .detach();
+        Self::redraw_after(pending, cx);
     }
 
     /// The index grew while it is built: the first page is listed again.
     fn refresh_file_list(&mut self, cx: &mut Context<Self>) {
-        let pending = self.launcher.refresh_files();
-        cx.spawn(async move |this, cx| {
-            pending.await;
-            this.update(cx, |_, cx| cx.notify()).ok();
-        })
-        .detach();
+        Self::redraw_after(self.launcher.refresh_files(), cx);
     }
 
     /// The list drew a row near its end: the next page loads, if there is
     /// one and none is loading.
     fn load_more_files(&mut self, cx: &mut Context<Self>) {
-        let pending = self.launcher.load_more_files();
+        Self::redraw_after(self.launcher.load_more_files(), cx);
+    }
+
+    /// Awaits `pending`, a page of the index being listed, in the
+    /// background, and draws the window again once it is.
+    fn redraw_after(pending: impl Future<Output = ()> + 'static, cx: &mut Context<Self>) {
         cx.spawn(async move |this, cx| {
             pending.await;
             this.update(cx, |_, cx| cx.notify()).ok();
@@ -350,27 +331,6 @@ impl LauncherWindow {
             return;
         }
         self.back(&Back, window, cx);
-    }
-
-    /// Page Down in Search Files: the selection moves by the rows in view.
-    fn files_next_page(&mut self, _: &SelectNextPage, _: &mut Window, cx: &mut Context<Self>) {
-        let page = self.files.as_ref().map_or(1, |files| files.list.page());
-        self.launcher
-            .move_selection(isize::try_from(page).unwrap_or(isize::MAX));
-        cx.notify();
-    }
-
-    /// Page Up in Search Files: the selection moves back by a page.
-    fn files_previous_page(
-        &mut self,
-        _: &SelectPreviousPage,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let page = self.files.as_ref().map_or(1, |files| files.list.page());
-        self.launcher
-            .move_selection(-isize::try_from(page).unwrap_or(isize::MAX));
-        cx.notify();
     }
 
     /// The split view, when it shows (see [`LauncherWindow::search_files_shown`]),
@@ -700,8 +660,10 @@ impl LauncherWindow {
             .key_context(KEY_CONTEXT)
             .on_action(cx.listener(Self::select_next))
             .on_action(cx.listener(Self::select_previous))
-            .on_action(cx.listener(Self::files_next_page))
-            .on_action(cx.listener(Self::files_previous_page))
+            // Page Down and Up move by the rows of Search Files' list in
+            // view (`LauncherWindow::paged_list`).
+            .on_action(cx.listener(Self::select_next_page))
+            .on_action(cx.listener(Self::select_previous_page))
             .on_action(cx.listener(Self::confirm))
             .on_action(cx.listener(Self::files_back))
             .on_action(cx.listener(Self::return_to_root))

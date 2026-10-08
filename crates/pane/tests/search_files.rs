@@ -19,7 +19,7 @@ use futures::executor::block_on;
 use gpui::{Entity, Modifiers, TestAppContext, VisualTestContext, prelude::*};
 use pane::LauncherWindow;
 use pane_core::defaults::ArtifactSource;
-use pane_core::file_index::{IndexerConfig, WalkOptions};
+use pane_core::file_index::{Category, IndexerConfig, WalkOptions};
 use pane_core::search_files::FileType;
 use pane_core::{DefaultExtension, Launcher, LinkOpener, Runtime, Screen, Status};
 use tempfile::TempDir;
@@ -318,7 +318,7 @@ fn the_type_dropdown_filters_by_kind(cx: &mut TestAppContext) {
     settle(&window, cx);
     assert_eq!(
         cx.read_entity(&window, |window, _| window.search_files_type()),
-        Some(FileType::Image)
+        Some(FileType::Of(Category::Images))
     );
     until_drawn(&window, cx, "files-row-plan.txt", false);
     assert!(cx.debug_bounds("files-row-shot.png").is_some());

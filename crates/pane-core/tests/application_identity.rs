@@ -15,6 +15,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use futures::executor::block_on;
+use pane_core::applications::icons::{Extracted, IconExtractor};
 use pane_core::applications::{Application, Applications, Cached, Discovery, Key, Source};
 use pane_core::{Launcher, PinTarget, ResultAction, Runtime, SlotChange, Status};
 use tempfile::TempDir;
@@ -99,6 +100,17 @@ fn discord(version: &str) -> String {
     format!(r"C:\Users\Ann\AppData\Local\Discord\{version}\Discord.exe")
 }
 
+/// No application has an icon: these applications are made up, and the
+/// system's extraction (the shell, on Windows) is not asked about them. A
+/// row shows its placeholder; icons are `application_icons.rs`'s.
+struct NoIcons;
+
+impl IconExtractor for NoIcons {
+    fn extract(&self, source: &str) -> Result<Extracted, String> {
+        Err(format!("no icon for {source} in these tests"))
+    }
+}
+
 /// Pane's data location and compiled code cache, kept across restarts.
 struct Dirs {
     data: TempDir,
@@ -121,6 +133,10 @@ impl Dirs {
         runtime.set_applications(applications);
         Launcher::with_packages(Ok(runtime), vec![], self.data.path().join("extensions"))
             .with_quick_slots(self.data.path())
+            .with_application_icons(
+                self.cache.path().join("application-icons"),
+                Arc::new(NoIcons),
+            )
     }
 
     /// A launcher, started afresh, whose host lists `system`'s
@@ -339,7 +355,7 @@ fn pins_made_before_identities_resolve_keep_their_slots_and_are_rewritten() {
 
     // Invoked, the carried pin opens the application's preferred source.
     block_on(launcher.activate_quick_slot(1));
-    assert_eq!(system.opened(), [mine.path.clone()]);
+    assert_eq!(system.opened(), std::slice::from_ref(&mine.path));
     assert_eq!(shown(&launcher), Status::Result("Opened Mail".into()));
 }
 

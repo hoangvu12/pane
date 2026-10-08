@@ -441,6 +441,10 @@ fn copy_package(fixture: &Fixture, folder: &Path) {
     .unwrap();
     let manifest = fs::read_to_string(package.join("pane.json")).unwrap();
     let manifest: Value = serde_json::from_str(&manifest).unwrap();
+    // The package icon its manifest names goes with it (#163).
+    if let Some(icon) = manifest["icon"].as_str() {
+        fs::copy(package.join(icon), folder.join(icon)).unwrap();
+    }
     // The packages declare the systems with an adapter (#35 Windows,
     // #38 Linux, #37 macOS); nothing is rewritten here.
     assert_eq!(

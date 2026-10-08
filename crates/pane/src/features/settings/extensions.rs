@@ -19,23 +19,26 @@
 //! Confirmations, Show Source Folder, Uninstall, and what else the
 //! extension list holds for it (Retry, why it is paused, development, the
 //! network and the programs it used); its automatic updates' switch; its
-//! preferences in a card (#143's controls); and its Commands, each with its
+//! preferences in a card (#143's controls, a dropdown drawn as the shared
+//! searchable select); and its Commands, each with its
 //! icon, its title, its alias field, its hotkey recorder, its fallback
 //! switch where it takes a query, and its own enable switch. A command the
 //! Shortcuts catalog does not list (a root provider, #164) shows only its
 //! switch.
 //!
 //! **The operations are the launcher's.** The page manages nothing itself:
-//! the switch and the menu's operations are the launcher's own extension
-//! list rows, entered and activated exactly as its Enter does
-//! ([`pane_core::Launcher::manage_extensions`],
-//! [`pane_core::Launcher::select`],
-//! [`pane_core::Launcher::activate_selected`]). The confirmations they ask
-//! for — disabling or uninstalling what other extensions require, the
-//! saved-data choice, deleting retained data — and the previews an install
-//! or an update check shows are the launcher's own screens, drawn here in
-//! place of the page from the launcher's live view, and answered here; so
-//! every operation runs through the same code with the same records. A
+//! the switch and the menu's operations are the launcher's typed
+//! operations ([`pane_core::Launcher::extension_operations`]: what each
+//! is, whose, and whether it is on), each run through
+//! [`pane_core::Launcher::run_extension_operation`], which leaves the
+//! launcher on the screen the user had. The confirmations they ask for —
+//! disabling or uninstalling what other extensions require, the saved-data
+//! choice, deleting retained data — and the previews an install or an
+//! update check shows are the launcher's own screens, drawn here in place
+//! of the page from the launcher's live view, and answered here
+//! ([`pane_core::Launcher::select`],
+//! [`pane_core::Launcher::activate_selected`]); so every operation runs
+//! through the same code with the same records. A
 //! command's alias and hotkey are set as the Shortcuts page sets them
 //! ([`pane_core::Launcher::set_alias`],
 //! [`pane_core::Launcher::set_hotkey`]), and its switch through
@@ -58,9 +61,11 @@
 //! including a failed one, the page shows what the launcher holds, and
 //! what the operation came to.
 
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
+use std::rc::Rc;
 
 use gpui::{
     AnyElement, App, Context, Div, ElementId, Entity, FocusHandle, Focusable, Hsla, MouseDownEvent,
@@ -69,8 +74,9 @@ use gpui::{
 };
 use gpui_elements::editable_text::{EditableTextState, StringStorage, TextChanged, text_input};
 use pane_core::{
-    ExtensionMark, InstalledPackage, Launcher, LauncherView, PackageIdentity, PackagePreferences,
-    PathKind, PreferenceField, PreferenceKind, Screen, ShortcutCommand, Status,
+    ExtensionMark, ExtensionOperation, InstalledPackage, Launcher, LauncherView, OperationKind,
+    PackageIdentity, PackagePreferences, PathKind, PreferenceField, PreferenceKind, Screen,
+    ShortcutCommand, Status,
 };
 
 use super::{Page, SettingsWindow, search};
@@ -79,7 +85,9 @@ use crate::ui::controls;
 use crate::ui::extension_icon::{RowIcon, row_icon_at};
 use crate::ui::icon::{Glyph, TileSize};
 use crate::ui::material::popover_shadows;
+use crate::ui::select::{Choice, Model, Select};
 use crate::ui::theme::{Theme, pressed};
+use crate::ui::virtual_list::PageWindow;
 
 /// What the group's page is, in one line: its sidebar entry's description
 /// in the search.
@@ -162,14 +170,16 @@ impl InstallSource {
     }
 }
 
-/// The Extensions pages' own state: the text fields of the preferences
-/// (#143), each created when it first draws and kept, so what the user
-/// types survives redraws; the menus; the install field; and what the
-/// last operation came to.
+/// The Extensions pages' own state: the text fields and the dropdowns'
+/// selects of the preferences (#143), each created when it first draws and
+/// kept, so what the user types or opens survives redraws; the menus; the
+/// install field; and what the last operation came to.
 #[derive(Default)]
 pub(crate) struct State {
     /// Each text field by [`field_key`], with what saves its changes.
     fields: HashMap<String, (Entity<EditableTextState>, Subscription)>,
+    /// Each dropdown preference's select by [`field_key`].
+    selects: HashMap<String, PreferenceSelect>,
     /// Why the last change of a preference could not be saved, if it
     /// could not; shown as the page's status.
     problem: Option<String>,
@@ -184,6 +194,12 @@ pub(crate) struct State {
     /// and the launcher left the flow (an install lands on root search):
     /// the launcher's status then.
     outcome: Option<Status>,
+    /// The sidebar's entries of a long Extensions group, drawn only near
+    /// the sidebar's view (#165).
+    sidebar_window: PageWindow,
+    /// An extension's long Commands section, drawn only near the page's
+    /// view (#165).
+    commands_window: PageWindow,
 }
 
 /// The field the group's page shows for an npm package or a Git
@@ -197,6 +213,34 @@ struct Installing {
 /// extension whose identity key is `package`.
 fn field_key(package: &str, key: &str) -> String {
     format!("{package}\u{1f}{key}")
+}
+
+/// A dropdown preference's select: the shared searchable select
+/// ([`crate::ui::select`]) the Settings pages' own choices use, a trigger
+/// showing the value in force that opens its options with a search field.
+struct PreferenceSelect {
+    select: Entity<Select>,
+    /// The preference's title and description it was made with: a reload
+    /// changing them makes it again.
+    labels: SelectLabels,
+    /// The options and the value in force as the page last drew them,
+    /// which the select's model reads live.
+    live: Rc<RefCell<SelectLive>>,
+}
+
+/// A dropdown preference's title and description, its select's accessible
+/// name and description.
+#[derive(Clone, PartialEq, Eq)]
+struct SelectLabels {
+    title: String,
+    description: String,
+}
+
+/// What a dropdown preference's select offers and marks now.
+#[derive(Default)]
+struct SelectLive {
+    choices: Vec<Choice>,
+    committed: Option<SharedString>,
 }
 
 /// A preference's text field as the page draws it: its editing state, its
@@ -268,23 +312,15 @@ fn entries(launcher: &Launcher, _cx: &App) -> Vec<search::Entry> {
     }
     entries.extend(
         launcher
-            .extension_list()
-            .rows
+            .extension_operations()
             .into_iter()
-            .filter_map(|row| {
-                // An extension's own row is its entry above.
-                if packages
-                    .iter()
-                    .any(|package| package.identity.key() == row.id)
-                {
-                    return None;
-                }
-                Some(search::Entry {
-                    control: Some(row.id),
-                    title: row.title,
-                    group: None,
-                    unavailable: row.unavailable.as_ref().map(|why| why.reason().to_owned()),
-                })
+            // An extension's own switch is its entry above.
+            .filter(|operation| operation.kind != OperationKind::Enable)
+            .map(|operation| search::Entry {
+                control: Some(operation.id),
+                title: operation.title,
+                group: None,
+                unavailable: operation.unavailable,
             }),
     );
     if launcher.installs_packages() {
@@ -299,18 +335,43 @@ fn entries(launcher: &Launcher, _cx: &App) -> Vec<search::Entry> {
 }
 
 /// The identity key of the installed extension a target names, if it names
-/// one: its own key ("Configure Extension…", the search's entry), or a
-/// control on its page — a preference, a command's preferences, a command,
-/// one of its operations (`reload:<key>` and the like). The longest key
-/// the target holds wins, so one extension's key inside another's cannot
-/// mislead it.
+/// one: its own key ("Configure Extension…", the search's entry), one of
+/// its operations (whose owner the launcher says), or a control on its
+/// page — a preference, a command's preferences, a command — by the
+/// anchors this page makes.
 fn extension_of(launcher: &Launcher, target: &str) -> Option<String> {
-    launcher
+    let installed: Vec<String> = launcher
         .packages()
         .into_iter()
         .map(|package| package.identity.key())
-        .filter(|key| target.contains(key.as_str()))
-        .max_by_key(String::len)
+        .collect();
+    if installed.iter().any(|key| key == target) {
+        return Some(target.to_owned());
+    }
+    let owner = match launcher
+        .extension_operations()
+        .into_iter()
+        .find(|operation| operation.id == target)
+    {
+        Some(operation) => operation.owner.map(|owner| owner.key()),
+        None => anchor_owner(target),
+    };
+    owner.filter(|key| installed.contains(key))
+}
+
+/// The identity key of the extension whose page holds the anchor `target`
+/// ([`preference_anchor`], [`command_preferences_anchor`],
+/// [`command_anchor`]).
+fn anchor_owner(target: &str) -> Option<String> {
+    if let Some(rest) = target.strip_prefix("preference:") {
+        return rest.split_once('\u{1f}').map(|(key, _)| key.to_owned());
+    }
+    let command = target
+        .strip_prefix("preferences:")
+        .or_else(|| target.strip_prefix("command:"))?;
+    // A command's id is its package's key, `#` and its id in `pane.json`,
+    // which holds no `#`.
+    command.rsplit_once('#').map(|(key, _)| key.to_owned())
 }
 
 /// A jump to `target` — the sidebar's search, [`super::open_at`] — on the
@@ -335,18 +396,15 @@ fn focus(
     false
 }
 
-/// Whether the launcher's screen is held by the extension-management
-/// flow: the list itself, or one of the screens its operations open — a
-/// confirmation, a package's preview, pause, build, network, program or
-/// runtime details. While it is, the pages draw the launcher's live view,
-/// so its confirmations show here; otherwise they read the launcher
-/// without entering the flow, and the launcher's screen stays wherever the
-/// user left it.
+/// Whether the launcher's screen is one an extension's operation opened:
+/// a confirmation, a package's preview, pause, build, network, program or
+/// runtime details. While it is, the pages draw it from the launcher's
+/// live view, so its confirmations show and are answered here; otherwise
+/// they read the launcher, whose screen stays wherever the user left it.
 pub(crate) fn in_extension_flow(screen: &Screen) -> bool {
     matches!(
         screen,
-        Screen::Extensions { .. }
-            | Screen::Confirm { .. }
+        Screen::Confirm { .. }
             | Screen::Package { .. }
             | Screen::PauseDetails { .. }
             | Screen::BuildDetails { .. }
@@ -382,134 +440,51 @@ fn status_tone(status: &Status, theme: &Theme) -> Option<(SharedString, Hsla)> {
     }
 }
 
-/// One operation the extension list holds for an extension, as its page
-/// offers it: the row's id, the menu's label and the row's own title (its
-/// test selector), with why it cannot be used here, if it cannot.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct Operation {
-    pub(crate) id: String,
-    pub(crate) label: String,
-    pub(crate) title: String,
-    pub(crate) reason: Option<String>,
-}
-
-/// A command's fallback switch on its extension's page: the extension
-/// list's row that turns it on or off, and whether it is on.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct FallbackRow {
-    /// The command's id.
-    pub(crate) command: String,
-    /// The extension list's row for it.
-    pub(crate) row: String,
-    pub(crate) on: bool,
-}
-
-/// The extension list's rows for the extension whose key is `key`, sorted
-/// out for its page.
-pub(crate) struct PageRows {
-    /// Its operations, as its Actions menu offers them.
-    pub(crate) operations: Vec<Operation>,
-    /// Its automatic updates' row and whether they are on, where it has one.
-    pub(crate) auto_update: Option<(String, bool)>,
-    /// The rows that forget choices recorded for a command it no longer
-    /// has.
-    pub(crate) forget: Vec<Operation>,
+/// The operations of one installed extension, sorted out for its page
+/// ([`page_operations`]).
+pub(crate) struct PageOperations {
+    /// Its switch.
+    pub(crate) enable: Option<ExtensionOperation>,
+    /// Its automatic updates' switch, where it has one.
+    pub(crate) auto_update: Option<ExtensionOperation>,
+    /// What its Actions menu offers, in the launcher's order.
+    pub(crate) menu: Vec<ExtensionOperation>,
+    /// What forgets the choices recorded for a command it no longer has.
+    pub(crate) forget: Vec<ExtensionOperation>,
     /// Its commands' fallback switches, for the commands that take a query
     /// or are fallbacks.
-    pub(crate) fallbacks: Vec<FallbackRow>,
+    pub(crate) fallbacks: Vec<ExtensionOperation>,
 }
 
-/// The extension list's rows for the extension whose key is `key`, titled
-/// `title`, sorted out for its page (see [`PageRows`]). Its own row (its
-/// switch) and the rows that set a command's alias or hotkey are left out:
-/// the page's switch and its Commands section do those.
-pub(crate) fn operations_of(rows: &[pane_core::Row], key: &str, title: &str) -> PageRows {
-    let mut operations = Vec::new();
-    let mut auto_update = None;
-    let mut forget = Vec::new();
-    let mut fallbacks = Vec::new();
-    let on = |row: &pane_core::Row| {
-        row.subtitle
-            .as_deref()
-            .is_some_and(|subtitle| subtitle.starts_with("On"))
+/// The operations of the installed extension with `identity` among
+/// `operations`, sorted out for its page by what each is (see
+/// [`PageOperations`]); its commands' aliases and hotkeys are its Commands
+/// section's, set as the Shortcuts page sets them.
+pub(crate) fn page_operations(
+    operations: Vec<ExtensionOperation>,
+    identity: &PackageIdentity,
+) -> PageOperations {
+    let mut page = PageOperations {
+        enable: None,
+        auto_update: None,
+        menu: Vec::new(),
+        forget: Vec::new(),
+        fallbacks: Vec::new(),
     };
-    for row in rows {
-        let Some((kind, owner)) = row.id.split_once(':') else {
-            continue;
-        };
-        let reason = row.unavailable.as_ref().map(|why| why.reason().to_owned());
-        if kind == "fallback-setting" {
-            if belongs(owner, key) {
-                fallbacks.push(FallbackRow {
-                    command: owner.to_owned(),
-                    row: row.id.clone(),
-                    on: on(row),
-                });
-            }
-            continue;
+    for operation in operations
+        .into_iter()
+        .filter(|operation| operation.owner.as_ref() == Some(identity))
+    {
+        match operation.kind {
+            OperationKind::Enable => page.enable = Some(operation),
+            OperationKind::AutomaticUpdates => page.auto_update = Some(operation),
+            OperationKind::Fallback => page.fallbacks.push(operation),
+            OperationKind::ForgetChoices => page.forget.push(operation),
+            OperationKind::Hotkey | OperationKind::Alias => {}
+            _ => page.menu.push(operation),
         }
-        if kind == "unlisted-setting" {
-            if belongs(owner, key) {
-                forget.push(Operation {
-                    id: row.id.clone(),
-                    label: row.title.clone(),
-                    title: row.title.clone(),
-                    reason,
-                });
-            }
-            continue;
-        }
-        if owner != key {
-            continue;
-        }
-        let label = match kind {
-            "hotkey" | "alias-setting" | "fallback-setting" => continue,
-            "updates" => {
-                auto_update = Some((row.id.clone(), on(row)));
-                continue;
-            }
-            "reload" => "Reload".to_owned(),
-            "retry" => "Retry".to_owned(),
-            "paused" => "Why Paused".to_owned(),
-            "clear-cache" => "Clear Cache".to_owned(),
-            "uninstall" => "Uninstall".to_owned(),
-            "network" => "Network Use".to_owned(),
-            "programs" => "Programs Run".to_owned(),
-            // Shown while the extension has answers remembered for
-            // "Don't ask again" (#146).
-            "reset-confirmations" => "Reset Confirmations".to_owned(),
-            // Pane's own Clipboard History (#166).
-            "clear-clipboard-history" => "Clear History".to_owned(),
-            // The title without the extension's name: "Develop", "Stop
-            // developing", "Why … did not build".
-            _ => row
-                .title
-                .replace(title, "")
-                .split_whitespace()
-                .collect::<Vec<_>>()
-                .join(" "),
-        };
-        operations.push(Operation {
-            id: row.id.clone(),
-            label,
-            title: row.title.clone(),
-            reason,
-        });
     }
-    PageRows {
-        operations,
-        auto_update,
-        forget,
-        fallbacks,
-    }
-}
-
-/// Whether the command id `command` (a package key, a separator and a
-/// manifest id) belongs to the package whose key is `key`.
-fn belongs(command: &str, key: &str) -> bool {
-    command
-        .strip_prefix(key)
-        .is_some_and(|rest| !rest.is_empty() && !rest.starts_with(|c: char| c.is_alphanumeric()))
+    page
 }
 
 /// The source of an installed extension, in words, as its page says it.
@@ -672,40 +647,60 @@ pub(super) fn sidebar_entries(
     theme: &Theme,
     cx: &mut Context<SettingsWindow>,
 ) -> Vec<AnyElement> {
-    this.launcher
-        .packages()
+    let packages = this.launcher.packages();
+    let listed = packages.len();
+    let entries = this.extensions.sidebar_window.clone();
+    packages
         .into_iter()
         .enumerate()
         .map(|(index, package)| {
             let key = package.identity.key();
-            let title = package.title();
             let selected = this.selected == group && this.extension.as_deref() == Some(&key);
-            let mark = this.launcher.extension_mark(&package.identity);
-            let icon = crate::features::icons::row_icon_of(&this.launcher, &key, theme);
-            let label = match &mark {
-                Some(mark) => format!("{title}, {}", mark.word()),
-                None => title.clone(),
-            };
-            let selector = format!("extension-entry-{title}");
-            sidebar_entry(
-                ("extension-entry", index),
-                &icon,
-                &title,
-                mark.as_ref(),
-                selected,
-                theme,
-            )
-            .debug_selector(move || selector)
-            .role(Role::ListBoxOption)
-            .aria_label(label)
-            .aria_selected(selected)
-            .when(selected, |row| row.aria_active_descendant())
-            .on_click(cx.listener(move |this, _: &gpui::ClickEvent, _, cx| {
-                this.show_extension(Some(key.clone()), cx);
-            }))
-            .into_any_element()
+            // A long group draws only the entries near the sidebar's view,
+            // and the selected one always (#165).
+            entries.row(listed, key.clone(), selected, &this.sidebar_scroll, || {
+                sidebar_entry_of(this, index, package, selected, theme, cx)
+            })
         })
         .collect()
+}
+
+/// The sidebar entry of the installed `package`, the `index`th, selected
+/// while its page shows.
+fn sidebar_entry_of(
+    this: &SettingsWindow,
+    index: usize,
+    package: InstalledPackage,
+    selected: bool,
+    theme: &Theme,
+    cx: &mut Context<SettingsWindow>,
+) -> AnyElement {
+    let key = package.identity.key();
+    let title = package.title();
+    let mark = this.launcher.extension_mark(&package.identity);
+    let icon = crate::features::icons::row_icon_of(&this.launcher, &key, theme);
+    let label = match &mark {
+        Some(mark) => format!("{title}, {}", mark.word()),
+        None => title.clone(),
+    };
+    let selector = format!("extension-entry-{title}");
+    sidebar_entry(
+        ("extension-entry", index),
+        &icon,
+        &title,
+        mark.as_ref(),
+        selected,
+        theme,
+    )
+    .debug_selector(move || selector)
+    .role(Role::ListBoxOption)
+    .aria_label(label)
+    .aria_selected(selected)
+    .when(selected, |row| row.aria_active_descendant())
+    .on_click(cx.listener(move |this, _: &gpui::ClickEvent, _, cx| {
+        this.show_extension(Some(key.clone()), cx);
+    }))
+    .into_any_element()
 }
 
 /// One extension's sidebar entry: the sidebar item's family (#97) — its
@@ -835,11 +830,14 @@ fn render(
         this.extensions.menu = false;
     }
     let flow = in_extension_flow(&live.screen);
-    // The flow's status while the launcher is in it; else what the last
-    // operation came to; else a preference that could not be saved.
+    // The flow's status while the launcher is in it; else, on a developed
+    // extension's page, why its last build failed, as the development
+    // thread reports it; else what the last operation came to; else a
+    // preference that could not be saved.
     let status = flow
         .then(|| status_tone(&live.status, &theme))
         .flatten()
+        .or_else(|| build_failure(this).map(|failure| (failure.into(), theme.danger)))
         .or_else(|| {
             this.extensions
                 .outcome
@@ -861,12 +859,12 @@ fn render(
             .aria_label(text)
             .into_any_element()
     });
-    let body = if flow && !matches!(live.screen, Screen::Extensions { .. }) {
+    let body = if flow {
         flow_screen(&live, &theme, cx)
     } else {
         match this.extension.clone() {
-            Some(key) => extension_page(this, &key, &live, flow, &theme, window, cx),
-            None => group_page(this, &live, flow, &theme, window, cx),
+            Some(key) => extension_page(this, &key, &theme, window, cx),
+            None => group_page(this, &theme, window, cx),
         }
     };
     let page = controls::page(&theme).children(status).children(body);
@@ -875,16 +873,6 @@ fn render(
         .debug_selector(|| "extensions".into())
         .child(page)
         .into_any_element()
-}
-
-/// The extension list's rows: live, where the launcher is on the list;
-/// else read without entering the flow.
-fn list_rows(this: &SettingsWindow, live: &LauncherView, flow: bool) -> Vec<pane_core::Row> {
-    if flow && matches!(live.screen, Screen::Extensions { .. }) {
-        live.rows.clone()
-    } else {
-        this.launcher.extension_list().rows
-    }
 }
 
 /// A flow screen in place of the page: its title over its lines of
@@ -930,7 +918,7 @@ fn flow_screen(
             // shows the reason, as the launcher's does.
             .when(reason.is_some(), |item| item.aria_disabled(true))
             .on_click(cx.listener(move |this, _: &gpui::ClickEvent, _, cx| {
-                activate(this, &id, cx);
+                answer(this, &id, cx);
             }))
             .into_any_element()
         })
@@ -994,14 +982,12 @@ fn list_entry(
 /// install sources, with the field an npm or Git install asks in.
 fn group_page(
     this: &mut SettingsWindow,
-    live: &LauncherView,
-    flow: bool,
     theme: &Theme,
     window: &mut Window,
     cx: &mut Context<SettingsWindow>,
 ) -> Vec<AnyElement> {
     let packages = this.launcher.packages();
-    let rows = list_rows(this, live, flow);
+    let operations = this.launcher.extension_operations();
     // The page's own anchor: the tests' and the reveal's.
     let mut content = vec![
         div()
@@ -1077,40 +1063,33 @@ fn group_page(
             .into_any_element(),
         );
     }
-    // The rows that belong to no extension: the runtime's, data kept for
-    // an uninstalled one; then the global automatic updates.
-    let keys: Vec<String> = packages
-        .iter()
-        .map(|package| package.identity.key())
-        .collect();
+    // The operations that belong to no installed extension: the
+    // runtime's, data kept for an uninstalled one; then every extension's
+    // automatic updates.
     let mut global = None;
     let mut others: Vec<AnyElement> = Vec::new();
-    for row in &rows {
-        if row.id == "updates" {
-            let on = row
-                .subtitle
-                .as_deref()
-                .is_some_and(|subtitle| subtitle.starts_with("On"));
-            global = Some((row.id.clone(), on));
+    for operation in operations {
+        let installed = operation
+            .owner
+            .as_ref()
+            .is_some_and(|owner| packages.iter().any(|package| package.identity == *owner));
+        if installed {
             continue;
         }
-        let owner = row.id.split_once(':').map_or("", |(_, owner)| owner);
-        if keys
-            .iter()
-            .any(|key| row.id == *key || owner == key || belongs(owner, key))
-        {
+        if operation.kind == OperationKind::AutomaticUpdates {
+            global = Some(operation);
             continue;
         }
-        let id = row.id.clone();
-        let reason = row.unavailable.as_ref().map(|why| why.reason().to_owned());
-        let icon: RowIcon = row_icon(&row.id).into();
-        let anchor = this.search_anchor(&row.id);
-        let selector = format!("extension-row-{}", row.title);
+        let reason = operation.unavailable.clone();
+        let icon: RowIcon = row_icon(&operation.id).into();
+        let anchor = this.search_anchor(&operation.id);
+        let selector = format!("extension-row-{}", operation.title);
+        let title = operation.title.clone();
         others.push(
             list_entry(
                 ("extension-other", others.len()),
-                Some((&icon, row.title.clone())),
-                &row.title,
+                Some((&icon, title.clone())),
+                &title,
                 reason.clone(),
                 theme,
             )
@@ -1118,7 +1097,7 @@ fn group_page(
             .when(reason.is_some(), |item| item.aria_disabled(true))
             .anchor_scroll(Some(anchor))
             .on_click(cx.listener(move |this, _: &gpui::ClickEvent, _, cx| {
-                activate(this, &id, cx);
+                run(this, &operation, cx);
             }))
             .into_any_element(),
         );
@@ -1128,18 +1107,18 @@ fn group_page(
             controls::section(None, controls::list_card(others, theme), theme).into_any_element(),
         );
     }
-    if let Some((id, on)) = global {
-        let anchor = this.search_anchor(&id);
+    if let Some(operation) = global {
+        let anchor = this.search_anchor(&operation.id);
         let switch = switch_row(
             "extension-updates".into(),
             "Update extensions automatically",
             "extension-row-Update extensions automatically",
-            on,
+            operation.on.unwrap_or(false),
             theme,
         )
         .anchor_scroll(Some(anchor))
         .on_click(cx.listener(move |this, _: &gpui::ClickEvent, _, cx| {
-            activate(this, &id, cx);
+            run(this, &operation, cx);
         }));
         content.push(
             controls::section(
@@ -1270,8 +1249,6 @@ fn switch_row(
 fn extension_page(
     this: &mut SettingsWindow,
     key: &str,
-    live: &LauncherView,
-    flow: bool,
     theme: &Theme,
     window: &mut Window,
     cx: &mut Context<SettingsWindow>,
@@ -1285,20 +1262,19 @@ fn extension_page(
         return Vec::new();
     };
     let title = package.title();
-    let rows = list_rows(this, live, flow);
-    let PageRows {
-        operations,
+    let PageOperations {
+        enable,
         auto_update,
+        menu: operations,
         forget,
         fallbacks,
-    } = operations_of(&rows, key, &title);
+    } = page_operations(this.launcher.extension_operations(), &package.identity);
     let mark = this.launcher.extension_mark(&package.identity);
     let mut content = vec![header(this, &package, mark.as_ref(), theme)];
 
-    // The enable switch: the launcher's own row for the extension, so
-    // disabling one others require asks first, as there.
+    // The enable switch: the launcher's own operation for the extension,
+    // so disabling one others require asks first, as there.
     let anchor = this.search_anchor(key);
-    let id = key.to_owned();
     let selector = format!("extension-row-{title}");
     let switch_selector = format!("{selector}-switch");
     let toggle = controls::toggle(package.enabled, theme).debug_selector(move || switch_selector);
@@ -1315,7 +1291,7 @@ fn extension_page(
             theme.text_muted,
             theme,
         ));
-    let enable = controls::setting_row_with(label, Vec::new(), theme)
+    let switch = controls::setting_row_with(label, Vec::new(), theme)
         .child(toggle)
         .id("extension-enable")
         .debug_selector(move || selector)
@@ -1329,23 +1305,25 @@ fn extension_page(
             Toggled::False
         })
         .cursor_pointer()
-        .on_click(cx.listener(move |this, _: &gpui::ClickEvent, _, cx| {
-            activate(this, &id, cx);
-        }));
-    let mut first = vec![enable.into_any_element()];
-    if let Some((id, on)) = auto_update {
-        let anchor = this.search_anchor(&id);
+        .when_some(enable, |row, operation| {
+            row.on_click(cx.listener(move |this, _: &gpui::ClickEvent, _, cx| {
+                run(this, &operation, cx);
+            }))
+        });
+    let mut first = vec![switch.into_any_element()];
+    if let Some(operation) = auto_update {
+        let anchor = this.search_anchor(&operation.id);
         first.push(
             switch_row(
                 "extension-auto-update".into(),
                 "Update automatically",
                 "extension-auto-update",
-                on,
+                operation.on.unwrap_or(false),
                 theme,
             )
             .anchor_scroll(Some(anchor))
             .on_click(cx.listener(move |this, _: &gpui::ClickEvent, _, cx| {
-                activate(this, &id, cx);
+                run(this, &operation, cx);
             }))
             .into_any_element(),
         );
@@ -1364,6 +1342,7 @@ fn extension_page(
     // Its preferences (#143).
     if let Some(preferences) = this.launcher.preferences_of(&package.identity) {
         let fields = text_fields(this, &preferences, cx);
+        let selects = preference_selects(this, &preferences, window, cx);
         let anchors: HashMap<String, ScrollAnchor> = preference_targets(&preferences)
             .into_iter()
             .map(|target| {
@@ -1371,7 +1350,12 @@ fn extension_page(
                 (target, anchor)
             })
             .collect();
-        let rows = preference_rows(&preferences, &fields, &anchors, theme, cx);
+        let drawing = PreferenceControls {
+            fields: &fields,
+            selects: &selects,
+            anchors: &anchors,
+        };
+        let rows = preference_rows(&preferences, &drawing, theme, cx);
         if !rows.is_empty() {
             content.push(
                 controls::section(
@@ -1469,13 +1453,13 @@ fn header(
 }
 
 /// The page's Actions menu: its button, and while it is open, the
-/// operations — Check for Update (the page's own), the extension list's
-/// rows for the extension, Show Source Folder (the page's own), and
+/// operations — Check for Update (the page's own), the launcher's
+/// operations for the extension, Show Source Folder (the page's own), and
 /// Uninstall last.
 fn actions_menu(
     this: &SettingsWindow,
     package: &InstalledPackage,
-    operations: &[Operation],
+    operations: &[ExtensionOperation],
     theme: &Theme,
     cx: &mut Context<SettingsWindow>,
 ) -> AnyElement {
@@ -1530,21 +1514,21 @@ fn actions_menu(
             })
             .into_any_element(),
         );
-        let (uninstall, others): (Vec<&Operation>, Vec<&Operation>) = operations
+        let (uninstall, others): (Vec<&ExtensionOperation>, Vec<&ExtensionOperation>) = operations
             .iter()
-            .partition(|operation| operation.id.starts_with("uninstall:"));
+            .partition(|operation| operation.kind == OperationKind::Uninstall);
         for operation in others {
-            let id = operation.id.clone();
+            let chosen = operation.clone();
             items.push(
                 entry(
                     items.len(),
                     &operation.label,
                     format!("extension-row-{}", operation.title),
-                    operation.reason.clone(),
+                    operation.unavailable.clone(),
                 )
                 .on_click(cx.listener(move |this, _: &gpui::ClickEvent, _, cx| {
                     this.extensions.menu = false;
-                    activate(this, &id, cx);
+                    run(this, &chosen, cx);
                 }))
                 .into_any_element(),
             );
@@ -1563,17 +1547,17 @@ fn actions_menu(
             .into_any_element(),
         );
         for operation in uninstall {
-            let id = operation.id.clone();
+            let chosen = operation.clone();
             items.push(
                 entry(
                     items.len(),
                     &operation.label,
                     format!("extension-row-{}", operation.title),
-                    operation.reason.clone(),
+                    operation.unavailable.clone(),
                 )
                 .on_click(cx.listener(move |this, _: &gpui::ClickEvent, _, cx| {
                     this.extensions.menu = false;
-                    activate(this, &id, cx);
+                    run(this, &chosen, cx);
                 }))
                 .into_any_element(),
             );
@@ -1607,10 +1591,10 @@ fn actions_menu(
 fn commands_section(
     this: &mut SettingsWindow,
     package: &InstalledPackage,
-    forget: &[Operation],
-    fallbacks: &[FallbackRow],
+    forget: &[ExtensionOperation],
+    fallbacks: &[ExtensionOperation],
     theme: &Theme,
-    _window: &mut Window,
+    window: &mut Window,
     cx: &mut Context<SettingsWindow>,
 ) -> AnyElement {
     let shortcuts: Vec<ShortcutCommand> = this
@@ -1621,121 +1605,25 @@ fn commands_section(
         .find(|group| group.identity.as_ref() == Some(&package.identity))
         .map(|group| group.commands)
         .unwrap_or_default();
+    let commands = package.listed_commands();
+    let count = commands.len();
+    // A long Commands section draws only the commands near the page's
+    // view, and the one whose alias or hotkey is being edited always
+    // (#165).
+    let window_rows = this.extensions.commands_window.clone();
+    let page = this.search.scroll().clone();
+    let active = super::shortcuts::active_commands(this, window);
     let mut rows = Vec::new();
-    for listed in package.listed_commands() {
-        let command = listed.registration;
-        let id = command.id.clone();
-        let anchor = this.search_anchor(&command_anchor(&id));
-        let icon = crate::features::icons::row_icon_of(&this.launcher, &id, theme);
-        let mut lines = Vec::new();
-        if let Some(subtitle) = &command.subtitle {
-            lines.push(
-                controls::field_description(subtitle.clone(), theme.text_muted, theme)
-                    .truncate()
-                    .into_any_element(),
-            );
-        }
-        // A root provider (#164) has no row in root search, so its page
-        // says what it does; its switch turns its results off and on.
-        if listed.mode == pane_core::CommandMode::Provider {
-            let selector = format!("extension-provider-{}", command.title);
-            let line = if package.enabled && listed.enabled {
-                "Answers root search as you type, with no row of its own"
-            } else {
-                "Off: it does not answer root search"
-            };
-            lines.push(
-                controls::field_description(line, theme.text_muted, theme)
-                    .debug_selector(move || selector)
-                    .into_any_element(),
-            );
-        }
-        if let Some(why) = &listed.unavailable {
-            lines.push(
-                controls::field_description(format!("Unavailable: {why}"), theme.warning, theme)
-                    .into_any_element(),
-            );
-        }
-        let label = div()
-            .flex()
-            .items_center()
-            .gap(theme.geometry.settings.item_gap)
-            .child(row_icon_at(
-                &icon,
-                TileSize::Mini,
-                "command-icon",
-                &format!("extension-command-{id}"),
-                theme,
-            ))
-            .child(controls::field_label(command.title.clone(), theme));
-        let (alias, hotkey) = match shortcuts.iter().find(|shortcut| shortcut.id == id) {
-            Some(shortcut) => (
-                Some(super::shortcuts::alias_column(this, shortcut, theme, cx)),
-                Some(super::shortcuts::hotkey_column(this, shortcut, theme, cx)),
-            ),
-            None => (None, None),
-        };
-        // Whether text typed into root search may be sent to it below the
-        // results: the extension list's own row, activated as its Enter
-        // does.
-        let fallback = shortcut_fallback(fallbacks, &id).map(|fallback| {
-            let selector = format!("extension-command-fallback-{id}");
-            let row = fallback.row.clone();
-            let on = fallback.on;
-            div()
-                .flex_none()
-                .flex()
-                .flex_col()
-                .items_center()
-                .gap(px(2.))
-                .child(controls::caption("Fallback", theme))
-                .child(
-                    controls::toggle(on, theme)
-                        .id(SharedString::from(selector.clone()))
-                        .debug_selector(move || selector)
-                        .role(Role::Switch)
-                        .aria_label(format!("Offer {} as a fallback", command.title))
-                        .aria_toggled(if on { Toggled::True } else { Toggled::False })
-                        .cursor_pointer()
-                        .on_click(cx.listener(move |this, _: &gpui::ClickEvent, _, cx| {
-                            activate(this, &row, cx);
-                        })),
-                )
+    for listed in commands {
+        let id = listed.registration.id.clone();
+        let kept = active.contains(&id);
+        let row = window_rows.row(count, id, kept, &page, || {
+            command_row(this, package, listed, &shortcuts, fallbacks, theme, cx)
         });
-        let enabled = listed.enabled;
-        let switch_selector = format!("extension-command-toggle-{id}");
-        let for_click = id.clone();
-        let switch = controls::toggle(enabled, theme)
-            .id(SharedString::from(switch_selector.clone()))
-            .debug_selector(move || switch_selector)
-            .role(Role::Switch)
-            .aria_label(format!("{} enabled", command.title))
-            .aria_toggled(if enabled {
-                Toggled::True
-            } else {
-                Toggled::False
-            })
-            .cursor_pointer()
-            .on_click(cx.listener(move |this, _: &gpui::ClickEvent, _, cx| {
-                switch_command(this, &for_click, !enabled, cx);
-            }));
-        let selector = format!("extension-command-{id}");
-        rows.push(
-            controls::setting_row_with(label, lines, theme)
-                .items_start()
-                .py(theme.geometry.controls.row_padding_y)
-                .id(SharedString::from(selector.clone()))
-                .debug_selector(move || selector)
-                .anchor_scroll(Some(anchor))
-                .children(alias)
-                .children(hotkey)
-                .children(fallback)
-                .child(div().flex_none().pt(px(4.)).child(switch))
-                .into_any_element(),
-        );
+        rows.push(row);
     }
     for (index, operation) in forget.iter().enumerate() {
-        let id = operation.id.clone();
+        let chosen = operation.clone();
         let selector = format!("extension-row-{}", operation.title);
         rows.push(
             list_entry(
@@ -1747,7 +1635,7 @@ fn commands_section(
             )
             .debug_selector(move || selector)
             .on_click(cx.listener(move |this, _: &gpui::ClickEvent, _, cx| {
-                activate(this, &id, cx);
+                run(this, &chosen, cx);
             }))
             .into_any_element(),
         );
@@ -1764,11 +1652,136 @@ fn commands_section(
         .into_any_element()
 }
 
+/// One command's row in its extension's Commands section: its icon, its
+/// title, its alias field, its hotkey recorder, its fallback switch where
+/// it takes a query, and its own switch (a root provider shows only its
+/// switch).
+fn command_row(
+    this: &mut SettingsWindow,
+    package: &InstalledPackage,
+    listed: pane_core::ListedCommand,
+    shortcuts: &[ShortcutCommand],
+    fallbacks: &[ExtensionOperation],
+    theme: &Theme,
+    cx: &mut Context<SettingsWindow>,
+) -> AnyElement {
+    let command = listed.registration;
+    let id = command.id.clone();
+    let anchor = this.search_anchor(&command_anchor(&id));
+    let icon = crate::features::icons::row_icon_of(&this.launcher, &id, theme);
+    let mut lines = Vec::new();
+    if let Some(subtitle) = &command.subtitle {
+        lines.push(
+            controls::field_description(subtitle.clone(), theme.text_muted, theme)
+                .truncate()
+                .into_any_element(),
+        );
+    }
+    // A root provider (#164) has no row in root search, so its page
+    // says what it does; its switch turns its results off and on.
+    if listed.mode == pane_core::CommandMode::Provider {
+        let selector = format!("extension-provider-{}", command.title);
+        let line = if package.enabled && listed.enabled {
+            "Answers root search as you type, with no row of its own"
+        } else {
+            "Off: it does not answer root search"
+        };
+        lines.push(
+            controls::field_description(line, theme.text_muted, theme)
+                .debug_selector(move || selector)
+                .into_any_element(),
+        );
+    }
+    if let Some(why) = &listed.unavailable {
+        lines.push(
+            controls::field_description(format!("Unavailable: {why}"), theme.warning, theme)
+                .into_any_element(),
+        );
+    }
+    let label = div()
+        .flex()
+        .items_center()
+        .gap(theme.geometry.settings.item_gap)
+        .child(row_icon_at(
+            &icon,
+            TileSize::Mini,
+            "command-icon",
+            &format!("extension-command-{id}"),
+            theme,
+        ))
+        .child(controls::field_label(command.title.clone(), theme));
+    let (alias, hotkey) = match shortcuts.iter().find(|shortcut| shortcut.id == id) {
+        Some(shortcut) => (
+            Some(super::shortcuts::alias_column(this, shortcut, theme, cx)),
+            Some(super::shortcuts::hotkey_column(this, shortcut, theme, cx)),
+        ),
+        None => (None, None),
+    };
+    // Whether text typed into root search may be sent to it below the
+    // results: the launcher's own operation for it.
+    let fallback = shortcut_fallback(fallbacks, &id).map(|fallback| {
+        let selector = format!("extension-command-fallback-{id}");
+        let operation = fallback.clone();
+        let on = fallback.on.unwrap_or(false);
+        div()
+            .flex_none()
+            .flex()
+            .flex_col()
+            .items_center()
+            .gap(px(2.))
+            .child(controls::caption("Fallback", theme))
+            .child(
+                controls::toggle(on, theme)
+                    .id(SharedString::from(selector.clone()))
+                    .debug_selector(move || selector)
+                    .role(Role::Switch)
+                    .aria_label(format!("Offer {} as a fallback", command.title))
+                    .aria_toggled(if on { Toggled::True } else { Toggled::False })
+                    .cursor_pointer()
+                    .on_click(cx.listener(move |this, _: &gpui::ClickEvent, _, cx| {
+                        run(this, &operation, cx);
+                    })),
+            )
+    });
+    let enabled = listed.enabled;
+    let switch_selector = format!("extension-command-toggle-{id}");
+    let for_click = id.clone();
+    let switch = controls::toggle(enabled, theme)
+        .id(SharedString::from(switch_selector.clone()))
+        .debug_selector(move || switch_selector)
+        .role(Role::Switch)
+        .aria_label(format!("{} enabled", command.title))
+        .aria_toggled(if enabled {
+            Toggled::True
+        } else {
+            Toggled::False
+        })
+        .cursor_pointer()
+        .on_click(cx.listener(move |this, _: &gpui::ClickEvent, _, cx| {
+            switch_command(this, &for_click, !enabled, cx);
+        }));
+    let selector = format!("extension-command-{id}");
+    controls::setting_row_with(label, lines, theme)
+        .items_start()
+        .py(theme.geometry.controls.row_padding_y)
+        .id(SharedString::from(selector.clone()))
+        .debug_selector(move || selector)
+        .anchor_scroll(Some(anchor))
+        .children(alias)
+        .children(hotkey)
+        .children(fallback)
+        .child(div().flex_none().pt(px(4.)).child(switch))
+        .into_any_element()
+}
+
 /// The fallback switch of the command with id `command`, if it has one.
-fn shortcut_fallback<'a>(fallbacks: &'a [FallbackRow], command: &str) -> Option<&'a FallbackRow> {
+fn shortcut_fallback<'a>(
+    fallbacks: &'a [ExtensionOperation],
+    command: &str,
+) -> Option<&'a ExtensionOperation> {
     fallbacks
         .iter()
-        .find(|fallback| fallback.command == command)
+        .find(|fallback| fallback.command.as_deref() == Some(command))
 }
 
 /// Every scroll target the preferences of an extension register: each
@@ -1792,20 +1805,28 @@ fn preference_targets(preferences: &PackagePreferences) -> Vec<String> {
     targets
 }
 
+/// What an extension's preference rows draw with: the text fields and
+/// the selects by [`field_key`], and the scroll anchors by target.
+struct PreferenceControls<'a> {
+    fields: &'a HashMap<String, FieldInput>,
+    selects: &'a HashMap<String, Entity<Select>>,
+    anchors: &'a HashMap<String, ScrollAnchor>,
+}
+
 /// The rows of an extension's preferences: the package's, then each
 /// command's under a row naming the command.
 fn preference_rows(
     preferences: &PackagePreferences,
-    fields: &HashMap<String, FieldInput>,
-    anchors: &HashMap<String, ScrollAnchor>,
+    drawing: &PreferenceControls<'_>,
     theme: &Theme,
     cx: &mut Context<SettingsWindow>,
 ) -> Vec<AnyElement> {
     let package = preferences.identity.key();
+    let anchors = drawing.anchors;
     let mut rows: Vec<AnyElement> = preferences
         .fields
         .iter()
-        .map(|field| preference_row(&package, field, fields, anchors, theme, cx))
+        .map(|field| preference_row(&package, field, drawing, theme, cx))
         .collect();
     for command in &preferences.commands {
         let selector = format!("preference-command-{}", command.command);
@@ -1818,7 +1839,7 @@ fn preference_rows(
             .anchor_scroll(anchors.get(&anchor).cloned());
         rows.push(header.into_any_element());
         for field in &command.fields {
-            rows.push(preference_row(&package, field, fields, anchors, theme, cx));
+            rows.push(preference_row(&package, field, drawing, theme, cx));
         }
     }
     rows
@@ -1827,17 +1848,20 @@ fn preference_rows(
 /// One preference's row: its title over its description and, while it is
 /// required and unset, "Required" in the error tone; its control at the
 /// right — a text field (a password's hidden as it is typed), a switch
-/// for a checkbox, a segmented choice for a dropdown, and a text field
-/// with "Choose…" for a file, folder or application. Each change is saved
-/// as it is made ([`pane_core::Launcher::set_preference`]).
+/// for a checkbox, a select for a dropdown (its value in force on a
+/// trigger that opens the options with a search field, the Settings
+/// pages' own select, [`preference_selects`]), and a text field with
+/// "Choose…" for a file, folder or application. Each change is saved as
+/// it is made ([`pane_core::Launcher::set_preference`]) and applies
+/// without a restart.
 fn preference_row(
     package: &str,
     field: &PreferenceField,
-    fields: &HashMap<String, FieldInput>,
-    anchors: &HashMap<String, ScrollAnchor>,
+    drawing: &PreferenceControls<'_>,
     theme: &Theme,
     cx: &mut Context<SettingsWindow>,
 ) -> AnyElement {
+    let (fields, anchors) = (drawing.fields, drawing.anchors);
     let preference = &field.preference;
     let key = field.key.clone();
     let mut lines = Vec::new();
@@ -1879,38 +1903,10 @@ fn preference_row(
                 }))
                 .into_any_element()
         }
-        PreferenceKind::Dropdown => {
-            let count = preference.options.len();
-            let mut options = Vec::new();
-            for (position, option) in preference.options.iter().enumerate() {
-                let chosen = effective.as_deref() == Some(option.value.as_str());
-                let selector = format!("preference-option-{key}-{}", option.value);
-                let (owner, saved, value) = (package.to_owned(), key.clone(), option.value.clone());
-                options.push(
-                    controls::segment(option.title.clone(), chosen, true, theme)
-                        .id(SharedString::from(selector.clone()))
-                        .debug_selector(move || selector)
-                        .role(Role::RadioButton)
-                        .aria_label(option.title.clone())
-                        .aria_toggled(if chosen {
-                            Toggled::True
-                        } else {
-                            Toggled::False
-                        })
-                        .aria_position_in_set(position + 1)
-                        .aria_size_of_set(count)
-                        .on_click(cx.listener(move |this, _: &gpui::ClickEvent, _, cx| {
-                            save_preference(this, &owner, &saved, &value, cx);
-                        })),
-                );
-            }
-            controls::row_segment_track(theme)
-                .id(SharedString::from(format!("preference-options-{key}")))
-                .role(Role::RadioGroup)
-                .aria_label(preference.title.clone())
-                .children(options)
-                .into_any_element()
-        }
+        PreferenceKind::Dropdown => match drawing.selects.get(&field_key(package, &key)) {
+            Some(select) => div().flex_none().child(select.clone()).into_any_element(),
+            None => div().into_any_element(),
+        },
         PreferenceKind::Text
         | PreferenceKind::Password
         | PreferenceKind::File
@@ -2079,6 +2075,119 @@ fn text_fields(
     drawn
 }
 
+/// The selects of the dropdown preferences of `preferences`, by
+/// [`field_key`]: each created the first time its preference draws (made
+/// again when a reload changed its title or description), and told the
+/// options and the value in force (the value set, else the default) each
+/// time it draws. A choice is saved as it is made, as every preference's
+/// change is ([`save_preference`]).
+///
+/// Its debug selectors are the select's own under
+/// `preference-select-<key>`: the trigger is `preference-select-<key>`,
+/// an option's row `preference-select-<key>-<value>`, the popup's search
+/// field `preference-select-<key>-query`.
+fn preference_selects(
+    this: &mut SettingsWindow,
+    preferences: &PackagePreferences,
+    window: &mut Window,
+    cx: &mut Context<SettingsWindow>,
+) -> HashMap<String, Entity<Select>> {
+    let mut drawn = HashMap::new();
+    let package = preferences.identity.key();
+    let all = preferences.fields.iter().chain(
+        preferences
+            .commands
+            .iter()
+            .flat_map(|command| &command.fields),
+    );
+    for field in all {
+        let preference = &field.preference;
+        if preference.kind != PreferenceKind::Dropdown {
+            continue;
+        }
+        let id = field_key(&package, &field.key);
+        let labels = SelectLabels {
+            title: preference.title.clone(),
+            description: preference.description.clone().unwrap_or_default(),
+        };
+        let fresh = this
+            .extensions
+            .selects
+            .get(&id)
+            .is_none_or(|kept| kept.labels != labels);
+        if fresh {
+            let live = Rc::new(RefCell::new(SelectLive::default()));
+            let read = live.clone();
+            let settings = cx.entity().downgrade();
+            let (owner, key) = (package.clone(), field.key.clone());
+            let SelectLabels {
+                title: name,
+                description,
+            } = labels.clone();
+            let debug = format!("preference-select-{}", field.key);
+            let select = cx.new(|cx| {
+                Select::new(
+                    name,
+                    description,
+                    debug,
+                    Rc::new(move |cx: &App| {
+                        let visuals = crate::settings::visuals(cx);
+                        let live = read.borrow();
+                        Model {
+                            theme: visuals.theme,
+                            material: visuals.material,
+                            choices: live.choices.clone(),
+                            committed: live.committed.clone(),
+                        }
+                    }),
+                    Rc::new(move |value: &str, _: &mut Window, cx: &mut App| {
+                        settings
+                            .update(cx, |this, cx| {
+                                save_preference(this, &owner, &key, value, cx);
+                            })
+                            .ok();
+                    }),
+                    window,
+                    cx,
+                )
+            });
+            this.extensions.selects.insert(
+                id.clone(),
+                PreferenceSelect {
+                    select,
+                    labels,
+                    live,
+                },
+            );
+        }
+        let kept = &this.extensions.selects[&id];
+        let effective = field.value.clone().or_else(|| preference.default.clone());
+        *kept.live.borrow_mut() = SelectLive {
+            choices: preference
+                .options
+                .iter()
+                .map(|option| Choice {
+                    id: option.value.clone().into(),
+                    label: option.title.clone().into(),
+                    subtitle: None,
+                    keywords: vec![option.value.clone().into()],
+                    unavailable_reason: None,
+                })
+                .collect(),
+            committed: effective
+                .filter(|value| {
+                    preference
+                        .options
+                        .iter()
+                        .any(|option| &option.value == value)
+                })
+                .map(SharedString::from),
+        };
+        drawn.insert(id, kept.select.clone());
+    }
+    drawn
+}
+
 // ------------------------------------------------------------ the behavior
 
 /// Saves `value` as the preference kept as `key` of the extension whose
@@ -2200,6 +2309,24 @@ pub(crate) fn path_prompt(kind: PathKind) -> PathPromptOptions {
     }
 }
 
+/// Why the last build of the extension whose page shows failed, while it
+/// is developed and its last build did: "Hello did not build: <its first
+/// error>".
+fn build_failure(this: &SettingsWindow) -> Option<String> {
+    let key = this.extension.as_deref()?;
+    let package = this
+        .launcher
+        .packages()
+        .into_iter()
+        .find(|package| package.identity.key() == key)?;
+    let failure = this.launcher.development(&package.identity)?.failure?;
+    Some(format!(
+        "{} did not build: {}",
+        package.title(),
+        failure.summary
+    ))
+}
+
 /// The installed package whose identity key is `key`.
 fn identity_of(launcher: &Launcher, key: &str) -> Option<PackageIdentity> {
     launcher
@@ -2210,10 +2337,10 @@ fn identity_of(launcher: &Launcher, key: &str) -> Option<PackageIdentity> {
 }
 
 /// Waits for `pending`, an operation the pages started, redrawing both
-/// windows now and when it lands, and keeps what it came to where the
-/// launcher left the flow by then (an install lands on root search, with
-/// its outcome there).
-fn follow(pending: impl Future<Output = ()> + 'static, cx: &mut Context<SettingsWindow>) {
+/// windows now and when it lands, and keeps what it came to as the page's
+/// status once the launcher is off the screens an operation opens (an
+/// install lands on root search, with its outcome there).
+fn keep_outcome_of(pending: impl Future<Output = ()> + 'static, cx: &mut Context<SettingsWindow>) {
     launcher_changed_outside(cx);
     cx.notify();
     cx.spawn(async move |this, cx| {
@@ -2231,21 +2358,28 @@ fn follow(pending: impl Future<Output = ()> + 'static, cx: &mut Context<Settings
     .detach();
 }
 
-/// Activates the extension-list row with `id` through the launcher's own
-/// flow, as the launcher window's Enter does. If the launcher is not in
-/// the flow, it is entered first ([`Launcher::manage_extensions`]), then
-/// the row is selected and activated; the confirmation the row asks for,
-/// if it asks, shows on the page, drawn from the launcher's view. A flow
-/// screen's own rows (a confirmation's answers, a preview's Install) are
-/// activated where they are.
-fn activate(this: &mut SettingsWindow, id: &str, cx: &mut Context<SettingsWindow>) {
+/// Runs `operation` through the launcher, which stays on the screen the
+/// user had ([`Launcher::run_extension_operation`]); the confirmation or
+/// details screen it asks for, if it asks, shows on the page, drawn from
+/// the launcher's view.
+fn run(
+    this: &mut SettingsWindow,
+    operation: &ExtensionOperation,
+    cx: &mut Context<SettingsWindow>,
+) {
+    this.extensions.outcome = None;
+    let pending = this.launcher.run_extension_operation(operation);
+    keep_outcome_of(pending, cx);
+}
+
+/// Answers the screen an operation opened by its row with `id` (a
+/// confirmation's answer, a preview's Install, a details screen's Retry),
+/// activated as the launcher window's Enter does.
+fn answer(this: &mut SettingsWindow, id: &str, cx: &mut Context<SettingsWindow>) {
     this.extensions.outcome = None;
     let launcher = &this.launcher;
-    if !in_extension_flow(&launcher.view().screen) {
-        launcher.manage_extensions();
-    }
     let Some(index) = launcher.view().rows.iter().position(|row| row.id == id) else {
-        // The row left the list between the frame that drew it and this
+        // The row left the screen between the frame that drew it and this
         // click (a background change): the page redraws with what the
         // launcher holds now, and nothing is activated.
         cx.notify();
@@ -2253,7 +2387,7 @@ fn activate(this: &mut SettingsWindow, id: &str, cx: &mut Context<SettingsWindow
     };
     launcher.select(index);
     let pending = launcher.activate_selected();
-    follow(pending, cx);
+    keep_outcome_of(pending, cx);
 }
 
 /// Keeps what an operation that answers for itself came to as the page's
@@ -2300,7 +2434,7 @@ fn check_for_update(
 ) {
     this.extensions.outcome = None;
     if let Some(pending) = this.launcher.check_for_update(identity) {
-        follow(pending, cx);
+        keep_outcome_of(pending, cx);
     }
 }
 
@@ -2364,7 +2498,7 @@ fn start_install(
                 if let Some(folder) = folder {
                     this.update(cx, |this, cx| {
                         let pending = this.launcher.preview_package(&folder);
-                        follow(pending, cx);
+                        keep_outcome_of(pending, cx);
                     })
                     .ok();
                 }
@@ -2409,7 +2543,7 @@ fn submit_install(this: &mut SettingsWindow, cx: &mut Context<SettingsWindow>) {
     };
     this.extensions.installing = None;
     this.extensions.outcome = None;
-    follow(pending, cx);
+    keep_outcome_of(pending, cx);
 }
 
 #[cfg(test)]

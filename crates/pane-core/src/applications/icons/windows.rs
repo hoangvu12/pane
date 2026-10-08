@@ -7,50 +7,52 @@
 //!   the shell draws it, below.
 //! - Anything else, a shortcut first: the shell's image of the source at
 //!   256 pixels, icon only (`IShellItemImageFactory`). An image larger than
-//!   48 pixels whose visible content does not fill its box
+//!   48 pixels whose content does not fill its box
 //!   ([`super::covers_enough`]), a small icon the shell padded into the
-//!   jumbo size, is rejected for the next: the shortcut's own icon location
-//!   (`IShellLinkW::GetIconLocation`, extracted at 256 pixels with
+//!   jumbo size or framed in a thumbnail (a program that ships only a
+//!   32-pixel icon), is rejected for the next: the shortcut's own icon
+//!   location (`IShellLinkW::GetIconLocation`, extracted at 256 pixels with
 //!   `PrivateExtractIconsW`; an internet shortcut's `IconFile` and
-//!   `IconIndex`), then its target program's shell image, and
-//!   finally the shell's file information icon (`SHGetFileInfoW`, 32
-//!   pixels), drawn as it is. Only when every source fails is a padded
-//!   image kept. A ClickOnce reference (`.appref-ms`) has only the shell's
-//!   images; its deployed program's icon is not looked for.
+//!   `IconIndex`), then its target program's shell image, then that
+//!   program's (or a program source's) own first icon, extracted the same
+//!   way, so the system takes the largest image it has and scales it to
+//!   256 pixels, and finally the shell's file information icon
+//!   (`SHGetFileInfoW`, 32 pixels). Only when every source fails is a
+//!   padded or framed image kept.
+//!   Whichever is kept, the cache crops a small picture padded into its
+//!   canvas and scales it to fill its place ([`super::fill_its_place`]).
+//!   A ClickOnce reference (`.appref-ms`) first draws its deployed
+//!   program's own icon, then that program's shell image, found where
+//!   ClickOnce installs it ([`super::click_once`]), before the shell's
+//!   image of the reference itself.
 //!
 //! Everything runs on the worker's thread, with COM initialized as a
 //! single-threaded apartment for the call.
 
-use std::ffi::c_void;
-use std::os::windows::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 
-use windows::Win32::Foundation::{
-    ERROR_INSUFFICIENT_BUFFER, ERROR_SUCCESS, RPC_E_CHANGED_MODE, SIZE,
-};
-use windows::Win32::Graphics::Gdi::{
-    BI_RGB, BITMAP, BITMAPINFO, BITMAPINFOHEADER, CreateCompatibleDC, DIB_RGB_COLORS, DeleteDC,
-    DeleteObject, GetDIBits, GetObjectW, HBITMAP, HGDIOBJ,
-};
+use windows::Win32::Foundation::{ERROR_INSUFFICIENT_BUFFER, ERROR_SUCCESS};
+use windows::Win32::Graphics::Gdi::{DeleteObject, HGDIOBJ};
 use windows::Win32::Storage::FileSystem::FILE_FLAGS_AND_ATTRIBUTES;
 use windows::Win32::Storage::Packaging::Appx::{
     GetPackagePathByFullName, GetPackagesByPackageFamily,
 };
 use windows::Win32::System::Com::{
-    CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED, COINIT_DISABLE_OLE1DDE, CoCreateInstance,
-    CoInitializeEx, CoUninitialize, IPersistFile, STGM_READ,
+    CLSCTX_INPROC_SERVER, CoCreateInstance, IPersistFile, STGM_READ,
 };
 use windows::Win32::UI::Shell::{
-    IShellItemImageFactory, IShellLinkW, SHCreateItemFromParsingName, SHFILEINFOW, SHGFI_ICON,
-    SHGFI_LARGEICON, SHGetFileInfoW, SIIGBF_BIGGERSIZEOK, SIIGBF_ICONONLY, ShellLink,
+    IShellLinkW, SHFILEINFOW, SHGFI_ICON, SHGFI_LARGEICON, SHGetFileInfoW, ShellLink,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     DestroyIcon, GetIconInfo, HICON, ICONINFO, PrivateExtractIconsW,
 };
 use windows::core::{Interface, PCWSTR, PWSTR};
 
-use super::{Extracted, appx, covers_enough, file_fingerprint};
-use crate::system_icons::{ICON_SIZE, SystemIcon, straight_rgba};
+use super::{Extracted, appx, click_once, covers_enough, file_fingerprint};
+use crate::applications::start_menu::{click_once_deployment, shortcut_text};
+use crate::system_icons::{ICON_SIZE, SystemIcon};
+use crate::util::wide;
+use crate::windows_shell::{Com, Pixels, bitmap_pixels, shell_image};
 
 /// What a packaged app's source path starts with, before its
 /// AppUserModelID.
@@ -91,7 +93,7 @@ pub(super) fn extract(source: &str) -> Result<Extracted, String> {
             Ok(pixels) if pixels.covers_enough() => Some(pixels),
             Ok(pixels) => {
                 problems.push(format!(
-                    "a {}×{} image padded around a smaller icon",
+                    "a {}×{} image padded or framed around a smaller icon",
                     pixels.width, pixels.height
                 ));
                 padded.get_or_insert(pixels);
@@ -103,14 +105,27 @@ pub(super) fn extract(source: &str) -> Result<Extracted, String> {
             }
         }
     };
-    if let Some(pixels) = consider(shell_image(source)) {
-        return pixels.extracted();
-    }
     let has_extension = |wanted: &str| {
         Path::new(source)
             .extension()
             .is_some_and(|extension| extension.eq_ignore_ascii_case(wanted))
     };
+    // A ClickOnce reference: the deployed program's own icon, where
+    // ClickOnce installs it, before the shell's image of the reference.
+    if has_extension("appref-ms")
+        && let Some(program) = click_once_program(source)
+    {
+        let program = program.to_string_lossy();
+        if let Some(pixels) = consider(icon_resource(&program, 0)) {
+            return pixels.extracted();
+        }
+        if let Some(pixels) = consider(shell_image(&*program)) {
+            return pixels.extracted();
+        }
+    }
+    if let Some(pixels) = consider(shell_image(source)) {
+        return pixels.extracted();
+    }
     // An internet shortcut (#173) names its icon in its own text.
     if has_extension("url")
         && let Ok(bytes) = std::fs::read(source)
@@ -119,6 +134,9 @@ pub(super) fn extract(source: &str) -> Result<Extracted, String> {
     {
         return pixels.extracted();
     }
+    // The program the source opens: a shortcut's target, or the source
+    // itself.
+    let mut program = None;
     if has_extension("lnk")
         && let Ok(link) = read_link(Path::new(source))
     {
@@ -127,11 +145,22 @@ pub(super) fn extract(source: &str) -> Result<Extracted, String> {
         {
             return pixels.extracted();
         }
-        if !link.target.is_empty()
-            && let Some(pixels) = consider(shell_image(&link.target))
-        {
-            return pixels.extracted();
+        if !link.target.is_empty() {
+            if let Some(pixels) = consider(shell_image(&link.target)) {
+                return pixels.extracted();
+            }
+            program = Some(link.target);
         }
+    } else if has_extension("exe") {
+        program = Some(source.to_owned());
+    }
+    // A program that ships only a small icon is framed or padded by the
+    // shell: its own first icon, the largest image it has scaled to 256
+    // pixels, fills its place.
+    if let Some(program) = &program
+        && let Some(pixels) = consider(icon_resource(program, 0))
+    {
+        return pixels.extracted();
     }
     match file_info_icon(source) {
         Ok(pixels) => pixels.extracted(),
@@ -145,40 +174,12 @@ pub(super) fn extract(source: &str) -> Result<Extracted, String> {
     }
 }
 
-/// COM initialized on this thread while it is held, as the shell needs.
-struct Com {
-    initialized: bool,
-}
-
-impl Com {
-    fn new() -> Result<Com, String> {
-        // SAFETY: no reserved pointer; paired with CoUninitialize in `drop`.
-        let result =
-            unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE) };
-        if result == RPC_E_CHANGED_MODE {
-            return Ok(Com { initialized: false });
-        }
-        result
-            .ok()
-            .map_err(|error| format!("cannot start COM: {error}"))?;
-        Ok(Com { initialized: true })
-    }
-}
-
-impl Drop for Com {
-    fn drop(&mut self) {
-        if self.initialized {
-            // SAFETY: paired with the successful CoInitializeEx in `new`.
-            unsafe { CoUninitialize() };
-        }
-    }
-}
-
-/// An image the system drew: straight RGBA, row by row.
-struct Pixels {
-    width: u32,
-    height: u32,
-    rgba: Vec<u8>,
+/// The program the ClickOnce reference at `source` deploys, where
+/// ClickOnce installed it ([`click_once::deployed_program`]).
+fn click_once_program(source: &str) -> Option<PathBuf> {
+    let text = shortcut_text(&std::fs::read(source).ok()?);
+    let deployment = click_once_deployment(&text)?;
+    click_once::deployed_program(&deployment, &click_once::store()?)
 }
 
 impl Pixels {
@@ -194,14 +195,6 @@ impl Pixels {
     }
 }
 
-fn wide(text: &str) -> Vec<u16> {
-    text.encode_utf16().chain([0]).collect()
-}
-
-fn wide_path(path: &Path) -> Vec<u16> {
-    path.as_os_str().encode_wide().chain([0]).collect()
-}
-
 /// `buffer` up to its first NUL, as text.
 fn text(buffer: &[u16]) -> String {
     let end = buffer
@@ -209,35 +202,6 @@ fn text(buffer: &[u16]) -> String {
         .position(|unit| *unit == 0)
         .unwrap_or(buffer.len());
     String::from_utf16_lossy(&buffer[..end]).trim().to_owned()
-}
-
-/// The shell's image of the item at `path` (a file, or a parsing name such
-/// as `shell:AppsFolder\<id>`), icon only, at 256 pixels or larger.
-fn shell_image(path: &str) -> Result<Pixels, String> {
-    let name = wide(path);
-    let failed = |error: windows::core::Error| format!("the shell has no image of {path}: {error}");
-    let side = ICON_SIZE as i32;
-    // SAFETY: plain COM calls on the interface the shell returns, on a
-    // thread with COM initialized for their lifetime; `name` outlives the
-    // call reading it.
-    let bitmap = unsafe {
-        let factory: IShellItemImageFactory =
-            SHCreateItemFromParsingName(PCWSTR(name.as_ptr()), None).map_err(failed)?;
-        factory
-            .GetImage(
-                SIZE { cx: side, cy: side },
-                SIIGBF_ICONONLY | SIIGBF_BIGGERSIZEOK,
-            )
-            .map_err(failed)?
-    };
-    // SAFETY: the bitmap is the shell's, given to this caller, and deleted
-    // once read.
-    let read = unsafe { bitmap_pixels(bitmap) };
-    // SAFETY: as above; nothing uses it after.
-    unsafe {
-        let _ = DeleteObject(HGDIOBJ::from(bitmap));
-    }
-    read
 }
 
 /// What a shortcut points at: its target and its own icon location.
@@ -249,7 +213,7 @@ struct Link {
 
 /// Reads the shortcut at `path`, without resolving a target that moved.
 fn read_link(path: &Path) -> windows::core::Result<Link> {
-    let file = wide_path(path);
+    let file = wide(path);
     // SAFETY: plain COM calls on interfaces the shell returns, on a thread
     // whose COM apartment outlives them; every buffer outlives its call.
     unsafe {
@@ -334,7 +298,8 @@ fn expand_environment(text: &str) -> String {
 }
 
 /// The icon at `index` of `file` (an `.ico`, or a program or library's
-/// resources), at 256 pixels: the system scales the closest size it has.
+/// resources), at 256 pixels: the system takes the size it has closest to
+/// that, the largest when all are smaller, and scales it.
 fn icon_resource(file: &str, index: i32) -> Result<Pixels, String> {
     let units: Vec<u16> = file.encode_utf16().collect();
     if units.len() >= 260 {
@@ -407,65 +372,6 @@ unsafe fn icon_pixels(icon: HICON) -> Result<Pixels, String> {
         let _ = DestroyIcon(icon);
     }
     read
-}
-
-/// The width, height and straight RGBA pixels of `bitmap`.
-///
-/// # Safety
-///
-/// `bitmap` must be a valid bitmap handle.
-unsafe fn bitmap_pixels(bitmap: HBITMAP) -> Result<Pixels, String> {
-    let mut info = BITMAP::default();
-    // SAFETY: `info` is a BITMAP of the size given.
-    let filled = unsafe {
-        GetObjectW(
-            HGDIOBJ::from(bitmap),
-            std::mem::size_of::<BITMAP>() as i32,
-            Some((&mut info as *mut BITMAP).cast::<c_void>()),
-        )
-    };
-    let (width, height) = (info.bmWidth, info.bmHeight.abs());
-    if filled == 0 || width <= 0 || height <= 0 {
-        return Err("the system drew no bitmap".into());
-    }
-    let mut header = BITMAPINFO {
-        bmiHeader: BITMAPINFOHEADER {
-            biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
-            biWidth: width,
-            // Negative: rows top-down.
-            biHeight: -height,
-            biPlanes: 1,
-            biBitCount: 32,
-            biCompression: BI_RGB.0,
-            ..Default::default()
-        },
-        ..Default::default()
-    };
-    let mut bgra = vec![0u8; width as usize * height as usize * 4];
-    // SAFETY: a memory DC of the screen's, deleted below; `bgra` holds
-    // every row GetDIBits writes at 32 bits a pixel.
-    let lines = unsafe {
-        let dc = CreateCompatibleDC(None);
-        let lines = GetDIBits(
-            dc,
-            bitmap,
-            0,
-            height as u32,
-            Some(bgra.as_mut_ptr().cast::<c_void>()),
-            &mut header,
-            DIB_RGB_COLORS,
-        );
-        let _ = DeleteDC(dc);
-        lines
-    };
-    if lines <= 0 {
-        return Err("the system's bitmap could not be read".into());
-    }
-    Ok(Pixels {
-        width: width as u32,
-        height: height as u32,
-        rgba: straight_rgba(&bgra),
-    })
 }
 
 /// The install folder of the package family `family`: its first package

@@ -1,11 +1,16 @@
-//! The extension-management flow that Pane's Settings window drives
-//! (#168, ADR 0043): the extension list's rows, from each installed
-//! package's state, reload, update, cache and uninstall rows to the
-//! hotkeys, choices, development and retained data beneath them, and the
-//! operations the extension pages in Settings run through them — the
-//! confirmations those operations ask for are the launcher's own screens,
-//! which Settings shows. The launcher window has no screen for the list:
-//! its "Manage Extensions" command opens Settings at the extensions.
+//! The extensions' operations that Pane's Settings window runs (#168, ADR
+//! 0043): from each installed package's switch, reload, update, cache and
+//! uninstall to the hotkeys, choices, development and retained data, read
+//! as typed operations ([`Launcher::extension_operations`]: what each is,
+//! whose, and whether it is on) and run one at a time
+//! ([`Launcher::run_extension_operation`]) without moving the launcher off
+//! the screen the user had open. The confirmations and details screens an
+//! operation opens are the launcher's own screens, which Settings draws and
+//! answers; once answered, the launcher returns to root search. The
+//! launcher window has no screen for the extensions: its "Manage
+//! Extensions" command opens Settings at them. The list the operations
+//! come from can still be shown as a screen of its own for the tests
+//! ([`Launcher::manage_extensions`]).
 //!
 //! Also here: turning one command of a package on or off, checking a
 //! package for an update and the folder its page shows.
@@ -20,6 +25,7 @@ use super::{
     Entry, Launcher, LauncherView, Row, Screen, State, first_index, network, programs, retained,
     updates,
 };
+use super::{Pending, Status};
 use crate::packages::{InstalledPackage, PackageIdentity, Store};
 
 impl Launcher {
@@ -41,8 +47,19 @@ impl Launcher {
         .with_rows(rows)
     }
 
-    /// Shows the installed packages, each enabled or disabled.
+    /// Shows the installed packages, each enabled or disabled, where the
+    /// list was entered as a screen ([`Launcher::manage_extensions`]).
+    /// Elsewhere — an operation Settings ran — what returned to the list
+    /// returns to where the user was instead: a confirmation or details
+    /// screen the operation opened goes back to root search, and any other
+    /// screen stays.
     pub(in crate::launcher) fn show_extensions(&self, state: &mut State) {
+        if !state.list_entered {
+            if opened_by_operation(&state.view.screen) {
+                self.show_root(state, None);
+            }
+            return;
+        }
         let (rows, entries) = self.extension_rows(state);
         self.leave_command(state);
         state.entries = entries;
@@ -149,6 +166,313 @@ impl Launcher {
         state.view.selected = selected.or_else(|| first_index(&rows));
         state.view.rows = rows;
     }
+}
+
+/// Whether `screen` is one an extension's operation opens over the screen
+/// the user had: a confirmation, a details screen or a hotkey recorder.
+fn opened_by_operation(screen: &Screen) -> bool {
+    matches!(
+        screen,
+        Screen::Extensions { .. }
+            | Screen::Confirm { .. }
+            | Screen::PauseDetails { .. }
+            | Screen::NetworkDetails { .. }
+            | Screen::ProgramDetails { .. }
+            | Screen::BuildDetails { .. }
+            | Screen::RuntimeDetails { .. }
+            | Screen::Hotkey { .. }
+    )
+}
+
+/// What one of the extensions' operations does (#168): Settings offers each
+/// where it belongs, by this, never by a row's words.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OperationKind {
+    /// Turns the extension on or off (asking first about the extensions
+    /// that require it).
+    Enable,
+    /// Turns its automatic updates on or off; with no owner, every
+    /// extension's.
+    AutomaticUpdates,
+    /// Replaces its code with the current build of its source folder.
+    Reload,
+    /// Starts it again after Pane paused it.
+    Retry,
+    /// Shows why Pane paused it.
+    WhyPaused,
+    /// Shows what it did on the network this session.
+    NetworkUse,
+    /// Shows the system programs it ran this session.
+    ProgramsRun,
+    /// Forgets the answers remembered for its confirmations.
+    ResetConfirmations,
+    /// Clears the history of Pane's own Clipboard History (#166), asking
+    /// first.
+    ClearHistory,
+    /// Clears its cache, asking first.
+    ClearCache,
+    /// Uninstalls it, asking first whether to keep its saved data.
+    Uninstall,
+    /// Builds and reloads it after each save in its source folder.
+    Develop,
+    /// Stops developing it.
+    StopDeveloping,
+    /// Shows why its last build failed.
+    WhyNotBuilt,
+    /// Records the keys of a command's hotkey (on the page, the Shortcuts
+    /// columns do).
+    Hotkey,
+    /// Sets a command's alias (likewise).
+    Alias,
+    /// Offers a command below root search's results for any text typed.
+    Fallback,
+    /// Forgets the alias and fallback recorded for a command it no longer
+    /// has.
+    ForgetChoices,
+    /// Shows why Pane's extension runtime stopped.
+    RuntimeDetails,
+    /// Starts Pane's extension runtime again.
+    RestartRuntime,
+    /// Deletes the data kept for an extension no longer installed.
+    DeleteRetainedData,
+}
+
+impl OperationKind {
+    /// What a menu calls it, without the extension's name.
+    fn label(self) -> &'static str {
+        match self {
+            OperationKind::Enable => "Enabled",
+            OperationKind::AutomaticUpdates => "Update Automatically",
+            OperationKind::Reload => "Reload",
+            OperationKind::Retry => "Retry",
+            OperationKind::WhyPaused => "Why Paused",
+            OperationKind::NetworkUse => "Network Use",
+            OperationKind::ProgramsRun => "Programs Run",
+            OperationKind::ResetConfirmations => "Reset Confirmations",
+            OperationKind::ClearHistory => "Clear History",
+            OperationKind::ClearCache => "Clear Cache",
+            OperationKind::Uninstall => "Uninstall",
+            OperationKind::Develop => "Develop",
+            OperationKind::StopDeveloping => "Stop Developing",
+            OperationKind::WhyNotBuilt => "Why the Build Failed",
+            OperationKind::Hotkey => "Hotkey",
+            OperationKind::Alias => "Alias",
+            OperationKind::Fallback => "Fallback",
+            OperationKind::ForgetChoices => "Forget",
+            OperationKind::RuntimeDetails => "Why the Runtime Stopped",
+            OperationKind::RestartRuntime => "Restart the Runtime",
+            OperationKind::DeleteRetainedData => "Delete Retained Data",
+        }
+    }
+}
+
+/// One of the extensions' operations, as the launcher's records say it now
+/// ([`Launcher::extension_operations`]); [`Launcher::run_extension_operation`]
+/// runs it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ExtensionOperation {
+    pub kind: OperationKind,
+    /// The extension it is about: an installed one, or, deleting retained
+    /// data, the one no longer installed whose data is kept. `None` for
+    /// the runtime's and for every extension's automatic updates.
+    pub owner: Option<PackageIdentity>,
+    /// The command it is about, by its full id: a hotkey, an alias, a
+    /// fallback, choices to forget.
+    pub command: Option<String>,
+    /// What a menu calls it, without the extension's name: "Reload",
+    /// "Clear Cache".
+    pub label: String,
+    /// What it is called in full: "Reload Hello", "Clear cache of Hello".
+    pub title: String,
+    /// Whether it is on now, for what turns something on or off (enabled,
+    /// automatic updates, fallback).
+    pub on: Option<bool>,
+    /// Why it cannot be used now, if it cannot.
+    pub unavailable: Option<String>,
+    /// Its stable id, the same while it is offered: what the sidebar's
+    /// search names it by, and what [`Launcher::run_extension_operation`]
+    /// finds it by.
+    pub id: String,
+}
+
+impl Launcher {
+    /// Every operation of the installed extensions, of the runtime and of
+    /// the data kept for uninstalled extensions, in the extension list's
+    /// order (each package's switch, reload and retry rows, automatic
+    /// updates, cache and uninstall; then confirmations, Clipboard History,
+    /// network and programs, hotkeys, choices and development; retained
+    /// data; every extension's automatic updates last), read now.
+    pub fn extension_operations(&self) -> Vec<ExtensionOperation> {
+        let state = self.lock();
+        let (rows, entries) = self.extension_rows(&state);
+        rows.into_iter()
+            .zip(entries)
+            .filter_map(|(row, entry)| operation(&state, row, &entry))
+            .collect()
+    }
+
+    /// Runs `operation` (one of [`Launcher::extension_operations`]) as
+    /// Settings' pages do: the launcher stays on the screen the user had,
+    /// and what it came to is that screen's status; a confirmation or
+    /// details screen it asks for shows instead, Settings answering it.
+    /// Await the returned future for the operation to finish. An operation
+    /// no longer offered does nothing; one that cannot be used now says why
+    /// in the status.
+    pub fn run_extension_operation(
+        &self,
+        operation: &ExtensionOperation,
+    ) -> impl Future<Output = ()> + Send + 'static {
+        let mut state = self.lock();
+        state.sent_from = None;
+        let (rows, entries) = self.extension_rows(&state);
+        let found = rows
+            .into_iter()
+            .zip(entries)
+            .find(|(row, _)| row.id == operation.id);
+        let pending = match found {
+            Some((row, _)) if row.unavailable.is_some() => {
+                let why = row.unavailable.map(|why| why.reason().to_owned());
+                state.view.status = Status::Error(why.unwrap_or_default());
+                Pending::Nothing
+            }
+            Some((_, entry)) => self.activation(&mut state, entry),
+            None => Pending::Nothing,
+        };
+        let work = self.pending_work(&state, pending);
+        drop(state);
+        work
+    }
+}
+
+/// The operation the extension list's `row`, activating `entry`, is; `None`
+/// for a row that is none (an unavailable hotkey's explanation).
+fn operation(state: &State, row: Row, entry: &Entry) -> Option<ExtensionOperation> {
+    let package_of_command = |command: &str| {
+        let (key, _) = super::choices::split(command);
+        state
+            .packages
+            .iter()
+            .find(|package| package.identity.key() == key)
+            .map(|package| package.identity.clone())
+    };
+    let (kind, owner, command, on) = match entry {
+        Entry::Toggle(identity) => (
+            OperationKind::Enable,
+            Some(identity.clone()),
+            None,
+            Some(
+                state
+                    .package(identity)
+                    .is_some_and(|package| package.enabled),
+            ),
+        ),
+        Entry::ToggleUpdates(Some(identity)) => (
+            OperationKind::AutomaticUpdates,
+            Some(identity.clone()),
+            None,
+            Some(!state.update_controls.off.contains(&identity.key())),
+        ),
+        Entry::ToggleUpdates(None) => (
+            OperationKind::AutomaticUpdates,
+            None,
+            None,
+            Some(state.update_controls.automatic),
+        ),
+        Entry::Reload(identity) => (OperationKind::Reload, Some(identity.clone()), None, None),
+        Entry::Retry(identity) => (OperationKind::Retry, Some(identity.clone()), None, None),
+        Entry::PauseDetails(identity) => {
+            (OperationKind::WhyPaused, Some(identity.clone()), None, None)
+        }
+        Entry::NetworkDetails(identity) => (
+            OperationKind::NetworkUse,
+            Some(identity.clone()),
+            None,
+            None,
+        ),
+        Entry::ProgramDetails(identity) => (
+            OperationKind::ProgramsRun,
+            Some(identity.clone()),
+            None,
+            None,
+        ),
+        Entry::ResetConfirmations(identity) => (
+            OperationKind::ResetConfirmations,
+            Some(identity.clone()),
+            None,
+            None,
+        ),
+        Entry::AskClearClipboardHistory(identity) => (
+            OperationKind::ClearHistory,
+            Some(identity.clone()),
+            None,
+            None,
+        ),
+        Entry::AskClearCache(identity) => (
+            OperationKind::ClearCache,
+            Some(identity.clone()),
+            None,
+            None,
+        ),
+        Entry::AskUninstall(identity) => {
+            (OperationKind::Uninstall, Some(identity.clone()), None, None)
+        }
+        Entry::Develop(identity) => (OperationKind::Develop, Some(identity.clone()), None, None),
+        Entry::StopDeveloping(identity) => (
+            OperationKind::StopDeveloping,
+            Some(identity.clone()),
+            None,
+            None,
+        ),
+        Entry::BuildDetails(identity) => (
+            OperationKind::WhyNotBuilt,
+            Some(identity.clone()),
+            None,
+            None,
+        ),
+        Entry::AskHotkey(command) => (
+            OperationKind::Hotkey,
+            package_of_command(command),
+            Some(command.clone()),
+            None,
+        ),
+        Entry::AskAlias(command) => (
+            OperationKind::Alias,
+            package_of_command(command),
+            Some(command.clone()),
+            None,
+        ),
+        Entry::ToggleFallback(command) => (
+            OperationKind::Fallback,
+            package_of_command(command),
+            Some(command.clone()),
+            Some(state.aliases.chosen.is_fallback(command)),
+        ),
+        Entry::ForgetChoices(command) => (
+            OperationKind::ForgetChoices,
+            package_of_command(command),
+            Some(command.clone()),
+            None,
+        ),
+        Entry::RuntimeDetails => (OperationKind::RuntimeDetails, None, None, None),
+        Entry::RestartRuntime => (OperationKind::RestartRuntime, None, None, None),
+        Entry::AskDeleteRetained(identity) => (
+            OperationKind::DeleteRetainedData,
+            Some(identity.clone()),
+            None,
+            None,
+        ),
+        _ => return None,
+    };
+    Some(ExtensionOperation {
+        kind,
+        owner,
+        command,
+        label: kind.label().to_owned(),
+        on,
+        unavailable: row.unavailable.as_ref().map(|why| why.reason().to_owned()),
+        title: row.title,
+        id: row.id,
+    })
 }
 
 /// One row per installed package, saying whether it is enabled or paused

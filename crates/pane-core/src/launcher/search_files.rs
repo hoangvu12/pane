@@ -40,7 +40,7 @@ use std::time::UNIX_EPOCH;
 use super::files::FileRow;
 use super::{Entry, Launcher, Row, Screen, State, Status, off_thread, owner};
 use crate::file_index::{Category, EntryKind, Found, IndexState, IndexStatus, SearchOptions, Sort};
-use crate::icons::Icon;
+use crate::icons::{DRAWN_IMAGE_EXTENSIONS, Icon};
 use crate::packages::PackageIdentity;
 
 /// The id of Pane's Files default extension, and of its Search Files
@@ -58,72 +58,48 @@ pub const RECENTLY_USED: &str = "Recently Used";
 /// Metadata alone.
 pub const PREVIEW_LIMIT: u64 = 32 * 1024 * 1024;
 
-/// The image types the detail previews (what the window can draw).
-const PREVIEWED: &[&str] = &[
-    "png", "jpg", "jpeg", "gif", "webp", "bmp", "tif", "tiff", "ico", "svg",
-];
-
 /// What the type dropdown keeps (#177): Raycast's types, in its order.
+/// Each but All Types and Folder is one of the index's categories
+/// ([`Category`]), whose table and names it reads.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum FileType {
     #[default]
     All,
     Folder,
-    Document,
-    Image,
-    Video,
-    Audio,
-    Archive,
-    Text,
-    Application,
-    Other,
+    Of(Category),
 }
 
 impl FileType {
-    /// The types, in the dropdown's order.
-    pub const ALL: [FileType; 10] = [
-        FileType::All,
-        FileType::Folder,
-        FileType::Document,
-        FileType::Image,
-        FileType::Video,
-        FileType::Audio,
-        FileType::Archive,
-        FileType::Text,
-        FileType::Application,
-        FileType::Other,
-    ];
+    /// The types, in the dropdown's order: All Types, Folder, then the
+    /// index's categories in [`Category::ALL`]'s order.
+    pub const ALL: [FileType; 10] = {
+        let mut all = [FileType::All; 10];
+        all[1] = FileType::Folder;
+        let mut at = 0;
+        while at < Category::ALL.len() {
+            all[at + 2] = FileType::Of(Category::ALL[at]);
+            at += 1;
+        }
+        all
+    };
 
-    /// The dropdown's label for it.
+    /// The dropdown's label for it: "All Types", "Folder", or the
+    /// category's noun ("Document", "Image", …).
     pub fn label(self) -> &'static str {
         match self {
             FileType::All => "All Types",
             FileType::Folder => "Folder",
-            FileType::Document => "Document",
-            FileType::Image => "Image",
-            FileType::Video => "Video",
-            FileType::Audio => "Audio",
-            FileType::Archive => "Archive",
-            FileType::Text => "Text",
-            FileType::Application => "Application",
-            FileType::Other => "Other",
+            FileType::Of(category) => category.noun(),
         }
     }
 
     /// Its stable id, as the dropdown names its choice: "all", "folder",
-    /// "document", …
+    /// or the category's id ("document", …).
     pub fn id(self) -> &'static str {
         match self {
             FileType::All => "all",
             FileType::Folder => "folder",
-            FileType::Document => "document",
-            FileType::Image => "image",
-            FileType::Video => "video",
-            FileType::Audio => "audio",
-            FileType::Archive => "archive",
-            FileType::Text => "text",
-            FileType::Application => "application",
-            FileType::Other => "other",
+            FileType::Of(category) => category.id(),
         }
     }
 
@@ -137,14 +113,7 @@ impl FileType {
         match self {
             FileType::All => (None, None),
             FileType::Folder => (Some(EntryKind::Folder), None),
-            FileType::Document => (None, Some(Category::Documents)),
-            FileType::Image => (None, Some(Category::Images)),
-            FileType::Video => (None, Some(Category::Video)),
-            FileType::Audio => (None, Some(Category::Audio)),
-            FileType::Archive => (None, Some(Category::Archives)),
-            FileType::Text => (None, Some(Category::Text)),
-            FileType::Application => (None, Some(Category::Applications)),
-            FileType::Other => (None, Some(Category::Other)),
+            FileType::Of(category) => (None, Some(category)),
         }
     }
 
@@ -360,7 +329,7 @@ impl FileDetails {
 /// Whether the file at `path` is an image the detail can preview, by its
 /// extension.
 pub fn previewed(path: &Path) -> bool {
-    extension(path).is_some_and(|extension| PREVIEWED.contains(&extension.as_str()))
+    extension(path).is_some_and(|extension| DRAWN_IMAGE_EXTENSIONS.contains(&extension.as_str()))
 }
 
 /// The extension of `path`, lowercased.
@@ -382,13 +351,8 @@ pub fn type_label(path: &Path, kind: EntryKind) -> String {
         (EntryKind::Link, _) => "Link".into(),
         (EntryKind::File, category) => {
             let noun = match category {
-                Some(Category::Documents) => "Document",
-                Some(Category::Images) => "Image",
-                Some(Category::Audio) => "Audio",
-                Some(Category::Video) => "Video",
-                Some(Category::Archives) => "Archive",
-                Some(Category::Text) => "Text",
-                _ => "File",
+                None | Some(Category::Other) => "File",
+                Some(category) => category.noun(),
             };
             match extension(path) {
                 Some(extension) => format!("{} {noun}", extension.to_uppercase()),
@@ -396,34 +360,6 @@ pub fn type_label(path: &Path, kind: EntryKind) -> String {
             }
         }
     }
-}
-
-/// A size as the Metadata says it, in the decimal units the systems'
-/// file managers use for documents: "0 bytes", "1 byte", "532 bytes",
-/// "12 KB", "1.2 MB", "3.4 GB".
-pub fn size_label(bytes: u64) -> String {
-    const UNITS: [&str; 5] = ["KB", "MB", "GB", "TB", "PB"];
-    match bytes {
-        1 => return "1 byte".into(),
-        0..1000 => return format!("{bytes} bytes"),
-        _ => {}
-    }
-    let mut value = bytes as f64 / 1000.;
-    let mut unit = 0;
-    while value >= 999.95 && unit + 1 < UNITS.len() {
-        value /= 1000.;
-        unit += 1;
-    }
-    let shown = if value >= 100. {
-        format!("{value:.0}")
-    } else {
-        let tenths = format!("{value:.1}");
-        tenths
-            .strip_suffix(".0")
-            .map(str::to_owned)
-            .unwrap_or(tenths)
-    };
-    format!("{shown} {}", UNITS[unit])
 }
 
 impl Launcher {
@@ -774,23 +710,20 @@ mod tests {
         }
         assert_eq!(FileType::from_id("pictures"), None);
         assert_eq!(FileType::Folder.filter(), (Some(EntryKind::Folder), None));
-        assert_eq!(FileType::Text.filter(), (None, Some(Category::Text)));
-        assert_eq!(FileType::Other.filter(), (None, Some(Category::Other)));
+        assert_eq!(
+            FileType::Of(Category::Text).filter(),
+            (None, Some(Category::Text))
+        );
+        assert_eq!(
+            FileType::Of(Category::Other).filter(),
+            (None, Some(Category::Other))
+        );
+        assert_eq!(
+            FileType::from_id("image"),
+            Some(FileType::Of(Category::Images))
+        );
         assert_eq!(FileType::All.options(100).offset, 100);
         assert_eq!(FileType::All.options(0).limit, PAGE);
-    }
-
-    #[test]
-    fn sizes_read_as_the_file_managers_say_them() {
-        assert_eq!(size_label(0), "0 bytes");
-        assert_eq!(size_label(1), "1 byte");
-        assert_eq!(size_label(532), "532 bytes");
-        assert_eq!(size_label(1000), "1 KB");
-        assert_eq!(size_label(12_345), "12.3 KB");
-        assert_eq!(size_label(1_200_000), "1.2 MB");
-        assert_eq!(size_label(999_999), "1 MB");
-        assert_eq!(size_label(345_000_000), "345 MB");
-        assert_eq!(size_label(3_400_000_000), "3.4 GB");
     }
 
     #[test]

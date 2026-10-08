@@ -797,27 +797,9 @@ fn render(
         .iter()
         .map(|group| group.commands.len())
         .sum();
-    let windowing = (listed >= PAGE_WINDOW_ROWS).then(|| {
-        let shortcuts = &this.shortcuts;
-        let mut keep: HashSet<String> = shortcuts
-            .alias_cells
-            .iter()
-            .chain(&shortcuts.hotkey_cells)
-            .chain(&shortcuts.hotkey_clears)
-            .filter(|(_, cell)| cell.is_focused(window))
-            .map(|(command, _)| command.clone())
-            .collect();
-        keep.extend(editing.clone());
-        keep.extend(
-            shortcuts
-                .recording
-                .as_ref()
-                .map(|recording| recording.command.clone()),
-        );
-        Windowing {
-            page: this.search.scroll().clone(),
-            keep,
-        }
+    let windowing = (listed >= PAGE_WINDOW_ROWS).then(|| Windowing {
+        page: this.search.scroll().clone(),
+        keep: active_commands(this, window),
     });
     let groups: Vec<AnyElement> = catalog
         .groups
@@ -1213,6 +1195,35 @@ fn group_element(
 struct Windowing {
     page: gpui::ScrollHandle,
     keep: HashSet<String>,
+}
+
+/// The commands whose alias or hotkey cell holds the focus, or whose alias
+/// is being edited or hotkey recorded: the rows a long list draws however
+/// far they are from the page's view (#165), here and on an extension's
+/// page.
+pub(super) fn active_commands(this: &SettingsWindow, window: &Window) -> HashSet<String> {
+    let shortcuts = &this.shortcuts;
+    let mut keep: HashSet<String> = shortcuts
+        .alias_cells
+        .iter()
+        .chain(&shortcuts.hotkey_cells)
+        .chain(&shortcuts.hotkey_clears)
+        .filter(|(_, cell)| cell.is_focused(window))
+        .map(|(command, _)| command.clone())
+        .collect();
+    keep.extend(
+        shortcuts
+            .editing
+            .as_ref()
+            .map(|editing| editing.command.clone()),
+    );
+    keep.extend(
+        shortcuts
+            .recording
+            .as_ref()
+            .map(|recording| recording.command.clone()),
+    );
+    keep
 }
 
 /// The group's stable key: its package identity's key, or "not installed"

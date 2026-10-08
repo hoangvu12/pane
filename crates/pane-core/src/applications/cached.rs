@@ -35,6 +35,7 @@ use std::time::{Duration, Instant};
 use super::identity::{Catalog, Identified, Source, is_identity};
 use super::{Application, Applications, Change, Changes, Discovery, Watch};
 use crate::clipboard::{Clock, SystemClock};
+use crate::util::lock;
 
 /// How long the changes a watcher reports must settle before the list is
 /// rescanned.
@@ -401,12 +402,6 @@ impl Applications for Cached {
         // The worker ends, and drops its watch, on its own thread.
         self.shared.wake.notify_all();
     }
-}
-
-fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
-    mutex
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 impl Shared {

@@ -20,7 +20,7 @@ use std::time::{Duration, Instant, SystemTime};
 
 use futures::executor::block_on;
 use pane_core::defaults::ArtifactSource;
-use pane_core::file_index::{IndexState, IndexerConfig, WalkOptions};
+use pane_core::file_index::{Category, IndexState, IndexerConfig, WalkOptions};
 use pane_core::search_files::{FileType, PAGE, RECENTLY_USED};
 use pane_core::{DefaultExtension, Launcher, LinkOpener, Runtime, Screen, Status};
 use serde_json::Value;
@@ -334,14 +334,14 @@ fn typing_ranks_by_the_index_and_the_dropdown_filters_by_type() {
     // Cleared: Recently Used again, the dropdown's type kept.
     block_on(launcher.set_query(""));
     for (kind, only) in [
-        (FileType::Image, vec!["shot.png"]),
-        (FileType::Document, vec!["report.pdf"]),
-        (FileType::Text, vec!["plan.txt"]),
-        (FileType::Audio, vec!["song.mp3"]),
-        (FileType::Video, vec!["clip.mp4"]),
-        (FileType::Application, vec!["setup.exe"]),
-        (FileType::Archive, vec!["photos.zip"]),
-        (FileType::Other, vec!["data.bin"]),
+        (FileType::Of(Category::Images), vec!["shot.png"]),
+        (FileType::Of(Category::Documents), vec!["report.pdf"]),
+        (FileType::Of(Category::Text), vec!["plan.txt"]),
+        (FileType::Of(Category::Audio), vec!["song.mp3"]),
+        (FileType::Of(Category::Video), vec!["clip.mp4"]),
+        (FileType::Of(Category::Applications), vec!["setup.exe"]),
+        (FileType::Of(Category::Archives), vec!["photos.zip"]),
+        (FileType::Of(Category::Other), vec!["data.bin"]),
     ] {
         block_on(launcher.set_file_type(kind));
         assert_eq!(launcher.search_files_view().unwrap().filter, kind);
@@ -355,7 +355,7 @@ fn typing_ranks_by_the_index_and_the_dropdown_filters_by_type() {
     }
     assert!(folders.iter().all(|row| !row.contains('.')), "{folders:?}");
     // A type and a query together.
-    block_on(launcher.set_file_type(FileType::Text));
+    block_on(launcher.set_file_type(FileType::Of(Category::Text)));
     block_on(launcher.set_query("report"));
     assert!(titles(&launcher).is_empty(), "{:?}", titles(&launcher));
     assert_eq!(

@@ -151,12 +151,12 @@ fn records_group_into_today_yesterday_and_dates_in_local_time() {
             ("Monday, Sep 28", 4)
         ]
     );
+    // The store's order is kept, whatever the grouping.
+    assert_eq!(ids(&listing.records), ["9", "8", "7", "4", "2"]);
     // A date of another year says which.
     let last_year = [record("1", "old", 1_767_175_200_000, None)];
     let listing = ClipboardBrowse::default().listing(&last_year, NOW, PLUS_7);
     assert_eq!(listing.sections[0].label, "Wednesday, Dec 31, 2025");
-    // The store's order is kept, whatever the grouping.
-    assert_eq!(ids(&listing.records), ["9", "8", "7", "4", "2"]);
 }
 
 #[test]
@@ -1194,19 +1194,22 @@ fn copied_images_and_files_are_kept_and_put_back_as_what_they_were() {
     };
     assert_eq!(
         ids(&browse.listing(&view.records, view.now, 0).records),
-        [listed_image.id.clone()]
+        std::slice::from_ref(&listed_image.id)
     );
 
     // Copy puts each back as what it was.
     launcher
         .copy_clipboard_record(&view, &listed_image.id)
         .unwrap();
-    assert_eq!(pane.clipboard.written_images(), [image.png.clone()]);
+    assert_eq!(
+        pane.clipboard.written_images(),
+        std::slice::from_ref(&image.png)
+    );
     open(&launcher, COMMAND);
     let view = launcher.clipboard_history().unwrap();
     let files_id = view.records[0].id.clone();
     launcher.copy_clipboard_record(&view, &files_id).unwrap();
-    assert_eq!(pane.clipboard.written_files(), [files.clone()]);
+    assert_eq!(pane.clipboard.written_files(), std::slice::from_ref(&files));
     assert!(pane.clipboard.written().is_empty(), "no text was written");
 
     // Paste: where the system can paste, files and an image have no clip

@@ -736,8 +736,10 @@ fn text_of(bytes: &[u8], latin1: bool) -> String {
 /// the host's).
 fn atoms_of(bytes: &[u8]) -> Vec<Atom> {
     bytes
-        .chunks_exact(4)
-        .map(|atom| u32::from_ne_bytes([atom[0], atom[1], atom[2], atom[3]]))
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .map(|atom| u32::from_ne_bytes(*atom))
         .collect()
 }
 
@@ -762,7 +764,7 @@ fn path_of_uri(uri: &str) -> Option<PathBuf> {
     if !(host.is_empty() || host.eq_ignore_ascii_case("localhost")) {
         return None;
     }
-    let encoded = rest[slash..].as_bytes();
+    let encoded = &rest.as_bytes()[slash..];
     let mut path = Vec::with_capacity(encoded.len());
     let mut at = 0;
     while at < encoded.len() {

@@ -114,11 +114,24 @@ impl ResultList {
 
     /// Scrolls the least that shows row `row` of the frame laid out.
     pub(super) fn reveal_row(&self, row: usize) {
-        if let Some(frame) = &self.frame {
-            let head = frame.children.first() == Some(&ListChild::Head);
-            self.list
-                .reveal(virtual_list::child_of_row(head, &frame.sections, row));
+        if let Some(child) = self.child_of_row(row) {
+            self.list.reveal(child);
         }
+    }
+
+    /// The element, placed after the list, that scrolls to show row `row`
+    /// again once this frame laid the list out (see
+    /// [`VirtualList::reveal_after_layout`]).
+    pub(super) fn reveal_row_after_layout(&self, row: usize) -> Option<impl IntoElement> {
+        let child = self.child_of_row(row)?;
+        Some(self.list.reveal_after_layout(child))
+    }
+
+    /// The list's child that shows row `row` of the frame laid out.
+    fn child_of_row(&self, row: usize) -> Option<usize> {
+        let frame = self.frame.as_ref()?;
+        let head = frame.children.first() == Some(&ListChild::Head);
+        Some(virtual_list::child_of_row(head, &frame.sections, row))
     }
 }
 

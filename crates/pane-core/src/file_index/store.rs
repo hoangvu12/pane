@@ -30,6 +30,7 @@ use super::terms::{
 use super::text;
 use super::wal::{self, Op, Wal};
 use crate::atomic::{Readers, write_atomically};
+use crate::util::lock;
 
 /// Entries the memory table holds before they are written as a segment.
 const MEMORY_TABLE_ENTRIES: usize = 1 << 16;
@@ -256,6 +257,47 @@ impl Source<'_> {
         }
     }
 
+    /// Appends the ids of entries with a term of `tag` holding `word`
+    /// anywhere (at its start too) to `all`: every term of the tag is
+    /// looked at, so this is asked only when the words' starts find too
+    /// few entries ([`FileIndex::search`]). Stops past
+    /// [`SHORT_WORD_ENTRIES`] entries.
+    fn word_inside(&self, tag: u8, word: &str, all: &mut Vec<u32>) {
+        let needle = word.as_bytes();
+        let holds = |term: &[u8]| {
+            term.get(1..)
+                .is_some_and(|rest| rest.windows(needle.len()).any(|part| part == needle))
+        };
+        match self {
+            Source::Memory(table) => {
+                let range = table.terms.range::<[u8], _>((
+                    Bound::Included(&[tag][..]),
+                    Bound::Excluded(&[tag + 1][..]),
+                ));
+                for (found, ids) in range {
+                    if holds(found) {
+                        all.extend_from_slice(ids);
+                        if all.len() >= SHORT_WORD_ENTRIES {
+                            break;
+                        }
+                    }
+                }
+            }
+            Source::Segment(segment) => {
+                segment.terms_with_prefix(&[tag], |found, offset| {
+                    if holds(found) {
+                        segment.postings_into(offset, all);
+                    }
+                    if all.len() >= SHORT_WORD_ENTRIES {
+                        ControlFlow::Break(())
+                    } else {
+                        ControlFlow::Continue(())
+                    }
+                });
+            }
+        }
+    }
+
     /// The hint of entry `id`, unless it is a superseded version in a
     /// memory table.
     fn hint(&self, id: u32) -> Option<u32> {
@@ -373,12 +415,6 @@ fn read<T>(lock: &RwLock<T>) -> RwLockReadGuard<'_, T> {
 
 fn write<T>(lock: &RwLock<T>) -> std::sync::RwLockWriteGuard<'_, T> {
     lock.write()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-}
-
-fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
-    mutex
-        .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
@@ -714,7 +750,12 @@ impl FileIndex {
 
     /// The entries matching `query.text`, best first: every word of the
     /// query starts a word of the entry's name or of a folder it is in
-    /// below its root. Never waits for a walk or a merge.
+    /// below its root (a query with `/` or `\`: its parts match the
+    /// folders and the name in order, see `text::score`). When those are
+    /// fewer than the page asks for, words of three letters or more are
+    /// also looked for inside words ("port" finds "report"), listed after
+    /// every match by the start of words. Never waits for a walk or a
+    /// merge.
     pub fn search(&self, query: &Query<'_>) -> Vec<Hit> {
         let prepared = text::Prepared::new(query.text);
         if prepared.words.is_empty() || query.limit == 0 {
@@ -724,10 +765,39 @@ impl FileIndex {
         let cap = CANDIDATES.max(wanted.saturating_mul(4));
         let now = now_seconds();
         let state = read(&self.state);
+        let mut hits = self.matching(&state, &prepared, query.kind, cap, false, now);
+        if prepared.finds_inside() {
+            let found: std::collections::HashSet<Vec<u8>> =
+                hits.iter().map(|(key, _)| key.clone()).collect();
+            if found.len() < wanted {
+                let inside = self.matching(&state, &prepared, query.kind, cap, true, now);
+                hits.extend(inside.into_iter().filter(|(key, _)| !found.contains(key)));
+            }
+        }
+        drop(state);
+        finish(hits, query.offset, query.limit, |a, b| {
+            b.score
+                .total_cmp(&a.score)
+                .then(b.meta.modified.cmp(&a.meta.modified))
+        })
+    }
+
+    /// The current entries of every source matching `prepared` by the
+    /// start of words, or, `inside`, by words found inside words
+    /// (`text::score_inside`), each scored, with its key.
+    fn matching(
+        &self,
+        state: &State,
+        prepared: &text::Prepared,
+        kind: Option<EntryKind>,
+        cap: usize,
+        inside: bool,
+        now: u64,
+    ) -> Vec<(Vec<u8>, Hit)> {
         let sources = state.sources();
         let mut hits: Vec<(Vec<u8>, Hit)> = Vec::new();
         for (at, source) in sources.iter().enumerate() {
-            for id in candidates(source, &prepared.words, query.kind, cap) {
+            for id in candidates(source, &prepared.words, kind, cap, inside) {
                 let Some(stored) = source.stored(id) else {
                     continue;
                 };
@@ -750,7 +820,12 @@ impl FileIndex {
                     is_folder: meta.kind == EntryKind::Folder,
                     modified: meta.modified,
                 };
-                if let Some(score) = text::score(&prepared, &candidate, now) {
+                let score = if inside {
+                    text::score_inside(prepared, &candidate, now)
+                } else {
+                    text::score(prepared, &candidate, now)
+                };
+                if let Some(score) = score {
                     hits.push((
                         stored.key.clone(),
                         Hit {
@@ -762,12 +837,7 @@ impl FileIndex {
                 }
             }
         }
-        drop(state);
-        finish(hits, query.offset, query.limit, |a, b| {
-            b.score
-                .total_cmp(&a.score)
-                .then(b.meta.modified.cmp(&a.meta.modified))
-        })
+        hits
     }
 
     /// The most recently modified entries, newest first, as Search Files
@@ -1085,11 +1155,14 @@ impl Iterator for Merge<'_> {
 /// The ids of the entries of `source` matching every word, at most `cap`:
 /// those with every word in their own name first, then by an exact word,
 /// recent change and shallowness, as their hints tell without reading them.
+/// A word matches a term it starts or, `inside`, one it is anywhere in, when
+/// it has `text::INSIDE_FROM` letters or more.
 fn candidates(
     source: &Source<'_>,
     words: &[String],
     kind: Option<EntryKind>,
     cap: usize,
+    inside: bool,
 ) -> Vec<u32> {
     let mut matched: Option<Vec<u32>> = None;
     let mut in_names: Option<Vec<u32>> = None;
@@ -1100,8 +1173,13 @@ fn candidates(
     for word in words {
         names.clear();
         folders.clear();
-        source.word(NAME_TAG, word, &mut names, &mut exact);
-        source.word(FOLDER_TAG, word, &mut folders, &mut ignored);
+        if inside && word.chars().count() >= text::INSIDE_FROM {
+            source.word_inside(NAME_TAG, word, &mut names);
+            source.word_inside(FOLDER_TAG, word, &mut folders);
+        } else {
+            source.word(NAME_TAG, word, &mut names, &mut exact);
+            source.word(FOLDER_TAG, word, &mut folders, &mut ignored);
+        }
         ignored.clear();
         sort_unique(&mut names);
         sort_unique(&mut folders);
@@ -1396,6 +1474,83 @@ mod tests {
             ..query("notes")
         });
         assert_eq!(names(&folders), ["notes"]);
+    }
+
+    #[test]
+    fn a_query_inside_a_word_is_found_after_the_words_it_starts() {
+        let fixture = fixture();
+        let (index, _) = fixture.open();
+        let mut bulk = index.bulk().unwrap();
+        bulk.add(index.prepare(vec![
+            fixture.entry("report.pdf", EntryKind::File, 100),
+            fixture.entry("portfolio.txt", EntryKind::File, 100),
+            fixture.entry("Reports", EntryKind::Folder, 100),
+            fixture.entry("Reports/q1.xlsx", EntryKind::File, 100),
+            fixture.entry("sport/ball.txt", EntryKind::File, 100),
+        ]))
+        .unwrap();
+        bulk.finish().unwrap();
+        // The memory table too: a change since the last segment.
+        index
+            .apply(&[Change::Put(fixture.entry(
+                "airport.md",
+                EntryKind::File,
+                100,
+            ))])
+            .unwrap();
+
+        let found = names(&index.search(&query("port")));
+        assert_eq!(found[0], "portfolio.txt", "{found:?}");
+        for inside in ["report.pdf", "Reports", "airport.md", "q1.xlsx", "ball.txt"] {
+            assert!(
+                found.iter().any(|name| name == inside),
+                "{inside}: {found:?}"
+            );
+        }
+        // A page the words' starts fill lists nothing found inside.
+        let first = index.search(&Query {
+            limit: 1,
+            ..query("port")
+        });
+        assert_eq!(names(&first), ["portfolio.txt"]);
+        // Short words must start a word.
+        assert!(
+            names(&index.search(&query("po")))
+                .iter()
+                .all(|name| name == "portfolio.txt")
+        );
+    }
+
+    #[test]
+    fn a_query_with_a_separator_matches_path_segments_in_order() {
+        let fixture = fixture();
+        let (index, _) = fixture.open();
+        let mut bulk = index.bulk().unwrap();
+        bulk.add(index.prepare(vec![
+            fixture.entry("Documents/Work/plan.txt", EntryKind::File, 100),
+            fixture.entry("Work/Documents/plan.txt", EntryKind::File, 100),
+            fixture.entry("Documents/plan notes.md", EntryKind::File, 100),
+        ]))
+        .unwrap();
+        bulk.finish().unwrap();
+        let paths = |text: &str| -> Vec<PathBuf> {
+            index
+                .search(&query(text))
+                .into_iter()
+                .map(|hit| hit.path)
+                .collect()
+        };
+        assert_eq!(
+            paths("work/documents/plan"),
+            [fixture.path("Work/Documents/plan.txt")]
+        );
+        assert_eq!(
+            paths(r"documents\work\plan"),
+            [fixture.path("Documents/Work/plan.txt")]
+        );
+        let both = paths("documents/plan");
+        assert_eq!(both.len(), 3, "{both:?}");
+        assert!(paths("plan/documents").is_empty());
     }
 
     #[test]

@@ -69,8 +69,8 @@ Rust's standard library on `wasm32-wasip2`) is rejected with an explanation.
   `packages/sample-helper-ts`; held alike by
   `crates/pane-core/tests/helpers.rs`. The helper sample is no default
   extension (it was one in development builds until #162); a Pane that
-  acquired it before keeps it as an ordinary installed package, which
-  Manage extensions uninstalls.
+  acquired it before keeps it as an ordinary installed package, which its
+  page in Settings uninstalls.
 - `sample-applications-js`, `sample-applications-ts`: the same host import
   and indexed results in JavaScript and TypeScript: "Launch <name>" for each
   installed application, also found as "Launch <alternate title>" and by
@@ -1620,7 +1620,11 @@ command that needs setup; its row in root search says "Needs setup", and
 none of this counts as a failure.
 
 The user changes the values later on the extension's card in Settings ›
-Extensions, saved as they change; "Configure Command…" and "Configure
+Extensions, saved as they change and applied without a restart: a text
+or password in a field, a checkbox as a switch, a dropdown as a select
+(its value on a button that opens the options under a "Search choices"
+field, as Settings' own choices are), a file, folder or application in a
+field with "Choose…". "Configure Command…" and "Configure
 Extension…" in root search's Actions panel open it there. Values are the
 package's [extension data](../docs/extension-data.md): a password is a
 local credential, every other value an extension setting, so disabling

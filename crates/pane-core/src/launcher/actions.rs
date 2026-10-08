@@ -367,7 +367,7 @@ pub(in crate::launcher) fn selected_action(state: &State) -> SelectedAction {
         (_, Some(Entry::Acquire(_))) => acting("Set up extension"),
         (_, Some(Entry::InstallUpdate)) => acting("Install update"),
         (_, Some(Entry::CheckUpdate)) => acting("Check for update"),
-        (_, Some(Entry::Manage)) => acting("Manage extensions"),
+        (_, Some(Entry::Manage)) => acting("Manage Extensions"),
         // Pane's Settings row opens the Settings window, exactly as its
         // ellipsis menu entry and the local shortcut do (the window, not
         // the launcher, acts; see [`Launcher::selected_opens_settings`]).

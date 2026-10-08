@@ -62,10 +62,6 @@ pub(crate) const IMAGES_DIR: &str = "clipboard-images";
 /// The version of the history file's format.
 const VERSION: u64 = 1;
 
-/// The id of Pane's Clipboard History default extension, whose history
-/// records from the first start.
-const CLIPBOARD_HISTORY: &str = "clipboard-history";
-
 /// Whether the package whose identity key is `owner` records what is
 /// copied before anyone turned its history on: only Pane's own Clipboard
 /// History default extension does (ADR 0042, amending ADR 0020); every
@@ -79,7 +75,11 @@ pub(crate) fn records_by_default(owner: &str) -> bool {
 
 /// The identity key of Pane's own Clipboard History default extension.
 pub(crate) fn default_owner() -> String {
-    crate::packages::PackageIdentity::default_extension(CLIPBOARD_HISTORY).key()
+    // Its history records from the first start.
+    crate::packages::PackageIdentity::default_extension(
+        crate::launcher::clipboard_view::CLIPBOARD_HISTORY,
+    )
+    .key()
 }
 
 /// Whether the package whose identity key is `owner` keeps copied images
@@ -1183,7 +1183,7 @@ mod tests {
         // Nothing written yet: it records, and the others do not.
         assert_eq!(store.get(&own).unwrap().capture, CaptureState::On);
         assert_eq!(store.get("a").unwrap().capture, CaptureState::Off);
-        assert_eq!(store.capturing_owners(), [own.clone()]);
+        assert_eq!(store.capturing_owners(), std::slice::from_ref(&own));
         // A capture keeps the copy for it.
         store.capture(store.deletions(), |packages, now| {
             let history = packages.get_mut(&own).expect("its fresh history");

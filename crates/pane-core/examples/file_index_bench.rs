@@ -569,8 +569,11 @@ fn catch_up(
         other => return Some(Err(format!("{other:?}"))),
     };
     let mut folders = index.folder_ids();
-    let resolved = file_index::resolve(&records, &mut folders);
-    let (changes_to_apply, _walk) = file_index::catch_up_changes(scope, &resolved);
+    let mut names = file_index::Names::for_volume_of(root);
+    let resolved = file_index::resolve(&records, &mut folders, &mut |id| names.name(id));
+    let (found, _walk) = file_index::catch_up_changes(scope, &resolved);
+    let mut changes_to_apply = file_index::missing_from(index, &resolved.listed);
+    changes_to_apply.extend(found);
     if let Err(error) = index.apply(&changes_to_apply) {
         return Some(Err(error.to_string()));
     }

@@ -63,7 +63,7 @@ pub fn reconcile(
             break;
         }
         reconciled.folders_compared += 1;
-        let is_root = scope.rules().roots.iter().any(|root| *root == folder);
+        let is_root = scope.rules().roots.contains(&folder);
         let indexed = index.get(&folder);
         let on_disk = walker::meta_at(&folder);
         let on_disk = match on_disk {
@@ -118,7 +118,7 @@ pub fn reconcile(
                 reconciled.hung_folders.push(folder.clone());
                 continue;
             }
-            Err(walker::Unlisted::Unreadable) => None,
+            Err(walker::Unlisted::Unreadable | walker::Unlisted::Refused) => None,
         };
         read_again(
             scope,

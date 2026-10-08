@@ -80,7 +80,11 @@ fn a_desktop_entrys_icon_is_found_in_the_themes_of_the_data_folders() {
     .unwrap();
 
     let name = entry_icon(&std::fs::read_to_string(&entry).unwrap()).unwrap();
-    let themes = IconThemes::new(&[data.clone()], Some(dir.path()), Some("Missing".into()));
+    let themes = IconThemes::new(
+        std::slice::from_ref(&data),
+        Some(dir.path()),
+        Some("Missing".into()),
+    );
 
     assert_eq!(
         themes.find(&name),
@@ -200,13 +204,35 @@ mod windows {
             r"shell:AppsFolder\Microsoft.WindowsCalculator_8wekyb3d8bbwe!App",
             r"shell:AppsFolder\windows.immersivecontrolpanel_cw5n1h2txyewy!microsoft.windows.immersivecontrolpanel",
         ];
-        let (source, extracted) = candidates
+        let found: Vec<_> = candidates
             .iter()
-            .find_map(|source| Some((*source, NativeExtractor.extract(source).ok()?)))
-            .expect("neither Calculator nor Settings has an icon");
-        let dark = extracted
-            .dark
-            .unwrap_or_else(|| panic!("{source} has no dark variant"));
+            .filter_map(|source| Some((*source, NativeExtractor.extract(source).ok()?)))
+            .collect();
+        assert!(
+            !found.is_empty(),
+            "neither Calculator nor Settings has an icon"
+        );
+        // A package has a light theme's logo of its own only when it ships
+        // a `lightunplated` variant; a server's inbox apps (CI's
+        // windows-2025 has no Calculator, and its Settings ships none)
+        // may have none, and then one logo serves both themes.
+        for (source, extracted) in &found {
+            if extracted.dark.is_none() {
+                let SystemIcon::File(logo) = &extracted.light else {
+                    panic!("{source}: the package's own logo is a file");
+                };
+                assert!(
+                    !ships_a_light_logo(logo),
+                    "{source} ships a light theme's logo, but has no dark variant"
+                );
+            }
+        }
+        let (source, extracted) = found
+            .iter()
+            .find(|(_, extracted)| extracted.dark.is_some())
+            .unwrap_or(&found[0]);
+        let source = *source;
+        let dark = extracted.dark.clone().unwrap_or(extracted.light.clone());
         for icon in [&extracted.light, &dark] {
             match icon {
                 SystemIcon::File(file) => {
@@ -220,10 +246,26 @@ mod windows {
                 SystemIcon::Png(_) => panic!("{source}: the package's own logo is a file"),
             }
         }
-        assert_ne!(extracted.light, dark, "{source}");
+        if extracted.dark.is_some() {
+            assert_ne!(extracted.light, dark, "{source}");
+        }
         // Its fingerprint is its package's manifest.
         let fingerprint = NativeExtractor.fingerprint(source).unwrap();
         assert!(fingerprint.contains("AppxManifest.xml"), "{fingerprint}");
+    }
+
+    /// Whether the folder of `logo`, a packaged app's logo file, holds a
+    /// light theme's variant of it (`<logo>.…altform-lightunplated….png`).
+    fn ships_a_light_logo(logo: &Path) -> bool {
+        let name = logo.file_name().unwrap().to_string_lossy().to_lowercase();
+        let stem = name.split('.').next().unwrap().to_owned();
+        fs::read_dir(logo.parent().unwrap())
+            .unwrap()
+            .filter_map(Result::ok)
+            .map(|entry| entry.file_name().to_string_lossy().to_lowercase())
+            .any(|file| {
+                file.starts_with(&format!("{stem}.")) && file.contains("altform-lightunplated")
+            })
     }
 }
 

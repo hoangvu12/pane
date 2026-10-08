@@ -181,7 +181,7 @@ pub trait ChangeSource: Send + Sync + 'static {
 pub fn native() -> std::sync::Arc<dyn ChangeSource> {
     #[cfg(target_os = "linux")]
     {
-        std::sync::Arc::new(linux::Inotify::default())
+        std::sync::Arc::new(linux::Inotify)
     }
     #[cfg(target_os = "macos")]
     {

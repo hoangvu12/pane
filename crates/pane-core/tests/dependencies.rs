@@ -349,8 +349,8 @@ fn a_disabled_required_dependency_is_not_enabled_again() {
     assert_eq!(
         launcher.view().status,
         result(
-            "Installed Caller; Rust operations sample stays disabled: enable it in Manage \
-             extensions for Caller to use it"
+            "Installed Caller; Rust operations sample stays disabled: enable it in Settings \
+             for Caller to use it"
         )
     );
     let rust = launcher

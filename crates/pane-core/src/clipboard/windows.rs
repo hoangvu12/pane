@@ -631,7 +631,7 @@ fn dib_pixels(dib: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
         }
     }
     if layout.bits == 32 && !any_alpha {
-        for pixel in rgba.chunks_exact_mut(4) {
+        for pixel in rgba.as_chunks_mut::<4>().0 {
             pixel[3] = 255;
         }
     }
@@ -658,7 +658,7 @@ fn channel(value: u32, mask: u32) -> u8 {
 /// pixel, `BI_RGB`, bottom row first), then its pixels as blue, green, red
 /// and alpha; `None` if it cannot be decoded.
 fn png_to_dib(png: &[u8]) -> Option<Vec<u8>> {
-    let (width, height, rgba) = decode_png(png)?;
+    let (width, height, rgba) = crate::icons::decode_png(png)?;
     let row = width as usize * 4;
     let mut dib = Vec::with_capacity(40 + rgba.len());
     dib.extend_from_slice(&40u32.to_le_bytes());
@@ -671,32 +671,11 @@ fn png_to_dib(png: &[u8]) -> Option<Vec<u8>> {
     // Resolution and colour table: none.
     dib.extend_from_slice(&[0; 16]);
     for line in rgba.chunks_exact(row).rev() {
-        for pixel in line.chunks_exact(4) {
+        for pixel in line.as_chunks::<4>().0 {
             dib.extend_from_slice(&[pixel[2], pixel[1], pixel[0], pixel[3]]);
         }
     }
     Some(dib)
-}
-
-/// The pixels of the PNG `png` as straight RGBA, with its width and height.
-fn decode_png(png: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
-    let mut decoder = ::png::Decoder::new(std::io::Cursor::new(png));
-    decoder.set_transformations(
-        ::png::Transformations::normalize_to_color8() | ::png::Transformations::ALPHA,
-    );
-    let mut reader = decoder.read_info().ok()?;
-    let mut buffer = vec![0; reader.output_buffer_size()?];
-    let info = reader.next_frame(&mut buffer).ok()?;
-    let pixels = &buffer[..info.buffer_size()];
-    let rgba = match info.color_type {
-        ::png::ColorType::Rgba => pixels.to_vec(),
-        ::png::ColorType::GrayscaleAlpha => pixels
-            .chunks_exact(2)
-            .flat_map(|pair| [pair[0], pair[0], pair[0], pair[1]])
-            .collect(),
-        _ => return None,
-    };
-    Some((info.width, info.height, rgba))
 }
 
 /// The full path of the program of the process whose window owns the

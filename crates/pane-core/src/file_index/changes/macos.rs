@@ -110,25 +110,25 @@ impl ChangeSource for FsEvents {
         let mut kept = Vec::new();
         let mut note = None;
         for root in &scope.rules().roots {
-            match volume_of(root) {
-                Some((_, uuid)) => match cursors.iter().find(|cursor| cursor.volume == uuid) {
-                    Some(cursor) => {
-                        if !kept.contains(cursor) {
-                            kept.push(cursor.clone());
-                        }
+            // Missing (an unplugged drive): its entries are kept.
+            let Some((_, uuid)) = volume_of(root) else {
+                continue;
+            };
+            match cursors.iter().find(|cursor| cursor.volume == uuid) {
+                Some(cursor) => {
+                    if !kept.contains(cursor) {
+                        kept.push(cursor.clone());
                     }
-                    None => {
-                        note.get_or_insert_with(|| {
-                            format!(
-                                "the event history of the volume holding {} is new",
-                                root.display()
-                            )
-                        });
-                        reconcile.push(root.clone());
-                    }
-                },
-                // Missing (an unplugged drive): its entries are kept.
-                None => {}
+                }
+                None => {
+                    note.get_or_insert_with(|| {
+                        format!(
+                            "the event history of the volume holding {} is new",
+                            root.display()
+                        )
+                    });
+                    reconcile.push(root.clone());
+                }
             }
         }
         if !reconcile.is_empty() && reconcile.len() == scope.rules().roots.len() {
@@ -178,6 +178,11 @@ impl ChangeSource for FsEvents {
 /// What the stream's callback is given.
 struct Info {
     roots: Vec<PathBuf>,
+    /// Each root that resolves to another path, by that path: FSEvents
+    /// reports a change by the folders' real paths (`/private/var/…` for a
+    /// root under `/var/…`, which is a link), and Pane's index holds them
+    /// under the root as given.
+    resolved: Vec<(PathBuf, PathBuf)>,
     sink: Sink,
     /// Whether the replayed history is still arriving.
     replaying: bool,
@@ -193,8 +198,16 @@ fn run_stream(
     run_loop: Arc<Mutex<Option<usize>>>,
     started: std::sync::mpsc::Sender<Result<(), String>>,
 ) {
+    let resolved = roots
+        .iter()
+        .filter_map(|root| {
+            let real = std::fs::canonicalize(root).ok()?;
+            (real != *root).then(|| (real, root.clone()))
+        })
+        .collect();
     let info = Box::into_raw(Box::new(Info {
         roots: roots.clone(),
+        resolved,
         sink,
         replaying,
     }));
@@ -285,9 +298,10 @@ extern "C" fn callback(
     for ((&path, &flag), &id) in paths.iter().zip(flags).zip(ids) {
         last = last.max(id);
         // SAFETY: a NUL-terminated path FSEvents gave.
-        let path = PathBuf::from(std::ffi::OsStr::from_bytes(
+        let reported = PathBuf::from(std::ffi::OsStr::from_bytes(
             unsafe { CStr::from_ptr(path) }.to_bytes(),
         ));
+        let path = as_given(&info.resolved, reported);
         if flag & fse::kFSEventStreamEventFlagHistoryDone != 0 {
             info.replaying = false;
             if !changed.is_empty() {
@@ -324,6 +338,26 @@ extern "C" fn callback(
     }
 }
 
+/// `path`, as FSEvents reported it, under the root it is in as Pane was
+/// given that root: below a root that resolves to another path
+/// (`resolved` pairs each such real path with the root), the root's part
+/// is put back; any other path is kept as it is.
+fn as_given(resolved: &[(PathBuf, PathBuf)], path: PathBuf) -> PathBuf {
+    resolved
+        .iter()
+        .filter_map(|(real, root)| Some((real, root, path.strip_prefix(real).ok()?)))
+        // The deepest real path, should one root resolve inside another.
+        .max_by_key(|(real, _, _)| real.components().count())
+        .map(|(_, root, rest)| {
+            if rest.as_os_str().is_empty() {
+                root.clone()
+            } else {
+                root.join(rest)
+            }
+        })
+        .unwrap_or(path)
+}
+
 struct Stream {
     run_loop: Arc<Mutex<Option<usize>>>,
 }
@@ -352,6 +386,70 @@ mod tests {
     use super::*;
     use crate::file_index::ScopeRules;
     use crate::file_index::indexer::Message;
+
+    #[test]
+    fn a_reported_path_is_put_back_under_its_root_as_given() {
+        let resolved = vec![
+            (
+                PathBuf::from("/private/var/folders/x/home"),
+                PathBuf::from("/var/folders/x/home"),
+            ),
+            (
+                PathBuf::from("/Volumes/Data/projects"),
+                PathBuf::from("/Users/me/projects"),
+            ),
+        ];
+        let given = |path: &str| as_given(&resolved, PathBuf::from(path));
+        assert_eq!(
+            given("/private/var/folders/x/home/Documents/a.txt"),
+            PathBuf::from("/var/folders/x/home/Documents/a.txt")
+        );
+        assert_eq!(
+            given("/private/var/folders/x/home"),
+            PathBuf::from("/var/folders/x/home")
+        );
+        assert_eq!(
+            given("/Volumes/Data/projects/app"),
+            PathBuf::from("/Users/me/projects/app")
+        );
+        // Not below a root that resolves elsewhere: as reported.
+        assert_eq!(
+            given("/Users/me/notes.txt"),
+            PathBuf::from("/Users/me/notes.txt")
+        );
+        assert_eq!(
+            given("/private/var/folders/x/homework"),
+            PathBuf::from("/private/var/folders/x/homework")
+        );
+    }
+
+    #[test]
+    fn a_root_under_a_link_has_its_changes_reported_under_it_as_given() {
+        let dir = tempfile::tempdir().unwrap();
+        // Under `/var/…`, a link to `/private/var/…`: a root as Pane may be
+        // given one.
+        let home = dir.path().join("home");
+        std::fs::create_dir_all(&home).unwrap();
+        let scope = Scope::new(ScopeRules::for_home(home.clone()));
+        let (sender, received) = channel();
+        let watch = FsEvents
+            .watch(&scope, &[], Vec::new(), Sink::new(sender, None))
+            .unwrap();
+        let live = home.join("live.txt");
+        std::fs::write(&live, "x").unwrap();
+        let deadline = Instant::now() + Duration::from_secs(20);
+        loop {
+            let left = deadline
+                .checked_duration_since(Instant::now())
+                .expect("FSEvents reported the change under the root as given");
+            if let Ok(Message::Changed(Changed::Paths(paths))) = received.recv_timeout(left)
+                && paths.contains(&live)
+            {
+                break;
+            }
+        }
+        drop(watch);
+    }
 
     #[test]
     fn fsevents_replays_what_changed_since_a_saved_event_id_then_reports_live_changes() {

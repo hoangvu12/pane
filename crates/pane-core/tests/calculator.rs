@@ -516,7 +516,7 @@ fn the_answer_is_listed_while_a_command_asked_after_it_is_still_answering() {
     // ("Slow answers"). Waiting longer is this test's own business; the
     // calculator's answer is not affected.
     runtime.set_limits(Limits {
-        compute: Duration::from_secs(30),
+        compute: Duration::from_secs(180),
         ..Limits::default()
     });
     let launcher = dirs.launcher(runtime);
@@ -548,7 +548,9 @@ fn the_answer_is_listed_while_a_command_asked_after_it_is_still_answering() {
         answered.try_recv().is_err(),
         "the slow command is still answering"
     );
-    answered.recv_timeout(Duration::from_secs(60)).unwrap();
+    // Generous: alone the slow command answers in seconds, but beside the
+    // whole suite its instance and its busy second can take over a minute.
+    answered.recv_timeout(Duration::from_secs(240)).unwrap();
     assert_eq!(titles(&launcher), ["0", "Slow answer"]);
     assert_eq!(selected_title(&launcher).as_deref(), Some("0"));
 }

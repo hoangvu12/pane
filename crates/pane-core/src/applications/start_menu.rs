@@ -157,6 +157,10 @@ type Handlers = Arc<dyn Fn(&str) -> bool + Send + Sync>;
 /// last written, so an unchanged shortcut is not read again.
 type Fingerprint = (u64, Option<SystemTime>);
 
+/// The shortcuts read by earlier scans, by path, with what each file was
+/// when it was read.
+type ReadShortcuts = Arc<Mutex<HashMap<PathBuf, (Fingerprint, Option<Shortcut>)>>>;
+
 /// The shortcuts in some folders and, when enabled, the packaged apps in
 /// the Apps folder.
 #[derive(Clone)]
@@ -172,7 +176,7 @@ pub struct StartMenu {
     /// Says whether a URL scheme has a handler.
     handlers: Handlers,
     /// The shortcuts read by earlier scans, by path.
-    read: Arc<Mutex<HashMap<PathBuf, (Fingerprint, Option<Shortcut>)>>>,
+    read: ReadShortcuts,
 }
 
 impl std::fmt::Debug for StartMenu {
@@ -422,11 +426,13 @@ fn is_program(target: &str) -> bool {
 /// The text of a small shortcut file: UTF-16 when it starts with that
 /// encoding's byte order mark (as `.appref-ms` files do), else UTF-8 (or
 /// the ANSI of `.url` files, read as far as it is UTF-8).
-fn shortcut_text(bytes: &[u8]) -> String {
+pub(super) fn shortcut_text(bytes: &[u8]) -> String {
     if let Some(utf16) = bytes.strip_prefix(&[0xFF, 0xFE]) {
         let units: Vec<u16> = utf16
-            .chunks_exact(2)
-            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|pair| u16::from_le_bytes(*pair))
             .collect();
         return String::from_utf16_lossy(&units);
     }
@@ -486,7 +492,7 @@ fn is_application_url(url: &str, handles: &dyn Fn(&str) -> bool) -> bool {
 /// first line, the deployment's URL with the application's identity
 /// (`https://host/App.application#App.application, Culture=neutral, ...`);
 /// `None` when it names none.
-fn click_once_deployment(text: &str) -> Option<String> {
+pub(super) fn click_once_deployment(text: &str) -> Option<String> {
     let line = text.trim_matches(['\0', '\u{feff}']).lines().next()?.trim();
     line.to_lowercase()
         .contains(".application")
@@ -873,45 +879,10 @@ fn desktop(_all_users: bool) -> Option<PathBuf> {
     None
 }
 
-/// COM initialized on this thread for as long as it is held; the shell may
-/// use COM to enumerate the Apps folder, read a shortcut or open one.
+/// COM on the thread for as long as it is held: the shell may use it to
+/// enumerate the Apps folder, read a shortcut or open one.
 #[cfg(windows)]
-struct Com {
-    /// Whether this guard initialized COM and must uninitialize it: not when
-    /// the thread already had it in another mode.
-    initialized: bool,
-}
-
-#[cfg(windows)]
-impl Com {
-    fn new() -> Result<Com, String> {
-        use windows::Win32::Foundation::RPC_E_CHANGED_MODE;
-        use windows::Win32::System::Com::{
-            COINIT_APARTMENTTHREADED, COINIT_DISABLE_OLE1DDE, CoInitializeEx,
-        };
-        // SAFETY: no reserved pointer; paired with CoUninitialize in `drop`.
-        let result =
-            unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE) };
-        if result == RPC_E_CHANGED_MODE {
-            // Already initialized as multithreaded: usable as it is.
-            return Ok(Com { initialized: false });
-        }
-        result
-            .ok()
-            .map_err(|error| format!("cannot start COM: {error}"))?;
-        Ok(Com { initialized: true })
-    }
-}
-
-#[cfg(windows)]
-impl Drop for Com {
-    fn drop(&mut self) {
-        if self.initialized {
-            // SAFETY: paired with the successful CoInitializeEx in `new`.
-            unsafe { windows::Win32::System::Com::CoUninitialize() };
-        }
-    }
-}
+use crate::windows_shell::Com;
 
 /// How many threads read shortcuts at once, at most.
 #[cfg(windows)]
@@ -961,7 +932,6 @@ fn read_shortcuts(paths: &[PathBuf]) -> Vec<Option<Shortcut>> {
 /// and the name Explorer shows for it.
 #[cfg(windows)]
 fn read_shortcut(path: &Path) -> windows::core::Result<Shortcut> {
-    use std::os::windows::ffi::OsStrExt;
     use windows::Win32::Foundation::PROPERTYKEY;
     use windows::Win32::System::Com::StructuredStorage::{PropVariantClear, PropVariantToString};
     use windows::Win32::System::Com::{
@@ -985,7 +955,7 @@ fn read_shortcut(path: &Path) -> windows::core::Result<Shortcut> {
             .unwrap_or(buffer.len());
         String::from_utf16_lossy(&buffer[..end]).trim().to_owned()
     };
-    let file: Vec<u16> = path.as_os_str().encode_wide().chain([0]).collect();
+    let file = crate::util::wide(path);
     // SAFETY: plain COM calls on interfaces the shell returns, on a thread
     // whose COM apartment outlives them; every buffer outlives its call.
     unsafe {
@@ -1160,7 +1130,7 @@ fn shell_execute(file: &str) -> Result<(), String> {
     use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
     use windows::core::PCWSTR;
 
-    let file: Vec<u16> = file.encode_utf16().chain([0]).collect();
+    let file = crate::util::wide(file);
     let _com = Com::new()?;
     let mut info = SHELLEXECUTEINFOW {
         cbSize: std::mem::size_of::<SHELLEXECUTEINFOW>() as u32,
@@ -1412,7 +1382,13 @@ mod tests {
         let path = PathBuf::from(format!(r"C:\Menu\{name}"));
         Found {
             kind: Kind::of(&path).unwrap(),
-            name: path.file_stem().unwrap().to_string_lossy().into_owned(),
+            // The file's own stem: off Windows a `\` is no separator, so
+            // the stem of the whole `C:\Menu\…` path would keep its folder.
+            name: Path::new(name)
+                .file_stem()
+                .unwrap()
+                .to_string_lossy()
+                .into_owned(),
             path,
             location: r"C:\Menu".into(),
             place,

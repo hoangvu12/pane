@@ -42,6 +42,7 @@ use crate::icons::{
 };
 use crate::packages::PackageIdentity;
 use crate::system_icons::{NativeIcons, SystemIcon, SystemIcons};
+use crate::util::lock;
 
 /// How many loads run at once.
 const WORKERS: usize = 4;
@@ -480,12 +481,6 @@ impl Shared {
             Err(why) => Err(why),
         }
     }
-}
-
-fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
-    mutex
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 #[cfg(test)]

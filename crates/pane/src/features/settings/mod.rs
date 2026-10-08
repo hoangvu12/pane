@@ -192,14 +192,17 @@ pub struct SettingsWindow {
     shortcuts: shortcuts::State,
     /// The Keyboard page's state, owned by its module.
     keyboard: keyboard::State,
-    /// The Extensions page's state (its preferences' text fields), owned
-    /// by its module.
+    /// The Extensions page's state (its preferences' text fields and
+    /// selects), owned by its module.
     extensions: extensions::State,
     /// The File Search page's state (its pattern field), owned by its
     /// module.
     file_search: file_search::State,
     /// The sidebar's search, owned by its module.
     search: search::State,
+    /// The sidebar's sections list as it scrolls: a long Extensions group
+    /// draws only the entries near its view (#165).
+    sidebar_scroll: gpui::ScrollHandle,
 }
 
 impl SettingsWindow {
@@ -213,7 +216,7 @@ impl SettingsWindow {
         // repaints this window and the launcher without a restart, and
         // the platform's appearance notification feeds the system's
         // appearance back into them (see `crate::settings`).
-        crate::settings::follow(&crate::settings::ensure(cx), window, cx);
+        crate::settings::bind_window_appearance(&crate::settings::ensure(cx), window, cx);
         // The placement the Launcher page explains its choices through,
         // ensuring it exists before the page's search reads it.
         crate::placement::ensure(cx);
@@ -233,6 +236,13 @@ impl SettingsWindow {
             }
         })
         .detach();
+        // A control that had the keyboard and is gone — the install field
+        // once its package shows, an editor or a menu closed — hands it
+        // back to the sidebar's list, where the window's own keys (the
+        // close shortcut, Escape, Up and Down) are bound: focus left on a
+        // control no longer drawn reaches none of them.
+        cx.on_focus_lost(window, |this, window, cx| window.focus(&this.focus, cx))
+            .detach();
         cx.spawn(async move |this, cx| {
             loop {
                 cx.background_executor().timer(shortcuts::WATCH).await;
@@ -281,6 +291,7 @@ impl SettingsWindow {
             extensions: extensions::State::default(),
             file_search: file_search::State::default(),
             search: search::State::new(cx),
+            sidebar_scroll: gpui::ScrollHandle::new(),
         }
     }
 
@@ -470,6 +481,7 @@ impl SettingsWindow {
             .id("sections")
             .debug_selector(|| "sections".into())
             .overflow_y_scroll()
+            .track_scroll(&self.sidebar_scroll)
             .track_focus(&self.focus)
             .role(Role::ListBox)
             .aria_label(if searching {

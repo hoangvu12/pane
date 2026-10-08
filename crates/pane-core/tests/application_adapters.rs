@@ -179,7 +179,10 @@ fn start_menu_shortcuts_are_found_once_without_uninstallers() {
     write(&everyone.join("Web site.url"), "");
     write(&everyone.join("desktop.ini"), "");
 
+    // Read as fixtures: on Windows the shell reads an empty file as a
+    // shortcut to nothing, which is not an application.
     let found = StartMenu::new(vec![user.clone(), everyone.clone()])
+        .with_resolver(read_fixtures)
         .sources()
         .unwrap();
 
@@ -370,8 +373,10 @@ fn the_hosts_list_finds_an_application_by_its_id_and_by_its_path_from_before() {
     let host =
         pane_core::applications::Cached::new(std::sync::Arc::new(menu), Duration::from_secs(3600));
     let mine = user.join("Tool.lnk").to_string_lossy().into_owned();
+    // As the adapter wrote it, separators and all.
     let installer = everyone
-        .join("Tools/Tool.lnk")
+        .join("Tools")
+        .join("Tool.lnk")
         .to_string_lossy()
         .into_owned();
 
@@ -470,7 +475,9 @@ fn desktop_shortcuts_and_taskbar_pins_are_applications() {
     assert_eq!(tool.sources.len(), 2);
     assert_eq!(
         tool.primary().path,
-        root.join("user/Desktop/My Tool.lnk").to_string_lossy()
+        root.join("user/Desktop")
+            .join("My Tool.lnk")
+            .to_string_lossy()
     );
     let portable = catalog
         .find(&Key::program(r"D:\Portable\portable.exe", "").id())
@@ -520,7 +527,9 @@ fn internet_shortcuts_with_a_handled_scheme_and_click_once_references_are_applic
     assert_eq!(game.sources.len(), 2);
     assert_eq!(
         game.primary().path,
-        root.join("user/Desktop/Dota 2.url").to_string_lossy()
+        root.join("user/Desktop")
+            .join("Dota 2.url")
+            .to_string_lossy()
     );
     assert_eq!(
         applications[0].id,
@@ -917,6 +926,14 @@ mod windows {
         assert!(status.success(), "the shortcut was not made");
     }
 
+    /// `path`, an existing folder, by its long names: what
+    /// `fs::canonicalize` resolves, without its `\\?\` prefix.
+    fn long_path(path: &Path) -> PathBuf {
+        let resolved = fs::canonicalize(path).unwrap();
+        let text = resolved.to_string_lossy();
+        PathBuf::from(text.strip_prefix(r"\\?\").unwrap_or(&text))
+    }
+
     /// A shortcut to `target` passing `arguments`, made as the shell makes
     /// them.
     fn shortcut_to(path: &Path, target: &Path, arguments: &str) {
@@ -938,13 +955,17 @@ mod windows {
     #[test]
     fn shortcuts_to_a_program_in_two_version_folders_are_one_application() {
         let dir = tempfile::tempdir().unwrap();
+        // The folder by its long name: a runner's temporary folder is
+        // under an 8.3 short name (`C:\Users\RUNNER~1\…`), and the shell
+        // reads a shortcut's target back by its long names.
+        let root = long_path(dir.path());
         let cmd = PathBuf::from(std::env::var("SystemRoot").unwrap()).join(r"System32\cmd.exe");
-        let program = |version: &str| dir.path().join(format!(r"Chat\{version}\chat.exe"));
+        let program = |version: &str| root.join(format!(r"Chat\{version}\chat.exe"));
         for version in ["app-1.0.0", "app-1.0.1"] {
             fs::create_dir_all(program(version).parent().unwrap()).unwrap();
             fs::copy(&cmd, program(version)).unwrap();
         }
-        let programs = dir.path().join("Programs");
+        let programs = root.join("Programs");
         shortcut_to(&programs.join("Chat.lnk"), &program("app-1.0.0"), "");
         shortcut_to(
             &programs.join("Chat (updated).lnk"),
@@ -1165,7 +1186,8 @@ mod windows {
             .unwrap();
         // Inbox packaged apps (Calculator on Windows 11, Settings on Windows
         // Server) have no Start menu shortcut; the Apps folder finds them,
-        // identified by their package family.
+        // identified by their package family, which is Microsoft's: a Store
+        // app's (`8wekyb3d8bbwe`) or a system app's (`cw5n1h2txyewy`).
         let packaged: Vec<&Source> = found
             .iter()
             .filter(|source| source.path.starts_with(r"shell:AppsFolder\"))
@@ -1175,7 +1197,8 @@ mod windows {
             .find(|source| source.name == "Calculator" || source.name == "Settings")
             .unwrap_or_else(|| panic!("no inbox packaged app among {packaged:?}"));
         assert!(
-            matches!(&inbox.key, Key::Package { family, .. } if family.ends_with("_8wekyb3d8bbwe")),
+            matches!(&inbox.key, Key::Package { family, .. }
+                if family.ends_with("_8wekyb3d8bbwe") || family.ends_with("_cw5n1h2txyewy")),
             "{inbox:?}"
         );
     }

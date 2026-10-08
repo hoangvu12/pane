@@ -405,7 +405,7 @@ impl LauncherWindow {
                 let history = ClipboardHistory::new(window, cx);
                 window.focus(&history.query.focus_handle(cx), cx);
                 self.clipboard = Some(history);
-                self.fit_window(split_view::SPLIT_CLIENT, window, cx);
+                self.fit_client(split_view::SPLIT_CLIENT, window, cx);
             }
             return;
         }
@@ -414,24 +414,8 @@ impl LauncherWindow {
             Screen::Form(_) | Screen::CustomView(_)
         );
         if !kept && self.clipboard.take().is_some() {
-            self.fit_window(shell::LAUNCHER_CLIENT, window, cx);
+            self.fit_client(shell::LAUNCHER_CLIENT, window, cx);
         }
-    }
-
-    /// Resizes the window's client to `size` and places it as the
-    /// launcher's placement does, unless it is that size already.
-    fn fit_window(
-        &mut self,
-        (width, height): (f32, f32),
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let size = gpui::size(px(width), px(height));
-        if window.viewport_size() == size {
-            return;
-        }
-        window.resize(size);
-        self.place_sized(size, window, cx);
     }
 
     /// The Open actions binding in the view: opens the Actions panel for
@@ -464,11 +448,8 @@ impl LauncherWindow {
 
     /// Page Down: the selection moves by the records in view (#165).
     fn clipboard_next_page(&mut self, _: &SelectNextPage, _: &mut Window, cx: &mut Context<Self>) {
-        let page = self
-            .clipboard
-            .as_ref()
-            .map_or(1, |history| history.list.page());
-        self.step_clipboard(isize::try_from(page).unwrap_or(isize::MAX), cx);
+        let list = self.clipboard.as_ref().map(|history| &history.list);
+        self.step_clipboard(virtual_list::page_move(list, true), cx);
     }
 
     /// Page Up: the selection moves back by the records in view.
@@ -478,11 +459,8 @@ impl LauncherWindow {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let page = self
-            .clipboard
-            .as_ref()
-            .map_or(1, |history| history.list.page());
-        self.step_clipboard(-isize::try_from(page).unwrap_or(isize::MAX), cx);
+        let list = self.clipboard.as_ref().map(|history| &history.list);
+        self.step_clipboard(virtual_list::page_move(list, false), cx);
     }
 
     /// Moves the selection `delta` records, keeping it in view.

@@ -293,8 +293,12 @@ fn folders_kinds_categories_sorting_and_pages() {
         ..SearchOptions::default()
     };
     assert_eq!(search("", audio), ["song.mp3"]);
-    // A blank query lists the newest first.
-    fs::write(fixture.home.join("Music/newest.txt"), "new").unwrap();
+    // A blank query lists the newest first. Its time is a minute later, so
+    // that it is the newest whatever the clock's resolution (times are kept
+    // in whole seconds, and the fixture was made within the same one).
+    let newest = fixture.home.join("Music/newest.txt");
+    fs::write(&newest, "new").unwrap();
+    touch(&newest);
     fixture
         .fake
         .report(Changed::Paths(vec![fixture.home.join("Music/newest.txt")]));
@@ -652,8 +656,8 @@ fn categories_and_folders_for_people() {
     );
 }
 
-/// Sets `folder`'s modified time a minute later, so that a reconciling
-/// walk sees it changed whatever the clock's resolution.
+/// Sets `folder`'s (or a file's) modified time a minute later, so that a
+/// reconciling walk sees it changed whatever the clock's resolution.
 fn touch(folder: &Path) {
     let time = fs::metadata(folder).unwrap().modified().unwrap() + Duration::from_secs(60);
     let mut options = fs::OpenOptions::new();
@@ -674,7 +678,10 @@ fn touch(folder: &Path) {
 fn a_folder_that_changes_constantly_is_taken_out_until_it_is_included_again() {
     let fixture = Fixture::indexed_with(|config| {
         config.valves.churn_changes = 20;
-        config.valves.churn_window = Duration::from_millis(150);
+        // Long enough that the coordinator, applying each batch on a busy
+        // runner, never lets a whole window pass unseen, which would start
+        // the count again.
+        config.valves.churn_window = Duration::from_secs(1);
         config.valves.churn_windows = 3;
     });
     let record = fixture._dir.path().join("data");
@@ -710,11 +717,14 @@ fn a_folder_that_changes_constantly_is_taken_out_until_it_is_included_again() {
     assert_eq!(churned.folder.as_deref(), Some(busy.as_path()));
     assert_eq!(
         churned.reason,
-        "It changed more than 20 times in 150 ms, 3 times in a row, so Pane took it out of the \
-         index"
+        "It changed more than 20 times in 1 second, 3 times in a row, so Pane took it out of \
+         the index"
     );
     // Recorded in Pane's own record, so it stays out after a restart.
-    assert_eq!(UserRules::read(&record).quarantined, [busy.clone()]);
+    assert_eq!(
+        UserRules::read(&record).quarantined,
+        std::slice::from_ref(&busy)
+    );
 
     // A change there is no longer looked at.
     fixture.fake.report(Changed::Paths(vec![log.clone()]));
@@ -729,7 +739,10 @@ fn a_folder_that_changes_constantly_is_taken_out_until_it_is_included_again() {
         })
         .unwrap();
     fixture.settle();
-    assert_eq!(fixture.indexer.user_rules().quarantined, [busy.clone()]);
+    assert_eq!(
+        fixture.indexer.user_rules().quarantined,
+        std::slice::from_ref(&busy)
+    );
     assert!(fixture.names("busy log").is_empty());
 
     // Included again: walked again, found, and no longer listed.
@@ -810,13 +823,11 @@ fn indexing_stops_while_the_disk_is_short_of_space_and_starts_again_by_itself() 
         .iter()
         .find(|problem| problem.kind == ProblemKind::LowSpace)
         .expect("listed on the File search page");
-    assert!(
-        low.reason.starts_with("Less than 1000 bytes"),
-        "{}",
-        low.reason
-    );
-    // The default floor is 1 GiB, as #126 proposes.
-    assert_eq!(Valves::default().free_space_floor, 1 << 30);
+    assert!(low.reason.starts_with("Less than 1 KB"), "{}", low.reason);
+    // The default floor is #126's proposed gigabyte, in the decimal units
+    // Pane shows sizes in.
+    assert_eq!(Valves::default().free_space_floor, 1_000_000_000);
+    assert_eq!(size_words(Valves::default().free_space_floor), "1 GB");
 
     // Room again: the first walk runs, by itself.
     free.store(1 << 40, Ordering::SeqCst);
@@ -871,7 +882,7 @@ fn a_folder_that_does_not_answer_is_skipped_for_the_walk_and_listed() {
     let status = fixture.indexer.status();
     assert_eq!(status.state, IndexState::Current);
     assert_eq!(status.hung, 1);
-    assert_eq!(status.hung_folders, [music.clone()]);
+    assert_eq!(status.hung_folders, std::slice::from_ref(&music));
     assert!(fixture.names("song").is_empty(), "skipped for this walk");
     assert_eq!(fixture.names("plan"), ["plan.txt"]);
     let problems = fixture.indexer.problems();
@@ -913,13 +924,130 @@ fn problems_read_for_people() {
     assert_eq!(count_words(1_000), "1,000");
     assert_eq!(count_words(450_097), "450,097");
     assert_eq!(count_words(12_345_678), "12,345,678");
-    let home = Path::new("/Users/me");
-    assert!(protected_by_macos(Some(home), &home.join("Documents")));
-    assert!(protected_by_macos(Some(home), &home.join("Downloads")));
-    assert!(!protected_by_macos(Some(home), &home.join("Projects")));
-    assert!(!protected_by_macos(
-        Some(home),
-        &home.join("Documents").join("Desktop")
-    ));
-    assert!(!protected_by_macos(None, &home.join("Desktop")));
+}
+
+#[test]
+fn a_folder_macos_refused_is_listed_apart_from_one_that_cannot_be_read() {
+    // What a walk found: the refusals are told by the system's answer
+    // (`privacy`), so any folder may be one, not only Desktop, Documents
+    // and Downloads.
+    let fixture = Fixture::indexed();
+    let refused = fixture.home.join("Music");
+    let unreadable = fixture.home.join("Documents");
+    {
+        let mut shared = fixture.indexer.shared();
+        shared.status.refused = 3;
+        shared.status.refused_folders = vec![refused.clone()];
+        shared.status.unreadable = 1;
+        shared.status.unreadable_folders = vec![unreadable.clone()];
+    }
+    let problems = fixture.indexer.problems();
+    let of = |kind: ProblemKind| -> Vec<&Problem> {
+        problems
+            .iter()
+            .filter(|problem| problem.kind == kind)
+            .collect()
+    };
+    let refusals = of(ProblemKind::Refused);
+    assert_eq!(refusals.len(), 2, "{problems:?}");
+    assert_eq!(refusals[0].folder.as_deref(), Some(refused.as_path()));
+    assert_eq!(refusals[0].reason, "macOS did not allow Pane to read it");
+    assert!(refusals[0].remedy.contains("Privacy & Security"));
+    assert_eq!(refusals[1].folder, None);
+    assert_eq!(
+        refusals[1].reason,
+        "macOS did not allow Pane to read 2 more folders"
+    );
+    let unreadables = of(ProblemKind::Unreadable);
+    assert_eq!(unreadables.len(), 1);
+    assert_eq!(unreadables[0].folder.as_deref(), Some(unreadable.as_path()));
+    assert!(!unreadables[0].remedy.contains("Privacy"));
+}
+
+#[test]
+fn indexing_pauses_while_the_computer_sleeps_and_resumes_a_while_after_it_wakes() {
+    let computer = Arc::new(crate::file_index::power::tests::FakeAwake::default());
+    let resume_after = Duration::from_millis(600);
+    let fixture = Fixture::indexed_with({
+        let computer = computer.clone();
+        move |config| {
+            config.valves.awake = computer;
+            config.valves.resume_after = resume_after;
+        }
+    });
+    assert!(!fixture.indexer.status().resuming);
+    // A change while awake is applied at once.
+    let documents = fixture.home.join("Documents");
+    let before = documents.join("before sleep.txt");
+    fs::write(&before, "x").unwrap();
+    fixture.fake.report(Changed::Paths(vec![before]));
+    fixture.settle();
+    assert_eq!(fixture.names("before sleep"), ["before sleep.txt"]);
+
+    // The computer sleeps for an hour; a change reported as it wakes
+    // waits for the pause after the wake, the status saying so.
+    computer.sleep(Duration::from_secs(3600));
+    let woke = Instant::now();
+    let after = documents.join("after wake.txt");
+    fs::write(&after, "x").unwrap();
+    fixture.fake.report(Changed::Paths(vec![after]));
+    until(|| fixture.indexer.status().resuming);
+    assert!(
+        fixture.names("after wake").is_empty(),
+        "nothing is applied during the pause"
+    );
+    fixture.settle();
+    assert!(
+        woke.elapsed() >= resume_after,
+        "resumed only once the pause was over ({:?})",
+        woke.elapsed()
+    );
+    assert!(!fixture.indexer.status().resuming);
+    assert_eq!(fixture.names("after wake"), ["after wake.txt"]);
+
+    // Awake again: the next change is applied at once.
+    let later = documents.join("later.txt");
+    fs::write(&later, "x").unwrap();
+    let reported = Instant::now();
+    fixture.fake.report(Changed::Paths(vec![later]));
+    fixture.settle();
+    assert!(reported.elapsed() < resume_after);
+    assert_eq!(fixture.names("later"), ["later.txt"]);
+}
+
+#[test]
+fn a_walk_under_way_when_the_computer_sleeps_waits_out_the_pause_and_finishes() {
+    let computer = Arc::new(crate::file_index::power::tests::FakeAwake::default());
+    let resume_after = Duration::from_millis(400);
+    let fixture = fixture_with({
+        let computer = computer.clone();
+        move |config| {
+            config.valves.awake = computer;
+            config.valves.resume_after = resume_after;
+        }
+    });
+    // Music answers slowly, so the walk is under way when the computer
+    // sleeps.
+    let music = fixture.home.join("Music");
+    crate::file_index::walker::STALLED
+        .lock()
+        .unwrap()
+        .push((music.clone(), Duration::from_millis(800)));
+    fixture.indexer.launcher_shown();
+    fixture.indexer.set_users(users(&[OWNER]));
+    until(|| fixture.indexer.status().found > 0);
+    computer.sleep(Duration::from_secs(600));
+    // The walk's next folder, after the wake, waits out the pause.
+    until(|| fixture.indexer.status().resuming);
+    fixture.settle();
+    crate::file_index::walker::STALLED
+        .lock()
+        .unwrap()
+        .retain(|(path, _)| *path != music);
+    let status = fixture.indexer.status();
+    assert_eq!(status.state, IndexState::Current);
+    assert!(!status.resuming);
+    assert_eq!(status.hung, 0, "the sleep is not counted as hanging");
+    assert_eq!(fixture.names("plan"), ["plan.txt"]);
+    assert_eq!(fixture.names("song"), ["song.mp3"]);
 }

@@ -452,15 +452,23 @@ fn a_restart_catches_up_with_what_changed_while_pane_was_stopped() {
     fs::remove_file(home.file("Documents/my plan b.txt")).unwrap();
     let (launcher, _runtime) = home.start();
     settle(&launcher);
-    let caught_up = launcher.file_index_status().caught_up.map(|(by, _)| by);
+    let status = launcher.file_index_status();
+    let caught_up = status.caught_up.map(|(by, _)| by);
     let expected = if cfg!(target_os = "windows") {
+        // Needs the temporary folder's volume to keep a change journal, as
+        // C: does (CI gives the runner's D: one).
         CaughtUpBy::Journal
     } else if cfg!(target_os = "macos") {
         CaughtUpBy::EventHistory
     } else {
         CaughtUpBy::ReconcilingWalk
     };
-    assert_eq!(caught_up, Some(expected), "caught up without a full walk");
+    assert_eq!(
+        caught_up,
+        Some(expected),
+        "caught up without a full walk ({:?})",
+        status.reason
+    );
     search(&launcher, "written while stopped");
     let deadline = std::time::Instant::now() + LIMIT;
     while file_rows(&launcher).first().map(String::as_str) != Some("written while stopped.txt") {
@@ -598,7 +606,7 @@ fn the_status_says_what_is_indexed_and_how_and_when_it_last_caught_up() {
         [("Files".to_owned(), None)]
     );
     let (effective, rules) = launcher.file_search_rules().unwrap();
-    assert_eq!(effective.roots, [home.home.clone()]);
+    assert_eq!(effective.roots, std::slice::from_ref(&home.home));
     assert_eq!(effective.home.as_deref(), Some(home.home.as_path()));
     assert_eq!(rules, UserRules::default());
 }
@@ -746,7 +754,7 @@ fn a_folder_taken_out_for_churn_is_listed_and_included_again() {
     change_rules(&home, &launcher, |rules| rules.include_hidden = true);
     assert_eq!(
         launcher.file_search_rules().unwrap().1.quarantined,
-        [documents.clone()]
+        std::slice::from_ref(&documents)
     );
 
     block_on(launcher.include_in_file_search(documents.clone())).unwrap();
@@ -784,9 +792,12 @@ fn a_folder_granted_to_files_outside_the_home_folder_is_kept_in_what_is_indexed(
     let (launcher, _runtime) = home.start();
     assert_eq!(
         launcher.file_search_rules().unwrap().1.added_roots,
-        [granted.clone()]
+        std::slice::from_ref(&granted)
     );
-    assert_eq!(UserRules::read(&record).added_roots, [granted.clone()]);
+    assert_eq!(
+        UserRules::read(&record).added_roots,
+        std::slice::from_ref(&granted)
+    );
     // The grant is forgotten.
     let grants: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(record.join("folders.json")).unwrap()).unwrap();

@@ -23,10 +23,10 @@ use pane_core::{LauncherView, Status};
 /// and runs the window until it has drawn the list: the launcher window
 /// has no row of its own that opens it ("Manage Extensions" opens
 /// Settings), but it still draws the flow's screens while the launcher
-/// holds them.
+/// holds them, and follows them with the keyboard as it follows any
+/// change Settings makes.
 pub fn enter_flow(window: &Entity<LauncherWindow>, cx: &mut VisualTestContext) -> LauncherView {
-    cx.read_entity(window, |window, _| window.launcher().manage_extensions());
-    window.update(cx, |_, cx| cx.notify());
+    window.update_in(cx, |window, w, cx| window.enter_extension_flow(w, cx));
     until(window, cx, |view| {
         matches!(view.screen, pane_core::Screen::Extensions { .. })
     })

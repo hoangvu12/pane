@@ -50,6 +50,7 @@ use crate::ui::motion;
 use crate::ui::result_row::{RowContent, RowMeta, result_row_with};
 use crate::ui::shell;
 use crate::ui::theme::{Theme, pressed};
+use crate::ui::virtual_list;
 use crate::{
     Back, Confirm, DismissLauncher, FocusNext, FocusPrevious, OpenSettings, ReturnToRoot,
     SelectNext, SelectNextPage, SelectPrevious, SelectPreviousPage,
@@ -123,9 +124,9 @@ pub struct LauncherWindow {
     pointer_selection_frozen: bool,
     /// What the list was last scrolled for.
     scrolled_for: Option<ScrolledFor>,
-    /// Whether the next frame scrolls to the selected row again, once the
-    /// list changed in this one has been laid out.
-    scroll_again: bool,
+    /// The row this frame scrolls to again once the list, changed in it,
+    /// has been laid out (see [`LauncherWindow::keep_selected_visible`]).
+    reveal_after_layout: Option<usize>,
     /// Draws the window again now and then while its rows show a date,
     /// keeping it current (#139; see
     /// [`LauncherWindow::keep_dates_current`]).
@@ -170,7 +171,7 @@ impl LauncherWindow {
         // window) without a restart, its background follows the material
         // in effect, and the platform's appearance notification feeds the
         // system's appearance back into them (see `crate::settings`).
-        crate::settings::follow(&crate::settings::ensure(cx), window, cx);
+        crate::settings::bind_window_appearance(&crate::settings::ensure(cx), window, cx);
         // The launcher this window runs owns the global-shortcut
         // registration: the recorded Open Pane hotkey is applied to the
         // system here, at startup, and the settings keep this launcher for
@@ -199,7 +200,7 @@ impl LauncherWindow {
             pointer: None,
             pointer_selection_frozen: false,
             scrolled_for: None,
-            scroll_again: false,
+            reveal_after_layout: None,
             dates: None,
             custom_view: None,
             menu_button,
@@ -445,25 +446,36 @@ impl LauncherWindow {
     /// Page Down: the selection moves down by the rows that fit in the
     /// list's view, stopping at the last row (#165), kept in view as the
     /// arrows' is.
-    fn select_next_page(&mut self, _: &SelectNextPage, _: &mut Window, cx: &mut Context<Self>) {
-        let page = self.results.list.page();
-        self.launcher
-            .move_selection(isize::try_from(page).unwrap_or(isize::MAX));
+    pub(crate) fn select_next_page(
+        &mut self,
+        _: &SelectNextPage,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let step = virtual_list::page_move(Some(self.paged_list()), true);
+        self.launcher.move_selection(step);
         cx.notify();
     }
 
     /// Page Up: the selection moves up by a page, stopping at the first
     /// row.
-    fn select_previous_page(
+    pub(crate) fn select_previous_page(
         &mut self,
         _: &SelectPreviousPage,
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let page = self.results.list.page();
-        self.launcher
-            .move_selection(-isize::try_from(page).unwrap_or(isize::MAX));
+        let step = virtual_list::page_move(Some(self.paged_list()), false);
+        self.launcher.move_selection(step);
         cx.notify();
+    }
+
+    /// The list Page Down and Up move the launcher's selection through:
+    /// Search Files' while it shows, else the results'.
+    fn paged_list(&self) -> &virtual_list::VirtualList {
+        self.files
+            .as_ref()
+            .map_or(&self.results.list, |files| &files.list)
     }
 
     pub(crate) fn confirm(&mut self, _: &Confirm, window: &mut Window, cx: &mut Context<Self>) {
@@ -863,6 +875,23 @@ impl LauncherWindow {
         self.place_sized(gpui::size(px(size.width), px(size.height)), window, cx);
     }
 
+    /// Resizes the window's client to `size` (the split view's, or the
+    /// launcher's own again) and places it as the launcher's placement
+    /// does, unless it is that size already.
+    pub(crate) fn fit_client(
+        &mut self,
+        (width, height): (f32, f32),
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let size = gpui::size(px(width), px(height));
+        if window.viewport_size() == size {
+            return;
+        }
+        window.resize(size);
+        self.place_sized(size, window, cx);
+    }
+
     /// Places the launcher window as [`LauncherWindow::place`] does, for a
     /// window of `size`: the size it is about to take (the Clipboard
     /// History view's), which the window reports only once the system has
@@ -1123,17 +1152,20 @@ impl LauncherWindow {
             list: self.results.list.viewport().size,
         };
         let last = self.scrolled_for.as_ref();
-        if last == Some(&shown) && !rows_changed && !self.scroll_again {
+        self.reveal_after_layout = None;
+        if last == Some(&shown) && !rows_changed {
             return;
         }
         // Scrolling uses the list's size as last laid out, and the heights
         // of the rows it drew; a row not yet drawn is taken to be a row
         // high. When the window, the screen, the rows or the selection
         // changed, the true sizes are known only once this frame is laid
-        // out, so the next frame scrolls again with them: otherwise a
-        // short screen after a long list, scrolled far down, would keep
-        // an offset that hides its selected row, and a selection paged
-        // past section labels would stop a label's height short.
+        // out, so the list scrolls again with them right after (see
+        // [`crate::ui::virtual_list::VirtualList::reveal_after_layout`]),
+        // drawing another frame only if that moved it: otherwise a short
+        // screen after a long list, scrolled far down, would keep an offset
+        // that hides its selected row, and a selection paged past section
+        // labels would stop a label's height short.
         let relaid = rows_changed
             || last.is_some_and(|last| {
                 last.window != shown.window
@@ -1141,12 +1173,9 @@ impl LauncherWindow {
                     || last.title != shown.title
                     || last.selected != shown.selected
             });
-        self.scroll_again = relaid && !self.scroll_again;
-        if self.scroll_again {
-            window.request_animation_frame();
-        }
         if let Some(selected) = view.selected {
             self.results.reveal_row(selected);
+            self.reveal_after_layout = relaid.then_some(selected);
         }
         self.scrolled_for = Some(shown);
     }
@@ -1158,6 +1187,20 @@ impl LauncherWindow {
     #[doc(hidden)]
     pub fn drawn_rows(&self) -> Vec<usize> {
         self.results.drawn_rows.iter().copied().collect()
+    }
+
+    /// Test support: shows the launcher's extension list as a screen of
+    /// its own ([`pane_core::Launcher::manage_extensions`]), which Pane
+    /// itself never shows (Settings runs each operation, #168), and follows
+    /// it as this window follows any change Settings makes to the launcher
+    /// (see `launcher_changed_outside`): the list takes the keys from the
+    /// query field. Test and debug builds only.
+    #[cfg(any(test, debug_assertions))]
+    #[doc(hidden)]
+    pub fn enter_extension_flow(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.launcher.manage_extensions();
+        self.sync_screen(window, cx);
+        cx.notify();
     }
 
     /// Makes the form's and custom view's controls, root search's query
@@ -1503,7 +1546,9 @@ impl LauncherWindow {
     /// The footer's left at rest on a screen with no heading line (#162):
     /// the open command's icon and the screen's title — the command's own
     /// on its list and search, a form's or a custom view's on those — or,
-    /// over Manage extensions, its row's tile and title. `None` on every
+    /// over the extension list the tests show as a screen
+    /// ([`LauncherWindow::enter_extension_flow`]), the Manage Extensions
+    /// row's tile and title. `None` on every
     /// other screen: root search has no title, and the core's own screens
     /// (a preview, a confirmation, the details screens) keep their
     /// heading, which says what they ask.
@@ -1513,7 +1558,7 @@ impl LauncherWindow {
             | Screen::CommandSearch { .. }
             | Screen::Form(_)
             | Screen::CustomView(_) => self.launcher.open_command_id()?,
-            Screen::Extensions { .. } => MANAGE_EXTENSIONS_ROW.to_owned(),
+            Screen::Extensions { .. } => pane_core::MANAGE_EXTENSIONS.to_owned(),
             _ => return None,
         };
         let icon = crate::features::icons::row_icon_of(&self.launcher, &id, theme);
@@ -1808,11 +1853,16 @@ impl Render for LauncherWindow {
                 .w_full()
                 .pt(theme.geometry.list_padding_top)
                 .pb(theme.geometry.list_padding_bottom),
+            )
+            .children(
+                self.reveal_after_layout
+                    .and_then(|row| self.results.reveal_row_after_layout(row)),
             );
         // The launcher decides what an item opens; its screen says which.
         // Root search has no title — the reference's launcher has none —
         // and neither has an extension's view (its list, its search, a
-        // form or a custom view of it) nor Manage extensions: they start
+        // form or a custom view of it) nor the extension list the tests
+        // show (Pane's own extensions are managed in Settings): they start
         // with their content, as Raycast's do, and the footer's left names
         // the open command instead (#162). The core's own screens (a
         // package's preview, a confirmation, the details and hotkey
@@ -2197,10 +2247,6 @@ pub(crate) fn section_label(section: &pane_core::Section) -> shell::SectionLabel
     }
 }
 
-/// The id of Pane's own Manage extensions… row, whose tile the footer
-/// shows over the screen it opens.
-const MANAGE_EXTENSIONS_ROW: &str = "pane.manage-extensions";
-
 /// What the row of a command whose required preferences are unset says in
 /// its kind's place: only the user, through the Setup screen, runs it.
 pub(crate) const NEEDS_SETUP: &str = "Needs setup";
@@ -2215,7 +2261,7 @@ pub(crate) fn row_icon(id: &str) -> (IconTone, Glyph) {
         "pane.install-from-folder" => (IconTone::Folder, Glyph::Folder),
         "pane.install-from-npm" => (IconTone::Web, Glyph::Blocks),
         "pane.install-from-git" => (IconTone::Term, Glyph::Terminal),
-        MANAGE_EXTENSIONS_ROW => (IconTone::Command, Glyph::Blocks),
+        pane_core::MANAGE_EXTENSIONS => (IconTone::Command, Glyph::Blocks),
         "pane.settings" => (IconTone::Command, Glyph::Gear),
         _ => (IconTone::Command, Glyph::Prompt),
     }

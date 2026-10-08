@@ -114,7 +114,7 @@ use application_update::{Application, Updates};
 use choices::Record;
 use developing::Developing;
 pub use developing::{BuildFailure, Development};
-pub use extensions::ExtensionMark;
+pub use extensions::{ExtensionMark, ExtensionOperation, OperationKind};
 pub use hotkeys::HotkeyOutcome;
 use hotkeys::{Bindings, OpenPane};
 pub use item_actions::{ItemAction, ItemActions, UnboundShortcut};
@@ -132,6 +132,7 @@ pub use setup::{
 };
 pub use shortcuts::{ShortcutCatalog, ShortcutCommand, ShortcutGroup};
 pub use submenus::{OpenSubmenu, SubmenuState};
+pub use updates::UpdateHold;
 
 /// The id of the root row that installs a package from a local folder.
 const INSTALL_FROM_FOLDER: &str = "pane.install-from-folder";
@@ -161,8 +162,9 @@ const INSTALL_FROM_GIT: &str = "pane.install-from-git";
 const GIT_REPOSITORY_FIELD: &str = "repository";
 
 /// The id of the root row of Pane's "Manage Extensions" command, which
-/// opens Settings at the extensions (#168).
-const MANAGE_EXTENSIONS: &str = "pane.manage-extensions";
+/// opens Settings at the extensions (#168): the window draws its tile by
+/// it.
+pub const MANAGE_EXTENSIONS: &str = "pane.manage-extensions";
 
 /// The id of the root row that opens Pane's Settings window.
 const SETTINGS: &str = "pane.settings";
@@ -788,6 +790,12 @@ struct State {
     /// no-view command's answer (or its running), launched from it with
     /// that query typed, so that changing the query clears it.
     sent_from: Option<String>,
+    /// Whether the extension list was entered as a screen of its own
+    /// ([`Launcher::manage_extensions`], test support): only then do the
+    /// operations' confirmations and details screens return to it. The
+    /// operations Settings runs ([`Launcher::run_extension_operation`])
+    /// leave the launcher where the user had it.
+    list_entered: bool,
     /// Whether a command a guest launched wants Pane's window shown (see
     /// [`Launcher::take_window_request`]).
     window_wanted: bool,
@@ -1465,6 +1473,7 @@ impl Launcher {
             acquisitions: Acquisitions::default(),
             updates: Updates::default(),
             sent_from: None,
+            list_entered: false,
             window_wanted: false,
             launches: Arc::default(),
             runtime_slow: None,
@@ -1834,6 +1843,21 @@ impl Launcher {
     #[doc(hidden)]
     pub fn package_being_updated(&self, component: &std::path::Path) -> bool {
         self.updating(component).is_some()
+    }
+
+    /// Test support: holds every update Pane applies by itself from now
+    /// on once it has claimed its package, before the replacement is
+    /// written, until the returned hold is dropped: the claim
+    /// ([`Launcher::package_being_updated`]) then lasts as long as the test
+    /// needs to ask things of the package, however fast the copy is
+    /// written (a clone on APFS takes no time at all). One hold at a time.
+    #[doc(hidden)]
+    pub fn hold_update_applies(&self) -> UpdateHold {
+        match &self.updates {
+            Some(updates) => updates.hold_applies(),
+            // Nothing to hold: this launcher installs no packages.
+            None => UpdateHold::of_nothing(),
+        }
     }
 
     /// Test support: the identities holding a change claim right now,
@@ -2488,18 +2512,17 @@ impl Launcher {
         true
     }
 
-    /// Enters the extension-management flow, wherever the launcher now
-    /// is: the extension list's rows and operations. Pane's Settings
-    /// window, where extensions are managed (#168), enters the flow
-    /// through this, so its pages reach the launcher's own operations and
-    /// records — the confirmations among them — rather than Settings
-    /// growing a management flow of its own. The launcher window draws no
-    /// screen for the list. Selecting a row and
-    /// activating it ([`Launcher::select`],
-    /// [`Launcher::activate_selected`]) drives it from there, as the
-    /// launcher window's Enter does.
+    /// Test support: shows the extension list as a screen of its own,
+    /// wherever the launcher now is, its rows driven by
+    /// [`Launcher::select`] and [`Launcher::activate_selected`], its
+    /// confirmations and details screens returning to it. Pane itself never
+    /// shows it (#168, ADR 0043): Settings runs each operation through
+    /// [`Launcher::run_extension_operation`], and the "Manage Extensions"
+    /// command opens Settings.
+    #[doc(hidden)]
     pub fn manage_extensions(&self) {
         let mut state = self.lock();
+        state.list_entered = true;
         self.show_extensions(&mut state);
     }
 
@@ -2532,6 +2555,19 @@ impl Launcher {
             Some(entry) => self.activation(&mut state, entry),
             None => Pending::Nothing,
         };
+        let work = self.pending_work(&state, pending);
+        drop(state);
+        work
+    }
+
+    /// The work [`Launcher::activation`] left, as a future to await: what
+    /// activating a row, or running an extension's operation
+    /// ([`Launcher::run_extension_operation`]), does after the lock.
+    fn pending_work(
+        &self,
+        state: &State,
+        pending: Pending,
+    ) -> impl Future<Output = ()> + Send + 'static + use<> {
         let epoch = state.screen_epoch;
         let open = state.open.clone();
         // A call into the package belongs to its generation as of now, not
@@ -2545,8 +2581,7 @@ impl Launcher {
             Pending::Run(_) | Pending::CustomView(..) => open.as_ref(),
             _ => None,
         };
-        let data = called.and_then(|component| self.data_in(&state, component));
-        drop(state);
+        let data = called.and_then(|component| self.data_in(state, component));
         let launcher = self.clone();
         async move {
             match pending {
@@ -2636,6 +2671,7 @@ impl Launcher {
             }
             Entry::StopSharingFolder(identity) => Pending::StopSharing(identity),
             Entry::Manage => {
+                state.list_entered = true;
                 self.show_extensions(state);
                 Pending::Nothing
             }
@@ -3049,6 +3085,9 @@ impl Launcher {
             }
             state.packages.push(installed);
             self.sync_hotkeys(state);
+            // A package that uses the file index starts it (#175), whether
+            // or not root search is refreshed after.
+            self.sync_file_index(state);
             return false;
         };
         // The replaced copy's code no longer runs: its generation ended
@@ -3071,6 +3110,8 @@ impl Launcher {
         }
         // A command the new copy no longer has releases its hotkey.
         self.sync_hotkeys(state);
+        // The new copy may use the file index, or no longer use it.
+        self.sync_file_index(state);
         // The replaced copy's results are asked for afresh.
         state
             .indexes
@@ -3157,6 +3198,7 @@ impl Launcher {
     /// the installed packages' commands, then the install row. Selects the
     /// command with component `select` if given, else the first row.
     fn show_root(&self, state: &mut State, select: Option<PathBuf>) {
+        state.list_entered = false;
         self.note_setup_needed(state);
         state.root = self.root_results(state);
         state.sent_from = None;

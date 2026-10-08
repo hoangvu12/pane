@@ -10,10 +10,10 @@ use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 
 use super::{Caught, CaughtUpBy, ChangeSource, NotifyWatch, Sink, Watching};
-use crate::file_index::catch_up_changes;
-use crate::file_index::journal::{JournalCursor, JournalRead, read_journal, resolve};
+use crate::file_index::journal::{JournalCursor, JournalRead, Names, read_journal, resolve};
 use crate::file_index::scope::Scope;
 use crate::file_index::store::FileIndex;
+use crate::file_index::{catch_up_changes, missing_from};
 
 /// Records past which reading the journal costs more than reconciling.
 const MAX_RECORDS: usize = 1_000_000;
@@ -90,8 +90,12 @@ impl ChangeSource for Journal {
             };
             match read {
                 JournalRead::Records { records, cursor } => {
-                    let caught = resolve(&records, &mut folders);
+                    // Read without administrator rights, the records carry
+                    // no names: entries are named by their ids.
+                    let mut names = Names::for_volume_of(root);
+                    let caught = resolve(&records, &mut folders, &mut |id| names.name(id));
                     let (found, folders_to_walk) = catch_up_changes(scope, &caught);
+                    changes.extend(missing_from(index, &caught.listed));
                     changes.extend(found);
                     walk.extend(folders_to_walk);
                     kept.push(cursor);

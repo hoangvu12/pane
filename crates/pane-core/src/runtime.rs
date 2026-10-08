@@ -35,7 +35,7 @@ use std::fmt;
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::task::{self, Poll};
 
@@ -925,7 +925,8 @@ impl Runtime {
         }
     }
 
-    /// Starts the runtime thread. Extensions are compiled on every start.
+    /// Starts the runtime thread. Extensions are compiled on every start
+    /// (unless `PANE_TEST_CODE_CACHE` names a cache shared by the tests).
     pub fn start() -> Result<Runtime, CallError> {
         Runtime::start_with(None)
     }
@@ -935,6 +936,15 @@ impl Runtime {
     /// directory holds only disposable data.
     pub fn start_with_cache(cache_dir: PathBuf) -> Result<Runtime, CallError> {
         Runtime::start_with(Some(cache_dir))
+    }
+
+    /// For the tests of the compiled-code cache itself: from now on, the
+    /// runtimes this process starts keep compiled code where they were
+    /// started to ([`Runtime::start_with_cache`]), or nowhere, even when
+    /// `PANE_TEST_CODE_CACHE` names a cache shared by the tests.
+    #[doc(hidden)]
+    pub fn ignore_shared_code_cache() {
+        IGNORE_SHARED_CODE_CACHE.store(true, Ordering::Relaxed);
     }
 
     fn start_with(cache_dir: Option<PathBuf>) -> Result<Runtime, CallError> {
@@ -1857,22 +1867,43 @@ fn parse_limits(text: &str) -> Option<Limits> {
     })
 }
 
-/// Locks `mutex`, taking it over if a thread panicked while holding it:
-/// the runtime thread may crash while a lock is held (see `supervisor`),
-/// and Pane carries on with what the lock guarded.
-pub(crate) fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
-    mutex
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-}
+/// Locks a mutex, taking it over if a thread panicked while holding it
+/// (the runtime thread may crash while a lock is held, see `supervisor`).
+pub(crate) use crate::util::lock;
 
 /// The runtime could not do something because of `error`.
 pub(crate) fn unavailable(error: impl fmt::Display) -> CallError {
     CallError::RuntimeUnavailable(error.to_string())
 }
 
+/// The environment variable naming a folder that every runtime keeps its
+/// compiled extension code in, in place of its own cache folder (or none):
+/// the test runs set it (`.cargo/config.toml`), so a run's tests compile
+/// each component once rather than once per test, which for the 4 MB
+/// JavaScript components is most of a test's time. Only the compiled code
+/// moves; the runtime's cache folder ([`Runtime::cache_folder`]) and all it
+/// holds stay where they were. Wasmtime's cache may be shared by processes
+/// running at once: it writes each entry whole under a temporary name and
+/// renames it into place, and treats an entry it cannot read as missing.
+/// Unset or empty, each runtime keeps its own, as a released Pane does.
+const SHARED_CODE_CACHE: &str = "PANE_TEST_CODE_CACHE";
+
+/// Set by [`Runtime::ignore_shared_code_cache`].
+static IGNORE_SHARED_CODE_CACHE: AtomicBool = AtomicBool::new(false);
+
+/// The folder [`SHARED_CODE_CACHE`] names, unless this process ignores it.
+fn shared_code_cache() -> Option<PathBuf> {
+    if IGNORE_SHARED_CODE_CACHE.load(Ordering::Relaxed) {
+        return None;
+    }
+    std::env::var_os(SHARED_CODE_CACHE)
+        .filter(|dir| !dir.is_empty())
+        .map(PathBuf::from)
+}
+
 /// The engine every runtime thread runs guests with: WASI 0.3 and
-/// component-model async, keeping compiled code in `cache_dir`, if given.
+/// component-model async, keeping compiled code in `cache_dir`, if given
+/// (or in the shared cache [`SHARED_CODE_CACHE`] names).
 fn engine(cache_dir: Option<PathBuf>) -> Result<Engine, CallError> {
     let mut config = Config::new();
     config
@@ -1881,7 +1912,7 @@ fn engine(cache_dir: Option<PathBuf>) -> Result<Engine, CallError> {
         // Every guest yields to the runtime thread at each tick (see
         // `deadlines`), so none holds it by computing.
         .epoch_interruption(true);
-    if let Some(dir) = cache_dir {
+    if let Some(dir) = shared_code_cache().or(cache_dir) {
         let mut cache = CacheConfig::new();
         cache.with_directory(dir);
         let cache = Cache::new(cache).map_err(unavailable)?;

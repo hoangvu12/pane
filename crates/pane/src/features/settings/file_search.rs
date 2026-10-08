@@ -49,6 +49,7 @@ use super::{Page, SettingsWindow, search};
 use crate::ui::controls::{self, status_note as note};
 use crate::ui::icon::Glyph;
 use crate::ui::theme::Theme;
+use crate::ui::virtual_list::PageWindow;
 
 /// The page's title: its sidebar entry, and its page's.
 pub(crate) const TITLE: &str = "File Search";
@@ -144,6 +145,9 @@ pub(crate) struct State {
     problem: Option<String>,
     /// What the page last drew of the index, for the watcher.
     drawn: Option<Drawn>,
+    /// The page's long lists (roots, exclusions, problems), drawn only
+    /// near the page's view (#165).
+    rows_window: PageWindow,
 }
 
 /// What the page draws of the index: when it differs from the launcher's
@@ -278,6 +282,9 @@ fn ago(then: SystemTime) -> String {
 fn state_words(status: &IndexStatus) -> String {
     match status.state {
         IndexState::Off => "Off".into(),
+        _ if status.resuming => {
+            "Paused: the computer slept; indexing resumes in a few seconds".into()
+        }
         IndexState::Building if status.waiting => {
             "Waiting: indexing starts once the launcher is first shown".into()
         }
@@ -465,7 +472,7 @@ fn status_section(
         .when(!busy, |button| {
             button.on_click(cx.listener(|this, _: &gpui::ClickEvent, _, cx| {
                 let pending = this.launcher.rebuild_file_index();
-                follow(this, pending, cx);
+                apply_and_report(this, pending, cx);
             }))
         });
     rows.push(
@@ -533,47 +540,56 @@ fn roots_section(
 ) -> AnyElement {
     let home = effective.home.as_deref();
     let mut rows = Vec::new();
+    // A long list draws only the rows near the page's view (#165).
+    let (window_rows, page) = (
+        this.file_search.rows_window.clone(),
+        this.search.scroll().clone(),
+    );
+    let listed = effective.roots.len();
     for root in &effective.roots {
-        let added = rules.added_roots.contains(root);
-        let name = last_name(root);
-        let what = if Some(root.as_path()) == home {
-            "Your home folder"
-        } else if added {
-            "A folder you added"
-        } else {
-            "Indexed by default"
-        };
-        let mut row = controls::setting_row(
-            shown(root, home),
-            vec![controls::row_line(what, theme.text_muted, theme)],
-            theme,
-        )
-        .debug_selector({
-            let name = name.clone();
-            move || format!("file-search-root-{name}")
-        });
-        if added {
-            let root = root.clone();
-            row = row.child(
-                button(
-                    format!("file-search-remove-root-{name}"),
-                    "Remove",
-                    !busy,
-                    theme,
-                )
-                .when(!busy, |button| {
-                    button.on_click(cx.listener(move |this, _: &gpui::ClickEvent, _, cx| {
-                        let root = root.clone();
-                        change(
-                            this,
-                            move |rules| rules.added_roots.retain(|r| *r != root),
-                            cx,
-                        );
-                    }))
-                }),
-            );
-        }
-        rows.push(row.into_any_element());
+        let key = format!("root:{}", root.display());
+        rows.push(window_rows.row(listed, key, false, &page, || {
+            let added = rules.added_roots.contains(root);
+            let name = last_name(root);
+            let what = if Some(root.as_path()) == home {
+                "Your home folder"
+            } else if added {
+                "A folder you added"
+            } else {
+                "Indexed by default"
+            };
+            let mut row = controls::setting_row(
+                shown(root, home),
+                vec![controls::row_line(what, theme.text_muted, theme)],
+                theme,
+            )
+            .debug_selector({
+                let name = name.clone();
+                move || format!("file-search-root-{name}")
+            });
+            if added {
+                let root = root.clone();
+                row = row.child(
+                    button(
+                        format!("file-search-remove-root-{name}"),
+                        "Remove",
+                        !busy,
+                        theme,
+                    )
+                    .when(!busy, |button| {
+                        button.on_click(cx.listener(move |this, _: &gpui::ClickEvent, _, cx| {
+                            let root = root.clone();
+                            change(
+                                this,
+                                move |rules| rules.added_roots.retain(|r| *r != root),
+                                cx,
+                            );
+                        }))
+                    }),
+                );
+            }
+            row.into_any_element()
+        }));
     }
     let anchor = this.search_anchor(ADD_ROOT);
     let add = button(ADD_ROOT.into(), "Add Folder…", !busy, theme)
@@ -621,10 +637,17 @@ fn excluded_section(
     cx: &mut Context<SettingsWindow>,
 ) -> AnyElement {
     let mut rows = Vec::new();
+    // A long list draws only the rows near the page's view (#165).
+    let (window_rows, page) = (
+        this.file_search.rows_window.clone(),
+        this.search.scroll().clone(),
+    );
+    let listed = rules.excluded_folders.len() + rules.excluded_patterns.len();
     for folder in &rules.excluded_folders {
         let name = last_name(folder);
         let removed = folder.clone();
-        rows.push(
+        let key = format!("excluded:{}", folder.display());
+        rows.push(window_rows.row(listed, key, false, &page, || {
             controls::setting_row(
                 shown(folder, home),
                 vec![controls::row_line(
@@ -656,42 +679,44 @@ fn excluded_section(
                     }))
                 }),
             )
-            .into_any_element(),
-        );
+            .into_any_element()
+        }));
     }
     for pattern in &rules.excluded_patterns {
         let removed = pattern.clone();
         let selector = format!("file-search-pattern-{pattern}");
         rows.push(
-            controls::setting_row(
-                pattern.clone(),
-                vec![controls::row_line(
-                    "An excluded pattern",
-                    theme.text_muted,
-                    theme,
-                )],
-                theme,
-            )
-            .debug_selector(move || selector)
-            .child(
-                button(
-                    format!("file-search-remove-pattern-{pattern}"),
-                    "Remove",
-                    !busy,
+            window_rows.row(listed, format!("pattern:{pattern}"), false, &page, || {
+                controls::setting_row(
+                    pattern.clone(),
+                    vec![controls::row_line(
+                        "An excluded pattern",
+                        theme.text_muted,
+                        theme,
+                    )],
                     theme,
                 )
-                .when(!busy, |button| {
-                    button.on_click(cx.listener(move |this, _: &gpui::ClickEvent, _, cx| {
-                        let removed = removed.clone();
-                        change(
-                            this,
-                            move |rules| rules.excluded_patterns.retain(|p| *p != removed),
-                            cx,
-                        );
-                    }))
-                }),
-            )
-            .into_any_element(),
+                .debug_selector(move || selector)
+                .child(
+                    button(
+                        format!("file-search-remove-pattern-{pattern}"),
+                        "Remove",
+                        !busy,
+                        theme,
+                    )
+                    .when(!busy, |button| {
+                        button.on_click(cx.listener(move |this, _: &gpui::ClickEvent, _, cx| {
+                            let removed = removed.clone();
+                            change(
+                                this,
+                                move |rules| rules.excluded_patterns.retain(|p| *p != removed),
+                                cx,
+                            );
+                        }))
+                    }),
+                )
+                .into_any_element()
+            }),
         );
     }
     let anchor = this.search_anchor(EXCLUDE_FOLDER);
@@ -813,63 +838,28 @@ fn rules_section(
 /// The Needs attention card: each problem with its reason and remedy, and
 /// Include Again on a folder taken out for churn.
 fn problems_section(
-    _this: &mut SettingsWindow,
+    this: &mut SettingsWindow,
     problems: &[Problem],
     home: Option<&Path>,
     busy: bool,
     theme: &Theme,
     cx: &mut Context<SettingsWindow>,
 ) -> AnyElement {
+    // A long list (a hundred folders that could not be read, say) draws
+    // only the rows near the page's view (#165).
+    let (window_rows, page) = (
+        this.file_search.rows_window.clone(),
+        this.search.scroll().clone(),
+    );
+    let listed = problems.len();
     let rows: Vec<AnyElement> = problems
         .iter()
-        .map(|problem| {
-            let kind = kind_name(problem.kind);
-            let (title, selector) = match &problem.folder {
-                Some(folder) => (
-                    shown(folder, home),
-                    format!("file-search-problem-{kind}-{}", last_name(folder)),
-                ),
-                None => (
-                    kind_title(problem.kind).to_owned(),
-                    format!("file-search-problem-{kind}"),
-                ),
-            };
-            let lines = vec![
-                controls::row_line(problem.reason.clone(), theme.warning, theme),
-                controls::row_line(problem.remedy.clone(), theme.text_muted, theme),
-            ];
-            let description = format!("{}. {}", problem.reason, problem.remedy);
-            let row = controls::setting_row(title.clone(), lines, theme)
-                .id(SharedString::from(selector.clone()))
-                .debug_selector(move || selector)
-                .role(Role::Status)
-                .aria_label(title)
-                .aria_description(description);
-            match (&problem.kind, &problem.folder) {
-                (ProblemKind::Churned, Some(folder)) => {
-                    let folder = folder.clone();
-                    let name = last_name(&folder);
-                    row.child(
-                        button(
-                            format!("file-search-include-again-{name}"),
-                            "Include Again",
-                            !busy,
-                            theme,
-                        )
-                        .when(!busy, |button| {
-                            button.on_click(cx.listener(
-                                move |this, _: &gpui::ClickEvent, _, cx| {
-                                    let pending =
-                                        this.launcher.include_in_file_search(folder.clone());
-                                    follow(this, pending, cx);
-                                },
-                            ))
-                        }),
-                    )
-                    .into_any_element()
-                }
-                _ => row.into_any_element(),
-            }
+        .enumerate()
+        .map(|(at, problem)| {
+            let key = format!("problem:{at}:{:?}", problem.folder);
+            window_rows.row(listed, key, false, &page, || {
+                problem_row(problem, home, busy, theme, cx)
+            })
         })
         .collect();
     controls::section(
@@ -879,6 +869,61 @@ fn problems_section(
     )
     .debug_selector(|| "file-search-section-Problems".into())
     .into_any_element()
+}
+
+/// One row of the Needs attention card: what needs attention, why and
+/// what to do, with Include Again for a folder taken out for churn.
+fn problem_row(
+    problem: &Problem,
+    home: Option<&Path>,
+    busy: bool,
+    theme: &Theme,
+    cx: &mut Context<SettingsWindow>,
+) -> AnyElement {
+    let kind = kind_name(problem.kind);
+    let (title, selector) = match &problem.folder {
+        Some(folder) => (
+            shown(folder, home),
+            format!("file-search-problem-{kind}-{}", last_name(folder)),
+        ),
+        None => (
+            kind_title(problem.kind).to_owned(),
+            format!("file-search-problem-{kind}"),
+        ),
+    };
+    let lines = vec![
+        controls::row_line(problem.reason.clone(), theme.warning, theme),
+        controls::row_line(problem.remedy.clone(), theme.text_muted, theme),
+    ];
+    let description = format!("{}. {}", problem.reason, problem.remedy);
+    let row = controls::setting_row(title.clone(), lines, theme)
+        .id(SharedString::from(selector.clone()))
+        .debug_selector(move || selector)
+        .role(Role::Status)
+        .aria_label(title)
+        .aria_description(description);
+    match (&problem.kind, &problem.folder) {
+        (ProblemKind::Churned, Some(folder)) => {
+            let folder = folder.clone();
+            let name = last_name(&folder);
+            row.child(
+                button(
+                    format!("file-search-include-again-{name}"),
+                    "Include Again",
+                    !busy,
+                    theme,
+                )
+                .when(!busy, |button| {
+                    button.on_click(cx.listener(move |this, _: &gpui::ClickEvent, _, cx| {
+                        let pending = this.launcher.include_in_file_search(folder.clone());
+                        apply_and_report(this, pending, cx);
+                    }))
+                }),
+            )
+            .into_any_element()
+        }
+        _ => row.into_any_element(),
+    }
 }
 
 // ------------------------------------------------------------ the behavior
@@ -895,12 +940,12 @@ fn change(
     };
     edit(&mut rules);
     let pending = this.launcher.set_file_search_rules(rules);
-    follow(this, pending, cx);
+    apply_and_report(this, pending, cx);
 }
 
 /// Waits for `pending`, a change the page started, redrawing now and when
 /// it lands; a failure is the page's status.
-fn follow(
+fn apply_and_report(
     this: &mut SettingsWindow,
     pending: impl Future<Output = Result<(), String>> + 'static,
     cx: &mut Context<SettingsWindow>,
@@ -1026,6 +1071,9 @@ mod tests {
         );
         status.state = IndexState::Current;
         assert_eq!(state_words(&status), "Up to date");
+        status.resuming = true;
+        assert!(state_words(&status).starts_with("Paused: the computer slept"));
+        status.resuming = false;
         assert_eq!(
             caught_up_words(Some((CaughtUpBy::Journal, SystemTime::now()))).as_deref(),
             Some("Last caught up from the change journal, just now")

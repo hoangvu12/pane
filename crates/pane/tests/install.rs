@@ -544,12 +544,12 @@ fn assert_confirmation_scroll_reset(cx: &mut TestAppContext, height: f32) {
     let view = settle(&window, cx);
     assert_eq!(view.selected, Some(0));
     // The first frame of the new screen scrolls with the list's size and
-    // rows as last laid out, those of the extension list; on a real
-    // platform nothing else may redraw the window, so it must ask for the
-    // next frame to scroll again with the new ones. The test platform
-    // delivers that frame when told to.
-    let asked = cx.update(|window, cx| window.simulate_next_frame(cx));
-    assert!(asked > 0, "the window asks for a frame to scroll again");
+    // rows as last laid out, those of the extension list, then again with
+    // the new ones once it laid them out; on a real platform nothing else
+    // may redraw the window, so when that moved the list it asks for the
+    // next frame, which draws it there (#165). The test platform delivers
+    // that frame, if asked for, when told to.
+    cx.update(|window, cx| window.simulate_next_frame(cx));
     cx.run_until_parked();
     // Compare with this same confirmation opened in a fresh window, which
     // has no inherited scroll offset. A row can start below the viewport's

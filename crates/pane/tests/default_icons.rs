@@ -24,11 +24,19 @@ mod settle;
 
 use settle::settle;
 
+/// A default package: its name, its title, and its rows' tiles (the row's
+/// title, the image file it draws).
+type DefaultPackage = (
+    &'static str,
+    &'static str,
+    &'static [(&'static str, &'static str)],
+);
+
 /// Each default package, its title, and the tiles its commands' rows
 /// draw: (the row's title, the image file it draws), for the commands that
 /// have a row. Calculator and Applications answer root search; their
 /// package icon is checked through the launcher.
-const DEFAULTS: [(&str, &str, &[(&str, &str)]); 5] = [
+const DEFAULTS: [DefaultPackage; 5] = [
     ("calculator", "Calculator", &[]),
     ("applications", "Applications", &[]),
     ("files", "Files", &[("Search Files", "search.svg")]),

@@ -349,7 +349,7 @@ mod tests {
         }
         write(&data.join("pixmaps/legacy.png"), "png");
 
-        let themes = IconThemes::new(&[data.clone()], None, Some("Mine".into()));
+        let themes = IconThemes::new(std::slice::from_ref(&data), None, Some("Mine".into()));
         // The user's theme has it.
         assert_eq!(
             themes.find("editor"),
@@ -371,7 +371,7 @@ mod tests {
         let file = data.join("pixmaps/legacy.png");
         assert_eq!(themes.find(&file.to_string_lossy()), Some(file));
         // Without a theme of the user's, hicolor alone.
-        let plain = IconThemes::new(&[data.clone()], None, None);
+        let plain = IconThemes::new(std::slice::from_ref(&data), None, None);
         assert_eq!(plain.find("editor"), None);
         assert!(plain.find("viewer").is_some());
     }
@@ -382,7 +382,7 @@ mod tests {
         let data = folder.path().join("share");
         write(&data.join("icons/hicolor/48x48/apps/tool.png"), "png");
         write(&data.join("icons/hicolor/128x128/apps/tool.png"), "png");
-        let themes = IconThemes::new(&[data.clone()], None, None);
+        let themes = IconThemes::new(std::slice::from_ref(&data), None, None);
         assert_eq!(
             themes.find("tool"),
             Some(data.join("icons/hicolor/128x128/apps/tool.png"))

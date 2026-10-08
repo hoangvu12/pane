@@ -203,6 +203,14 @@ impl Launcher {
     pub fn set_window_presence(&self, presence: WindowPresence) {
         let left = {
             let mut state = self.lock();
+            // The file index's first walk waits for the window to say it is
+            // shown (#175), the first time too, when the launcher already
+            // counted itself shown (its presence starts as shown).
+            if presence != WindowPresence::Hidden
+                && let Some(files) = &state.files
+            {
+                files.indexer().launcher_shown();
+            }
             if state.feedback.presence == presence {
                 return;
             }
@@ -213,10 +221,6 @@ impl Launcher {
             match presence {
                 WindowPresence::Shown | WindowPresence::Compact => {
                     confirmations::arm_confirmation(&mut state);
-                    // The file index's first walk waits for this (#175).
-                    if let Some(files) = &state.files {
-                        files.indexer().launcher_shown();
-                    }
                     false
                 }
                 WindowPresence::Hidden => confirmations::leave_confirmation(&mut state),

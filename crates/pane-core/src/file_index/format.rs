@@ -86,7 +86,9 @@ pub(crate) const SEPARATOR: u8 = std::path::MAIN_SEPARATOR as u8;
 /// A path as the index keys it, losslessly: its bytes on Unix, and on
 /// Windows its UTF-16 as WTF-8 (UTF-8 that also carries unpaired
 /// surrogates), so that a name that is not valid Unicode is kept exactly
-/// for opening. Keys sort a folder's entries together after it.
+/// for opening. Keys sort a folder's entries together after it. On
+/// Windows a `/` is written as the `\` it stands for, so that one path has
+/// one key however its separators were written.
 pub(crate) fn path_key(path: &Path) -> Vec<u8> {
     #[cfg(unix)]
     {
@@ -96,7 +98,13 @@ pub(crate) fn path_key(path: &Path) -> Vec<u8> {
     #[cfg(windows)]
     {
         use std::os::windows::ffi::OsStrExt;
-        wtf8_encode(path.as_os_str().encode_wide())
+        wtf8_encode(path.as_os_str().encode_wide().map(|unit| {
+            if unit == u16::from(b'/') {
+                u16::from(b'\\')
+            } else {
+                unit
+            }
+        }))
     }
     #[cfg(not(any(unix, windows)))]
     {

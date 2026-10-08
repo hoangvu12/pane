@@ -613,12 +613,39 @@ fn enter_never_runs_a_program_in_search_files(fixture: &'static Package) {
     pane.search("run plan");
     let path = pane.folder.file("notes/run plan.bat");
     a_program_runs_only_through_run(&pane, "run plan.bat", &path);
+    // A script known by its executable bit alone: its row, told from its
+    // name, has a document's actions (the index reads no file to list
+    // it), but the check before Enter acts finds the bit, so Enter shows
+    // it in the file manager and runs nothing (#175, docs/files.md).
     #[cfg(unix)]
     {
         pane.open();
         pane.search("plan script");
         let script = pane.folder.file("notes/plan script");
-        a_program_runs_only_through_run(&pane, "plan script", &script);
+        pane.select("plan script");
+        assert_eq!(
+            pane.actions(),
+            [
+                "Open".to_owned(),
+                reveal(),
+                "Open With…".to_owned(),
+                "Copy Path".to_owned(),
+                "Copy Name".to_owned(),
+                "Copy File".to_owned(),
+                trash(),
+            ]
+        );
+        block_on(pane.launcher.activate_selected());
+        match pane.system.take().as_slice() {
+            [Done::Revealed(revealed)] => assert!(same_file(revealed, &script)),
+            other => panic!("{other:?}"),
+        }
+        assert!(pane.opener.take().is_empty(), "Enter ran nothing");
+        assert_eq!(
+            pane.huds(),
+            [format!("Showed plan script in {}", manager())]
+        );
+        assert!(pane.closed());
     }
 }
 

@@ -11,7 +11,10 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use futures::executor::block_on;
-use pane_core::{Launcher, PackageIdentity, Runtime, Screen, SettingsTarget};
+use pane_core::{
+    ExtensionOperation, Launcher, OperationKind, PackageIdentity, Runtime, Screen, SettingsTarget,
+    Status,
+};
 use tempfile::TempDir;
 
 #[path = "support/rows.rs"]
@@ -249,6 +252,111 @@ fn an_extensions_page_reads_its_description_its_folder_and_its_state() {
     let gone = PackageIdentity::npm("not-installed");
     assert!(launcher.source_folder(&gone).is_none());
     assert!(block_on(launcher.show_source_folder(&gone)).is_err());
+}
+
+/// The operation of `kind` the launcher offers for `identity`.
+fn operation_of(
+    launcher: &Launcher,
+    identity: &PackageIdentity,
+    kind: OperationKind,
+) -> ExtensionOperation {
+    launcher
+        .extension_operations()
+        .into_iter()
+        .find(|operation| operation.kind == kind && operation.owner.as_ref() == Some(identity))
+        .unwrap_or_else(|| panic!("no {kind:?} for {identity}"))
+}
+
+#[test]
+fn settings_runs_typed_operations_without_moving_the_launcher_off_its_screen() {
+    let (sources, data) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    let folder = settings_package(&sources.path().join("settings"), None);
+    let launcher = installed(&data, &folder);
+    let identity = PackageIdentity::local(&folder).unwrap();
+    block_on(launcher.set_query("gree"));
+
+    // What each operation is, whose, and whether it is on, is the
+    // launcher's to say: nothing is read from a row's words.
+    let operations = launcher.extension_operations();
+    let kinds: Vec<OperationKind> = operations
+        .iter()
+        .filter(|operation| operation.owner.as_ref() == Some(&identity))
+        .map(|operation| operation.kind)
+        .collect();
+    for kind in [
+        OperationKind::Enable,
+        OperationKind::Reload,
+        OperationKind::ClearCache,
+        OperationKind::Uninstall,
+        OperationKind::Develop,
+    ] {
+        assert!(kinds.contains(&kind), "{kind:?} in {kinds:?}");
+    }
+    let enable = operation_of(&launcher, &identity, OperationKind::Enable);
+    assert_eq!(enable.on, Some(true));
+    let reload = operation_of(&launcher, &identity, OperationKind::Reload);
+    assert_eq!(reload.label, "Reload");
+    assert_eq!(reload.title, "Reload Settings sample");
+    let global = operations
+        .iter()
+        .find(|operation| {
+            operation.kind == OperationKind::AutomaticUpdates && operation.owner.is_none()
+        })
+        .expect("every extension's automatic updates");
+    assert!(global.on.is_some());
+    let fallback_owners: Vec<_> = operations
+        .iter()
+        .filter(|operation| operation.kind == OperationKind::Alias)
+        .map(|operation| (operation.owner.clone(), operation.command.clone()))
+        .collect();
+    assert!(
+        fallback_owners.contains(&(Some(identity.clone()), Some(greeting(&folder)))),
+        "{fallback_owners:?}"
+    );
+
+    // Run from Settings, an operation leaves the launcher where the user
+    // had it: root search, the query typed.
+    block_on(launcher.run_extension_operation(&reload));
+    assert!(
+        matches!(launcher.screen(), Screen::Root { ref query } if query == "gree"),
+        "{:?}",
+        launcher.screen()
+    );
+    assert!(
+        matches!(launcher.view().status, Status::Result(_)),
+        "{:?}",
+        launcher.view().status
+    );
+    block_on(launcher.run_extension_operation(&enable));
+    assert!(!launcher.packages()[0].enabled);
+    assert_eq!(
+        operation_of(&launcher, &identity, OperationKind::Enable).on,
+        Some(false)
+    );
+    assert!(matches!(launcher.screen(), Screen::Root { .. }));
+    block_on(launcher.run_extension_operation(&enable));
+    assert!(launcher.packages()[0].enabled);
+
+    // A confirmation shows instead, for Settings to answer; cancelled, the
+    // launcher returns to root search, not to a list.
+    let clear = operation_of(&launcher, &identity, OperationKind::ClearCache);
+    block_on(launcher.run_extension_operation(&clear));
+    assert!(matches!(launcher.screen(), Screen::Confirm { .. }));
+    select_title(&launcher, "Cancel");
+    block_on(launcher.activate_selected());
+    assert!(
+        matches!(launcher.screen(), Screen::Root { .. }),
+        "{:?}",
+        launcher.screen()
+    );
+
+    // An operation no longer offered does nothing.
+    let gone = ExtensionOperation {
+        id: "reload:gone".into(),
+        ..reload
+    };
+    block_on(launcher.run_extension_operation(&gone));
+    assert!(matches!(launcher.screen(), Screen::Root { .. }));
 }
 
 /// A link opener that records the files and folders it is asked to open.

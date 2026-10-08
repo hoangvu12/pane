@@ -3,8 +3,9 @@
 //! reads its status. Answers at once from what is indexed; the search never
 //! waits for a walk, and the guest never reads the file system for it.
 
+use super::category::Category;
 use super::format::EntryKind;
-use super::indexer::{Category, IndexState, SearchOptions, Sort};
+use super::indexer::{IndexState, SearchOptions, Sort};
 use crate::runtime::{GuestState, bindings};
 
 use bindings::pane::extension::file_index as wit;

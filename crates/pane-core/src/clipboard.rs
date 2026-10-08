@@ -649,8 +649,8 @@ impl Sink for CaptureSink {
                 if observation.markers.allow() && image.png.len() <= MAX_IMAGE_BYTES =>
             {
                 let owner = history::default_owner();
-                let capturing = running.contains(&owner)
-                    && store.capturing_owners().iter().any(|o| *o == owner);
+                let capturing =
+                    running.contains(&owner) && store.capturing_owners().contains(&owner);
                 capturing
                     .then(|| match store.keep_image(&owner, image) {
                         Ok(kept) => Some(kept),

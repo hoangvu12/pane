@@ -21,7 +21,9 @@
 //! writing while the disk holding the cache has too little free space, and
 //! starts again once there is room ([`Valves::free_space_floor`]); and a
 //! folder that does not answer is skipped for the walk
-//! ([`WalkOptions::hung_after`]).
+//! ([`WalkOptions::hung_after`]). Indexing also pauses while the computer
+//! sleeps and resumes a few seconds after it wakes, counting only awake
+//! time in its limits (`power`, [`Valves::resume_after`]).
 
 use std::collections::{BTreeSet, HashMap, VecDeque};
 use std::path::{Path, PathBuf};
@@ -32,15 +34,20 @@ use std::time::{Duration, Instant, SystemTime};
 
 use serde::{Deserialize, Serialize};
 
+use super::category::Category;
 use super::changes::{Caught, CaughtUpBy, ChangeSource, Changed, Sink, Watching};
 use super::format::{EntryKind, Meta};
 use super::journal::JournalCursor;
+use super::power::{Awake, Pause, RESUME_AFTER, SystemAwake};
 use super::reconcile::reconcile;
 use super::scope::{Admitted, Scope, ScopeRules};
+use super::space::{FREE_SPACE_FLOOR, FreeSpace, free_space};
 use super::store::{Change, FileIndex, Hit, IndexError, IndexRecord, Opened, Query};
 use super::walker::{WalkOptions, WalkReport, walk, walk_folders};
+use super::wording::{count_words, size_words, span_words};
 use super::{Entry, lower_current_thread};
 use crate::files::{canonical, is_network_path, program_named, runs_as_program};
+use crate::util::lock;
 
 /// How long after start the first full walk (or a reconciling walk the
 /// catch-up asks for) waits for the launcher to be shown before it starts
@@ -66,10 +73,6 @@ pub const RULES_FILE: &str = "file-search.json";
 /// The index's folder in Pane's cache folder.
 pub const INDEX_DIR: &str = "file-index";
 
-/// The free space under which indexing stops writing (#126's proposed
-/// value): 1 GiB on the volume holding Pane's cache.
-pub const FREE_SPACE_FLOOR: u64 = 1 << 30;
-
 /// The safety valves' thresholds (see the module docs); the proposed
 /// values by default, smaller in tests.
 #[derive(Clone)]
@@ -87,7 +90,13 @@ pub struct Valves {
     pub space_retry: Duration,
     /// How the free space of the volume holding a folder is read: the
     /// system's ([`free_space`]) unless a test says otherwise.
-    pub free_space: Arc<dyn Fn(&Path) -> Option<u64> + Send + Sync>,
+    pub free_space: FreeSpace,
+    /// How long the computer has slept (see `power`): the system's clocks
+    /// unless a test puts a computer of its own to sleep.
+    pub awake: Arc<dyn Awake>,
+    /// How long indexing waits after the computer woke before it resumes
+    /// ([`RESUME_AFTER`]).
+    pub resume_after: Duration,
 }
 
 impl Default for Valves {
@@ -99,48 +108,10 @@ impl Default for Valves {
             free_space_floor: FREE_SPACE_FLOOR,
             space_retry: Duration::from_secs(60),
             free_space: Arc::new(free_space),
+            awake: Arc::new(SystemAwake),
+            resume_after: RESUME_AFTER,
         }
     }
-}
-
-/// The space free to this user on the volume holding `path` (or its
-/// nearest existing folder above it); `None` when the system does not say.
-pub fn free_space(path: &Path) -> Option<u64> {
-    let existing = path.ancestors().find(|folder| folder.exists())?;
-    free_space_at(existing)
-}
-
-#[cfg(windows)]
-fn free_space_at(path: &Path) -> Option<u64> {
-    use std::os::windows::ffi::OsStrExt;
-    use windows::Win32::Storage::FileSystem::GetDiskFreeSpaceExW;
-    use windows::core::PCWSTR;
-    let wide: Vec<u16> = path.as_os_str().encode_wide().chain([0]).collect();
-    let mut available = 0u64;
-    // SAFETY: `wide` is NUL-terminated and `available` is a u64 the call
-    // writes.
-    unsafe { GetDiskFreeSpaceExW(PCWSTR(wide.as_ptr()), Some(&mut available), None, None) }.ok()?;
-    Some(available)
-}
-
-#[cfg(unix)]
-fn free_space_at(path: &Path) -> Option<u64> {
-    use std::os::unix::ffi::OsStrExt;
-    let path = std::ffi::CString::new(path.as_os_str().as_bytes()).ok()?;
-    // SAFETY: a plain C structure, for which all zeroes is a valid value.
-    let mut stats: libc::statvfs = unsafe { std::mem::zeroed() };
-    // SAFETY: a NUL-terminated path and a structure of the call's own type.
-    if unsafe { libc::statvfs(path.as_ptr(), &mut stats) } != 0 {
-        return None;
-    }
-    // The fields' widths differ between systems.
-    #[allow(clippy::unnecessary_cast)]
-    Some((stats.f_bavail as u64).saturating_mul(stats.f_frsize as u64))
-}
-
-#[cfg(not(any(windows, unix)))]
-fn free_space_at(_path: &Path) -> Option<u64> {
-    None
 }
 
 /// How the indexer runs: where the index is kept, what it covers, and how
@@ -303,6 +274,10 @@ pub struct IndexStatus {
     /// Folders that could not be read, counted, and the first ones named.
     pub unreadable: u64,
     pub unreadable_folders: Vec<PathBuf>,
+    /// Folders macOS's privacy protection did not let Pane read, told
+    /// from the system's answer, counted, and the first ones named.
+    pub refused: u64,
+    pub refused_folders: Vec<PathBuf>,
     /// Folders not watched (Linux's watch limit), reconciled every few
     /// minutes instead.
     pub unwatched: u64,
@@ -317,6 +292,9 @@ pub struct IndexStatus {
     /// walk.
     pub hung: u64,
     pub hung_folders: Vec<PathBuf>,
+    /// The computer woke a moment ago: indexing waits a few seconds
+    /// ([`Valves::resume_after`]) before it resumes.
+    pub resuming: bool,
 }
 
 /// What a [`Problem`] is about.
@@ -350,66 +328,8 @@ pub struct Problem {
     pub remedy: String,
 }
 
-/// `count` for people: "5 million", "1,000", "12,345".
-pub fn count_words(count: u64) -> String {
-    if count >= 1_000_000 && count % 1_000_000 == 0 {
-        return format!("{} million", count / 1_000_000);
-    }
-    let digits = count.to_string();
-    let mut grouped = String::new();
-    for (at, digit) in digits.chars().enumerate() {
-        if at > 0 && (digits.len() - at) % 3 == 0 {
-            grouped.push(',');
-        }
-        grouped.push(digit);
-    }
-    grouped
-}
-
-/// `bytes` for people, in whole units where they are: "1 GB", "512 MB".
-fn size_words(bytes: u64) -> String {
-    const GB: u64 = 1 << 30;
-    const MB: u64 = 1 << 20;
-    if bytes >= GB {
-        format!("{} GB", (bytes + GB / 2) / GB)
-    } else if bytes >= MB {
-        format!("{} MB", (bytes + MB / 2) / MB)
-    } else {
-        format!("{bytes} bytes")
-    }
-}
-
-/// `span` for people: "1 minute", "10 seconds", "200 ms".
-fn span_words(span: Duration) -> String {
-    let plural = |count: u64, unit: &str| {
-        if count == 1 {
-            format!("1 {unit}")
-        } else {
-            format!("{count} {unit}s")
-        }
-    };
-    let seconds = span.as_secs();
-    if span.subsec_nanos() == 0 && seconds >= 60 && seconds % 60 == 0 {
-        plural(seconds / 60, "minute")
-    } else if span.subsec_nanos() == 0 && seconds > 0 {
-        plural(seconds, "second")
-    } else {
-        format!("{} ms", span.as_millis())
-    }
-}
-
-/// Whether `folder` is one of the folders macOS asks the user about before
-/// Pane may read it: the home folder's Desktop, Documents and Downloads.
-pub fn protected_by_macos(home: Option<&Path>, folder: &Path) -> bool {
-    let Some(home) = home else {
-        return false;
-    };
-    folder.parent() == Some(home)
-        && folder
-            .file_name()
-            .and_then(|name| name.to_str())
-            .is_some_and(|name| matches!(name, "Desktop" | "Documents" | "Downloads"))
-}
+/// The remedy for a folder macOS's privacy protection refused.
+const ALLOW_IN_PRIVACY_SETTINGS: &str = "Allow Pane under System Settings › Privacy & Security › Files and Folders, then rebuild      the index";
 
 /// How to search.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -441,106 +361,6 @@ pub enum Sort {
     Relevance,
     /// Most recently modified first.
     Modified,
-}
-
-/// A kind of file, told from its name's extension, the same table on
-/// every system. Search Files' type dropdown offers each (#177), as
-/// Raycast's File Search does.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Category {
-    /// Documents to read or edit in an application: PDF, office and
-    /// e-book files.
-    Documents,
-    Images,
-    Audio,
-    Video,
-    Archives,
-    /// Programs, scripts, shortcuts, installers and application bundles.
-    Applications,
-    /// Plain text: notes, data and configuration files, source code.
-    Text,
-    /// A file of none of the other categories (a folder is in none).
-    Other,
-}
-
-const DOCUMENTS: &[&str] = &[
-    "pdf", "doc", "docx", "odt", "rtf", "pages", "xls", "xlsx", "ods", "numbers", "ppt", "pptx",
-    "odp", "key", "epub", "html", "htm",
-];
-const TEXT: &[&str] = &[
-    "txt", "text", "md", "markdown", "rst", "adoc", "org", "tex", "csv", "tsv", "json", "jsonc",
-    "xml", "yaml", "yml", "toml", "ini", "cfg", "conf", "env", "log", "srt", "vtt", "css", "scss",
-    "less", "js", "mjs", "cjs", "jsx", "ts", "tsx", "rs", "py", "rb", "go", "java", "kt", "swift",
-    "c", "h", "cc", "cpp", "hpp", "cs", "php", "lua", "sql", "r", "dart", "vue", "svelte", "zig",
-];
-const IMAGES: &[&str] = &[
-    "png", "jpg", "jpeg", "gif", "bmp", "tif", "tiff", "webp", "heic", "heif", "svg", "ico", "raw",
-    "cr2", "nef", "arw", "dng", "psd", "ai", "avif",
-];
-const AUDIO: &[&str] = &[
-    "mp3", "wav", "flac", "aac", "m4a", "ogg", "oga", "opus", "wma", "aiff", "aif", "mid", "midi",
-];
-const VIDEO: &[&str] = &[
-    "mp4", "mov", "mkv", "avi", "wmv", "webm", "m4v", "mpg", "mpeg", "flv", "3gp", "ogv",
-];
-const ARCHIVES: &[&str] = &[
-    "zip", "rar", "7z", "tar", "gz", "tgz", "bz2", "xz", "zst", "iso", "dmg", "cab", "lz", "lzma",
-];
-
-impl Category {
-    /// The categories but [`Category::Other`], in the order an entry is
-    /// told by: the first that holds it names it ([`Category::of`]).
-    const NAMED: [Category; 7] = [
-        Category::Applications,
-        Category::Images,
-        Category::Video,
-        Category::Audio,
-        Category::Archives,
-        Category::Documents,
-        Category::Text,
-    ];
-
-    /// Whether the entry at `path`, of `kind`, is of this category. A
-    /// script is both an application and text; a folder is of none but an
-    /// application bundle's.
-    pub fn holds(self, path: &Path, kind: EntryKind) -> bool {
-        let extension = path
-            .extension()
-            .and_then(|extension| extension.to_str())
-            .map(str::to_ascii_lowercase)
-            .unwrap_or_default();
-        let table = match self {
-            Category::Documents => DOCUMENTS,
-            Category::Images => IMAGES,
-            Category::Audio => AUDIO,
-            Category::Video => VIDEO,
-            Category::Archives => ARCHIVES,
-            Category::Text => TEXT,
-            Category::Applications => {
-                return match kind {
-                    EntryKind::Folder => extension == "app",
-                    EntryKind::File | EntryKind::Link => program_named(path),
-                };
-            }
-            Category::Other => {
-                return kind != EntryKind::Folder
-                    && !Category::NAMED
-                        .iter()
-                        .any(|category| category.holds(path, kind));
-            }
-        };
-        kind != EntryKind::Folder && table.contains(&extension.as_str())
-    }
-
-    /// The one category that names the entry at `path`, of `kind`, for
-    /// people (an application before text, an image before a document);
-    /// `None` for a folder that is no application bundle.
-    pub fn of(path: &Path, kind: EntryKind) -> Option<Category> {
-        Category::NAMED
-            .into_iter()
-            .chain([Category::Other])
-            .find(|category| category.holds(path, kind))
-    }
 }
 
 /// An entry a search found, for an extension: the id Pane gave it and what
@@ -669,12 +489,6 @@ impl Run {
         self.stop.store(true, Ordering::Relaxed);
         let _ = self.sender.send(Message::Stop);
     }
-}
-
-fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
-    mutex
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 impl Indexer {
@@ -939,7 +753,8 @@ impl Indexer {
     }
 
     /// What the File search page lists about the index (#176): folders that
-    /// could not be read (macOS's refusals apart), are not watched, churned
+    /// could not be read (macOS's refusals apart, told by what the system
+    /// answered, see `privacy`), are not watched, churned
     /// or did not answer, a walk stopped at the ceiling, and a stop for
     /// space, each with why and what to do.
     pub fn problems(&self) -> Vec<Problem> {
@@ -948,7 +763,6 @@ impl Indexer {
         let Some(config) = &shared.config else {
             return Vec::new();
         };
-        let home = config.rules.home.as_deref();
         let mut problems = Vec::new();
         if status.low_space {
             problems.push(Problem {
@@ -1011,24 +825,33 @@ impl Indexer {
                 remedy: "Rebuild the index once they answer".into(),
             });
         }
+        for folder in &status.refused_folders {
+            problems.push(Problem {
+                kind: ProblemKind::Refused,
+                folder: Some(folder.clone()),
+                reason: "macOS did not allow Pane to read it".into(),
+                remedy: ALLOW_IN_PRIVACY_SETTINGS.into(),
+            });
+        }
+        let named_refused = status.refused_folders.len() as u64;
+        if status.refused > named_refused {
+            problems.push(Problem {
+                kind: ProblemKind::Refused,
+                folder: None,
+                reason: format!(
+                    "macOS did not allow Pane to read {} more folders",
+                    count_words(status.refused - named_refused)
+                ),
+                remedy: ALLOW_IN_PRIVACY_SETTINGS.into(),
+            });
+        }
         for folder in &status.unreadable_folders {
-            if cfg!(target_os = "macos") && protected_by_macos(home, folder) {
-                problems.push(Problem {
-                    kind: ProblemKind::Refused,
-                    folder: Some(folder.clone()),
-                    reason: "macOS did not allow Pane to read it".into(),
-                    remedy: "Allow Pane under System Settings › Privacy & Security › Files and \
-                             Folders, then rebuild the index"
-                        .into(),
-                });
-            } else {
-                problems.push(Problem {
-                    kind: ProblemKind::Unreadable,
-                    folder: Some(folder.clone()),
-                    reason: "Pane cannot read it, so what is in it is not indexed".into(),
-                    remedy: "Make sure your account may open it, then rebuild the index".into(),
-                });
-            }
+            problems.push(Problem {
+                kind: ProblemKind::Unreadable,
+                folder: Some(folder.clone()),
+                reason: "Pane cannot read it, so what is in it is not indexed".into(),
+                remedy: "Make sure your account may open it, then rebuild the index".into(),
+            });
         }
         let named = status.unreadable_folders.len() as u64;
         if status.unreadable > named {
@@ -1193,7 +1016,7 @@ impl Indexer {
             asked *= 4;
         };
         if options.sort == Sort::Modified {
-            hits.sort_by(|a, b| b.meta.modified.cmp(&a.meta.modified));
+            hits.sort_by_key(|hit| std::cmp::Reverse(hit.meta.modified));
         }
         let page: Vec<Hit> = hits.into_iter().skip(options.offset).take(limit).collect();
         let mut shared = self.shared();
@@ -1412,7 +1235,17 @@ fn coordinate(
     receiver: Receiver<Message>,
     stop: Arc<AtomicBool>,
 ) {
-    let Some(mut coordinator) = Coordinator::open(inner, config, rules, sender, stop) else {
+    let Some(mut coordinator) = Coordinator::open(inner.clone(), config, rules, sender, stop)
+    else {
+        // What was sent meanwhile is no longer waited for.
+        let left: Vec<Message> = receiver.try_iter().collect();
+        if let Some(inner) = inner.upgrade() {
+            let count = counted(&left);
+            if count > 0 {
+                inner.queued.fetch_sub(count, Ordering::SeqCst);
+            }
+            inner.changed.notify_all();
+        }
         return;
     };
     coordinator.run(receiver);
@@ -1445,6 +1278,11 @@ struct Coordinator {
     /// Changes were let go while short of space: every root is reconciled
     /// once there is room.
     missed: bool,
+    /// The pause after a sleep, shared with the walker's threads.
+    pause: Arc<Pause>,
+    /// How long the computer had slept when this run started: the first
+    /// walk's delay counts awake time only.
+    asleep_at_start: Duration,
 }
 
 /// The changes counted in one folder: in the window that started `since`,
@@ -1520,8 +1358,14 @@ impl Coordinator {
         if let Some(inner) = inner.upgrade() {
             lock(&inner.shared).status.entries = index.stats().stored;
         }
+        let pause = Arc::new(Pause::new(
+            config.valves.awake.clone(),
+            config.valves.resume_after,
+        ));
         let mut coordinator = Coordinator {
             inner,
+            asleep_at_start: config.valves.awake.asleep(),
+            pause,
             started: Instant::now(),
             cursors: Vec::new(),
             full_walk: false,
@@ -1821,13 +1665,47 @@ impl Coordinator {
     }
 
     /// Whether a deferred walk may run now: the launcher was shown, or the
-    /// delay passed.
+    /// delay passed, in awake time.
     fn may_walk(&self) -> bool {
         let shown = self
             .inner
             .upgrade()
             .is_some_and(|inner| lock(&inner.shared).shown);
-        shown || self.started.elapsed() >= self.config.first_walk_delay
+        shown || self.awake_since_start() >= self.config.first_walk_delay
+    }
+
+    /// How long this run has been going, the computer awake.
+    fn awake_since_start(&self) -> Duration {
+        let elapsed = self.started.elapsed();
+        if super::power::INSTANT_COUNTS_SLEEP {
+            let slept = self
+                .config
+                .valves
+                .awake
+                .asleep()
+                .saturating_sub(self.asleep_at_start);
+            elapsed.saturating_sub(slept)
+        } else {
+            elapsed
+        }
+    }
+
+    /// Waits out the pause after a sleep: when the computer slept since
+    /// the last look (or a walker's thread noticed it), indexing waits
+    /// [`Valves::resume_after`] before it goes on, the status saying so,
+    /// and churn is counted afresh (a sleep breaks a run of busy minutes).
+    /// At once when the computer did not sleep.
+    fn wait_after_sleep(&mut self) {
+        let slept = self.pause.look();
+        if slept.is_none() && !self.pause.on() {
+            return;
+        }
+        if slept.is_some() {
+            self.churn.clear();
+        }
+        self.status(|shared| shared.status.resuming = true);
+        self.pause.hold(&self.stop);
+        self.status(|shared| shared.status.resuming = false);
     }
 
     fn run(&mut self, receiver: Receiver<Message>) {
@@ -1835,6 +1713,7 @@ impl Coordinator {
             if self.stopped() {
                 break;
             }
+            self.wait_after_sleep();
             // Short of space: looked at again, and indexing starts again
             // once there is room.
             if self.low_space && self.room() && !self.deferred() {
@@ -1862,7 +1741,7 @@ impl Coordinator {
                 Some(
                     self.config
                         .first_walk_delay
-                        .saturating_sub(self.started.elapsed())
+                        .saturating_sub(self.awake_since_start())
                         .max(Duration::from_millis(10)),
                 )
             } else if !self.unwatched.is_empty() {
@@ -1901,12 +1780,12 @@ impl Coordinator {
                     Err(_) => break,
                 }
             }
-            let count = batch.len();
+            // A batch that came as the computer woke waits for the pause
+            // after the sleep.
+            self.wait_after_sleep();
+            let count = counted(&batch);
             let stop = self.handle(batch);
-            if let Some(inner) = self.inner.upgrade() {
-                inner.queued.fetch_sub(count, Ordering::SeqCst);
-                inner.changed.notify_all();
-            }
+            self.handled(count);
             if stop {
                 break;
             }
@@ -1914,6 +1793,9 @@ impl Coordinator {
         // Stopped: watching stops now; what is in the log is kept, and the
         // cursors are saved once it is a segment.
         self.watching = None;
+        // What was sent and never handled is no longer waited for.
+        let left: Vec<Message> = receiver.try_iter().collect();
+        self.handled(counted(&left));
         if self.low_space {
             // Nothing more is written; changes let go meanwhile are caught
             // up from the cursors saved before, next time.
@@ -1927,6 +1809,16 @@ impl Coordinator {
         }
     }
 
+    /// Notes that `count` counted messages were handled (or let go of).
+    fn handled(&self, count: usize) {
+        if let Some(inner) = self.inner.upgrade() {
+            if count > 0 {
+                inner.queued.fetch_sub(count, Ordering::SeqCst);
+            }
+            inner.changed.notify_all();
+        }
+    }
+
     /// Handles a batch of messages; `true` to stop.
     fn handle(&mut self, batch: Vec<Message>) -> bool {
         let mut paths: BTreeSet<PathBuf> = BTreeSet::new();
@@ -1934,6 +1826,12 @@ impl Coordinator {
         let mut stop = false;
         let now = Instant::now();
         let mut churned: Vec<PathBuf> = Vec::new();
+        // The cursors the batch reports, and whether its history ended:
+        // taken only once its changes are applied, so that cursors past a
+        // change never are saved without it (a batch that stops, a run
+        // stopped meanwhile, leaves both as they were).
+        let mut reported: Option<Vec<JournalCursor>> = None;
+        let mut history_done = false;
         for message in batch {
             match message {
                 Message::Stop => stop = true,
@@ -1944,11 +1842,10 @@ impl Coordinator {
                 }
                 Message::Changed(Changed::Rescan(folder)) => rescan.push(folder),
                 Message::Changed(Changed::HistoryDone(cursors)) => {
-                    self.cursors = cursors;
-                    self.caught_up = Some(CaughtUpBy::EventHistory);
-                    self.save();
+                    reported = Some(cursors);
+                    history_done = true;
                 }
-                Message::Changed(Changed::Cursors(cursors)) => self.cursors = cursors,
+                Message::Changed(Changed::Cursors(cursors)) => reported = Some(cursors),
                 Message::Changed(Changed::Unwatched(folders)) => {
                     self.unwatched.extend(folders);
                     self.unwatched.sort();
@@ -1965,12 +1862,14 @@ impl Coordinator {
             self.quarantine(folder);
         }
         if paths.is_empty() && rescan.is_empty() {
+            self.take_cursors(reported, history_done);
             return false;
         }
         if !self.room() {
             // Nothing is written: what changed is caught up once there is
             // room.
             self.missed = true;
+            self.take_cursors(reported, history_done);
             return false;
         }
         self.status(|shared| shared.busy = true);
@@ -1993,8 +1892,22 @@ impl Coordinator {
         changes.extend(walked);
         self.add_watches(&changes);
         let _ = self.index.apply(&changes);
+        self.take_cursors(reported, history_done);
         self.settled();
         false
+    }
+
+    /// Takes the cursors a batch reported, its changes applied; once the
+    /// replayed history ended, the index is caught up by it and the
+    /// cursors are saved.
+    fn take_cursors(&mut self, reported: Option<Vec<JournalCursor>>, history_done: bool) {
+        if let Some(cursors) = reported {
+            self.cursors = cursors;
+        }
+        if history_done {
+            self.caught_up = Some(CaughtUpBy::EventHistory);
+            self.save();
+        }
     }
 
     /// The folders a rescan asks for, within the roots: a folder above a
@@ -2158,6 +2071,8 @@ impl Coordinator {
             self.status(|shared| {
                 shared.status.unreadable = report.unreadable;
                 shared.status.unreadable_folders = report.unreadable_folders.clone();
+                shared.status.refused = report.refused;
+                shared.status.refused_folders = report.refused_folders.clone();
                 shared.status.hung = report.hung;
                 shared.status.hung_folders = report.hung_folders.clone();
                 shared.status.ceiling_reached = report.ceiling_reached;
@@ -2211,11 +2126,26 @@ impl Coordinator {
         let looked = &Mutex::new(Instant::now());
         let valves = &self.config.valves;
         let dir = &self.config.dir;
+        let pause = &*self.pause;
         std::thread::scope(|threads| {
             let walker = threads.spawn(move || {
                 walk(scope, options, cancel, &|batch: Vec<Entry>| {
                     if stop.load(Ordering::Relaxed) {
                         cancel.store(true, Ordering::Relaxed);
+                    }
+                    // The computer slept during the walk: each of its
+                    // threads waits out the pause after the wake before it
+                    // hands over its next folder.
+                    if pause.look().is_some() || pause.on() {
+                        let say = |resuming: bool| {
+                            if let Some(inner) = inner.upgrade() {
+                                lock(&inner.shared).status.resuming = resuming;
+                                inner.changed.notify_all();
+                            }
+                        };
+                        say(true);
+                        pause.hold(stop);
+                        say(false);
                     }
                     {
                         let mut looked = lock(looked);
@@ -2391,6 +2321,15 @@ fn open_index(
             }
         }
     }
+}
+
+/// How many of `messages` were counted as sent ([`Counter::sent`], or
+/// [`Indexer::launcher_shown`]): all but a stop, which is never counted.
+fn counted(messages: &[Message]) -> usize {
+    messages
+        .iter()
+        .filter(|message| !matches!(message, Message::Stop))
+        .count()
 }
 
 /// What counts the messages a sink sends, for [`Indexer::wait_until_settled`].

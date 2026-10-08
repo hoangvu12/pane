@@ -254,17 +254,19 @@ fn the_page_says_how_the_index_is_doing_and_rebuild_builds_it_again(cx: &mut Tes
 
     // Rebuild Index deletes the index and builds it again.
     fs::write(world.home.join("Documents/after.txt"), "x").unwrap();
+    // The index was current, by a full walk, before the rebuild too: the
+    // rebuild is done once a full walk is recorded again, later.
+    let before = launcher.file_index_status().caught_up;
     click(&mut sc, "file-search-rebuild");
     until(&mut sc, &launcher, |launcher| {
         let status = launcher.file_index_status();
         status.state == IndexState::Current
             && status.caught_up.map(|(by, _)| by) == Some(CaughtUpBy::FullWalk)
+            && status.caught_up != before
+            && found(launcher, "after")
+                .iter()
+                .any(|row| row == "after.txt")
     });
-    assert!(
-        found(&launcher, "after")
-            .iter()
-            .any(|row| row == "after.txt")
-    );
     assert!(a11y(&mut sc).contains("Up to date"));
 }
 
@@ -334,6 +336,46 @@ fn a_pattern_typed_is_excluded_and_its_remove_brings_it_back(cx: &mut TestAppCon
             .is_empty()
     });
     assert!(!drawn(&mut sc, "file-search-pattern-*.md"));
+}
+
+#[gpui::test]
+fn a_long_list_of_exclusions_draws_only_the_rows_near_the_pages_view(cx: &mut TestAppContext) {
+    // Three hundred patterns: the page draws the ones near its view and a
+    // stand-in for each other, as the Shortcuts page does (#165).
+    let world = World::new();
+    let launcher = world.launcher(true, |_| {});
+    let (_, mut rules) = launcher.file_search_rules().unwrap();
+    rules.excluded_patterns = (0..300).map(|at| format!("*.p{at:03}")).collect();
+    block_on(launcher.set_file_search_rules(rules)).unwrap();
+    let (_settings, mut sc) = open_page(cx, launcher.clone());
+    sc.update(|window, cx| window.simulate_next_frame(cx));
+    sc.run_until_parked();
+    assert!(
+        drawn(&mut sc, "file-search-pattern-*.p000"),
+        "the first is drawn"
+    );
+    assert!(
+        !drawn(&mut sc, "file-search-pattern-*.p299"),
+        "the last, far below the view, is a stand-in"
+    );
+
+    // Scrolled to the end, the last is drawn and the first no longer.
+    let viewport = sc.update(|window, _| window.viewport_size());
+    for _ in 0..4 {
+        sc.simulate_event(gpui::ScrollWheelEvent {
+            position: gpui::point(viewport.width / 2., viewport.height / 2.),
+            delta: gpui::ScrollDelta::Pixels(gpui::point(px(0.), px(-40_000.))),
+            modifiers: Modifiers::none(),
+            touch_phase: gpui::TouchPhase::Moved,
+        });
+        sc.update(|window, cx| window.simulate_next_frame(cx));
+        sc.run_until_parked();
+    }
+    assert!(
+        drawn(&mut sc, "file-search-pattern-*.p299"),
+        "the last is drawn"
+    );
+    assert!(!drawn(&mut sc, "file-search-pattern-*.p000"));
 }
 
 #[gpui::test]
