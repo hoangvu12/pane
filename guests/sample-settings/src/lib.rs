@@ -205,6 +205,13 @@ impl Command for Greeting {
                 "Crashes on purpose; three crashes within five minutes pause the extension",
             ),
             item("count", "Count", "Adds one to a count kept in its content"),
+            // The smokes reach "Stop responding" by its place: items added
+            // later go after it.
+            item(
+                "busy",
+                "Stop responding",
+                "Computes without waiting for up to a minute; Pane stops it after 5 seconds",
+            ),
             item(
                 "log",
                 "Write to the log",
@@ -219,11 +226,6 @@ impl Command for Greeting {
                 "fail",
                 "Fail",
                 "Fails with an error, which the extension answers with",
-            ),
-            item(
-                "busy",
-                "Stop responding",
-                "Computes without waiting for up to a minute; Pane stops it after 5 seconds",
             ),
         ]))
     }
