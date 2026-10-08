@@ -23,7 +23,7 @@ mod feedback;
 mod rows;
 
 use feedback::shown;
-use rows::{select_title, titles};
+use rows::select_title;
 
 const MANAGE_ROW: &str = "Manage Extensions";
 const TOKEN: &str = "sample-token";
@@ -193,7 +193,7 @@ fn subtitle(launcher: &Launcher, title: &str) -> String {
         .into_iter()
         .find(|row| row.title == title)
         .and_then(|row| row.subtitle)
-        .unwrap_or_else(|| panic!("no row {title:?} in {:?}", titles(launcher)))
+        .unwrap_or_else(|| panic!("no row {title:?} in {:?}", rows::titles(launcher)))
 }
 
 /// The explanation an extension gets for a credential Windows cannot

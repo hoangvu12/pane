@@ -426,12 +426,14 @@ fn the_actions_panel_over_root_search_says_its_entries(cx: &mut TestAppContext) 
 #[gpui::test]
 fn the_footers_message_is_said_before_the_selection_that_came_with_it(cx: &mut TestAppContext) {
     let (window, cx) = open_samples(cx);
-    // The message and the move reach the same frame: the message is set
-    // without drawing, then Down draws both.
+    // The message and another selection reach the same frame: both are set
+    // without drawing, then the window draws. (A key is no way to do it:
+    // the test platform draws the message's frame before it handles Down.)
     cx.read_entity(&window, |window, _| {
-        window.launcher().show_error("Something failed")
+        window.launcher().show_error("Something failed");
+        window.launcher().select(1);
     });
-    cx.simulate_keystrokes("down");
+    window.update(cx, |_, cx| cx.notify());
     let shown = view(&window, cx);
     assert_eq!(shown.selected, Some(1));
     assert_eq!(announcement(cx), "Something failed");

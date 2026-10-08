@@ -201,6 +201,16 @@ enum Said {
     Nothing,
 }
 
+impl Said {
+    /// Whether it is what `other` said, the same row whatever its section.
+    fn same_row(&self, other: &Said) -> bool {
+        match (self, other) {
+            (Said::Row { id, .. }, Said::Row { id: other, .. }) => id == other,
+            _ => self == other,
+        }
+    }
+}
+
 /// A list the announcer follows: what it shows, its field's text and what
 /// was last said of its selection.
 struct Layer {
@@ -425,7 +435,17 @@ impl Announcer {
             }
             self.typed = None;
         }
-        if target == layer.said {
+        // A selection Pane changed (typing settled, a late result) is said
+        // only for another row: the same row under another section's label
+        // (root search's "Commands" becoming "Results" as the user types)
+        // is not.
+        let unchanged = if moved {
+            target == layer.said
+        } else {
+            target.same_row(&layer.said)
+        };
+        if unchanged {
+            layer.said = target;
             return None;
         }
         let before = std::mem::replace(&mut layer.said, target);
@@ -713,6 +733,30 @@ mod tests {
         announcer.text.clear();
         announcer.frame(Some(typed), None, later + SETTLE * 2);
         assert_eq!(announcer.text, "", "said once");
+    }
+
+    /// Root search lists every row under "Commands" for a blank query and
+    /// what it found under "Results": the same first row, labelled anew as
+    /// the user types, is not said; a move into another section later still
+    /// names it.
+    #[test]
+    fn typing_that_relabels_the_same_row_says_nothing() {
+        let now = Instant::now();
+        let mut announcer = Announcer::default();
+        let mut blank = root("", 3, None);
+        blank.target = Target::Row(row(0, Some("Commands")));
+        announcer.frame(Some(blank), None, now);
+        let mut typed = root("r", 2, None);
+        typed.target = Target::Row(row(0, Some("Results")));
+        announcer.frame(Some(typed.clone()), None, now);
+        announcer.frame(Some(typed), None, now + SETTLE);
+        assert_eq!(announcer.text, "");
+
+        let mut fallback = root("r", 2, None);
+        fallback.target = Target::Row(row(1, Some("Fallbacks")));
+        announcer.user_moved();
+        announcer.frame(Some(fallback), None, now + SETTLE);
+        assert_eq!(announcer.text, "Fallbacks: Row 1, 2 of 2");
     }
 
     #[test]

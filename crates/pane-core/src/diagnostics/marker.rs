@@ -387,10 +387,11 @@ mod tests {
         let record = CrashRecord::open(&folder, "1.0.0", &table);
         assert!(!record.ended_unexpectedly(), "another Pane still runs");
         assert!(other.exists(), "its marker is left alone");
-        assert_eq!(
-            markers(&folder),
-            [marker_name(OTHER), marker_name(std::process::id())]
-        );
+        // Sorted as `markers` sorts them: by name, so the order depends on
+        // this test's process id.
+        let mut both = [marker_name(OTHER), marker_name(std::process::id())];
+        both.sort();
+        assert_eq!(markers(&folder), both);
     }
 
     #[test]

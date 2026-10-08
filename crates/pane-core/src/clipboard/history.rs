@@ -1579,7 +1579,7 @@ mod tests {
             .unwrap();
         assert_eq!(raw()["packages"]["a"]["items"][1], *item);
         // Read back after a restart.
-        let reopened = HistoryStore::open(dir.path());
+        let (reopened, _) = store_at(dir.path(), DAY);
         assert_eq!(
             texts(&reopened.get("a").unwrap()),
             ["another", "a secret copied"]
@@ -1630,7 +1630,7 @@ mod tests {
         store
             .update("a", |history| Ok(history.delete(&[1])))
             .unwrap();
-        let history = HistoryStore::open(dir.path()).get("a").unwrap();
+        let history = store_at(dir.path(), DAY).0.get("a").unwrap();
         assert!(history.items.iter().all(|item| item.unreadable.is_none()));
         assert_eq!(history.items.len(), 2);
     }
