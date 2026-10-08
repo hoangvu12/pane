@@ -422,8 +422,6 @@ struct Inner {
     shared: Mutex<Shared>,
     /// Told whenever the status or the work in flight changes.
     changed: Condvar,
-    /// Messages sent and not yet handled by the coordinator.
-    queued: AtomicUsize,
 }
 
 #[derive(Default)]
@@ -480,6 +478,9 @@ struct Issued {
 struct Run {
     stop: Arc<AtomicBool>,
     sender: Sender<Message>,
+    /// Each activation counts only its own reports: a stopped native
+    /// watcher can still be finishing a callback when its replacement runs.
+    queued: Arc<Queued>,
     thread: Option<std::thread::JoinHandle<()>>,
 }
 
@@ -540,9 +541,9 @@ impl Indexer {
         }
         shared.shown = true;
         if let Some(run) = &shared.run {
-            self.0.queued.fetch_add(1, Ordering::SeqCst);
+            run.queued.sent();
             if run.sender.send(Message::Shown).is_err() {
-                self.0.queued.fetch_sub(1, Ordering::SeqCst);
+                run.queued.unsent();
             }
         }
     }
@@ -593,17 +594,28 @@ impl Indexer {
         let weak = Arc::downgrade(&self.0);
         let thread_stop = stop.clone();
         let thread_sender = sender.clone();
+        let queued = Arc::new(Queued::default());
+        let thread_queued = queued.clone();
         let spawned = std::thread::Builder::new()
             .name("pane-file-index".into())
             .spawn(move || {
                 lower_current_thread();
-                coordinate(weak, config, rules, thread_sender, receiver, thread_stop);
+                coordinate(
+                    weak,
+                    config,
+                    rules,
+                    thread_sender,
+                    receiver,
+                    thread_stop,
+                    thread_queued,
+                );
             });
         match spawned {
             Ok(thread) => {
                 shared.run = Some(Run {
                     stop,
                     sender,
+                    queued,
                     thread: Some(thread),
                 })
             }
@@ -938,7 +950,10 @@ impl Indexer {
         let mut shared = self.shared();
         loop {
             let settled = !shared.busy
-                && self.0.queued.load(Ordering::SeqCst) == 0
+                && shared
+                    .run
+                    .as_ref()
+                    .is_none_or(|run| run.queued.0.load(Ordering::SeqCst) == 0)
                 && shared.status.state != IndexState::Building;
             if settled {
                 return true;
@@ -1234,15 +1249,17 @@ fn coordinate(
     sender: Sender<Message>,
     receiver: Receiver<Message>,
     stop: Arc<AtomicBool>,
+    queued: Arc<Queued>,
 ) {
-    let Some(mut coordinator) = Coordinator::open(inner.clone(), config, rules, sender, stop)
+    let Some(mut coordinator) =
+        Coordinator::open(inner.clone(), config, rules, sender, stop, queued.clone())
     else {
         // What was sent meanwhile is no longer waited for.
         let left: Vec<Message> = receiver.try_iter().collect();
         if let Some(inner) = inner.upgrade() {
             let count = counted(&left);
             if count > 0 {
-                inner.queued.fetch_sub(count, Ordering::SeqCst);
+                queued.0.fetch_sub(count, Ordering::SeqCst);
             }
             inner.changed.notify_all();
         }
@@ -1258,6 +1275,7 @@ struct Coordinator {
     index: Arc<FileIndex>,
     sender: Sender<Message>,
     stop: Arc<AtomicBool>,
+    queued: Arc<Queued>,
     started: Instant,
     watching: Option<Box<dyn Watching>>,
     /// The cursors to save with the index next.
@@ -1302,6 +1320,7 @@ impl Coordinator {
         rules: ScopeRules,
         sender: Sender<Message>,
         stop: Arc<AtomicBool>,
+        queued: Arc<Queued>,
     ) -> Option<Coordinator> {
         let scope = Arc::new(Scope::new(rules));
         let existing = {
@@ -1383,6 +1402,7 @@ impl Coordinator {
             index,
             sender,
             stop,
+            queued,
         };
         coordinator.catch_up();
         Some(coordinator)
@@ -1633,9 +1653,7 @@ impl Coordinator {
 
     /// The counter of queued messages the indexer waits on.
     fn queued(&self) -> Option<Weak<dyn Counter>> {
-        self.inner
-            .upgrade()
-            .map(|inner| Arc::downgrade(&inner) as Weak<dyn Counter>)
+        Some(Arc::downgrade(&self.queued) as Weak<dyn Counter>)
     }
 
     /// Walks the roots that are there but not indexed yet: added since the
@@ -1813,7 +1831,7 @@ impl Coordinator {
     fn handled(&self, count: usize) {
         if let Some(inner) = self.inner.upgrade() {
             if count > 0 {
-                inner.queued.fetch_sub(count, Ordering::SeqCst);
+                self.queued.0.fetch_sub(count, Ordering::SeqCst);
             }
             inner.changed.notify_all();
         }
@@ -2338,13 +2356,18 @@ pub(crate) trait Counter: Send + Sync {
     fn unsent(&self);
 }
 
-impl Counter for Inner {
+/// Reports belonging to one coordinator, including any native callback
+/// still finishing after that coordinator was stopped.
+#[derive(Default)]
+struct Queued(AtomicUsize);
+
+impl Counter for Queued {
     fn sent(&self) {
-        self.queued.fetch_add(1, Ordering::SeqCst);
+        self.0.fetch_add(1, Ordering::SeqCst);
     }
 
     fn unsent(&self) {
-        self.queued.fetch_sub(1, Ordering::SeqCst);
+        self.0.fetch_sub(1, Ordering::SeqCst);
     }
 }
 

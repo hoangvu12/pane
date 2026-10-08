@@ -200,6 +200,55 @@ fn until(mut done: impl FnMut() -> bool) {
 }
 
 #[test]
+fn changing_rules_does_not_wait_for_a_stopped_watchers_inflight_report() {
+    // A native callback may already be sending when dropping its watch
+    // asks the source thread to stop. Hold that report across the restart.
+    struct HeldCounter {
+        delegate: Arc<dyn Counter>,
+        entered: Sender<()>,
+        release: Mutex<Receiver<()>>,
+    }
+    impl Counter for HeldCounter {
+        fn sent(&self) {
+            self.delegate.sent();
+            self.entered.send(()).unwrap();
+            lock(&self.release).recv().unwrap();
+        }
+        fn unsent(&self) {
+            self.delegate.unsent();
+        }
+    }
+
+    let fixture = Fixture::indexed();
+    let mut old_sink = lock(&fixture.fake.sink).as_ref().unwrap().clone();
+    let (entered, ready) = channel();
+    let (release, resume) = channel();
+    let held: Arc<dyn Counter> = Arc::new(HeldCounter {
+        delegate: old_sink.counter.as_ref().unwrap().upgrade().unwrap(),
+        entered,
+        release: Mutex::new(resume),
+    });
+    old_sink.counter = Some(Arc::downgrade(&held));
+    let report = std::thread::spawn(move || old_sink.send(Changed::Paths(Vec::new())));
+    ready.recv_timeout(LIMIT).unwrap();
+
+    let mut rules = fixture.indexer.user_rules();
+    rules.include_hidden = true;
+    fixture.indexer.set_user_rules(rules);
+    let settled = fixture.indexer.wait_until_settled(Duration::from_secs(2));
+
+    // Always release and join the callback before asserting, including
+    // against a broken implementation, so the test leaves no stuck thread.
+    release.send(()).unwrap();
+    assert!(
+        report.join().unwrap().is_err(),
+        "the old receiver is closed"
+    );
+    assert!(settled, "the replacement index must settle independently");
+    assert_eq!(fixture.names("hidden notes"), [".hidden notes.txt"]);
+}
+
+#[test]
 fn the_first_walk_waits_for_the_launcher_to_be_shown() {
     let fixture = fixture();
     fixture.indexer.set_users(users(&[OWNER]));
