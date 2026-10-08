@@ -24,6 +24,15 @@ on:
           smoke, package, js-guests. Empty runs everything.
         type: string
         default: ""
+      smoke_os:
+        description: Operating system for the smoke jobs (other jobs are unchanged).
+        type: choice
+        default: all
+        options:
+          - all
+          - windows-2025
+          - macos-15
+          - ubuntu-24.04
 
 # One run per branch: a superseded run is cancelled instead of finishing
 # (each leg holds a shared runner for the better part of an hour, and
@@ -228,7 +237,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-2025, macos-15, ubuntu-24.04]
+        os: ${{ fromJSON(inputs.smoke_os && inputs.smoke_os != 'all' && format('["{0}"]', inputs.smoke_os) || '["windows-2025","macos-15","ubuntu-24.04"]') }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4

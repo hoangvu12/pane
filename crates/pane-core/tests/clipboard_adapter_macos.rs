@@ -32,6 +32,9 @@ use std::sync::mpsc;
 use std::sync::{Mutex, MutexGuard};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use objc2::rc::autoreleasepool;
+use objc2_app_kit::NSPasteboard;
+use objc2_foundation::{NSArray, NSString, NSURL};
 use pane_core::clipboard::{
     Content, Copied, Markers, Observation, ProgramName, Sink, Skip, Ticket, accept, accept_any,
     testing,
@@ -214,6 +217,53 @@ fn the_watcher_reports_this_tests_changes_until_dropped() {
         accept_any(&copied, &[]),
         Ok(Copied::Files(listed)) if listed == files.as_slice()
     ));
+
+    // Taking ownership announces a change before its data is necessarily
+    // ready. Filling a declared type does not increment that change count.
+    let declared = autoreleasepool(|_| {
+        let board = NSPasteboard::generalPasteboard();
+        let kind = NSString::from_str("public.file-url");
+        // SAFETY: there is no owner object; the test supplies the data.
+        unsafe { board.declareTypes_owner(&NSArray::from_slice(&[&*kind]), None) }
+    });
+    // Keep the producer's data unavailable across several watcher polls.
+    std::thread::sleep(Duration::from_secs(1));
+    autoreleasepool(|_| {
+        let board = NSPasteboard::generalPasteboard();
+        let url = NSURL::fileURLWithPath(&NSString::from_str(&files[0].to_string_lossy()));
+        assert!(board.setString_forType(
+            &url.absoluteString().unwrap(),
+            &NSString::from_str("public.file-url")
+        ));
+        assert_eq!(board.changeCount(), declared);
+    });
+    next(
+        "the file supplied after its change was announced",
+        &|report| report.content == Content::Files(vec![files[0].clone()]),
+    );
+
+    // A different process supplies the same format, as the native smoke
+    // does. Repeating crosses the watcher's polling boundary while
+    // AppleScript declares and fills the pasteboard.
+    for iteration in 0..20 {
+        std::thread::sleep(Duration::from_millis(iteration * 13));
+        let copied = std::process::Command::new("osascript")
+            .args([
+                "-e",
+                "on run argv\nset the clipboard to (POSIX file (item 1 of argv))\nend run",
+            ])
+            .arg(&files[0])
+            .output()
+            .unwrap();
+        assert!(
+            copied.status.success(),
+            "{}",
+            String::from_utf8_lossy(&copied.stderr)
+        );
+        next("the externally copied file", &|report| {
+            report.content == Content::Files(vec![files[0].clone()])
+        });
+    }
 
     // Writing is a change too, reported like any other.
     let written = format!("{prefix}written");

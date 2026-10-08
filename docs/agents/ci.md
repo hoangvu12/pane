@@ -24,7 +24,7 @@ Every workflow ends in one job named **`CI passed`**: green when every other job
 
 To recheck fixes without the whole suite, name the tests in a manual run on the branch: `gh workflow run ci-fast.yml --ref <branch> -f tests='test(/file_index/)'`. It builds the guests and runs only the tests that nextest filter expression selects, on Linux, Windows and macOS, with the same opt-ins as every test job. The full verify run (or the branch tier) still decides that a branch is done. A manual run needs the workflow on `main`. Locally, `cargo xtask ci-tests -E '<filter>'` does the same; options after `ci-tests` go to `cargo nextest run`.
 
-To recheck a fix to the release matrix's other jobs, a smoke for instance, name the jobs in a manual run: `gh workflow run ci.yml --ref <branch> -f only=smoke` (comma-separated with no spaces: `renderers`, `licenses`, `lints`, `tests`, `smoke`, `package`, `js-guests`). The jobs not named are skipped, so its `CI passed` answers only for those named; a release still needs a run of everything.
+To recheck a fix to the release matrix's other jobs, a smoke for instance, name the jobs in a manual run: `gh workflow run ci.yml --ref <branch> -f only=smoke` (comma-separated with no spaces: `renderers`, `licenses`, `lints`, `tests`, `smoke`, `package`, `js-guests`). A platform-specific smoke fix can add `-f smoke_os=macos-15` (or `windows-2025` / `ubuntu-24.04`); the default `all` and pushes to main still run every system. The jobs not named are skipped, so its `CI passed` answers only for those named; a release still needs a run of everything.
 
 ## How the jobs are built
 
