@@ -263,6 +263,46 @@ and why, how it last caught up (`CaughtUpBy`: the journal, the event
 history, a reconciling walk or a full walk) and when, and how many folders
 could not be read or are not watched.
 
+**The ignore rules are kept between batches** (#186). To tell whether the
+rules admit a path, each folder above it is judged and its ignore files
+are read (`.ignore`, `.gitignore`, `.git/info/exclude`, whether it holds
+`.git` or `CACHEDIR.TAG`). The scope keeps what it learned of each folder
+(`Scope::admits_kept`), so the next batch reads only what changed: a file
+changed deep in a repository costs its own folder's files, not every
+folder's above it. The live batches, the catch-up at start
+(`catch_up_changes`) and the check before a file is acted on
+([Opening](#opening)) use the same record. Correctness comes first, so
+the record drops more than it strictly has to:
+
+- A folder that a change names (made, deleted, renamed, its attributes
+  changed; Windows also names a folder whose entries changed) is dropped
+  with every folder under it.
+- A `.gitignore`, `.ignore`, `CACHEDIR.TAG` or `.git/info/exclude` that
+  changes, or a `.git` that appears or goes, drops its folder and every
+  folder under it, and the folder is **re-checked**. It is walked again
+  under the rules as they are now and compared with what the index holds
+  there: what the rules leave out now goes (a whole folder at once if the
+  folder itself is left out), and what they admit now comes in. Windows
+  also reports what Git does inside a repository as a change of its
+  `.git`, so a `.git` counts only when it appears or goes since a change
+  last named it. The first time one is named, a `.git` made before Pane
+  started counts as there already (the index was built or caught up with
+  it); one made since, or whose time the system does not say, is
+  re-checked. A catch-up that names one of these files re-checks its
+  folder with the walks it waits for.
+- The global Git ignore file, and the files Git reads to find it
+  (`core.excludesFile` in `~/.gitconfig`, `git/config` under
+  `XDG_CONFIG_HOME` or `~/.config`, `GIT_CONFIG_GLOBAL`, the system's
+  `gitconfig`), are looked at (their size and modified time) before each
+  batch. When one changed, the rules are read again with nothing kept, and
+  every root is re-checked if the global ignore file itself changed.
+- A change of the user's rules (`file-search.json`, through the File
+  Search page or a folder taken out for churn) builds the rules again with
+  nothing kept. So does a watcher's overflow, which drops everything kept,
+  and so does the start of watching, which drops what the catch-up
+  learned: a change made between the two is reported by neither.
+- The record holds at most 20,000 folders; past that it is dropped whole.
+
 ## The File Search page
 
 Pane's own page in Settings
@@ -317,8 +357,8 @@ tests), and each is listed on the page:
   `node_modules`, a cache or temporary folder, a folder an ignore file
   ignores, a hidden or an excluded folder never counts, so such a folder is
   never taken out, recorded or listed. Whether a change counts is told
-  with what the batch of changes learned of the rules (`Admitted`), which
-  the batch is then looked at with. A
+  with the ignore rules the scope keeps between batches
+  (`Scope::admits_kept`, #186), which the batch is then looked at with. A
   folder with more than 1,000 changes (`churn_changes`) in 3 windows in a
   row (`churn_windows`) is taken out of the index: its entries go, the rules
   leave it out from then on (it is added to `UserRules::quarantined`,
@@ -517,9 +557,11 @@ off the window's thread, the host checks the entry again
    file or folder was indexed ("it is now a link"; a link itself is never
    opened: "it is a link, which Pane does not follow").
 3. It is still in the index scope ("it is no longer in the folders file
-   search covers"), and its canonical path is under a root's (a folder
-   above it replaced by a link outside: "it is no longer inside the folders
-   file search covers").
+   search covers"), told with the ignore rules the coordinator keeps
+   between batches ([above](#catching-up-and-watching); read again when
+   the global ignore file changed), and its canonical path is under a
+   root's (a folder above it replaced by a link outside: "it is no longer
+   inside the folders file search covers").
 4. Whether it is a **program**: any entry of the types below, the same on
    every system, or on macOS and Linux a file with an executable bit
    ([`files::runs_as_program`](../crates/pane-core/src/files.rs)): the
@@ -730,7 +772,9 @@ which the coordinator above builds on:
   recycle and setup folders, folders tagged with `CACHEDIR.TAG` and Pane's
   own folders. Each but the last is a switch, and the user's folders and
   `.gitignore`-style patterns add to them. `Scope::admits` applies the same
-  rules to one path, reading the ignore files above it, for changes.
+  rules to one path, reading the ignore files above it, for changes;
+  `Scope::admits_kept` does so with what the scope keeps of those folders
+  between batches (#186, [above](#catching-up-and-watching)).
 - **The engine** (`file_index/store.rs`), in the shape of `minidex`: a
   memory table of recent changes, logged first to a write-ahead log
   (`file_index/wal.rs`, records with a CRC, a torn tail dropped); immutable
@@ -887,8 +931,12 @@ there), `--root <folder>` another folder. It prints, as a table against
   gives each kind's 50th, 95th and 99th percentiles on both shapes;
 - a changed file re-indexed, 100 times, as the indexer takes a change:
   what the index holds at its path, the file read, the rules applied to it
-  and every folder above it (their ignore files read), the change applied
-  and found by a query. One row is for a file near the root. The other is
+  as a batch applies them (#186: the global ignore file looked at, the
+  file's own folder dropped from what the scope keeps and its ignore files
+  read again, as when Windows reports that folder too, the folders above it
+  kept from the time before), the change applied and found by a query. The
+  first of the 100 reads every folder above it. One row is for a file near
+  the root. The other is
   for a file in the deepest folder the walk found with ignore files on the
   way down, with its depth and how many of its folders hold ignore files;
   that file is written beside the first and indexed as if it were in that
@@ -980,7 +1028,14 @@ milestone is merged).
   without a restart; a folder taken out for churn listed and included
   again; a folder granted to Files under #29 outside the home folder added
   to the roots and the grant forgotten, and one the index covers simply
-  forgotten.
+  forgotten. For the ignore rules kept between batches (#186), each over
+  several batches of changes: a `.gitignore` line added hiding what it
+  matches (and what a later batch adds) and removed showing it again; a
+  new `.git` folder applying its `.gitignore`, and deleting it lifting it;
+  the user's excluded pattern applied and lifted without a restart; a file
+  an ignore file hides since it was found explained at Enter, not opened.
+  `file_index::scope` tests that what is kept of a folder holds until it,
+  a folder above it, or everything is forgotten.
 - **The coordinator through the change source's seam**
   (`file_index::indexer` unit tests): a fake source the test scripts (what
   a catch-up finds) and drives (the live changes it reports), with the real
@@ -1164,6 +1219,23 @@ milestone is merged).
   change within the second a folder was indexed is not seen until the
   folder changes again, and a file changed in place while Pane was stopped
   keeps its old size and time until it changes again while Pane runs.
+- The ignore rules kept between batches (#186): an ignore file changed
+  while Pane was stopped is re-checked only where the catch-up names it
+  (the change journal, FSEvents' history); Linux's reconciling catch-up
+  reads again only the folders whose time changed, so a pattern added
+  while stopped is applied deeper down only as those folders next change.
+  Linux does not watch inside `.git`, so a change of `.git/info/exclude`
+  alone is not seen there while Pane runs. The global ignore file is
+  looked at with each batch of changes, so a change of it alone is applied
+  with the next change under a root. The check before a file is acted on
+  uses what the coordinator keeps, so for about the settle time (100 ms)
+  after an ignore file changes, before its change is handled, it judges
+  by the rules from before. Re-checking a folder walks it whole, so an
+  ignore file changed in the home folder itself, or the global ignore
+  file, walks every root again (at background priority, the index
+  answering meanwhile from what it holds). Where the system does not say
+  when a `.git` was made, the first change named in it re-checks its
+  repository once.
 - The roots and rules an index was built under are recorded as JSON; a
   root whose path is not valid Unicode cannot be recorded.
 - The benchmark's numbers against Raycast's are not measured yet (#174).

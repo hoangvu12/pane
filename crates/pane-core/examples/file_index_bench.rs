@@ -901,10 +901,13 @@ fn time_queries(index: &FileIndex, queries: &[TimedQuery]) -> Vec<Duration> {
 /// A changed file re-indexed 100 times, as the indexer takes a change
 /// (`Indexer::look_at` in `file_index/indexer.rs`): the file written, then,
 /// timed, what the index holds at its path, the file read, the rules
-/// applied to it and to every folder above it (their ignore files read, as
-/// for each batch of changes), the change applied and a query finding it.
-/// The file is written in `changes`; with `indexed_in`, it is indexed as if
-/// it were in that folder, which is not written to, and taken out again.
+/// applied to it as each batch of changes applies them (#186: the global
+/// ignore file looked at, what the scope keeps of the file's folder
+/// dropped, as when Windows reports the folder changed too, so that its
+/// ignore files are read again, the folders above it kept from the run
+/// before), the change applied and a query finding it. The file is written
+/// in `changes`; with `indexed_in`, it is indexed as if it were in that
+/// folder, which is not written to, and taken out again.
 fn reindex(
     index: &FileIndex,
     scope: &Scope,
@@ -912,6 +915,8 @@ fn reindex(
     name: &str,
     indexed_in: Option<&Path>,
 ) -> Vec<Duration> {
+    // The first change reads every folder above it.
+    scope.forget_all_kept();
     let mut times = Vec::new();
     for n in 0..100 {
         let text = format!("changed {name} {n} zqx");
@@ -926,7 +931,12 @@ fn reindex(
         let mut entry = Entry::read(&file).expect("the changed file");
         entry.path = path.clone();
         let is_dir = entry.meta.kind == EntryKind::Folder;
-        let admitted = scope.admits(&path, is_dir, &mut Admitted::default());
+        std::hint::black_box(scope.global_ignore_changed());
+        scope.forget_kept(&path);
+        if let Some(folder) = path.parent() {
+            scope.forget_kept(folder);
+        }
+        let admitted = scope.admits_kept(&path, is_dir);
         if admitted {
             index.apply(&[Change::Put(entry)]).expect("applied");
         }
@@ -1146,6 +1156,8 @@ fn catch_up(
             return Some(Err(error.to_string()));
         }
     }
+    // A catch-up runs at start, with a scope that keeps nothing yet (#186).
+    scope.forget_all_kept();
     let started = Instant::now();
     let records = match file_index::read_journal(root, Some(&start), 1_000_000) {
         JournalRead::Records { records, .. } => records,

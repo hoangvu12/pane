@@ -1,18 +1,29 @@
 //! The index scope (#126, "Scope and rules"): the roots, and the rules
 //! deciding what under them is indexed. Ignore files are read as Git reads
 //! them, without running `git`, by ripgrep's `ignore` crate.
+//!
+//! What the rules learn of a folder when a change is looked at (its ignore
+//! files, whether it is in a repository) is kept by the scope between
+//! batches of changes (#186, [`Scope::admits_kept`]) until a change drops
+//! it ([`Scope::forget_kept`]); a scope built again keeps nothing.
 
 use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
+use std::time::SystemTime;
 
 use ignore::Match;
-use ignore::gitignore::{Gitignore, GitignoreBuilder};
+use ignore::gitignore::{Gitignore, GitignoreBuilder, gitconfig_excludes_path};
 use serde::{Deserialize, Serialize};
 
 use super::format::{SEPARATOR, path_key};
 use super::volume::{VolumeKind, VolumeKinds, volume_kind};
+use crate::util::lock;
+
+/// The most folders a scope keeps between batches of changes; past it,
+/// everything kept is dropped and learned again.
+const KEPT_FOLDERS: usize = 20_000;
 
 /// What the user and Pane decide is indexed. Every switch here is a user
 /// setting, and starts as [`ScopeRules::for_home`] says. The rules an index
@@ -168,6 +179,54 @@ pub struct Scope {
     volumes: VolumeKinds,
     /// Per root, the kind of volume holding it, asked once.
     root_volumes: Vec<OnceLock<VolumeKind>>,
+    /// What [`Scope::admits_kept`] learned of folders, kept between batches
+    /// of changes until a change drops it (#186).
+    kept: Mutex<Admitted>,
+    /// The files Git reads to find the user's global ignore file, and that
+    /// file, each as it was before `global` was read.
+    global_files: Vec<(PathBuf, Stamp)>,
+    /// The global ignore file `global` was read from, and how it was then.
+    global_file: Option<(PathBuf, Stamp)>,
+}
+
+/// How a file was: its size and modified time, `None` when it was not
+/// there.
+type Stamp = Option<(u64, Option<SystemTime>)>;
+
+fn stamp(path: &Path) -> Stamp {
+    std::fs::metadata(path)
+        .ok()
+        .map(|metadata| (metadata.len(), metadata.modified().ok()))
+}
+
+/// The files Git reads to find the user's global ignore file
+/// (`core.excludesFile`), as the `ignore` crate reads them
+/// (`ignore::gitignore::gitconfig_excludes_path`): `GIT_CONFIG_GLOBAL`, the
+/// home folder's `.gitconfig`, `git/config` in `XDG_CONFIG_HOME` (or
+/// `~/.config`), and the system's (`GIT_CONFIG_SYSTEM`, or
+/// `/etc/gitconfig`).
+fn git_config_files() -> Vec<PathBuf> {
+    let set = |name: &str| {
+        std::env::var_os(name)
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from)
+    };
+    // The home folder as the `ignore` crate finds it.
+    #[allow(deprecated)]
+    let home = std::env::home_dir();
+    let mut files = Vec::new();
+    files.extend(set("GIT_CONFIG_GLOBAL"));
+    if let Some(home) = &home {
+        files.push(home.join(".gitconfig"));
+    }
+    let config = set("XDG_CONFIG_HOME")
+        .or_else(|| home.as_ref().map(|home| home.join(".config")));
+    if let Some(config) = config {
+        files.push(config.join("git").join("config"));
+    }
+    let system = set("GIT_CONFIG_SYSTEM");
+    files.push(system.unwrap_or_else(|| PathBuf::from("/etc/gitconfig")));
+    files
 }
 
 fn matcher(root: &Path, files: &[PathBuf]) -> Option<Gitignore> {
@@ -207,6 +266,25 @@ impl Scope {
                 builder.build().ok().filter(|matcher| !matcher.is_empty())
             })
             .collect();
+        // Each as it was before the global ignore file is read, so that a
+        // change made while it is read is seen as one later.
+        let (global_files, global_file) = if rules.use_ignore_files {
+            let mut files: Vec<(PathBuf, Stamp)> = git_config_files()
+                .into_iter()
+                .map(|file| {
+                    let then = stamp(&file);
+                    (file, then)
+                })
+                .collect();
+            let global_file = gitconfig_excludes_path().map(|file| {
+                let then = stamp(&file);
+                (file, then)
+            });
+            files.extend(global_file.clone());
+            (files, global_file)
+        } else {
+            (Vec::new(), None)
+        };
         let global = rules
             .use_ignore_files
             .then(|| Gitignore::global().0)
@@ -232,11 +310,57 @@ impl Scope {
             home,
             volumes,
             root_volumes,
+            kept: Mutex::new(Admitted::default()),
+            global_files,
+            global_file,
         }
     }
 
     pub fn rules(&self) -> &ScopeRules {
         &self.rules
+    }
+
+    /// Whether the user's global Git ignore file, or a file Git reads to
+    /// find it (`core.excludesFile` in `.gitconfig`), changed since these
+    /// rules read it: the rules are to be built again (#186). Never while
+    /// ignore files are not used.
+    pub fn global_ignore_changed(&self) -> bool {
+        self.global_files
+            .iter()
+            .any(|(file, then)| stamp(file) != *then)
+    }
+
+    /// Whether these rules and `other` read the same global ignore file, as
+    /// it was then: if not, what it leaves out may have changed.
+    pub fn same_global_ignore(&self, other: &Scope) -> bool {
+        self.global_file == other.global_file
+    }
+
+    /// Whether the rules admit `path`, as [`Scope::admits`] says, told with
+    /// what the scope keeps of the folders it was asked about before (#186):
+    /// the ignore files of a folder and the folders above it are read once,
+    /// and kept between batches of changes until [`Scope::forget_kept`]
+    /// drops them. Shared by the coordinator's batches and the check before
+    /// a file is acted on.
+    pub fn admits_kept(&self, path: &Path, is_dir: bool) -> bool {
+        let mut kept = lock(&self.kept);
+        if kept.folders.len() > KEPT_FOLDERS {
+            kept.clear();
+        }
+        self.admits(path, is_dir, &mut kept)
+    }
+
+    /// Drops what is kept of `folder` and every folder under it, so that
+    /// their ignore files are read again when next asked: `folder` was
+    /// created, deleted, renamed or changed, or an ignore file, a
+    /// repository or a cache tag in it was.
+    pub fn forget_kept(&self, folder: &Path) {
+        lock(&self.kept).forget(folder);
+    }
+
+    /// Drops everything kept.
+    pub fn forget_all_kept(&self) {
+        lock(&self.kept).clear();
     }
 
     /// The kind of volume holding `path`.
@@ -488,6 +612,17 @@ impl Scope {
                 Some(self.folder_context(&parent_context, folder, OwnFiles::read(folder)))
             }
         };
+        // Known under its folder, which is known already, so that forgetting
+        // that one forgets it too.
+        if folder != self.rules.roots[root]
+            && let Some(parent) = folder.parent()
+        {
+            known
+                .below
+                .entry(parent.to_path_buf())
+                .or_default()
+                .push(folder.to_path_buf());
+        }
         known.folders.insert(folder.to_path_buf(), context.clone());
         context
     }
@@ -497,6 +632,36 @@ impl Scope {
 #[derive(Default)]
 pub struct Admitted {
     folders: HashMap<PathBuf, Option<Context>>,
+    /// The folders known directly in each folder known.
+    below: HashMap<PathBuf, Vec<PathBuf>>,
+}
+
+impl Admitted {
+    /// Forgets `folder` and every folder known under it.
+    fn forget(&mut self, folder: &Path) {
+        // A folder is known only once the one it is in is: one not known
+        // has nothing known under it.
+        if self.folders.remove(folder).is_none() {
+            return;
+        }
+        if let Some(parent) = folder.parent()
+            && let Some(siblings) = self.below.get_mut(parent)
+        {
+            siblings.retain(|sibling| sibling != folder);
+        }
+        let mut pending = self.below.remove(folder).unwrap_or_default();
+        while let Some(next) = pending.pop() {
+            self.folders.remove(&next);
+            if let Some(below) = self.below.remove(&next) {
+                pending.extend(below);
+            }
+        }
+    }
+
+    fn clear(&mut self) {
+        self.folders.clear();
+        self.below.clear();
+    }
 }
 
 /// The files of a folder the rules read: its ignore files and whether it
@@ -629,6 +794,43 @@ mod tests {
         let scope = Scope::new(rules);
         assert!(admitted(&scope, &home, "repo/build/out.o"));
         assert!(admitted(&scope, &home, "plain/secret.key"));
+    }
+
+    #[test]
+    fn what_is_kept_of_a_folder_holds_until_it_or_a_folder_above_it_is_forgotten() {
+        let (_dir, home) = home_with(&[
+            "repo/.git/HEAD",
+            "repo/.gitignore",
+            "repo/src/trace.txt",
+            "other/notes.txt",
+        ]);
+        let scope = Scope::new(ScopeRules::for_home(home.clone()));
+        let traced = home.join("repo/src/trace.txt");
+        assert!(scope.admits_kept(&traced, false));
+        assert!(scope.admits_kept(&home.join("other/notes.txt"), false));
+
+        // Kept: the ignore file is not read again until its folder is
+        // forgotten.
+        fs::write(home.join("repo/.gitignore"), "*.txt\n").unwrap();
+        assert!(scope.admits_kept(&traced, false));
+        assert!(!scope.admits(&traced, false, &mut Admitted::default()));
+        scope.forget_kept(&home.join("other"));
+        assert!(scope.admits_kept(&traced, false), "another folder forgotten");
+        scope.forget_kept(&home.join("repo"));
+        assert!(!scope.admits_kept(&traced, false));
+
+        // Forgetting a folder forgets every folder under it.
+        fs::write(home.join("repo/.gitignore"), "").unwrap();
+        assert!(!scope.admits_kept(&traced, false));
+        scope.forget_kept(&home);
+        assert!(scope.admits_kept(&traced, false));
+
+        // And everything at once.
+        fs::write(home.join("repo/.gitignore"), "src/\n").unwrap();
+        assert!(scope.admits_kept(&traced, false));
+        scope.forget_all_kept();
+        assert!(!scope.admits_kept(&traced, false));
+        assert!(!scope.admits_kept(&home.join("repo/src"), true));
     }
 
     #[test]

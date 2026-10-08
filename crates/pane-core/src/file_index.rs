@@ -98,8 +98,10 @@ impl Entry {
 
 /// The changes a catch-up asks for, in order (removals first), and the
 /// folders to walk again with [`walk_folders`]: each path it touched is
-/// looked at now, indexed if it exists and `scope` admits it, removed
-/// otherwise.
+/// looked at now, indexed if it exists and `scope` admits it (told with
+/// what the scope keeps of the folders, [`Scope::admits_kept`]), removed
+/// otherwise. A touched ignore file, repository or cache tag is among the
+/// changes, so that the coordinator re-checks its folder (#186).
 pub fn catch_up_changes(scope: &Scope, catch_up: &CatchUp) -> (Vec<Change>, Vec<PathBuf>) {
     let mut changes = Vec::new();
     for folder in &catch_up.removed_folders {
@@ -110,10 +112,9 @@ pub fn catch_up_changes(scope: &Scope, catch_up: &CatchUp) -> (Vec<Change>, Vec<
             changes.push(Change::Remove(path.clone()));
         }
     }
-    let mut known = Admitted::default();
     for path in &catch_up.touched {
         match Entry::read(path) {
-            Ok(entry) if scope.admits(path, entry.meta.kind == EntryKind::Folder, &mut known) => {
+            Ok(entry) if scope.admits_kept(path, entry.meta.kind == EntryKind::Folder) => {
                 changes.push(Change::Put(entry));
             }
             _ => changes.push(Change::Remove(path.clone())),

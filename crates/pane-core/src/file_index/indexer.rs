@@ -40,7 +40,7 @@ use super::format::{EntryKind, Meta};
 use super::journal::JournalCursor;
 use super::power::{Awake, Pause, RESUME_AFTER, SystemAwake};
 use super::reconcile::reconcile;
-use super::scope::{Admitted, Scope, ScopeRules};
+use super::scope::{Admitted, CACHE_TAG, Scope, ScopeRules};
 use super::space::{FREE_SPACE_FLOOR, FreeSpace, free_space};
 use super::store::{Change, FileIndex, Hit, IndexError, IndexRecord, Opened, Query};
 use super::volume::{VolumeKinds, volume_kind};
@@ -68,6 +68,15 @@ pub const MAX_RESULTS: usize = 200;
 /// The ids Pane keeps per package, the newest; an older one is no longer
 /// known ("search again").
 const IDS_KEPT: usize = 10_000;
+
+/// The most folders whose repository (`.git`) the coordinator remembers
+/// seeing; past it, it forgets them all.
+const REPOSITORIES_KEPT: usize = 10_000;
+
+/// How long before a run started a repository must have been made for the
+/// run to count it as there already (file systems' clocks and times are
+/// not exact).
+const MADE_BEFORE: Duration = Duration::from_secs(2);
 
 /// The record of the user's file search rules, beside `installed.json`.
 pub const RULES_FILE: &str = "file-search.json";
@@ -1136,12 +1145,17 @@ impl Indexer {
     /// the index open now, the path is not a network path, it is still
     /// there, of the kind indexed and not a link, it is still in the index
     /// scope, and its canonical path is under a root. Blocking.
+    ///
+    /// The scope is told with what the coordinator keeps of the folders
+    /// between batches of changes (#186), or with the rules read again when
+    /// the global ignore file changed since they were.
     pub fn checked(&self, owner: &str, id: &str) -> Result<Checked, String> {
-        let (path, kind, scope) = {
+        let (path, kind, scope, volumes) = {
             let shared = self.shared();
             let (path, kind) =
                 lookup(&shared, owner, id).ok_or("Pane no longer knows it; search again")?;
-            (path, kind, shared.scope.clone())
+            let volumes = shared.config.as_ref().map(|config| config.volumes.clone());
+            (path, kind, shared.scope.clone(), volumes)
         };
         if is_network_path(&path) {
             return Err("it is on a network location".into());
@@ -1172,7 +1186,15 @@ impl Indexer {
             _ => {}
         }
         if let Some(scope) = &scope {
-            if !scope.admits(&path, now == EntryKind::Folder, &mut Admitted::default()) {
+            let is_dir = now == EntryKind::Folder;
+            let admitted = if scope.global_ignore_changed() {
+                let volumes = volumes.unwrap_or_else(|| Arc::new(volume_kind));
+                let fresh = Scope::with_volumes(scope.rules().clone(), volumes);
+                fresh.admits(&path, is_dir, &mut Admitted::default())
+            } else {
+                scope.admits_kept(&path, is_dir)
+            };
+            if !admitted {
                 return Err("it is no longer in the folders file search covers".into());
             }
             let resolved =
@@ -1314,6 +1336,19 @@ struct Coordinator {
     /// How long the computer had slept when this run started: the first
     /// walk's delay counts awake time only.
     asleep_at_start: Duration,
+    /// When this run started, by the clock file times are told in.
+    started_at: SystemTime,
+    /// Folders whose ignore rules changed, to re-check with everything
+    /// under them (#186): the catch-up's wait for the launcher to be shown,
+    /// or a batch of changes let go for want of space.
+    recheck: Vec<PathBuf>,
+    /// Whether each folder whose `.git` a change named held a repository
+    /// then, so that what Git does inside one is told from one made or
+    /// deleted.
+    repositories: HashMap<PathBuf, bool>,
+    /// The system's event history (macOS) is being replayed: a repository
+    /// it names may have been made while Pane was not running.
+    replaying: bool,
 }
 
 /// The changes counted in one folder: in the window that started `since`,
@@ -1411,6 +1446,10 @@ impl Coordinator {
             asleep_at_start: config.valves.awake.asleep(),
             pause,
             started: Instant::now(),
+            started_at: SystemTime::now(),
+            recheck: Vec::new(),
+            repositories: HashMap::new(),
+            replaying: false,
             cursors: Vec::new(),
             full_walk: false,
             walk: walk_again,
@@ -1488,15 +1527,10 @@ impl Coordinator {
     /// times in each of [`Valves::churn_windows`] windows in a row, to take
     /// out of the index. Only a change of an entry the rules admit counts
     /// (one in `.git`, `node_modules`, an ignored or a hidden folder never
-    /// does), told with `known`, the batch's memo of what the rules admit.
-    /// A root itself, and a folder out of the index already, is never taken
-    /// out.
-    fn count_churn(
-        &mut self,
-        changed: &[PathBuf],
-        now: Instant,
-        known: &mut Admitted,
-    ) -> Vec<PathBuf> {
+    /// does), told with what the scope keeps of the folders between
+    /// batches (#186), which the batch is then looked at with. A root
+    /// itself, and a folder out of the index already, is never taken out.
+    fn count_churn(&mut self, changed: &[PathBuf], now: Instant) -> Vec<PathBuf> {
         if self.config.valves.churn_windows == 0 {
             return Vec::new();
         }
@@ -1505,7 +1539,7 @@ impl Coordinator {
         for path in changed {
             let counts = *admitted
                 .entry(path.as_path())
-                .or_insert_with(|| self.admits_change(path, known));
+                .or_insert_with(|| self.admits_change(path));
             if let Some(folder) = path.parent().filter(|_| counts) {
                 *per_folder.entry(folder).or_default() += 1;
             }
@@ -1555,7 +1589,7 @@ impl Coordinator {
     /// Whether the rules admit the entry at `path` that a change reported:
     /// a folder or not as the disk says, or, once it is gone, as the index
     /// held it.
-    fn admits_change(&self, path: &Path, known: &mut Admitted) -> bool {
+    fn admits_change(&self, path: &Path) -> bool {
         let is_dir = match path.symlink_metadata() {
             Ok(metadata) => metadata.is_dir(),
             Err(_) => self
@@ -1563,7 +1597,138 @@ impl Coordinator {
                 .get(path)
                 .is_some_and(|meta| meta.kind == EntryKind::Folder),
         };
-        self.scope.admits(path, is_dir, known)
+        self.scope.admits_kept(path, is_dir)
+    }
+
+    /// Drops what the scope keeps of the folders the changes `reports` name
+    /// (#186), and answers the folders whose ignore rules they may have
+    /// changed, to re-check with everything under them:
+    ///
+    /// - a folder named (made, deleted, renamed, its attributes changed):
+    ///   what is kept of it and of every folder under it;
+    /// - a folder's `.gitignore`, `.ignore`, `CACHEDIR.TAG` or
+    ///   `.git/info/exclude`: that folder, kept no more, and re-checked;
+    /// - a folder's `.git`: the same, once a repository was made or deleted
+    ///   there (not for what Git does inside one).
+    fn forget_changed(&mut self, reports: &[PathBuf]) -> Vec<PathBuf> {
+        let named: BTreeSet<&Path> = reports.iter().map(PathBuf::as_path).collect();
+        let mut recheck = Vec::new();
+        for path in named {
+            self.scope.forget_kept(path);
+            let Some((folder, repository)) = rules_folder(path) else {
+                continue;
+            };
+            if repository && !self.repository_changed(folder) {
+                continue;
+            }
+            self.scope.forget_kept(folder);
+            recheck.push(folder.to_path_buf());
+        }
+        recheck
+    }
+
+    /// Whether a repository was made or deleted in `folder`, whose `.git` a
+    /// change named: `.git` is there now and was not when last named, or
+    /// the other way. Named for the first time, it was there before only if
+    /// it was made before this run started, unless the system's history is
+    /// being replayed: on Windows, what Git does inside a repository names
+    /// its `.git` too.
+    fn repository_changed(&mut self, folder: &Path) -> bool {
+        let now = folder.join(".git").symlink_metadata();
+        let there = now.is_ok();
+        let before = self.repositories.get(folder).copied().or_else(|| {
+            let made = now.as_ref().ok()?.created().ok()?;
+            let early = made.checked_add(MADE_BEFORE)? < self.started_at;
+            (early && !self.replaying).then_some(true)
+        });
+        if self.repositories.len() >= REPOSITORIES_KEPT {
+            self.repositories.clear();
+        }
+        self.repositories.insert(folder.to_path_buf(), there);
+        before != Some(there)
+    }
+
+    /// Re-checks `folders`, whose ignore rules changed, with everything
+    /// under them (#186): each is walked again under the rules as they are
+    /// now and compared with what the index holds there, so that what the
+    /// rules leave out now goes and what they admit now comes in. A folder
+    /// the rules no longer admit takes everything under it out; one gone,
+    /// or no longer a folder, is left to its own change. What a folder that
+    /// did not answer holds is kept, and nothing is taken out when the walk
+    /// stopped at the ceiling. Nothing at all when the run stops meanwhile.
+    fn recheck_folders(&self, folders: Vec<PathBuf>) -> Vec<Change> {
+        let mut changes = Vec::new();
+        for folder in outermost(folders) {
+            if self.stopped() {
+                return Vec::new();
+            }
+            if self.scope.root_of(&folder).is_none() || !folder.is_dir() {
+                continue;
+            }
+            if !self.scope.admits_kept(&folder, true) {
+                if self.index.get(&folder).is_some() {
+                    changes.push(Change::RemoveUnder(folder));
+                }
+                continue;
+            }
+            let walked: Mutex<HashMap<PathBuf, Meta>> = Mutex::new(HashMap::new());
+            let report = walk_folders(
+                &self.scope,
+                std::slice::from_ref(&folder),
+                &self.config.walk,
+                &self.stop,
+                &|entries: Vec<Entry>| {
+                    let entries = entries.into_iter().map(|entry| (entry.path, entry.meta));
+                    lock(&walked).extend(entries);
+                },
+            );
+            if self.stopped() || report.cancelled {
+                return Vec::new();
+            }
+            let walked = walked
+                .into_inner()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            if !walked.contains_key(&folder) {
+                // Not indexed by a walk now (tagged as a cache, or gone).
+                if self.index.get(&folder).is_some() && !report.ceiling_reached {
+                    changes.push(Change::RemoveUnder(folder));
+                }
+                continue;
+            }
+            // What the index holds there, the folders the walk still found
+            // compared in turn.
+            let mut held: HashMap<PathBuf, Meta> = HashMap::new();
+            if let Some(meta) = self.index.get(&folder) {
+                held.insert(folder.clone(), meta);
+            }
+            let mut pending = vec![folder];
+            while let Some(at) = pending.pop() {
+                if report.hung_folders.contains(&at) {
+                    continue;
+                }
+                for (path, meta) in self.index.children(&at) {
+                    match walked.get(&path) {
+                        Some(now) if now.kind == EntryKind::Folder && meta.kind == now.kind => {
+                            pending.push(path.clone());
+                        }
+                        Some(now) if now.kind == meta.kind => {}
+                        _ if report.ceiling_reached => {}
+                        // Gone, left out now, or of another kind now.
+                        _ => changes.push(match meta.kind {
+                            EntryKind::Folder => Change::RemoveUnder(path.clone()),
+                            EntryKind::File | EntryKind::Link => Change::Remove(path.clone()),
+                        }),
+                    }
+                    held.insert(path, meta);
+                }
+            }
+            for (path, meta) in walked {
+                if held.get(&path) != Some(&meta) {
+                    changes.push(Change::Put(Entry { path, meta }));
+                }
+            }
+        }
+        changes
     }
 
     /// Takes `folder`, which changes constantly, out of the index until the
@@ -1583,6 +1748,7 @@ impl Coordinator {
         self.walk.retain(|walked| !walked.starts_with(&folder));
         self.reconcile.retain(|walked| !walked.starts_with(&folder));
         self.unwatched.retain(|walked| !walked.starts_with(&folder));
+        self.recheck.retain(|walked| !walked.starts_with(&folder));
         let Some(inner) = self.inner.upgrade() else {
             return;
         };
@@ -1660,10 +1826,28 @@ impl Coordinator {
                     note,
                 } => {
                     let _ = self.index.apply(&changes);
+                    // An ignore file, a repository or a cache tag that
+                    // changed while Pane was not running: its folder is
+                    // re-checked with the walks (#186).
+                    for change in &changes {
+                        let path = match change {
+                            Change::Put(entry) => &entry.path,
+                            Change::Remove(path) | Change::RemoveUnder(path) => path,
+                        };
+                        if let Some((folder, repository)) = rules_folder(path) {
+                            if repository {
+                                let there = folder.join(".git").symlink_metadata().is_ok();
+                                self.repositories.insert(folder.to_path_buf(), there);
+                            }
+                            self.recheck.push(folder.to_path_buf());
+                        }
+                    }
                     self.walk.extend(walk);
                     self.reconcile = reconcile;
                     self.walk_added_roots();
                     self.cursors = cursors;
+                    // Replayed through the live stream (macOS).
+                    self.replaying = how == CaughtUpBy::EventHistory;
                     self.caught_up = Some(how);
                     if let Some(note) = note {
                         self.status(|shared| shared.status.reason = Some(note));
@@ -1701,6 +1885,10 @@ impl Coordinator {
             Ok(watching) => self.watching = Some(watching),
             Err(why) => self.status(|shared| shared.status.reason = Some(why)),
         }
+        // What the catch-up learned of folders is dropped once watching
+        // started: an ignore file changed between the two is reported by
+        // neither (#186).
+        self.scope.forget_all_kept();
         if !self.deferred() {
             self.save();
             self.settled();
@@ -1747,7 +1935,10 @@ impl Coordinator {
 
     /// Whether walks wait to run.
     fn deferred(&self) -> bool {
-        self.full_walk || !self.walk.is_empty() || !self.reconcile.is_empty()
+        self.full_walk
+            || !self.walk.is_empty()
+            || !self.reconcile.is_empty()
+            || !self.recheck.is_empty()
     }
 
     /// Whether a deferred walk may run now: the launcher was shown, or the
@@ -1941,35 +2132,61 @@ impl Coordinator {
         if stop || self.stopped() {
             return true;
         }
-        // What the rules admit, learned once for the whole batch: churn is
-        // counted only for the paths they admit, and the paths are looked at
-        // with the same memo.
-        let mut known = Admitted::default();
-        let churned = self.count_churn(&reports, now, &mut known);
-        if !churned.is_empty() {
-            for folder in churned {
-                self.quarantine(folder);
+        // What the rules admit is told with what the scope keeps of the
+        // folders between batches (#186), first dropped for the folders
+        // these changes may have changed; churn is counted only for the
+        // paths the rules admit, and the paths are looked at the same way.
+        let mut recheck = self.forget_changed(&reports);
+        if !rescan.is_empty() {
+            // Anything may have changed there.
+            self.scope.forget_all_kept();
+        }
+        if self.scope.global_ignore_changed() {
+            // The rules are read again, and every root re-checked if the
+            // global ignore file itself changed.
+            let scope = Arc::new(Scope::with_volumes(
+                self.scope.rules().clone(),
+                self.config.volumes.clone(),
+            ));
+            if !scope.same_global_ignore(&self.scope) {
+                recheck.extend(scope.kept_roots());
             }
-            // The rules changed: what the memo learned under them no longer
-            // holds.
-            known = Admitted::default();
+            self.scope = scope.clone();
+            self.status(|shared| shared.scope = Some(scope));
+        }
+        if self.full_walk {
+            // The first walk, still to come, reads every folder under the
+            // rules as they are then.
+            recheck.clear();
+        }
+        // A folder taken out for churn builds the rules again, keeping
+        // nothing.
+        let churned = self.count_churn(&reports, now);
+        for folder in churned {
+            self.quarantine(folder);
         }
         let paths: BTreeSet<PathBuf> = reports.into_iter().collect();
-        if paths.is_empty() && rescan.is_empty() {
+        if paths.is_empty() && rescan.is_empty() && recheck.is_empty() {
             self.take_cursors(reported, history_done);
             return false;
         }
         if !self.room() {
             // Nothing is written: what changed is caught up once there is
-            // room.
+            // room, and the folders to re-check are re-checked then.
             self.missed = true;
+            self.recheck.extend(recheck);
             self.take_cursors(reported, history_done);
             return false;
         }
         self.status(|shared| shared.busy = true);
         let mut changes = Vec::new();
         let mut new_folders = Vec::new();
-        self.look_at(paths, &mut known, &mut changes, &mut new_folders);
+        self.look_at(paths, &mut changes, &mut new_folders);
+        if !recheck.is_empty() {
+            // A new folder under one re-checked is walked by the re-check.
+            new_folders.retain(|new| !recheck.iter().any(|folder| new.starts_with(folder)));
+            changes.extend(self.recheck_folders(recheck));
+        }
         if !rescan.is_empty() {
             let folders = self.rescan_folders(rescan);
             let reconciled = reconcile(
@@ -1999,6 +2216,7 @@ impl Coordinator {
             self.cursors = cursors;
         }
         if history_done {
+            self.replaying = false;
             self.caught_up = Some(CaughtUpBy::EventHistory);
             self.save();
         }
@@ -2035,12 +2253,12 @@ impl Coordinator {
     }
 
     /// Looks at each changed path now: indexed if it exists and the rules
-    /// admit it (told with `known`, the batch's memo), removed otherwise; a
-    /// folder new to the index is walked.
+    /// admit it (told with what the scope keeps of the folders between
+    /// batches, #186), removed otherwise; a folder new to the index is
+    /// walked.
     fn look_at(
         &self,
         paths: BTreeSet<PathBuf>,
-        known: &mut Admitted,
         changes: &mut Vec<Change>,
         new_folders: &mut Vec<PathBuf>,
     ) {
@@ -2062,7 +2280,7 @@ impl Coordinator {
                 Err(_) if is_root => {}
                 Ok(entry) => {
                     let is_dir = entry.meta.kind == EntryKind::Folder;
-                    if !self.scope.admits(&path, is_dir, known) {
+                    if !self.scope.admits_kept(&path, is_dir) {
                         gone(changes, indexed);
                         continue;
                     }
@@ -2130,7 +2348,7 @@ impl Coordinator {
     }
 
     /// Runs the walks that waited: the first full walk, then the folders
-    /// to walk and to reconcile the catch-up asked for.
+    /// to walk, to reconcile and to re-check the catch-up asked for.
     fn do_walks(&mut self) {
         if !self.room() {
             return;
@@ -2198,6 +2416,12 @@ impl Coordinator {
         if !self.walk.is_empty() {
             let folders = std::mem::take(&mut self.walk);
             changes.extend(self.walk_new(&folders));
+        }
+        // The folders whose ignore rules changed (#186); a full walk read
+        // every folder under the rules as they are.
+        let recheck = std::mem::take(&mut self.recheck);
+        if !walked_all && !recheck.is_empty() {
+            changes.extend(self.recheck_folders(recheck));
         }
         if self.stopped() {
             return;
@@ -2353,6 +2577,42 @@ impl Coordinator {
             }
         });
     }
+}
+
+/// The folder whose ignore rules a change of `path` may change (#186), and
+/// whether `path` is its repository (`.git`): `X` for `X/.gitignore`,
+/// `X/.ignore`, `X/CACHEDIR.TAG`, `X/.git`, `X/.git/info` and
+/// `X/.git/info/exclude`, in any letter case.
+fn rules_folder(path: &Path) -> Option<(&Path, bool)> {
+    let is = |name: &std::ffi::OsStr, wanted: &str| name.eq_ignore_ascii_case(wanted);
+    let named = |at: &Path, wanted: &str| at.file_name().is_some_and(|name| is(name, wanted));
+    let name = path.file_name()?;
+    let parent = path.parent()?;
+    if is(name, ".gitignore") || is(name, ".ignore") || is(name, CACHE_TAG) {
+        return Some((parent, false));
+    }
+    if is(name, ".git") {
+        return Some((parent, true));
+    }
+    let info = if is(name, "exclude") { parent } else { path };
+    let git = info.parent()?;
+    if named(info, "info") && named(git, ".git") {
+        return Some((git.parent()?, false));
+    }
+    None
+}
+
+/// `folders` without those under another of them.
+fn outermost(mut folders: Vec<PathBuf>) -> Vec<PathBuf> {
+    folders.sort();
+    folders.dedup();
+    let mut outer: Vec<PathBuf> = Vec::new();
+    for folder in folders {
+        if !outer.iter().any(|above| folder.starts_with(above)) {
+            outer.push(folder);
+        }
+    }
+    outer
 }
 
 /// Brings the index, built under the rules `before`, to the rules `after`,
