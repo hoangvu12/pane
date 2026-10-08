@@ -112,19 +112,25 @@ impl ResultList {
         changed
     }
 
-    /// Scrolls the least that shows row `row` of the frame laid out.
+    /// Scrolls the least that shows row `row` of the frame laid out. The
+    /// first row is shown with what is above it — the head (the pinned
+    /// home) and its section's label — as far as there is room.
     pub(super) fn reveal_row(&self, row: usize) {
         if let Some(child) = self.child_of_row(row) {
-            self.list.reveal(child);
+            if row == 0 {
+                self.list.reveal_from_top(child);
+            } else {
+                self.list.reveal(child);
+            }
         }
     }
 
     /// The element, placed after the list, that scrolls to show row `row`
     /// again once this frame laid the list out (see
-    /// [`VirtualList::reveal_after_layout`]).
+    /// [`VirtualList::reveal_after_layout`]), as [`ResultList::reveal_row`].
     pub(super) fn reveal_row_after_layout(&self, row: usize) -> Option<impl IntoElement> {
         let child = self.child_of_row(row)?;
-        Some(self.list.reveal_after_layout(child))
+        Some(self.list.reveal_after_layout(child, row == 0))
     }
 
     /// The list's child that shows row `row` of the frame laid out.

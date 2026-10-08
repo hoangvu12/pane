@@ -381,6 +381,51 @@ fn rows_out_of_view_request_no_icons(cx: &mut TestAppContext) {
     assert!(server.count("/favicon.ico") <= 1, "{:?}", server.requests());
 }
 
+/// A launcher first laid out shorter than its pinned home — as the window
+/// is while the system sizes it at start — shows the home once it grows,
+/// over a list longer than the window: the first row's reveal shows what
+/// is above it, so no offset left from the short layout hides the
+/// "Pinned" label, the strip or the rows' label.
+#[gpui::test]
+fn the_pinned_home_shows_when_the_launcher_grows_after_a_short_layout(cx: &mut TestAppContext) {
+    let data = tempfile::tempdir().unwrap();
+    let pins: Vec<_> = ["one", "two", "three", "four", "five", "six", "seven"]
+        .iter()
+        .map(|id| json!({ "command": id }))
+        .collect();
+    let record = json!({ "version": 2, "pins": pins });
+    fs::write(data.path().join("quick-slots.json"), record.to_string()).unwrap();
+    cx.executor().allow_parking();
+    cx.update(pane::bind_keys);
+    let launcher =
+        Launcher::new(Runtime::start(), commands(40, title)).with_quick_slots(data.path());
+    let (window, cx) = cx.add_window_view(|window, cx| LauncherWindow::new(launcher, window, cx));
+    cx.simulate_resize(gpui::size(px(640.), px(140.)));
+    settle(&window, cx);
+    redraw(&window, cx);
+    cx.simulate_resize(pane::launcher_client_size());
+    settle(&window, cx);
+    redraw(&window, cx);
+
+    assert_eq!(selected(&window, cx), Some(0));
+    let list = cx.debug_bounds("rows").expect("the list is rendered");
+    let label = cx
+        .debug_bounds("section-Pinned")
+        .expect("the home's label is drawn");
+    assert!(
+        label.top() >= list.top(),
+        "the label shows: {label:?} in {list:?}"
+    );
+    let commands = cx
+        .debug_bounds("section-Commands")
+        .expect("the rows' label is drawn");
+    assert!(
+        commands.bottom() <= list.bottom(),
+        "{commands:?} in {list:?}"
+    );
+    assert!(row_is_visible(cx, &title(0)));
+}
+
 /// The `p`th percentile of `samples` (sorted in place).
 fn percentile(samples: &mut [Duration], p: f64) -> Duration {
     samples.sort();
@@ -424,7 +469,8 @@ fn benchmark(cx: &mut TestAppContext) {
         format!("report {index} draft.{kind}")
     }));
     let (window, cx) = open(cx, listed);
-    assert_eq!(settle(&window, cx).rows.len(), APPLICATIONS + FILES);
+    // The commands, then Pane's own "Settings…".
+    assert_eq!(settle(&window, cx).rows.len(), APPLICATIONS + FILES + 1);
 
     // Keystrokes: a query typed and erased, again and again, each key's
     // frame timed.
