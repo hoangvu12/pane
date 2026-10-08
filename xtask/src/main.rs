@@ -15,7 +15,10 @@
 //!   clippy: the half of `ci` that builds no guests and runs no tests.
 //! - `ci-tests`: build the guests, then run the workspace's tests with
 //!   cargo-nextest, which retries a failing test twice before the run
-//!   fails for it, so one flaky failure costs time, not the run.
+//!   fails for it, so one flaky failure costs time, not the run. Options
+//!   after `ci-tests` (or `ci`) go to `cargo nextest run` as they are: CI
+//!   passes `--partition hash:1/3` to run one shard of the tests, `-E
+//!   <filter>` to run only some, `--no-run` to build them only.
 //! - `package-linux`: build Pane's Linux package and the artifacts its
 //!   default extensions are acquired from, under `target/dist/` (with
 //!   `--dev`, the package's program is the development profile; see
@@ -91,9 +94,17 @@ const PREBUILT: &[&str] = &[
 
 fn main() -> ExitCode {
     let task = std::env::args().nth(1);
-    if task.as_deref() == Some("file-index-bench") {
-        // Its options are the benchmark's own, passed on as they are.
-        return match file_index_bench(std::env::args().skip(2).collect()) {
+    // These pass their options on as they are: the benchmark's are its
+    // own, the tests' are cargo-nextest's.
+    let options = || std::env::args().skip(2).collect::<Vec<_>>();
+    let passing_on = match task.as_deref() {
+        Some("file-index-bench") => Some(file_index_bench(options())),
+        Some("ci-tests") => Some(ci_tests(&options())),
+        Some("ci") => Some(ci(&options())),
+        _ => None,
+    };
+    if let Some(result) = passing_on {
+        return match result {
             Ok(()) => ExitCode::SUCCESS,
             Err(message) => {
                 eprintln!("xtask: {message}");
@@ -124,16 +135,15 @@ fn main() -> ExitCode {
     let result = match (task.as_deref(), version) {
         (Some("guests"), _) => guests(),
         (Some("js-guests"), _) => js_guests(),
-        (Some("ci"), _) => ci(),
         (Some("ci-lints"), _) => ci_lints(),
-        (Some("ci-tests"), _) => ci_tests(),
         (Some("package-linux"), Ok(version)) => package::linux(dev, version),
         (Some("package-windows"), Ok(version)) => package::windows(dev, version),
         (Some("package-macos"), Ok(version)) => package::macos(dev, version),
         (_, Err(why)) => Err(why),
         _ => Err("usage: cargo xtask \
-             <guests|js-guests|ci|ci-lints|ci-tests|package-linux|package-windows|package-macos> \
-             [--dev] [--package-version <version>], or cargo xtask file-index-bench [options]"
+             <guests|js-guests|ci-lints|package-linux|package-windows|package-macos> \
+             [--dev] [--package-version <version>], cargo xtask <ci|ci-tests> \
+             [nextest options], or cargo xtask file-index-bench [options]"
             .into()),
     };
     match result {
@@ -519,22 +529,26 @@ fn ci_lints() -> Result<(), String> {
 /// twice before the run fails for it, so one flaky failure costs time
 /// rather than the run. cargo-nextest runs no doc tests; this workspace
 /// has none (its documentation's code fences are `text` and `json`, not
-/// Rust), so nothing that `cargo test` ran is lost.
-fn ci_tests() -> Result<(), String> {
+/// Rust), so nothing that `cargo test` ran is lost. `nextest` goes on to
+/// `cargo nextest run` as it is (a shard, a filter, `--no-run`).
+fn ci_tests(nextest: &[String]) -> Result<(), String> {
     guests()?;
-    run(cargo().current_dir(root()).args([
-        "nextest",
-        "run",
-        "--locked",
-        "--workspace",
-        "--retries",
-        "2",
-    ]))
+    run(cargo()
+        .current_dir(root())
+        .args([
+            "nextest",
+            "run",
+            "--locked",
+            "--workspace",
+            "--retries",
+            "2",
+        ])
+        .args(nextest))
 }
 
-fn ci() -> Result<(), String> {
+fn ci(nextest: &[String]) -> Result<(), String> {
     ci_lints()?;
-    ci_tests()
+    ci_tests(nextest)
 }
 
 /// Builds the file index's benchmark in release and runs it with `args`.
