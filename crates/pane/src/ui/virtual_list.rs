@@ -86,18 +86,31 @@ impl VirtualList {
         self.state.scroll_to_reveal_item(index);
     }
 
+    /// Reveals the list's first child, then the child at `index`: what is
+    /// above `index` (a head, a section's label) shows as far as the list
+    /// has room for it with `index` whole. A list first laid out short and
+    /// then grown keeps no offset that hides them.
+    pub(crate) fn reveal_from_top(&self, index: usize) {
+        self.reveal(0);
+        self.reveal(index);
+    }
+
     /// An empty element, placed after the list in the same frame, that
     /// reveals the child at `index` again once the list has been laid out
     /// — with the heights this frame measured rather than the row-high
     /// guesses a reveal before it used — and asks for another frame only
     /// when that moved the list. A list whose first reveal was right is
-    /// left idle.
-    pub(crate) fn reveal_after_layout(&self, index: usize) -> impl IntoElement {
+    /// left idle. With `from_top`, as [`VirtualList::reveal_from_top`].
+    pub(crate) fn reveal_after_layout(&self, index: usize, from_top: bool) -> impl IntoElement {
         let list = self.clone();
         canvas(
             move |_, window, _| {
                 let before = list.state.logical_scroll_top();
-                list.reveal(index);
+                if from_top {
+                    list.reveal_from_top(index);
+                } else {
+                    list.reveal(index);
+                }
                 let after = list.state.logical_scroll_top();
                 if (before.item_ix, before.offset_in_item) != (after.item_ix, after.offset_in_item)
                 {
