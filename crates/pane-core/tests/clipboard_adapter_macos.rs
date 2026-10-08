@@ -215,6 +215,28 @@ fn the_watcher_reports_this_tests_changes_until_dropped() {
         Ok(Copied::Files(listed)) if listed == files.as_slice()
     ));
 
+    // A different process supplies the same format, as the native smoke
+    // does. Repeating crosses the watcher's polling boundary while
+    // AppleScript declares and fills the pasteboard.
+    for _ in 0..20 {
+        let copied = std::process::Command::new("osascript")
+            .args([
+                "-e",
+                "on run argv\nset the clipboard to (POSIX file (item 1 of argv))\nend run",
+            ])
+            .arg(&files[0])
+            .output()
+            .unwrap();
+        assert!(
+            copied.status.success(),
+            "{}",
+            String::from_utf8_lossy(&copied.stderr)
+        );
+        next("the externally copied file", &|report| {
+            report.content == Content::Files(vec![files[0].clone()])
+        });
+    }
+
     // Writing is a change too, reported like any other.
     let written = format!("{prefix}written");
     clipboard.write_text(&written).unwrap();
