@@ -2,6 +2,9 @@ name: macOS clipboard copy probe
 on:
   push:
     branches: [fix/clipboard-file-smoke]
+    paths-ignore:
+      - crates/pane-core/tests/**
+      - .github/workflows/clipboard-copy-probe.yml
 permissions:
   contents: read
 jobs:

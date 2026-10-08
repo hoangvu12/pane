@@ -218,7 +218,8 @@ fn the_watcher_reports_this_tests_changes_until_dropped() {
     // A different process supplies the same format, as the native smoke
     // does. Repeating crosses the watcher's polling boundary while
     // AppleScript declares and fills the pasteboard.
-    for _ in 0..20 {
+    for iteration in 0..20 {
+        std::thread::sleep(Duration::from_millis(iteration * 13));
         let copied = std::process::Command::new("osascript")
             .args([
                 "-e",
