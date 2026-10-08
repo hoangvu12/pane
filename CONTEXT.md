@@ -17,8 +17,12 @@ An installable addition that contributes functionality to the launcher.
 _Avoid_: Plugin, add-on
 
 **Default extension**:
-An extension provided by default to supply an everyday feature; the user can disable it individually. It may be acquired automatically during initial setup rather than shipped inside the installer.
+An official extension provided by default to supply an everyday feature: offered ticked at first setup and acquired then rather than shipped inside the installer, at the revision the Pane release names. The user can leave it out at first setup or disable it individually.
 _Avoid_: Mandatory feature, core feature
+
+**Official extension**:
+An extension Pane's maintainers publish, each from a repository of its own that anyone may contribute to, and which Pane marks as its own. The default extensions are official extensions.
+_Avoid_: Built-in extension, core extension, first-party plugin
 
 **Artifact source**:
 Where Pane reads the index of its default extensions and downloads their payloads from: Pane's own downloads, distinct from npm and the Git hosts. A development build can name one on this computer instead, for tests and smokes; a release build cannot.
@@ -236,6 +240,18 @@ _Avoid_: Plugin bundle
 The `pane.json` file that declares a package's title, version, required extension API, commands, operations and dependencies, versioned by its manifest version.
 _Avoid_: package.json (npm's file)
 
+**Extension API version**:
+The version of the interface an extension is built against, which its package manifest names. Every breaking change to the interface gets a new one, and Pane runs extensions built for its current version and, for a while, the previous one.
+_Avoid_: SDK version, manifest version (the format of `pane.json` itself)
+
+**Collection**:
+A Git repository or folder whose root lists several extension packages, each in a folder of its own under an extension id. The user installs some or all of them, and each one installed is a package of its own.
+_Avoid_: Monorepo, bundle, extension pack, marketplace
+
+**Extension id**:
+The name a collection gives one of its extensions, unique within the collection and kept across its releases; with the repository, it forms that extension's package identity.
+_Avoid_: Slug, path (an extension's folder can move; its id stays)
+
 **Source-only package**:
 A package whose manifest names components that have not been built, in a folder, published to npm without them, or a Git revision holding only the source; Pane explains it rather than installing it, and never builds it.
 _Avoid_: Broken install
@@ -245,7 +261,7 @@ An extension package published to the npm registry: a tarball holding its packag
 _Avoid_: Node package, npm module (Pane runs no Node code), plugin from npm
 
 **Git-distributed package**:
-An extension package distributed as a Git repository whose root holds its package manifest, identified by its repository (host and path, without `.git` or a reference; the path in lowercase on github.com, gitlab.com, bitbucket.org and codeberg.org, which ignore its case, and as written elsewhere): the same repository written as an HTTPS, SSH or scheme-less address is one package. Pane fetches the one revision asked for itself, over HTTPS, checks every object against its id and writes out only its files and folders, then installs it like a local package, into a managed copy, while it keeps its Git source identity. Pane runs nothing from the repository: no build, hook, filter or submodule.
+An extension package distributed as a Git repository whose root holds its package manifest, or as one extension of a collection in a Git repository (identified then by the repository and its extension id), identified by its repository (host and path, without `.git` or a reference; the path in lowercase on github.com, gitlab.com, bitbucket.org and codeberg.org, which ignore its case, and as written elsewhere): the same repository written as an HTTPS, SSH or scheme-less address is one package. Pane fetches the one revision asked for itself, over HTTPS, checks every object against its id and writes out only its files and folders, then installs it like a local package, into a managed copy, while it keeps its Git source identity. Pane runs nothing from the repository: no build, hook, filter or submodule.
 _Avoid_: Cloned extension, repository checkout (Pane keeps no repository)
 
 **Release revision**:
