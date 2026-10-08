@@ -224,7 +224,7 @@ fn the_watcher_reports_this_tests_changes_until_dropped() {
         let board = NSPasteboard::generalPasteboard();
         let kind = NSString::from_str("public.file-url");
         // SAFETY: there is no owner object; the test supplies the data.
-        unsafe { board.declareTypes_owner(&NSArray::from_slice(&[&kind]), None) }
+        unsafe { board.declareTypes_owner(&NSArray::from_slice(&[&*kind]), None) }
     });
     // Keep the producer's data unavailable across several watcher polls.
     std::thread::sleep(Duration::from_secs(1));
