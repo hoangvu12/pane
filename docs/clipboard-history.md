@@ -144,7 +144,7 @@ page, the Actions panel and what the host honours never disagree:
 
 | Preference | Control | Is |
 | --- | --- | --- |
-| Keep History For (`keepHistoryFor`) | 1 Hour, 1 Day, 7 Days, 30 Days, 90 Days | the retention ([Expiry](#expiry)) |
+| Keep History For (`keepHistoryFor`) | a select of 1 Hour, 1 Day, 7 Days, 30 Days, 90 Days (a dropdown preference, as every one is drawn) | the retention ([Expiry](#expiry)) |
 | Recording (`pauseRecording`) | a switch, "Pause Recording" | paused (or off) while on; recording while off |
 | Disabled Applications (`disabledApplications`) | the applications' file names, separated by commas, and "Add…", the system's application picker, which adds the chosen application's file name | the programs whose copies are not recorded ([What is kept](#behavior)) |
 

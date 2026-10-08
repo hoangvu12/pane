@@ -268,7 +268,7 @@ the import gets them; an indexed result takes `alternate-titles` and
 
 Every application row in root search, and a quick slot pinning one, shows
 the application's own icon, drawn bare, without the tile Pane's own rows
-keep (decision 2, [ADR 0035](adr/0035-the-launcher-borrows-raycasts-polish-within-the-accepted-ui.md)).
+keep (decision 2, [ADR 0035](https://github.com/hoangvu12/pane/blob/2a4f9c43c990656325297a5980f34fa4bddba76e/docs/adr/0035-the-launcher-borrows-raycasts-polish-within-the-accepted-ui.md)).
 The host extracts and keeps the icons (ADR 0038,
 [`icons`](../crates/pane-core/src/applications/icons.rs)):
 
@@ -276,17 +276,29 @@ The host extracts and keeps the icons (ADR 0038,
   adapter per system (`IconExtractor`, `NativeExtractor`):
   - Windows desktop programs: the shell's image of the application's
     primary source (`IShellItemImageFactory`, icon only). Above 48 pixels,
-    an image whose visible content (pixels not almost transparent) spans
-    less than half its width and less than half its height is a small icon
-    the shell padded into the jumbo size, and is rejected for the next
-    source: the shortcut's own icon location (`IShellLinkW`, extracted at
-    256 pixels, which the system scales from its closest size), then the
-    shortcut's target program's shell image, and finally the shell's file
-    information icon (32 pixels), drawn as it is. Only when every source
-    fails is a padded image kept. An internet shortcut's (`.url`) padded
-    image is rejected for the icon its `IconFile` and `IconIndex` name; a
-    ClickOnce reference (`.appref-ms`) has only the shell's images (its
-    deployed program's icon is not looked for).
+    an image whose content (below) spans less than half its width and
+    less than half its height is a small icon the shell padded into the
+    jumbo size, or framed in a thumbnail (a program that ships only a
+    32-pixel icon is drawn by the shell as that icon in the middle of a
+    square with a thin frame), and is rejected for the next source: the
+    shortcut's own icon location (`IShellLinkW`, extracted at 256 pixels,
+    which the system scales from its closest size), then the shortcut's
+    target program's shell image, then that program's own first icon (or a
+    program source's), extracted the same way so the system takes the
+    largest image it has, and finally the shell's file information icon
+    (32 pixels). Only when every source fails is a padded or framed image
+    kept (then cropped, below). An internet shortcut's (`.url`) padded
+    image is rejected for the icon its `IconFile` and `IconIndex` name. A
+    ClickOnce reference (`.appref-ms`) is drawn first by its deployed
+    program's own icon, then that program's shell image, before the
+    shell's image of the reference: the program is found where ClickOnce
+    installs it, `%LOCALAPPDATA%\Apps\2.0\<random>\<random>\<name>_<token>_<version>_<hash>\`,
+    by the deployment's name (lowercased and, past ten characters,
+    shortened as ClickOnce does, `orde..tion` for `Orders.application`)
+    and its publisher's `PublicKeyToken`, the newest version, the program
+    named after the deployment else its first
+    ([`click_once`](../crates/pane-core/src/applications/icons/click_once.rs),
+    tested against a store the test builds).
   - Windows packaged apps: the logo the package's manifest names for the
     app (`Square44x44Logo`, else `Square150x150Logo`, else the package's
     `Logo`), in the package's install folder found through
@@ -308,6 +320,22 @@ The host extracts and keeps the icons (ADR 0038,
     `pixmaps` folders; within a theme an SVG of a scalable folder, or the
     PNG closest to 256 pixels
     ([`theme`](../crates/pane-core/src/applications/icons/theme.rs)).
+- **Filling its place**, whatever extracted the icon and on every system
+  (`fill_its_place`): an image whose content spans less than three
+  quarters of its canvas its larger way, a small picture padded into a
+  large square or framed in a thumbnail, is cropped to the square around
+  that content, centred on it with a margin of 1/32 of its span each side,
+  and scaled to 256 pixels, so it is drawn as large as every other
+  application's icon; a frame's rings are left out of it (transparent, or
+  the frame's fill). Its content is its visible pixels (not almost
+  transparent), except within a frame: a canvas of at least 64 pixels
+  whose ring 1/16 of its side in is of one fill, transparent or light,
+  with rings of one colour drawn from its edge in, at least one unlike
+  the fill (the middle half of each side looked at, so rounded corners do
+  not count), has for content the pixels within those rings unlike the
+  fill. An icon whose content already spans three quarters of its canvas
+  (a system's own icon grid, as macOS's, leaves less margin than that) is
+  kept as it is.
 - **The cache**: `application-icons` in Pane's cache folder (beside the
   compiled extension code: `%LOCALAPPDATA%\Pane\cache`,
   `~/Library/Caches/Pane`, `$XDG_CACHE_HOME/pane`), not extension data and
@@ -315,8 +343,11 @@ The host extracts and keeps the icons (ADR 0038,
   a digest of the application's id and its source's fingerprint (the
   source's path, size and modification time; a packaged app's manifest's),
   a dark variant beside it, written atomically, with an index
-  (`index.json`). An index that cannot be read is deleted with every image
-  and rebuilt; images the index does not name are removed. It holds at
+  (`index.json`). An index that cannot be read, or that an older Pane made
+  (its version records how the images were made: version 2 since icons are
+  cropped to fill their place, 3 since a framed thumbnail is cropped to
+  what its frame holds), is deleted with every image and rebuilt,
+  so every icon is extracted again; images the index does not name are removed. It holds at
   most 64 MiB and 10,000 icons, the least recently drawn going first.
   Deleting it loses nothing but the time to extract the icons again.
 - **Refreshing**: a single worker thread at low priority (Windows'
@@ -355,7 +386,7 @@ The host extracts and keeps the icons (ADR 0038,
 | Found in | Shortcuts: shell links (`.lnk`), internet shortcuts (`.url`) whose scheme has a registered handler (its key under `HKEY_CLASSES_ROOT` is marked `URL Protocol` and has a `shell` key: a game launcher's `steam://`, `com.epicgames.launcher://`) and ClickOnce application references (`.appref-ms`), in the Start menu's `%APPDATA%\Microsoft\Windows\Start Menu\Programs` then `%ProgramData%\...\Programs`, with subfolders, and without subfolders on the user's Desktop and every user's (`FOLDERID_Desktop`, `FOLDERID_PublicDesktop`, wherever the shell keeps them) and among the taskbar pins (`%APPDATA%\Microsoft\Internet Explorer\Quick Launch\User Pinned\TaskBar`); then the packaged (AppX/MSIX) apps of the shell's Apps folder (`FOLDERID_AppsFolder`), such as Calculator on Windows 11 | Application bundles (`.app`) in `/Applications`, `/System/Applications` and `~/Applications`, and their subfolders two deep (such as `Utilities`), not inside bundles | Desktop entries (`.desktop`) in `$XDG_DATA_HOME/applications` (default `~/.local/share/applications`) then `applications` in each of `$XDG_DATA_DIRS` (default `/usr/local/share:/usr/share`), with subfolders (Flatpak and Snap add their folders to `XDG_DATA_DIRS`) |
 | Name | The name Explorer shows for the shortcut (localized), else its file name; a packaged app's display name | The bundle's display name as Finder shows it (localized), else its folder name | The entry's `Name` for the messages locale (`Name[vi]`), else the plain `Name` |
 | Also found by | The shortcut's file name, other shortcuts' names, a shell link's target program's name (an internet shortcut or a ClickOnce reference has no program) | The bundle's folder name | The plain `Name`, the `Exec` program's name, `Keywords` for the locale |
-| Icon | The shell's 256-pixel image, padded small icons rejected for the shortcut's icon location, its target or the file information icon (an internet shortcut's `IconFile`); a packaged app's manifest logo with light and dark variants | The workspace's icon of the bundle | The entry's `Icon` in the user's icon theme, its parents, `hicolor`, then `pixmaps` |
+| Icon | The shell's 256-pixel image, padded or framed small icons rejected for the shortcut's icon location, its target's image, the target's own largest icon or the file information icon (an internet shortcut's `IconFile`); a packaged app's manifest logo with light and dark variants | The workspace's icon of the bundle | The entry's `Icon` in the user's icon theme, its parents, `hicolor`, then `pixmaps` |
 | Identified by | A shell link's target and arguments, version folders wildcarded (an MSI-advertised one's installed program); an internet shortcut's URL; a ClickOnce reference's deployment; a packaged app's package family | The bundle identifier | The desktop file id |
 | Left out | The Startup folders (`Startup` in either Start menu's Programs folder); uninstallers: a shortcut whose name contains "Uninstall" or whose program's name starts with `unins` (`unins000.exe`, `uninstall.exe`); a shell link whose target is missing (broken), empty (a shell item, or an advertised product that is not installed), a folder, or a document rather than a program (a program is `.exe`, `.com`, `.bat`, `.cmd`, `.msc`, `.cpl`, `.vbs`, `.vbe`, `.wsf` or `.wsh`); an internet shortcut to a web page or a document (`http`, `https`, `ftp`, `file`, `mailto`, `news`) or to a scheme nothing handles; folders that are symbolic links or junctions, which are not walked; a shortcut at the same place in the all-users menu (or Desktop) as in the user's; Apps folder items that are not packaged apps (desktop programs, found by their shortcuts) or that have a shortcut's name | Nothing | `Type` other than `Application`, `NoDisplay` or `Hidden` (a hidden entry also hides a lower one with the same desktop file id), no `Exec`, `OnlyShowIn`/`NotShowIn` against `$XDG_CURRENT_DESKTOP`, a `TryExec` program that is missing, an `Exec` line using field codes against the spec (`%i`, `%F` or `%U` inside an argument, more than one of `%f %u %F %U`, an unknown code or a lone `%`: skipped with a line on standard error, not guessed) |
 | Opened by (the primary source) | `ShellExecuteEx` on the shortcut, or on `shell:AppsFolder\<AppUserModelID>` for a packaged app, as Explorer opens them (errors returned, no dialog), with COM initialized for the call and uninitialized after | `/usr/bin/open` on the bundle (Launch Services); its error message is shown | Running the `Exec` program directly (quoting and field codes per the Desktop Entry spec; file and URL codes dropped; `Path` as working folder), in its own process group; a `Terminal=true` entry runs in `$TERMINAL -e`, else the first installed of `x-terminal-emulator -e`, `gnome-terminal --`, `konsole -e`, `xfce4-terminal -x`, `alacritty -e`, `kitty`, `foot`, `xterm -e`, and is refused with an explanation when there is none |
@@ -463,7 +494,11 @@ and returns `open-application(id)`; only the adapter differs.
   refresh; the JavaScript and TypeScript samples show an application's
   icon by the import's reference; and the
   host gives that reference and the icon's source. The visible-content
-  check, the batch order, the manifest's logo and its variants, the icon
+  check, cropping a padded icon to fill its place (centred, scaled up and
+  down, a filling icon and an empty one left alone), finding a framed
+  thumbnail's content and cropping it without the frame (a synthetic copy
+  of Windows' frame, and an opaque light one; a coloured plate, a white
+  plate and a dark fill not taken for a frame), the batch order, the manifest's logo and its variants, the icon
   theme lookup and an internet shortcut's icon file are unit tests of
   `icons`, `appx`, `theme` and the Windows extractor.
 - Icon adapters ([`crates/pane-core/tests/application_icon_adapters.rs`](../crates/pane-core/tests/application_icon_adapters.rs)):
@@ -582,9 +617,21 @@ and returns `open-application(id)`; only the adapter differs.
   stays as it was.
 - Icons: a shortcut's own icon location is extracted at 256 pixels as the
   system scales it from the closest size the file has, so a small icon
-  there is drawn enlarged rather than padded. ClickOnce references are
-  drawn by the shell's image of their file; their deployed program's icon
-  is not looked for. While no list is kept (no package asked for the
+  there is drawn enlarged rather than padded. A program that ships only a
+  small icon is drawn on Windows by that icon as the system scales it up
+  from the program's resources (blocky or soft as the system scales it),
+  elsewhere cropped and scaled up to fill its place, a little soft; an SVG
+  icon (a Linux theme's) is kept as it is, not cropped. Pixels almost
+  transparent (alpha up to 16 of 255) count as empty when cropping, so a
+  faint glow beyond the picture is cut. A frame is recognised only by its
+  shape: an icon that is itself a light plate drawn to its canvas's edges
+  with a thin outline of another colour, and a picture spanning less than
+  three quarters of it, is taken for a framed thumbnail and cropped to
+  that picture. A packaged app whose manifest logo ships no larger target
+  size than 44 or 48 pixels is kept at that size (drawn scaled up).
+  A ClickOnce reference's deployed program is found by the store's folder
+  names alone; a deployment installed elsewhere (a machine-wide or
+  online-only one) is drawn by the shell's image of its reference. While no list is kept (no package asked for the
   applications yet, as when only a pinned slot shows one), finding what an
   icon is extracted from scans the system's folders without keeping or
   watching them.

@@ -8,7 +8,7 @@ folders under the user's home folder (the **file index**), caught up at
 start from what the file system recorded while Pane was not running and
 kept current while it runs, so a file is found as quickly as a command
 ([#126](https://github.com/hoangvu12/pane/issues/126),
-[ADR 0034](adr/0034-file-search-indexes-the-users-home-folder.md); built by
+[ADR 0034](https://github.com/hoangvu12/pane/blob/2a4f9c43c990656325297a5980f34fa4bddba76e/docs/adr/0034-file-search-indexes-the-users-home-folder.md); built by
 [#174](https://github.com/hoangvu12/pane/issues/174),
 [#175](https://github.com/hoangvu12/pane/issues/175) and
 [#176](https://github.com/hoangvu12/pane/issues/176)). The feature is a
@@ -32,9 +32,6 @@ What is indexed and how the index is doing are shown and changed on the
 **File Search** page in Settings, which also lists what the index's
 [safety valves](#the-safety-valves) did (#176,
 [below](#the-file-search-page)).
-
-Not yet (a later ticket of #126): pausing indexing while the computer
-sleeps is not done (see [Limits](#limits)).
 
 ## Where it lives
 
@@ -289,8 +286,10 @@ tests), and each is listed on the page:
   of changes, a reconciling walk), and once a second during a first walk,
   Pane reads the free space of the volume holding its cache
   (`GetDiskFreeSpaceExW` on Windows, `statvfs` elsewhere,
-  `file_index::free_space`). Under 1 GiB (`Valves::free_space_floor`,
-  `FREE_SPACE_FLOOR`) indexing stops writing: the status is Stopped and says
+  `file_index::free_space`). Under 1 GB (`Valves::free_space_floor`,
+  `FREE_SPACE_FLOOR`: #126 proposes 1 GiB; Pane writes sizes in decimal
+  units, so the floor is 1,000,000,000 bytes and the page says "1 GB")
+  indexing stops writing: the status is Stopped and says
   why, a first walk under way is given up, and changes reported meanwhile
   are let go. Pane looks again every minute (`space_retry`); once there is
   room it starts again by itself, walking what was not walked and
@@ -303,6 +302,27 @@ tests), and each is listed on the page:
   walk keeps what the index held of it), listed, and its helper left behind
   to end whenever the system answers it, so a stalled network mount or a
   dying disk holds up only itself.
+
+**Sleep** (#126 "Every system", story 43): indexing pauses while the
+computer sleeps and resumes 5 seconds after it wakes (`Valves::resume_after`,
+`file_index::power`). Pane learns of a sleep from two clocks every system
+keeps, one that runs on through a sleep and one that stops (Windows'
+interrupt time and unbiased interrupt time, Linux's `CLOCK_BOOTTIME` and
+`CLOCK_MONOTONIC`, macOS's `CLOCK_MONOTONIC` and `CLOCK_UPTIME_RAW`): their
+difference grows by exactly each sleep, and the wall clock, which the user
+or time synchronization may move, is not read. The coordinator looks before
+each batch of changes and each pass of its loop, and each walker thread
+before each folder; whoever first sees the difference grow starts the
+pause, and everyone waits it out, the status saying "Paused: the computer
+slept". The system's own notifications (`WM_POWERBROADCAST`, IOKit's
+`IORegisterForSystemPower`, logind's `PrepareForSleep`) are not used: each
+needs a window, a run loop or a D-Bus connection of its own, and while the
+computer sleeps every thread of Pane is frozen anyway (the write-ahead log
+keeps what was half applied); what matters is what follows the wake, which
+the first look after it catches. Time limits count awake time only: the
+first walk's delay takes the sleep out, a folder whose wait the sleep
+interrupted is given its limit again before it counts as hung, and the
+churn windows start again after a sleep.
 
 ## In root search
 
@@ -351,8 +371,9 @@ searches, keep the launcher's [command search](command-search.md).
   once.
 - **The type dropdown** at the search field's right ("Filter by Type"):
   All Types, Folder, Document, Image, Video, Audio, Archive, Text,
-  Application, Other (`search_files::FileType`). Folder keeps folders; the
-  others keep the index's categories, told from the name's extension by
+  Application, Other (`search_files::FileType`: All Types, Folder, or one
+  of the index's categories, whose names it reads). Folder keeps folders;
+  the others keep the index's categories, told from the name's extension by
   one table on every system (`file_index::Category`): Document is PDF,
   office and e-book files and web pages; Text is plain text, data,
   configuration and source files (`txt`, `md`, `csv`, `json`, `yaml`,
@@ -372,10 +393,14 @@ searches, keep the launcher's [command search](command-search.md).
   and never runs it. A click selects; a double click is Enter.
 - **The detail** beside the list, for the selected file: an image's
   preview (`png`, `jpg`, `jpeg`, `gif`, `webp`, `bmp`, `tif`, `tiff`,
-  `ico` and `svg`, at most 32 MB, never a link's target), else the file's
+  `ico` and `svg`, `icons::DRAWN_IMAGE_EXTENSIONS`, what the window draws;
+  the Images category holds these and images Pane cannot draw, such as a
+  camera's raw files; at most 32 MB, never a link's target), else the file's
   icon, large; under it the **Metadata**: Name, Where (`~/…`), Type ("PNG
-  Image", "PDF Document", "MD Text", "Folder", "Application"), Size (in the
-  units the file managers use: "532 bytes", "1.2 MB"; not for a folder),
+  Image", "PDF Document", "MD Text", "Folder", "Application"), Size (in decimal
+  units, as macOS's Finder and the Linux file managers write them: "532
+  bytes", "1.2 MB"; `file_index::size_words`, the one formatter for sizes,
+  which the File Search page uses too; not for a folder),
   Created (where the system records it) and Modified ("Today at 14:02",
   "Sep 28 at 16:12"), read from the file system when the file is selected
   (`Launcher::search_files_details`).
@@ -410,7 +435,7 @@ Ctrl+Shift+Enter the third, and the Actions panel (Ctrl+K) lists them all.
 | **Move to Recycle Bin** (destructive): after a confirmation | **Move to Recycle Bin** | |
 
 File search's own Enter never runs a program by accident
-([ADR 0037](adr/0037-a-command-declares-its-mode-and-host-functions-decide-what-happens-after-it-runs.md)):
+([ADR 0037](https://github.com/hoangvu12/pane/blob/2a4f9c43c990656325297a5980f34fa4bddba76e/docs/adr/0037-a-command-declares-its-mode-and-host-functions-decide-what-happens-after-it-runs.md)):
 a file that would run a program when opened ([below](#opening)) is shown
 in the file manager, and only its explicit **Run** runs it; choosing Run is
 the confirmation, so nothing more is asked. (On macOS the file manager is
@@ -672,7 +697,18 @@ which the coordinator above builds on:
   and, separately, of the folders below the root. A query reads, per
   segment, at most 1,000 candidates matching every word, those with every
   word in the name first, ranked by their hints, then scores them as #126's
-  "Matching and ranking" describes (`file_index/text.rs`). Keys are the
+  "Matching and ranking" describes (`file_index/text.rs`): an exact name,
+  then an exact stem, a name starting with the query, every word starting
+  a word of the name, then of the folders. A query with `/` or `\`
+  matches path segments in order: the words of each part start words of
+  one folder below the root, those folders in the parts' order (others may
+  lie between), and the last part's the name ("documents/plan",
+  `docs\work\` for anything inside); it ranks just below a name prefix.
+  When the words' starts find fewer entries than the page asks for, a
+  second pass looks for words of three letters or more inside words
+  ("port" finds "report", in a name or a folder), reading every term of the
+  dictionary, and lists those after every match by the start of words
+  (`text::score_inside`, its score put 100 below). Keys are the
   path's exact bytes (WTF-8 on Windows), so a name that is not valid
   Unicode is shown with replacement characters and still opened exactly.
   Each entry keeps its kind, size, modified time, file id and volume.
@@ -779,12 +815,22 @@ volume keeps none (FAT, exFAT, network shares), or the system refused.
 the index holds (each folder's NTFS file id, read by the walk), following
 renamed folders; a record in a folder the index does not hold resolves to
 nothing. `catch_up_changes` then looks at each path and applies the scope.
+
+Read without administrator rights, the records carry no names (Windows
+leaves them out; seen on Windows 11 as a non-elevated user). So a record
+without a name is named by its file id (`file_index::Names`: the entry
+opened with `OpenFileById` for reading attributes only, its name read from
+the handle, each id once, at most 100,000 per catch-up); an entry gone has
+no name to read, so a folder gone is known by the id the index holds, and
+a file gone puts its folder in `CatchUp::listed`, whose entries the disk no
+longer holds are removed (`file_index::missing_from`).
+
 The test
 `file_index::journal::tests::the_journal_is_read_without_administrator_rights_and_resolves_to_paths`
 indexes a temporary folder, makes changes (a file created, one deleted, a
 folder renamed, a file in it created), and reads them back from the
-cursor; it has not run yet, and is the evidence #174 asks for when run
-without administrator rights (CI's Windows runner is an administrator).
+cursor. Run as a non-elevated user, it is the evidence #174 asks for (CI's
+Windows runner is an administrator).
 
 The other systems' equivalents are FSEvents' history on macOS (no
 permission beyond reading the folders, and the privacy prompts for Desktop,
@@ -846,12 +892,22 @@ milestone is merged).
   indexing stopped while the disk is short of space (nothing written, a
   change let go) and started again by itself once there is room (the walk,
   then the change caught up); a folder that does not answer skipped and
-  listed without holding up the walk. Excluding a folder takes only it out
+  listed without holding up the walk; a sleep (a fake computer the test
+  puts to sleep, `power::tests::FakeAwake`) pausing a batch of changes and
+  a walk under way until the pause after the wake is over, the status
+  saying so, the sleep not counted as hanging; a folder macOS refused
+  listed apart from one that cannot be read. `file_index::power` tests the
+  pause itself and that the system's clocks never say a time asleep that
+  goes back; `file_index::privacy` tells a refusal from the system's
+  answer (`EPERM` on macOS only) on every system. Excluding a folder takes only it out
   and including it again walks only it. The walker's own tests hold up a
   folder's listing to show the walk does not wait for it.
   `file_index::reconcile` and `store` unit tests cover reading only changed
-  folders, a missing root keeping its entries, and a folder's children
-  across segments and memory.
+  folders, a missing root keeping its entries, a folder's children
+  across segments and memory, a query found inside words after the words
+  it starts (segments and memory alike, not when the words' starts fill
+  the page) and a query with `/` or `\` matching path segments in order;
+  `file_index::text` tests the ranks of each.
 - **Per system**: the NTFS journal read without administrator rights
   (`file_index::journal` tests, #174); inotify reporting a change in a
   watched folder and a folder added later, and stopping when dropped
@@ -919,11 +975,9 @@ milestone is merged).
 
 ## Limits
 
-- Indexing does not pause while the computer sleeps (#126's "Every
-  system" asks it to, and to count only awake time in its time limits); a
-  walk under way when the computer sleeps carries on after it wakes. The
-  churn windows and the hung-folder bound use the system's monotonic clock,
-  which counts time asleep on some systems and not on others.
+- A sleep is noticed at the first piece of indexing work after the wake,
+  not as it begins (see [Sleep](#the-safety-valves)); a folder's listing
+  already asked of the system when the computer slept is not interrupted.
 - Churn is counted per folder a change is in, not per subtree: a build
   writing across many folders at once is taken out folder by folder, only
   where one folder alone changes more than the threshold. A root itself is
@@ -943,14 +997,17 @@ milestone is merged).
 - The link from Search Files to the File Search page opens Settings at
   #176's page: `features::search_files::FILE_SEARCH_PAGE` is that page's
   title (`features::settings::file_search::TITLE`).
-- Matching is by word prefix; a query inside a word ("port" in
-  "report") is not found yet, and a query with `/` or `\` is matched word
-  by word, not as path segments in order.
-- macOS asks before Pane reads Desktop, Documents and Downloads; the File
-  Search page says so before the first walk and lists a refused folder
-  with how to allow it, telling a refusal from another unreadable folder by
-  the folder (the home folder's Desktop, Documents or Downloads), not by
-  the system's answer. Unverified on a real Mac.
+- A query inside a word ("port" in "report") is looked for only when the
+  words' starts find fewer entries than the page asks for, and only for
+  words of three letters or more; that pass reads every term of the index,
+  so it is slower than a match by the start of words on a large index.
+- macOS asks before Pane reads Desktop, Documents and Downloads (and
+  removable and network volumes); the File Search page says so before the
+  first walk and lists a refused folder with how to allow it, telling a
+  refusal from another unreadable folder by what the system answered when
+  the walker opened it (`EPERM`, "Operation not permitted", is the privacy
+  protection; `EACCES` is the account's own permissions;
+  `file_index::privacy`), whichever folder it is. Unverified on a real Mac.
 - Linux's catch-up compares folders' modified times in whole seconds: a
   change within the second a folder was indexed is not seen until the
   folder changes again, and a file changed in place while Pane was stopped

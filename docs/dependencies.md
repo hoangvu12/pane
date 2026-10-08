@@ -241,8 +241,9 @@ enabled packages require does not disable it yet. Pane shows "Disable
 - the rows **Disable all N** (N counts the package itself; first and
   selected) and **Cancel** ("Keep them all enabled").
 
-Cancel, or Back, returns to the extension list with the package's row
-selected; nothing was changed, recorded or stopped. Disable all disables
+Cancel, or Back, returns to the extension's page in Settings (the launcher
+to root search; to the extension list with the package's row selected
+where the tests show it as a screen); nothing was changed, recorded or stopped. Disable all disables
 the package and exactly the dependents shown, recorded in one write of
 `installed.json` (all of them or, if it cannot be written, none: each is
 enabled again and the error is shown), and says "Disabled Greeter and
@@ -314,8 +315,9 @@ it?" with:
   in the single uninstall), **Uninstall all N and delete saved data** and
   **Cancel** ("Keep them all installed"; Esc too).
 
-Cancel, or Back, returns to the extension list with the Uninstall row
-selected; nothing was removed, stopped or recorded. Uninstall all applies
+Cancel, or Back, returns to the extension's page in Settings (the launcher
+to root search; to the extension list with the Uninstall row selected
+where the tests show it as a screen); nothing was removed, stopped or recorded. Uninstall all applies
 the chosen row to every package shown, exactly as uninstalling each alone
 would (their commands leave root search, their instances stop, their
 managed copies, caches and credentials go, and their settings and content

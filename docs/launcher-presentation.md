@@ -78,7 +78,13 @@ show changes (its rows, its sections, its screen) — never when an icon
 arrives, a toast shows or the number hints slide — so nothing moves under
 the user. Up and Down, and Page Down and Page Up (the rows in view, stopping
 at the first and last rows), keep the selection in view; the wheel scrolls
-the list itself and is never undone.
+the list itself and is never undone. GPUI's `list` forgets the row-high
+guess for the children it has not drawn whenever it is laid out at a new
+width (its first layout included), taking them to have no height; the list
+gives the guess back before it reveals a row, or revealing one far past the
+rows drawn (the last of ten thousand) would stop short of it. The overscan
+is laid out, not painted: its rows are drawn to be measured, so their icons
+start loading too, a little ahead of the rows scrolling into view.
 
 A frame reads the launcher's view and what it draws of the whole list
 (`Launcher::presented_list`: the sections, whether only fallbacks are
@@ -99,9 +105,14 @@ room the window leaves above the footer. The Settings Shortcuts page, once
 it lists 50 commands or more, draws only the command rows within a view's
 height of the page's view, the others standing in as blocks of their last
 height (`ui::virtual_list::PageWindow`); the row being edited or recorded,
-or holding the focus, is always drawn.
+or holding the focus, is always drawn. The other long lists of Settings
+do the same past 50 rows: the Extensions group's entries in the sidebar
+(the selected one always drawn), an extension's Commands section (the
+command whose alias or hotkey is being edited always drawn), and the File
+Search page's indexed folders, exclusions and what needs attention.
 
-The window tests are `crates/pane/tests/virtual_lists.rs`; its ignored
+The window tests are `crates/pane/tests/virtual_lists.rs` (the File
+Search page's long list is tested in `file_search_settings.rs`); its ignored
 `benchmark` measures keystroke-to-frame latency in root search over 11,000
 results and the frame time of scrolling them (targets: 16 ms at the 95th
 percentile, 60 frames per second), run optimized on Windows:

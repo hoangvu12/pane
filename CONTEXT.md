@@ -37,8 +37,8 @@ A command of an installed extension that the user turned off with its switch on 
 _Avoid_: Hidden command, unlisted command
 
 **Extension page**:
-An installed extension's page in Pane's Settings, under the sidebar's Extensions group: its icon, title, description and source, its enable switch, its preferences, its commands each with its alias, hotkey and switch, and its operations (Check for Update, Reload, Clear Cache, Reset Confirmations, Show Source Folder, Uninstall), which run the launcher's own operations and confirmations. Extensions are managed there; the launcher's built-in **Manage Extensions** command opens Settings at the group, and the launcher has no screen of its own for them (ADR 0043).
-_Avoid_: Manage extensions screen (removed), extension card, extension list (the core's flow the pages drive)
+An installed extension's page in Pane's Settings, under the sidebar's Extensions group: its icon, title, description and source, its enable switch, its preferences, its commands each with its alias, hotkey and switch, and its operations (Check for Update, Reload, Clear Cache, Reset Confirmations, Show Source Folder, Uninstall), which run the launcher's own operations and confirmations: the core hands Settings each operation typed (what it is, whose, whether it is on) and runs it without moving the launcher off the screen the user had. Extensions are managed there; the launcher's built-in **Manage Extensions** command opens Settings at the group, and the launcher has no screen of its own for them (ADR 0043).
+_Avoid_: Manage extensions screen (removed), extension card, extension list (the core's list of operations, shown as a screen only in tests)
 
 **Extension settings**:
 Values an installed package's commands save through Pane, owned by its package identity and kept while it is disabled, updated or Pane is stopped.
@@ -149,7 +149,7 @@ The roots (the home folder, and the folders the user adds) and the rules decidin
 _Avoid_: Search scope, library, watched folders
 
 **Safety valve**:
-What keeps the file index from costing the user more than it gives, each listed on the File Search page with its reason and remedy: churn quarantine (a folder changing more than about 1,000 times a minute for 3 minutes in a row is taken out until the user includes it again), the ceiling (a walk stops at 5 million entries), the free-space floor (indexing stops writing while the disk holding Pane's cache has less than 1 GiB free, and starts again by itself) and hung-folder skipping (a folder that does not answer within 10 seconds is skipped for that walk).
+What keeps the file index from costing the user more than it gives, each listed on the File Search page with its reason and remedy: churn quarantine (a folder changing more than about 1,000 times a minute for 3 minutes in a row is taken out until the user includes it again), the ceiling (a walk stops at 5 million entries), the free-space floor (indexing stops writing while the disk holding Pane's cache has less than 1 GB free, and starts again by itself) and hung-folder skipping (a folder that does not answer within 10 seconds is skipped for that walk).
 _Avoid_: Limit (a valve is a reaction to what happens, not a bound the user sets), throttle
 
 **Granted folder**:
