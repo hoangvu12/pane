@@ -86,20 +86,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-      # Not every runner image carries rustup (the Windows arm64 one has
-      # lacked it); the setup below installs the pinned toolchain with it.
-      - name: Install rustup if the image lacks it
-        run: |
-          if ! command -v rustup >/dev/null; then
-            if [ "$RUNNER_OS" = Windows ]; then
-              curl -sSfL -o "$RUNNER_TEMP/rustup-init.exe" \
-                "https://static.rust-lang.org/rustup/dist/${{ matrix.target }}/rustup-init.exe"
-              "$RUNNER_TEMP/rustup-init.exe" -y --default-toolchain none --profile minimal
-            else
-              curl -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain none --profile minimal
-            fi
-            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
-          fi
       - uses: ./.github/actions/setup
       - uses: actions/download-artifact@v4
         with:

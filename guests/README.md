@@ -530,8 +530,9 @@ TypeScript 7.0.2. Every JS component imports the same 20 WASI 0.3 interfaces
 through its libc, whatever the source uses, and `wasi:http`'s `types` and
 `client` too if its bundle imports `wasi:http` (itself or through
 `@pane/extension/http`), which Pane then lists as using the network; it is
-about 4.4 MB. Only Linux x86_64 builds have been run; the scripts avoid OS-specific paths, but Windows
-and macOS builds are unverified. See
+about 4.4 MB. The whole toolchain build has been run on Linux and Windows x86_64. The componentizer
+itself is built in CI for Windows, macOS and Linux on x64 and arm64, from a runtime built once on
+Linux, and each build's TypeScript sample passes Pane's checks there (`componentizer.yml`). See
 [tools/componentize-js](../tools/componentize-js/README.md) for the patch queue.
 
 ## Forms
