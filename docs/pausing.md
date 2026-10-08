@@ -245,8 +245,9 @@ and a host call that never returns (see the limits below):
 How it works:
 
 - **Epochs.** Each runtime thread has a ticker thread advancing the
-  engine's epoch every 10 ms (`Config::epoch_interruption`), and every
-  store yields to the runtime thread at each one (an epoch-deadline
+  engine's epoch every 10 ms while a call is in flight on it (see the next
+  point; `Config::epoch_interruption`), and every store yields to the
+  runtime thread at each one (an epoch-deadline
   callback). So the runtime thread keeps looking at the call's generation
   and injected faults however busy a guest is: disabling, reloading,
   updating or pausing a package stops its computing guest within a tick
@@ -254,6 +255,29 @@ How it works:
   because it measures time, not instructions, and costs a check per loop
   and function rather than a count per instruction. The ticker ends with
   its thread.
+- **The timers sleep while no call runs** (#190). Every request sent to a
+  runtime thread is **in flight** there from when it is sent until it has
+  been served: any guest call (a command, root and indexed results, a
+  search, an action, a scheduled run, a service's cycle, setup and
+  preferences; an operation is served inside its caller's call), a custom
+  view's destructor, and host work that waits on guests
+  (`Runtime::running`, `view_count`). Guest code runs only meanwhile.
+  While nothing is in flight, the ticker waits without a timeout and does
+  not tick; the watchdog waits too while the thread is also outside any
+  poll of its work, so a thread working with nothing in flight (an
+  injected fault, a nudge to drop stopped instances) is still watched. A
+  request being sent wakes both, the thread starting a poll wakes the
+  watchdog, and the thread's end wakes both, for the ticker's last tick.
+  Each checks and waits under the lock that the count and the poll change
+  under, so a call that starts as a timer goes to wait still wakes it, and
+  no computing guest is left unticked. So while Pane is quiet, neither
+  thread wakes at all. While anything is in flight, both behave
+  exactly as below: a tick every 10 ms, a look every 100 ms, the compute
+  limit and the give-up. The watchdog does not count the time it waited:
+  it starts its count afresh as it wakes, and a "not responding yet" it
+  had said is withdrawn as it goes to wait, since the thread was then seen
+  outside any poll. Between a service's cycles, or a schedule's runs, both
+  wait.
 - **The meter** counts a call's compute time as the runtime thread's CPU
   time while it polls the call (`CLOCK_THREAD_CPUTIME_ID` on Linux and
   macOS, `GetThreadTimes` on Windows; wall time inside those polls where
@@ -282,7 +306,9 @@ How it works:
   thread waits for it. Its expiry runs on a thread of its own.
 - **The watchdog.** Each runtime thread has a heartbeat, bumped at each
   poll of its work, each epoch yield of a guest and as each host call
-  starts and ends. A watchdog thread looks every 100 ms. A thread waiting
+  starts and ends. A watchdog thread looks every 100 ms while a request
+  is in flight or the thread is inside a poll (it sleeps otherwise, see
+  above). A thread waiting
   for work, or awaiting a guest's host work, is not polled, so never quiet;
   one inside a host call is never given up on; one computing a guest
   beats at every tick (and is stopped by the meter). A thread inside one
