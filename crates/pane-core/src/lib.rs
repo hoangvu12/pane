@@ -40,6 +40,7 @@ pub mod placement;
 mod platform;
 mod preferences;
 mod programs;
+mod protection;
 mod runtime;
 mod search;
 pub mod system;

@@ -46,8 +46,11 @@ declare module "pane:extension/cache@0.1.0" {
 /**
  * `pane:extension/credentials@0.1.0`: secrets the extension keeps on this
  * computer, such as a sign-in token. Clearing the cache keeps them. Pane
- * stores them as plain text in its data folder, not in the system's keychain.
- * `get` and `set` behave as in the settings module.
+ * keeps them in a file only the user can read, each value encrypted for the
+ * current user on Windows (DPAPI), as it is on macOS and Linux; not in the
+ * system's keychain. `get` and `set` behave as in the settings module, except
+ * that `get` throws, ending "Sign in again.", for a value Pane cannot decrypt
+ * on this computer, which it keeps until `set` replaces it.
  */
 declare module "pane:extension/credentials@0.1.0" {
   export function get(key: string): string | null;
