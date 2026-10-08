@@ -24,6 +24,12 @@ struct Fake {
     watched: Mutex<Vec<PathBuf>>,
     /// Catch-ups made.
     catch_ups: AtomicUsize,
+    /// Its catch-up reads the folder-id table, as the NTFS journal's does.
+    reads_folder_ids: AtomicBool,
+    /// It watches each indexed folder, as Linux's inotify does.
+    watches_each_folder: AtomicBool,
+    /// The folders the latest watch was given.
+    folders: Mutex<Vec<PathBuf>>,
 }
 
 struct FakeWatch(Arc<AtomicUsize>);
@@ -54,10 +60,14 @@ impl ChangeSource for Fake {
         _index: &FileIndex,
         _scope: &Scope,
         cursors: &[JournalCursor],
+        folders: &mut FolderIds<'_>,
         _cancel: &AtomicBool,
     ) -> Caught {
         assert_eq!(cursors, [cursor()], "the cursors saved with the index");
         self.catch_ups.fetch_add(1, Ordering::SeqCst);
+        if self.reads_folder_ids.load(Ordering::SeqCst) {
+            assert!(!folders.ids().is_empty(), "the folders indexed");
+        }
         lock(&self.caught).take().unwrap_or(Caught::Changes {
             changes: Vec::new(),
             walk: Vec::new(),
@@ -68,14 +78,19 @@ impl ChangeSource for Fake {
         })
     }
 
+    fn watches_folders(&self) -> bool {
+        self.watches_each_folder.load(Ordering::SeqCst)
+    }
+
     fn watch(
         &self,
         scope: &Scope,
         _cursors: &[JournalCursor],
-        _folders: Vec<PathBuf>,
+        folders: Vec<PathBuf>,
         sink: Sink,
     ) -> Result<Box<dyn Watching>, String> {
         *lock(&self.watched) = scope.watched_roots();
+        *lock(&self.folders) = folders;
         *lock(&self.sink) = Some(sink);
         self.watching.fetch_add(1, Ordering::SeqCst);
         Ok(Box::new(FakeWatch(self.watching.clone())))
@@ -1273,4 +1288,90 @@ fn churn_in_folders_the_index_leaves_out_never_takes_anything_out() {
     assert_eq!(churned.len(), 1, "{churned:?}");
     assert_eq!(churned[0].folder.as_deref(), Some(busy.as_path()));
     assert_eq!(fixture.names("plan"), ["plan.txt"]);
+}
+
+/// The folder-id table is read from the index once per open and shared by
+/// the catch-up and the watch setup (#187): a source whose catch-up reads
+/// it (as the NTFS journal's does) and that watches each folder (as
+/// Linux's inotify does) has it read once, and the watch is given the
+/// folders as the catch-up's changes left them.
+#[test]
+fn the_catch_up_and_the_watch_share_one_read_of_the_folder_ids() {
+    let fixture = Fixture::indexed();
+    fixture.indexer.set_users(BTreeSet::new());
+    until(|| fixture.fake.watching.load(Ordering::SeqCst) == 0);
+
+    // While off, a folder was made and another one deleted.
+    let home = &fixture.home;
+    let projects = home.join("Projects");
+    fs::create_dir_all(&projects).unwrap();
+    fs::remove_dir_all(home.join("Music")).unwrap();
+    *lock(&fixture.fake.caught) = Some(Caught::Changes {
+        changes: vec![
+            Change::Put(Entry::read(&projects).unwrap()),
+            Change::RemoveUnder(home.join("Music")),
+        ],
+        walk: Vec::new(),
+        reconcile: Vec::new(),
+        cursors: vec![cursor()],
+        how: CaughtUpBy::Journal,
+        note: None,
+    });
+    fixture.fake.reads_folder_ids.store(true, Ordering::SeqCst);
+    fixture.fake.watches_each_folder.store(true, Ordering::SeqCst);
+    fixture.indexer.set_users(users(&[OWNER]));
+    fixture.settle();
+
+    let index = fixture.indexer.shared().index.clone().expect("open");
+    assert_eq!(index.folder_id_reads(), 1, "read once, for both");
+    let folders = lock(&fixture.fake.folders).clone();
+    assert!(folders.contains(&projects), "{folders:?}");
+    assert!(folders.contains(&home.join("Documents")), "{folders:?}");
+    assert!(!folders.contains(&home.join("Music")), "{folders:?}");
+    let depths: Vec<usize> = folders
+        .iter()
+        .map(|folder| folder.components().count())
+        .collect();
+    assert!(depths.is_sorted(), "shallowest first: {folders:?}");
+}
+
+/// On Windows a restart reads the folder-id table from the index once
+/// (#187): the NTFS catch-up resolves the journal's records through it,
+/// and watching each root whole needs none. Run on the runner's NTFS
+/// volume; where the temporary folder's volume keeps no journal, the
+/// catch-up reconciles and never reads it.
+#[cfg(windows)]
+#[test]
+fn a_restart_on_windows_reads_the_folder_ids_once() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path().join("home");
+    fs::create_dir_all(home.join("Documents/Drafts")).unwrap();
+    fs::write(home.join("Documents/plan.txt"), "plan").unwrap();
+    let index_dir = dir.path().join("cache").join(INDEX_DIR);
+    let native = || IndexerConfig {
+        source: crate::file_index::native_changes(),
+        ..config(&index_dir, &home, Arc::new(Fake::default()))
+    };
+    let first = Indexer::default();
+    first.configure(native(), UserRules::default());
+    first.launcher_shown();
+    first.set_users(users(&[OWNER]));
+    assert!(first.wait_until_settled(LIMIT), "{:?}", first.status());
+    first.set_users(BTreeSet::new());
+    drop(first);
+
+    // Changed while Pane is not running.
+    fs::write(home.join("Documents/Drafts/letter.txt"), "x").unwrap();
+    let indexer = Indexer::default();
+    // Its index may be let go by the old coordinator a moment later.
+    indexer.configure(native(), UserRules::default());
+    indexer.launcher_shown();
+    indexer.set_users(users(&[OWNER]));
+    assert!(indexer.wait_until_settled(LIMIT), "{:?}", indexer.status());
+    let index = indexer.shared().index.clone().expect("open");
+    let reads = index.folder_id_reads();
+    match indexer.status().caught_up.map(|(by, _)| by) {
+        Some(CaughtUpBy::Journal) => assert_eq!(reads, 1, "read once, for both"),
+        how => assert_eq!(reads, 0, "caught up {how:?}, never resolving records"),
+    }
 }

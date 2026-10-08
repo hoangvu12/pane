@@ -118,8 +118,12 @@ while any walk runs, searches answer from what is indexed so far.
 One thread of its own per activation ("pane-file-index"), at background
 priority (background mode and EcoQoS on Windows, the background QoS class
 on macOS, nice 19 and the idle I/O class on Linux), does all the writing;
-the walker's threads run at the same priority. A query never runs at
-background priority and never waits for the coordinator.
+the walker's threads run at the same priority, and so does the index's own
+merge thread ("pane-file-index-merge", one per open index), which merges
+segments in the background (#187, [below](#the-engine-and-the-walker)). A
+query never runs at background priority and never waits for the
+coordinator or for a merge, and the coordinator never waits for a merge
+either.
 
 ### Where it is kept
 
@@ -241,6 +245,18 @@ Only the roots the rules keep are caught up and watched, and a root on a
 network share the user included is not watched on any system: it is
 reconciled at start and every 5 minutes instead
 ([above](#network-shares-and-removable-drives)).
+
+The **folder-id table** (each indexed folder's file id and path,
+`FileIndex::folder_ids`) takes reading every entry of every segment. It
+is read at most once each time the index opens (#187,
+`file_index::FolderIds`): by the NTFS catch-up, the first time a volume's
+records need resolving, then brought up to the changes the catch-up
+applied and handed to the watch setup; and by the watch setup only where
+the source watches each folder (Linux). Windows and macOS watch each root
+whole and never read it for watching, nor after a first walk. It is let go
+once watching has started, and is not kept on disk: that would change the
+index's format, which is left for when the benchmark shows the catch-up
+still needs it.
 
 A **reconciling walk** (`file_index::reconcile`) compares the index's own
 folders with the disk and reads again only a folder whose modified time
@@ -782,15 +798,34 @@ which the coordinator above builds on:
   front-coded in blocks of 16, each with a fixed 4-byte hint (day modified,
   depth, kind) and the postings of its terms, whose dictionary is an `fst`
   map read through a memory map; prefix tombstones hiding a deleted or
-  renamed folder's entries in older segments; and a merge of all segments
-  into one, which drops superseded versions, deletions and what tombstones
-  hide, once there are more than 8. A first walk writes segments directly,
-  without the log, and merges them at the end. Terms are the folded words
-  (case and accents ignored, split at camel case and digits) of the name
-  and, separately, of the folders below the root. A query reads, per
-  segment, at most 1,000 candidates matching every word, those with every
-  word in the name first, ranked by their hints, then scores them as #126's
-  "Matching and ranking" describes (`file_index/text.rs`): an exact name,
+  renamed folder's entries in older segments; and **tiered merges in the
+  background** (#187). Each time a segment is written (the memory table at
+  65,536 entries, at a save of the cursors, when Pane stops), the index's
+  merge thread looks for 4 neighbouring segments of similar size (the
+  largest at most 4 times the smallest, a segment under 4,096 entries
+  counted as 4,096), the smallest such run, and merges it into one segment
+  that takes its place; with more than 8 segments it merges the smallest 4
+  neighbours whatever their sizes, so a query reads about 8 at most. Only
+  neighbours are merged, so each segment's entries stay newer than every
+  older one's. A merge keeps the newest version of each path and drops
+  what tombstones hide; it drops deletions and the tombstones its segments
+  carry only when it starts at the oldest segment, since only then is
+  nothing older left for them to hide (a merge above it carries them on).
+  It holds the writer only to name its file and to put the merged segment
+  in place, never while writing it: the coordinator applies changes and
+  writes segments meanwhile, and queries read the old segments until the
+  new one replaces them. A merge cut short (Pane stopped, the index
+  closed) leaves its file out of `index.json`, which the next open
+  deletes; what changed meanwhile is in the log or a segment of its own,
+  so nothing is lost. A first walk writes segments directly, without the
+  log, with no merge running, and merges them into one at its end; so
+  does `FileIndex::compact`, which the benchmark uses. Terms are the
+  folded words (case and accents ignored, split at camel case and digits)
+  of the name and, separately, of the folders below the root. A query
+  reads, per segment, at most 1,000 candidates matching every word, those
+  with every word in the name first, ranked by their hints, then scores
+  them as #126's "Matching and ranking" describes (`file_index/text.rs`):
+  an exact name,
   then an exact stem, a name starting with the query, every word starting
   a word of the name, then of the folders. A query with `/` or `\`
   matches path segments in order: the words of each part start words of
@@ -863,7 +898,9 @@ crate Raycast uses), before the measurement, which is to confirm it:
 - **Threads and priority.** It starts its own flush, compaction and
   recovery threads with its own priority policy; #126 wants Pane's
   coordinator to own background priority, pausing for sleep and "no
-  periodic work while nothing changes".
+  periodic work while nothing changes". (Pane's index has one merge thread
+  of its own since #187, at the same background priority, which waits
+  without waking while no segment is written.)
 - **Matching.** Its tokenizer and candidate pruning are fixed; #126 wants
   folding consistent with root search's and weights tuned against Pane's
   fixtures, with name and folder matches told apart.
@@ -909,11 +946,17 @@ there), `--root <folder>` another folder. It prints, as a table against
 - query latency over a fixed set (`--queries`, default 1,000, about as
   many of each kind), on two shapes of the index: one segment, as the
   first index leaves it, and several segments with changes in memory, as
-  a stream of changes leaves it before a merge (5 segments and the last
-  batch in memory, about one change for every 50 entries a batch, between
-  500 and 10,000: files added, entries changed, files and a folder
-  deleted). Each shape gets a first pass and a warm pass. The overall
-  95th percentile covers every kind (#183):
+  a stream of changes leaves it once the index merged what it wrote (5
+  batches, about one change for every 50 entries a batch, between 500 and
+  10,000: files added, entries changed, files and a folder deleted; 4
+  written as segments, which the background merges make one, and the last
+  in memory; until #187 the 5 segments stayed). Each shape gets a first
+  pass and a warm pass. A third row times the same set once more while
+  changes arrive (#187): another thread applies streams of 5 batches of a
+  tenth of that size, each but the last written as a segment, 100 ms
+  apart, so that segments are merged in the background while the queries
+  run; it says how many changes arrived meanwhile. The overall 95th
+  percentile covers every kind (#183):
   - whole names, 3-letter prefixes, a word, folder and name words, one
     letter;
   - misses: a word no entry holds (3 to 8 letters, so the pass inside
@@ -942,8 +985,9 @@ there), `--root <folder>` another folder. It prints, as a table against
   that file is written beside the first and indexed as if it were in that
   folder, which is not written to;
 - on Windows with the generated tree, the catch-up after 10,000 files
-  created: the journal read from a saved cursor, resolved, looked at,
-  applied and found;
+  created: the journal read from a saved cursor, resolved (the folder-id
+  table read once, as the coordinator does since #187), looked at, applied
+  and found;
 - the time to open the index at start, the private memory it adds while
   idle, and the peak memory while indexing.
 
@@ -1055,7 +1099,11 @@ milestone is merged).
   standing for Windows' and macOS's) left out, indexed once other volumes
   are included (the removable drive watched, the share never, a change on
   it found by the reconciling walk) and left out again, and a home folder
-  on a share left out until then (#184). Each safety valve triggered: a
+  on a share left out until then (#184); the folder-id table read once for
+  a catch-up that reads it and a watch given each folder, the watch given
+  the folders as the catch-up's changes left them, and on Windows a
+  restart through the real NTFS journal reading it once (#187, through
+  `FileIndex`'s count of reads). Each safety valve triggered: a
   folder churning taken out, listed, recorded, kept out across a rule
   change and included again, one busy now and then never taken out, and
   the same burst of changes in `node_modules`, a repository's `.git`, an
@@ -1096,7 +1144,15 @@ milestone is merged).
   Other `store` and `segment` tests cover the tombstones looked up by
   prefix against reading each one, the term ordinals, the fragment lists,
   the key filter, and an index of the previous and of a later format
-  version rebuilt.
+  version rebuilt. The merges (#187): which run of segments is merged
+  (similar sizes, the smallest run, any run past 8 segments); a merge held
+  before it puts its segment in place while changes arrive (a batch
+  written as a segment, one in memory), the same reference queries
+  answering from what is current during it and after it, and after
+  opening again, for a merge from the oldest segment (its tombstones
+  dropped) and one above it (carried on); a restart from the folder as a
+  merge cut short leaves it, its merged segment deleted and every change
+  found through the log; and many small segments merged a few at a time.
 - **Per system**: the NTFS journal read without administrator rights
   (`file_index::journal` tests, #174); inotify reporting a change in a
   watched folder and a folder added later, and stopping when dropped
@@ -1238,7 +1294,12 @@ milestone is merged).
   repository once.
 - The roots and rules an index was built under are recorded as JSON; a
   root whose path is not valid Unicode cannot be recorded.
-- The benchmark's numbers against Raycast's are not measured yet (#174).
+- The benchmark's numbers against Raycast's are not measured yet (#174),
+  nor the catch-up after 10,000 changes and the queries while changes
+  arrive since #187's merges and shared folder-id table.
+- A merge does not follow the sleep pause: one under way when the
+  computer sleeps finishes after the wake, at background priority. A first
+  walk waits for a merge under way to finish before it writes.
 - A handler slow to fail (over three seconds) is reported as having opened
   the file. Screen reader behaviour is unverified, as for all of root
   search.

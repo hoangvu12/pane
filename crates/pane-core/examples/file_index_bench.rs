@@ -2,7 +2,8 @@
 //! and warm runs), index size on disk, query latency percentiles per kind
 //! of query on two shapes of the index (one segment, as the first index
 //! leaves it; several segments and changes in memory, as a stream of
-//! changes leaves it), a changed file re-indexed near the root and in a
+//! changes leaves it) and while changes arrive and segments are merged in
+//! the background (#187), a changed file re-indexed near the root and in a
 //! deep folder under ignore files, the catch-up after 10,000 changes
 //! (Windows), and memory, against the targets of #126 (Raycast: 450,097
 //! entries in 12.9 s, 61.8 MB on disk).
@@ -40,7 +41,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -65,10 +66,11 @@ const GUARD_REINDEX_P95: Duration = Duration::from_millis(2_500);
 
 /// The batches of the stream of changes timed queries see on the second
 /// shape of the index: all but the last are written as a segment of their
-/// own, the last stays in the memory table. The index merges its segments
-/// past 8 (`MAX_SEGMENTS` in `store.rs`) and writes its memory table past
-/// 65,536 entries, so 5 segments (with the one the first index left) and a
-/// batch of at most 10,000 changes in memory stay below both.
+/// own, the last stays in the memory table (at most 10,000 changes, below
+/// the 65,536 entries past which it is written). The index merges a few
+/// segments of similar size at a time in the background (#187), so the
+/// segments are counted once its merges are done: about 2 (the one the
+/// first index left, and the stream's 4 merged), not 5.
 const STREAM_BATCHES: usize = 5;
 
 /// The words and extensions of the generated tree's names, and of the
@@ -356,9 +358,15 @@ fn main() {
     }
     index.compact().expect("the index merged into one segment");
     let per_batch = (runs[0].entries as usize / 50).clamp(500, 10_000);
-    let streamed = stream_changes(&index, &root, &sample, per_batch);
+    let mut streamed = stream_changes(&index, &root, &sample, per_batch);
+    // As the merges the stream started leave it, so that runs compare.
+    index.wait_for_merges();
+    streamed.segments = index.stats().segments;
     let several_first = time_queries(&index, &queries);
     let several_warm = time_queries(&index, &queries);
+    // The same queries while changes go on arriving and segments are merged
+    // in the background (#187).
+    let arriving = while_changes_arrive(&index, &root, &sample, per_batch, &queries);
     drop(index);
     let _ = std::fs::remove_dir_all(&index_dir);
 
@@ -408,6 +416,10 @@ fn main() {
         spread(&several_warm)
     );
     println!(
+        "| Query, 95th percentile, while changes arrive and segments merge | {} | under 10 ms | not measured |",
+        spread(&arriving.times)
+    );
+    println!(
         "| A changed file re-indexed near the root, 95th percentile | {} (p50 {}) | under 10 ms | 4–10 ms |",
         millis(percentile(&near_root, 95.0)),
         millis(percentile(&near_root, 50.0)),
@@ -453,8 +465,12 @@ fn main() {
         QueryKind::ALL.len()
     );
     println!(
-        "Several segments and changes in memory: {} segments and {} changes in memory, left by a stream of {} changes in {STREAM_BATCHES} batches of about {per_batch} (the index merges past 8 segments).",
+        "Several segments and changes in memory: {} segments and {} changes in memory, left by a stream of {} changes in {STREAM_BATCHES} batches of about {per_batch}, once the index merged what the stream wrote (a few segments of similar size at a time, in the background).",
         streamed.segments, streamed.in_memory, streamed.changes,
+    );
+    println!(
+        "While changes arrive: {} changes applied while the queries ran, in batches of about {} each written as a segment, a pause of 100 ms after every {STREAM_BATCHES}; {} segments at the end.",
+        arriving.changes, arriving.per_batch, arriving.segments,
     );
     println!();
     println!(
@@ -1021,6 +1037,52 @@ fn deep_folder(root: &Path, scope: &Scope, sample: &[PathBuf]) -> Option<DeepFol
     best
 }
 
+/// The queries timed while changes arrived, and what arrived.
+struct Arriving {
+    times: Vec<Duration>,
+    /// Changes applied while the queries ran.
+    changes: usize,
+    per_batch: usize,
+    /// Segments when the queries were done.
+    segments: usize,
+}
+
+/// `queries` timed while another thread applies changes, as the indexer's
+/// coordinator does (#187): streams of [`STREAM_BATCHES`] batches of about
+/// a tenth of `per_batch` changes, each but the last written as a segment
+/// of its own, 100 ms apart, so that the index merges segments in the
+/// background while the queries run. A query never waits for a merge,
+/// only for a batch being put in memory.
+fn while_changes_arrive(
+    index: &FileIndex,
+    root: &Path,
+    sample: &[PathBuf],
+    per_batch: usize,
+    queries: &[TimedQuery],
+) -> Arriving {
+    let per_batch = (per_batch / 10).max(50);
+    let done = AtomicBool::new(false);
+    let (times, changes) = std::thread::scope(|threads| {
+        let stream = threads.spawn(|| {
+            let mut changes = 0;
+            while !done.load(Ordering::Relaxed) {
+                changes += stream_changes(index, root, sample, per_batch).changes;
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            changes
+        });
+        let times = time_queries(index, queries);
+        done.store(true, Ordering::Relaxed);
+        (times, stream.join().unwrap_or(0))
+    });
+    Arriving {
+        times,
+        changes,
+        per_batch,
+        segments: index.stats().segments,
+    }
+}
+
 /// What the stream of changes left.
 struct Streamed {
     segments: usize,
@@ -1030,8 +1092,8 @@ struct Streamed {
     in_memory: usize,
 }
 
-/// A stream of changes over the index, as days of use leave it before a
-/// merge: [`STREAM_BATCHES`] batches of about `per_batch` changes, each
+/// A stream of changes over the index, as days of use bring them:
+/// [`STREAM_BATCHES`] batches of about `per_batch` changes, each
 /// written as a segment of its own but the last, which stays in memory.
 /// Each batch adds files beside entries the walk found (six tenths),
 /// changes found entries, a newer version over the segment's (three

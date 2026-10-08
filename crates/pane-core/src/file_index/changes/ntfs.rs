@@ -9,7 +9,7 @@
 use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 
-use super::{Caught, CaughtUpBy, ChangeSource, NotifyWatch, Sink, Watching};
+use super::{Caught, CaughtUpBy, ChangeSource, FolderIds, NotifyWatch, Sink, Watching};
 use crate::file_index::journal::{JournalCursor, JournalRead, Names, read_journal, resolve};
 use crate::file_index::scope::Scope;
 use crate::file_index::store::FileIndex;
@@ -63,6 +63,7 @@ impl ChangeSource for Journal {
         index: &FileIndex,
         scope: &Scope,
         cursors: &[JournalCursor],
+        folders: &mut FolderIds<'_>,
         _cancel: &AtomicBool,
     ) -> Caught {
         let mut changes = Vec::new();
@@ -70,7 +71,6 @@ impl ChangeSource for Journal {
         let mut reconcile: Vec<PathBuf> = Vec::new();
         let mut kept: Vec<JournalCursor> = Vec::new();
         let mut note = None;
-        let mut folders = index.folder_ids();
         // A root the rules leave out (a network share or a removable drive)
         // is not caught up: it holds nothing in the index.
         let roots = scope.kept_roots();
@@ -94,9 +94,11 @@ impl ChangeSource for Journal {
             match read {
                 JournalRead::Records { records, cursor } => {
                     // Read without administrator rights, the records carry
-                    // no names: entries are named by their ids.
+                    // no names: entries are named by their ids. The folder
+                    // ids are read from the index here, the first time
+                    // records need them, and once for every volume.
                     let mut names = Names::for_volume_of(root);
-                    let caught = resolve(&records, &mut folders, &mut |id| names.name(id));
+                    let caught = resolve(&records, folders.ids(), &mut |id| names.name(id));
                     let (found, folders_to_walk) = catch_up_changes(scope, &caught);
                     changes.extend(missing_from(index, &caught.listed));
                     changes.extend(found);

@@ -22,7 +22,7 @@ use std::sync::{Arc, Mutex};
 use fsevent_sys as fse;
 use fsevent_sys::core_foundation as cf;
 
-use super::{Caught, CaughtUpBy, ChangeSource, Changed, Sink, Watching};
+use super::{Caught, CaughtUpBy, ChangeSource, Changed, FolderIds, Sink, Watching};
 use crate::file_index::journal::JournalCursor;
 use crate::file_index::scope::Scope;
 use crate::file_index::store::FileIndex;
@@ -102,6 +102,7 @@ impl ChangeSource for FsEvents {
         _index: &FileIndex,
         scope: &Scope,
         cursors: &[JournalCursor],
+        _folders: &mut FolderIds<'_>,
         _cancel: &AtomicBool,
     ) -> Caught {
         // The replay itself comes through the live stream (`watch`), from

@@ -66,7 +66,8 @@ pub use walker::{HUNG_AFTER, MAX_ENTRIES, WalkOptions, WalkReport, walk, walk_fo
 
 pub use category::Category;
 pub use changes::{
-    Caught, CaughtUpBy, ChangeSource, Changed, Sink, SinkClosed, Watching, native as native_changes,
+    Caught, CaughtUpBy, ChangeSource, Changed, FolderIds, Sink, SinkClosed, Watching,
+    native as native_changes,
 };
 pub use indexer::{
     Checked, FIRST_WALK_DELAY, Found, INDEX_DIR, IndexState, IndexStatus, Indexer, IndexerConfig,

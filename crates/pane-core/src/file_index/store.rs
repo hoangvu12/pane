@@ -3,21 +3,25 @@
 //! segments on disk each with its own term dictionary (and, like the memory
 //! table, the terms having each fragment of their words, for the pass
 //! inside words) and key filter, tombstones that hide a deleted folder's
-//! entries in older segments, and compaction that merges the segments into
-//! one. Its files are Pane's own, versioned by
-//! [`FORMAT_VERSION`]: an index of another version is rebuilt, never read.
+//! entries in older segments, and merges of a few segments of similar size
+//! at a time, in the background (#187). Its files are Pane's own, versioned
+//! by [`FORMAT_VERSION`]: an index of another version is rebuilt, never
+//! read.
 //!
 //! One writer at a time changes the index (its writer lock); queries read
 //! it at the same time, never waiting for a segment to be written or
-//! merged, only for the moment its result replaces what was there.
+//! merged, only for the moment its result replaces what was there. Merges
+//! run on a thread of the index's own ([`Merger`]), at background priority,
+//! so that applying changes never waits for one either.
 
 use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 use std::fs::{self, File};
 use std::io;
-use std::ops::{Bound, ControlFlow};
+use std::ops::{Bound, ControlFlow, Range};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, MutexGuard, RwLock, RwLockReadGuard};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, RwLock, RwLockReadGuard};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
@@ -39,7 +43,15 @@ use crate::util::lock;
 const MEMORY_TABLE_ENTRIES: usize = 1 << 16;
 /// Entries a first index writes per segment, before merging them.
 const BULK_SEGMENT_ENTRIES: usize = 1 << 17;
-/// Segments beyond which they are merged into one.
+/// Neighbouring segments a merge takes at a time (#187): a few, so that no
+/// change waits for the whole index to be written again.
+const MERGE_FACTOR: usize = 4;
+/// A segment smaller than this counts as this many entries when sizes are
+/// compared: the small segments that flushes and starts leave are alike.
+const MERGE_FLOOR: u64 = 1 << 12;
+/// Segments beyond which the smallest run of [`MERGE_FACTOR`] neighbours is
+/// merged even if their sizes differ, so that a query reads at most about
+/// this many.
 const MAX_SEGMENTS: usize = 8;
 /// Candidates a query reads and scores per segment, at least.
 const CANDIDATES: usize = 1_000;
@@ -519,9 +531,11 @@ struct State {
     /// Oldest first; each newer segment's entries are newer than all of an
     /// older one's.
     segments: Vec<Arc<Segment>>,
-    /// Every tombstone not yet merged away.
+    /// Every tombstone not yet merged away: those the segments carry and
+    /// the unflushed ones.
     tombstones: Tombstones,
-    /// The tombstones the next segment written carries.
+    /// The tombstones the next segment written carries, kept here until
+    /// that segment is among `segments`.
     unflushed_tombstones: Vec<Tombstone>,
 }
 
@@ -567,8 +581,383 @@ pub struct FileIndex {
     dir: PathBuf,
     roots: Roots,
     _lock: File,
-    state: RwLock<State>,
-    writer: Mutex<Writer>,
+    /// Shared with the merger's thread, as are the writer and `merges`.
+    state: Arc<RwLock<State>>,
+    writer: Arc<Mutex<Writer>>,
+    merges: Arc<Merges>,
+    /// The merger's thread, stopped and waited for when the index closes,
+    /// before its folder is unlocked.
+    merger: Option<std::thread::JoinHandle<()>>,
+    /// How often [`FileIndex::folder_ids`] read the table since the index
+    /// opened, for the tests (#187).
+    folder_id_reads: AtomicUsize,
+}
+
+impl Drop for FileIndex {
+    /// Stops the merger, letting go of a merge under way, before the folder
+    /// is unlocked: nothing writes there once the index is closed.
+    fn drop(&mut self) {
+        self.merges.close();
+        if let Some(merger) = self.merger.take() {
+            let _ = merger.join();
+        }
+    }
+}
+
+/// The merges in the background (#187): whenever segments are added, the
+/// merger's thread looks for a run to merge ([`tier_to_merge`]) and merges
+/// it, while changes go on being applied and queries answered.
+#[derive(Default)]
+struct Merges {
+    /// Held while segments are merged (by the merger, or by a full
+    /// compaction) and while a first walk writes its segments: one at a
+    /// time. Always taken before the writer, never while holding it.
+    merging: Mutex<()>,
+    turns: Mutex<Turns>,
+    changed: Condvar,
+    /// The index is closing: a merge under way is let go.
+    closing: AtomicBool,
+}
+
+/// Whether the merger has something to do.
+#[derive(Default)]
+struct Turns {
+    /// Segments were added since the merger last looked.
+    wanted: bool,
+    /// The merger is looking for runs to merge, or merging one.
+    running: bool,
+    /// Tests: no merge starts while held.
+    held: bool,
+    /// Tests: a merge waits before its segment takes the run's place while
+    /// this is set; `paused` says it waits.
+    pause_before_swap: bool,
+    #[cfg_attr(not(test), allow(dead_code))]
+    paused: bool,
+}
+
+impl Merges {
+    fn turns(&self) -> MutexGuard<'_, Turns> {
+        lock(&self.turns)
+    }
+
+    fn wait<'a>(&self, turns: MutexGuard<'a, Turns>) -> MutexGuard<'a, Turns> {
+        self.changed
+            .wait(turns)
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    fn closing(&self) -> bool {
+        self.closing.load(Ordering::SeqCst)
+    }
+
+    /// Asks the merger to look for segments to merge.
+    fn want(&self) {
+        self.turns().wanted = true;
+        self.changed.notify_all();
+    }
+
+    /// Waits for the merger's next turn: `false` once the index closes.
+    fn next_turn(&self) -> bool {
+        let mut turns = self.turns();
+        loop {
+            if self.closing() {
+                return false;
+            }
+            if turns.wanted && !turns.held {
+                turns.wanted = false;
+                turns.running = true;
+                return true;
+            }
+            turns = self.wait(turns);
+        }
+    }
+
+    /// Whether the merger's turn goes on to another merge.
+    fn going_on(&self) -> bool {
+        !self.closing() && !self.turns().held
+    }
+
+    fn turn_done(&self) {
+        self.turns().running = false;
+        self.changed.notify_all();
+    }
+
+    /// The index closes: the merger stops.
+    fn close(&self) {
+        let _turns = self.turns();
+        self.closing.store(true, Ordering::SeqCst);
+        self.changed.notify_all();
+    }
+
+    /// Waits until no merge is due or under way.
+    fn wait_until_done(&self) {
+        let mut turns = self.turns();
+        while !self.closing() && ((turns.wanted && !turns.held) || turns.running) {
+            turns = self.wait(turns);
+        }
+    }
+
+    /// Waits while a test pauses merges before their segment takes the
+    /// run's place; at once otherwise.
+    fn before_swap(&self) {
+        let mut turns = self.turns();
+        if !turns.pause_before_swap {
+            return;
+        }
+        turns.paused = true;
+        self.changed.notify_all();
+        while turns.pause_before_swap && !self.closing() {
+            turns = self.wait(turns);
+        }
+        turns.paused = false;
+        self.changed.notify_all();
+    }
+}
+
+/// Ends the merger's turn, even if a merge panics, so that nothing waits
+/// for it forever.
+struct Turn<'a>(&'a Merges);
+
+impl Drop for Turn<'_> {
+    fn drop(&mut self) {
+        self.0.turn_done();
+    }
+}
+
+/// What the merger's thread holds of the index.
+struct Merger {
+    dir: PathBuf,
+    roots: Roots,
+    state: Arc<RwLock<State>>,
+    writer: Arc<Mutex<Writer>>,
+    merges: Arc<Merges>,
+}
+
+impl Merger {
+    /// The merger's thread, at background priority, as the walker's and the
+    /// coordinator's: each time segments were added, merges what is due,
+    /// until the index closes.
+    fn run(self) {
+        super::lower_current_thread();
+        while self.merges.next_turn() {
+            let _turn = Turn(&self.merges);
+            while self.merges.going_on() {
+                match self.merge_due() {
+                    Ok(true) => {}
+                    // Nothing due, or a merge failed (it is tried again when
+                    // segments are next added).
+                    Ok(false) | Err(_) => break,
+                }
+            }
+        }
+    }
+
+    /// Merges the next run of segments due, if one is: `true` when it did.
+    /// The writer is held only to name the new segment and to put it in
+    /// place, never while it is written, so that changes go on being
+    /// applied meanwhile.
+    fn merge_due(&self) -> Result<bool, IndexError> {
+        let _merging = lock(&self.merges.merging);
+        let segments = read(&self.state).segments.clone();
+        let sizes: Vec<u64> = segments
+            .iter()
+            .map(|segment| u64::from(segment.len()))
+            .collect();
+        let Some(run) = tier_to_merge(&sizes) else {
+            return Ok(false);
+        };
+        let id = {
+            let mut writer = lock(&self.writer);
+            let id = writer.next_file;
+            writer.next_file += 1;
+            id
+        };
+        // The tombstones as of now: one applied later hides what it hides
+        // in the merged segment as it did in the run.
+        let tombstones = read(&self.state).tombstones.clone();
+        let written = write_merged(
+            &self.dir,
+            &self.roots,
+            &segments[run.clone()],
+            &tombstones,
+            run.start == 0,
+            id,
+            &self.merges.closing,
+        )?;
+        let Some(merged) = written else {
+            return Ok(false);
+        };
+        self.merges.before_swap();
+        let mut writer = lock(&self.writer);
+        if !replace_run(&self.state, &segments[run.clone()], merged) {
+            drop(writer);
+            let _ = fs::remove_file(segment_path(&self.dir, id));
+            return Ok(false);
+        }
+        write_manifest(&self.dir, &self.state, &writer)?;
+        let old: Vec<PathBuf> = segments[run]
+            .iter()
+            .map(|segment| segment.path.clone())
+            .collect();
+        drop(segments);
+        delete_replaced(old, &mut writer.garbage);
+        Ok(true)
+    }
+}
+
+/// The run of neighbouring segments to merge next, given each segment's
+/// entries, oldest first: [`MERGE_FACTOR`] neighbours of similar size (the
+/// largest at most [`MERGE_FACTOR`] times the smallest, each counted as at
+/// least [`MERGE_FLOOR`]), the smallest such run; and with more than
+/// [`MAX_SEGMENTS`] segments, the smallest run of neighbours whatever their
+/// sizes. `None` when nothing is due. Neighbours only, so that the merged
+/// segment takes their place and each segment's entries stay newer than
+/// every older one's.
+fn tier_to_merge(sizes: &[u64]) -> Option<Range<usize>> {
+    if sizes.len() < MERGE_FACTOR {
+        return None;
+    }
+    let mut similar: Option<(u64, usize)> = None;
+    let mut smallest: Option<(u64, usize)> = None;
+    for start in 0..=sizes.len() - MERGE_FACTOR {
+        let run = &sizes[start..start + MERGE_FACTOR];
+        let total: u64 = run.iter().sum();
+        let counted = run.iter().map(|&size| size.max(MERGE_FLOOR));
+        let least = counted.clone().min().unwrap_or(MERGE_FLOOR);
+        let most = counted.max().unwrap_or(MERGE_FLOOR);
+        if most <= least.saturating_mul(MERGE_FACTOR as u64)
+            && similar.is_none_or(|(best, _)| total < best)
+        {
+            similar = Some((total, start));
+        }
+        if smallest.is_none_or(|(best, _)| total < best) {
+            smallest = Some((total, start));
+        }
+    }
+    if similar.is_none() && sizes.len() > MAX_SEGMENTS {
+        // Too many segments: the smallest run, whatever the sizes.
+        similar = smallest;
+    }
+    let (_, start) = similar?;
+    Some(start..start + MERGE_FACTOR)
+}
+
+/// Writes `run`, neighbouring segments oldest first, merged into a new
+/// segment `id` in `dir`: the newest version of each key, without what
+/// `tombstones` hide. When `oldest` (the run starts at the oldest segment,
+/// so that nothing older is left for them to hide) its deletions and the
+/// tombstones it carries are dropped; otherwise the merged segment keeps
+/// them for the segments older than it. A tombstone is so dropped only by
+/// a merge covering every segment it could hide. `None` when the index
+/// closed meanwhile (`closing`): the merge is let go and its file deleted.
+fn write_merged(
+    dir: &Path,
+    roots: &Roots,
+    run: &[Arc<Segment>],
+    tombstones: &Tombstones,
+    oldest: bool,
+    id: u64,
+    closing: &AtomicBool,
+) -> Result<Option<Segment>, IndexError> {
+    let carried: Vec<Tombstone> = if oldest {
+        Vec::new()
+    } else {
+        run.iter()
+            .flat_map(|segment| segment.tombstones.iter().cloned())
+            .collect()
+    };
+    let path = segment_path(dir, id);
+    let merged = Merge::new(run)
+        .take_while(|_| !closing.load(Ordering::Relaxed))
+        .filter(|stored| {
+            !tombstones.covers(&stored.key, stored.seq) && !(oldest && stored.meta.is_none())
+        })
+        .map(|stored| {
+            let (terms, hint) = terms_and_hint(roots, &stored.key, stored.meta.as_ref());
+            (
+                stored.seq,
+                Prepared {
+                    key: stored.key,
+                    meta: stored.meta,
+                    terms,
+                    hint,
+                },
+            )
+        });
+    segment::write(&path, merged, &carried)?;
+    if closing.load(Ordering::Relaxed) {
+        // Cut short: never put in place.
+        let _ = fs::remove_file(&path);
+        return Ok(None);
+    }
+    Ok(Some(Segment::open(id, path)?))
+}
+
+/// Puts `merged` in the place of `run` among the segments and rebuilds the
+/// tombstones from what the segments and the unflushed changes carry now;
+/// `false`, changing nothing, if the run is no longer there as it was.
+fn replace_run(state: &RwLock<State>, run: &[Arc<Segment>], merged: Segment) -> bool {
+    let mut guard = write(state);
+    let state = &mut *guard;
+    let ids: Vec<u64> = run.iter().map(|segment| segment.id).collect();
+    let Some(at) = state
+        .segments
+        .iter()
+        .position(|segment| ids.first() == Some(&segment.id))
+    else {
+        return false;
+    };
+    let now: Vec<u64> = state
+        .segments
+        .iter()
+        .skip(at)
+        .take(ids.len())
+        .map(|segment| segment.id)
+        .collect();
+    if now != ids {
+        return false;
+    }
+    let newer = state.segments.split_off(at + ids.len());
+    state.segments.truncate(at);
+    state.segments.push(Arc::new(merged));
+    state.segments.extend(newer);
+    let tombstones: Tombstones = state
+        .segments
+        .iter()
+        .flat_map(|segment| segment.tombstones.iter().cloned())
+        .chain(state.unflushed_tombstones.iter().cloned())
+        .collect();
+    state.tombstones = tombstones;
+    true
+}
+
+/// Deletes the files of segments a merge replaced, once nothing maps them;
+/// Windows refuses to delete a mapped file, so one a query still holds goes
+/// to `garbage`, deleted later.
+fn delete_replaced(old: Vec<PathBuf>, garbage: &mut Vec<PathBuf>) {
+    for path in old {
+        if fs::remove_file(&path).is_err() && path.exists() {
+            garbage.push(path);
+        }
+    }
+}
+
+fn segment_path(dir: &Path, id: u64) -> PathBuf {
+    dir.join(format!("{id}.seg"))
+}
+
+/// Records the live segments and `writer`'s record in `dir`'s
+/// [`MANIFEST`], at once.
+fn write_manifest(dir: &Path, state: &RwLock<State>, writer: &Writer) -> Result<(), IndexError> {
+    let manifest = Manifest {
+        format: FORMAT_VERSION,
+        segments: read(state).segments.iter().map(|s| s.id).collect(),
+        next_file: writer.next_file,
+        record: writer.record.clone(),
+    };
+    let bytes = serde_json::to_vec_pretty(&manifest).map_err(io::Error::other)?;
+    write_atomically(&dir.join(MANIFEST), &bytes, Readers::OwnerOnly)?;
+    Ok(())
 }
 
 fn now_seconds() -> u64 {
@@ -681,24 +1070,27 @@ impl FileIndex {
                 }
             }
         }
-        let index = FileIndex {
+        let mut index = FileIndex {
             dir: dir.to_path_buf(),
             roots,
             _lock: lock_file,
-            state: RwLock::new(State {
+            state: Arc::new(RwLock::new(State {
                 memory,
                 frozen: None,
                 segments: loaded.segments,
                 tombstones,
                 unflushed_tombstones: unflushed,
-            }),
-            writer: Mutex::new(Writer {
+            })),
+            writer: Arc::new(Mutex::new(Writer {
                 wal,
                 next_seq: max_seq + 1,
                 next_file: next_file + 1,
                 record: loaded.record,
                 garbage: Vec::new(),
-            }),
+            })),
+            merges: Arc::new(Merges::default()),
+            merger: None,
+            folder_id_reads: AtomicUsize::new(0),
         };
         // What the logs held goes into a segment now, so that the logs can
         // be deleted.
@@ -710,6 +1102,20 @@ impl FileIndex {
         for old in loaded.wals {
             let _ = fs::remove_file(old);
         }
+        let merger = Merger {
+            dir: index.dir.clone(),
+            roots: index.roots.clone(),
+            state: index.state.clone(),
+            writer: index.writer.clone(),
+            merges: index.merges.clone(),
+        };
+        let thread = std::thread::Builder::new()
+            .name("pane-file-index-merge".into())
+            .spawn(move || merger.run())?;
+        index.merger = Some(thread);
+        // An index left with segments to merge (a merge cut short when Pane
+        // stopped) has them merged now.
+        index.merges.want();
         Ok((index, opened))
     }
 
@@ -798,8 +1204,11 @@ impl FileIndex {
 
     /// Starts writing many entries at once, as a first walk does: they go
     /// straight into segments, without the log, and become visible as each
-    /// segment is written. Other changes wait until it is finished.
+    /// segment is written. Other changes wait until it is finished, and no
+    /// merge runs meanwhile (one under way is finished first): it merges
+    /// what it wrote at its end.
     pub fn bulk(&self) -> Result<Bulk<'_>, IndexError> {
+        let merging = lock(&self.merges.merging);
         let mut writer = lock(&self.writer);
         // The memory table's entries are older than the segments to come.
         self.flush_locked(&mut writer)?;
@@ -807,21 +1216,31 @@ impl FileIndex {
             index: self,
             writer,
             buffer: Vec::new(),
+            _merging: merging,
         })
     }
 
-    /// Writes the memory table as a segment, and merges the segments if
-    /// there are too many.
+    /// Writes the memory table as a segment; the merger then merges
+    /// segments if some are due.
     pub fn flush(&self) -> Result<(), IndexError> {
         let mut writer = lock(&self.writer);
         self.flush_locked(&mut writer)
     }
 
     /// Merges every segment and the memory table into one segment, dropping
-    /// superseded versions, deletions and what tombstones hide.
+    /// superseded versions, deletions and what tombstones hide, here and
+    /// now (after a merge under way).
     pub fn compact(&self) -> Result<(), IndexError> {
+        let _merging = lock(&self.merges.merging);
         let mut writer = lock(&self.writer);
         self.compact_locked(&mut writer)
+    }
+
+    /// Waits until the merger has merged what is due: what the benchmark and
+    /// the tests wait on, so that the segments they look at are as the
+    /// merges leave them. Changes and queries never need to.
+    pub fn wait_for_merges(&self) {
+        self.merges.wait_until_done();
     }
 
     pub fn record(&self) -> IndexRecord {
@@ -1057,7 +1476,10 @@ impl FileIndex {
 
     /// Each indexed folder's file id, and its path: what the change journal
     /// names folders by. Folders whose file system gave no id are left out.
+    /// It visits every entry of every segment: the coordinator reads it at
+    /// most once per open (`changes::FolderIds`, #187).
     pub fn folder_ids(&self) -> HashMap<u64, PathBuf> {
+        self.folder_id_reads.fetch_add(1, Ordering::Relaxed);
         let state = read(&self.state);
         let sources = state.sources();
         let mut ids = HashMap::new();
@@ -1109,28 +1531,19 @@ impl FileIndex {
     }
 
     fn segment_path(&self, id: u64) -> PathBuf {
-        self.dir.join(format!("{id}.seg"))
+        segment_path(&self.dir, id)
     }
 
     fn save_manifest(&self, writer: &Writer) -> Result<(), IndexError> {
-        let manifest = Manifest {
-            format: FORMAT_VERSION,
-            segments: read(&self.state).segments.iter().map(|s| s.id).collect(),
-            next_file: writer.next_file,
-            record: writer.record.clone(),
-        };
-        let bytes = serde_json::to_vec_pretty(&manifest).map_err(io::Error::other)?;
-        write_atomically(&self.dir.join(MANIFEST), &bytes, Readers::OwnerOnly)?;
-        Ok(())
+        write_manifest(&self.dir, &self.state, writer)
     }
 
+    /// After changes are applied: the memory table written as a segment
+    /// when it is full. Merges are the merger's, never done here (#187).
     fn maintain_locked(&self, writer: &mut Writer) -> Result<(), IndexError> {
         let full = read(&self.state).memory.entries.len() >= MEMORY_TABLE_ENTRIES;
         if full {
             self.flush_locked(writer)?;
-        }
-        if read(&self.state).segments.len() > MAX_SEGMENTS {
-            self.compact_locked(writer)?;
         }
         writer
             .garbage
@@ -1138,7 +1551,8 @@ impl FileIndex {
         Ok(())
     }
 
-    /// Writes the memory table as a new segment and starts a new log.
+    /// Writes the memory table as a new segment and starts a new log, then
+    /// asks the merger to look at the segments.
     fn flush_locked(&self, writer: &mut Writer) -> Result<(), IndexError> {
         let (frozen, carried, tombstones) = {
             let mut state = write(&self.state);
@@ -1147,7 +1561,10 @@ impl FileIndex {
             }
             let frozen = Arc::new(std::mem::take(&mut state.memory));
             state.frozen = Some(frozen.clone());
-            let carried = std::mem::take(&mut state.unflushed_tombstones);
+            // Still unflushed until the segment carrying them is in place,
+            // so that a merge rebuilding the tombstones meanwhile keeps
+            // them.
+            let carried = state.unflushed_tombstones.clone();
             (frozen, carried, state.tombstones.clone())
         };
         let wal_id = writer.next_file;
@@ -1178,14 +1595,22 @@ impl FileIndex {
             let mut state = write(&self.state);
             state.segments.push(segment);
             state.frozen = None;
+            // No change came meanwhile (the writer is held): what was
+            // unflushed is what the segment carries.
+            let written = carried.len().min(state.unflushed_tombstones.len());
+            state.unflushed_tombstones = state.unflushed_tombstones.split_off(written);
         }
         self.save_manifest(writer)?;
         let old_path = old_wal.path.clone();
         drop(old_wal);
         let _ = fs::remove_file(old_path);
+        self.merges.want();
         Ok(())
     }
 
+    /// Merges every segment into one, here and now, with the memory table
+    /// written first. Called holding `merges.merging` (by
+    /// [`FileIndex::compact`] and [`Bulk::finish`]) and the writer.
     fn compact_locked(&self, writer: &mut Writer) -> Result<(), IndexError> {
         self.flush_locked(writer)?;
         let (segments, tombstones) = {
@@ -1197,42 +1622,74 @@ impl FileIndex {
         }
         let id = writer.next_file;
         writer.next_file += 1;
-        let path = self.segment_path(id);
-        let merged = Merge::new(&segments).filter_map(|stored| {
-            let meta = stored.meta?;
-            if tombstones.covers(&stored.key, stored.seq) {
-                return None;
-            }
-            let (terms, hint) = terms_and_hint(&self.roots, &stored.key, Some(&meta));
-            Some((
-                stored.seq,
-                Prepared {
-                    key: stored.key,
-                    meta: Some(meta),
-                    terms,
-                    hint,
-                },
-            ))
-        });
-        segment::write(&path, merged, &[])?;
-        let merged = Arc::new(Segment::open(id, path)?);
-        {
-            let mut state = write(&self.state);
-            state.segments = vec![merged];
-            state.tombstones = Tombstones::default();
+        let written = write_merged(
+            &self.dir,
+            &self.roots,
+            &segments,
+            &tombstones,
+            true,
+            id,
+            &self.merges.closing,
+        )?;
+        let Some(merged) = written else {
+            return Ok(());
+        };
+        if !replace_run(&self.state, &segments, merged) {
+            let _ = fs::remove_file(self.segment_path(id));
+            return Ok(());
         }
         self.save_manifest(writer)?;
-        // Each old segment's map is released with its last reference;
-        // Windows refuses to delete a mapped file, so one a query still
-        // holds is deleted later.
+        // Each old segment's map is released with its last reference.
         let old: Vec<PathBuf> = segments.iter().map(|s| s.path.clone()).collect();
         drop(segments);
-        for path in old {
-            if fs::remove_file(&path).is_err() && path.exists() {
-                writer.garbage.push(path);
-            }
-        }
+        delete_replaced(old, &mut writer.garbage);
         Ok(())
+    }
+}
+
+#[cfg(test)]
+impl FileIndex {
+    /// How often [`FileIndex::folder_ids`] read the table since the index
+    /// opened.
+    pub(crate) fn folder_id_reads(&self) -> usize {
+        self.folder_id_reads.load(Ordering::Relaxed)
+    }
+
+    /// Holds merges off (none starts; one under way finishes first), or
+    /// lets them go again.
+    pub(crate) fn hold_merges(&self, held: bool) {
+        let mut turns = self.merges.turns();
+        turns.held = held;
+        self.merges.changed.notify_all();
+        while held && turns.running {
+            turns = self.merges.wait(turns);
+        }
+    }
+
+    /// Makes merges wait before their segment takes the run's place, or
+    /// lets them go on.
+    pub(crate) fn pause_merges_before_swap(&self, pause: bool) {
+        self.merges.turns().pause_before_swap = pause;
+        self.merges.changed.notify_all();
+    }
+
+    /// Waits until a merge waits before its swap, at most `limit`: whether
+    /// one does.
+    pub(crate) fn wait_until_merge_paused(&self, limit: std::time::Duration) -> bool {
+        let deadline = std::time::Instant::now() + limit;
+        let mut turns = self.merges.turns();
+        while !turns.paused {
+            let Some(left) = deadline.checked_duration_since(std::time::Instant::now()) else {
+                return false;
+            };
+            turns = self
+                .merges
+                .changed
+                .wait_timeout(turns, left)
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .0;
+        }
+        true
     }
 }
 
@@ -1241,6 +1698,8 @@ pub struct Bulk<'a> {
     index: &'a FileIndex,
     writer: MutexGuard<'a, Writer>,
     buffer: Vec<(u64, Prepared)>,
+    /// No merge runs while a first walk writes.
+    _merging: MutexGuard<'a, ()>,
 }
 
 impl Bulk<'_> {
@@ -2282,6 +2741,8 @@ mod tests {
     fn search_answers_as_a_brute_force_reference_across_segments_memory_and_tombstones() {
         let fixture = fixture();
         let (index, _) = fixture.open();
+        // The segments as each batch leaves them, unmerged.
+        index.hold_merges(true);
         let now = 20_000 * 86_400;
         let mut model = Model::default();
         let first = reference_entries(&fixture, now);
@@ -2323,11 +2784,15 @@ mod tests {
         }
         assert_matches_reference(&index, &model, now, "several segments and memory");
 
-        // Opened again: the log's changes become a segment.
+        // Opened again: the log's changes become a segment, and the merger
+        // merges segments meanwhile.
         drop(index);
         let (index, opened) = fixture.open();
         assert_eq!(opened, Opened::Existing);
         assert_matches_reference(&index, &model, now, "opened again");
+        index.wait_for_merges();
+        assert!(index.stats().segments < batches.len() + 1);
+        assert_matches_reference(&index, &model, now, "merged a few at a time");
 
         index.compact().unwrap();
         assert_eq!(index.stats().segments, 1);
@@ -2380,7 +2845,7 @@ mod tests {
     }
 
     #[test]
-    fn many_segments_are_merged_into_one() {
+    fn many_segments_are_merged_a_few_at_a_time_in_the_background() {
         let fixture = fixture();
         let (index, _) = fixture.open();
         for n in 0..(MAX_SEGMENTS + 2) {
@@ -2394,7 +2859,178 @@ mod tests {
             index.flush().unwrap();
             index.apply(&[]).unwrap();
         }
-        assert!(index.stats().segments <= MAX_SEGMENTS);
+        index.wait_for_merges();
+        // Small segments are alike: any MERGE_FACTOR of them are merged.
+        assert!(index.stats().segments < MERGE_FACTOR);
         assert_eq!(index.search(&query("file")).len(), MAX_SEGMENTS + 2);
+    }
+
+    #[test]
+    fn a_few_neighbouring_segments_of_similar_size_are_merged_at_a_time() {
+        let floor = MERGE_FLOOR;
+        // Too few to merge.
+        assert_eq!(tier_to_merge(&[]), None);
+        assert_eq!(tier_to_merge(&[10, 10, 10]), None);
+        // Small segments count as the floor: alike.
+        assert_eq!(tier_to_merge(&[1, 10, 100, 1000]), Some(0..4));
+        // A first index's large segment, then the changes' small ones: the
+        // small ones.
+        assert_eq!(
+            tier_to_merge(&[400_000, floor, floor, floor, floor]),
+            Some(1..5)
+        );
+        // Of two similar runs, the smaller; none mixing the two sizes.
+        let two_tiers = [8, 8, 8, 8, 1, 1, 1, 1].map(|times| floor * times);
+        assert_eq!(tier_to_merge(&two_tiers), Some(4..8));
+        // Sizes too far apart: none, as long as there are few segments...
+        let apart = [floor << 24, floor << 18, floor << 12, floor << 6, floor];
+        assert_eq!(tier_to_merge(&apart), None);
+        // ...and past MAX_SEGMENTS, the smallest run whatever the sizes.
+        let many: Vec<u64> = (0..=MAX_SEGMENTS as u32)
+            .rev()
+            .map(|n| floor << (3 * n))
+            .collect();
+        let tail = many.len() - MERGE_FACTOR;
+        assert_eq!(tier_to_merge(&many), Some(tail..many.len()));
+    }
+
+    /// The index with the reference fixture's first index as one segment
+    /// and its first `flushed` batches of changes each written as a segment
+    /// of its own, merges held off; and the model of what it holds.
+    fn reference_index(fixture: &Fixture, now: u64, flushed: usize) -> (FileIndex, Model) {
+        let (index, _) = fixture.open();
+        index.hold_merges(true);
+        let mut model = Model::default();
+        let first = reference_entries(fixture, now);
+        model.apply(&first.iter().cloned().map(Change::Put).collect::<Vec<_>>());
+        let mut bulk = index.bulk().unwrap();
+        bulk.add(index.prepare(first)).unwrap();
+        bulk.finish().unwrap();
+        for batch in &reference_changes(fixture, now)[..flushed] {
+            index.apply(batch).unwrap();
+            model.apply(batch);
+            index.flush().unwrap();
+        }
+        assert_eq!(index.stats().segments, flushed + 1);
+        (index, model)
+    }
+
+    /// Lets the merger go and waits until a merge has written its segment
+    /// but not yet put it in the place of the run it merged.
+    fn start_a_merge(index: &FileIndex) {
+        index.pause_merges_before_swap(true);
+        index.hold_merges(false);
+        assert!(
+            index.wait_until_merge_paused(std::time::Duration::from_secs(20)),
+            "no merge started"
+        );
+    }
+
+    #[test]
+    fn changes_arriving_during_a_merge_are_kept_and_queries_meanwhile_are_current() {
+        let now = 20_000 * 86_400;
+        // Three batches flushed: the merge takes the oldest segment and the
+        // three after it, dropping their deletions and the tombstones they
+        // carry. Four: it takes the four newest, above the oldest, and
+        // carries their tombstones on.
+        for flushed in [3, 4] {
+            let fixture = fixture();
+            let (index, mut model) = reference_index(&fixture, now, flushed);
+            let before = index.stats().segments;
+            start_a_merge(&index);
+            assert_eq!(index.stats().segments, before, "not in place yet");
+            assert_matches_reference(&index, &model, now, "as a merge starts");
+            // Changes arrive while it runs, the first batch written as a
+            // segment of its own, the next kept in memory: new versions of
+            // entries the merge reads, files deleted, folders deleted.
+            let batches = reference_changes(&fixture, now);
+            for (at, batch) in batches[flushed..].iter().enumerate() {
+                index.apply(batch).unwrap();
+                model.apply(batch);
+                if at == 0 {
+                    index.flush().unwrap();
+                }
+                // A query during the merge answers from what is current.
+                assert_matches_reference(&index, &model, now, "during a merge");
+            }
+            index.pause_merges_before_swap(false);
+            index.wait_for_merges();
+            // The run's MERGE_FACTOR segments are one, the one written
+            // meanwhile is kept after it.
+            assert_eq!(index.stats().segments, before - (MERGE_FACTOR - 1) + 1);
+            {
+                let state = read(&index.state);
+                let merged = &state.segments[if flushed == 3 { 0 } else { 1 }];
+                assert_eq!(
+                    merged.tombstones.is_empty(),
+                    flushed == 3,
+                    "tombstones dropped only by a merge from the oldest segment"
+                );
+            }
+            assert_matches_reference(&index, &model, now, "after the merge");
+            // Nothing was lost on the way to the disk either.
+            drop(index);
+            let (index, opened) = fixture.open();
+            assert_eq!(opened, Opened::Existing);
+            assert_matches_reference(&index, &model, now, "opened again after the merge");
+        }
+    }
+
+    /// The segments in `dir` its record does not list.
+    fn unlisted_segments(dir: &Path) -> usize {
+        let manifest: Manifest =
+            serde_json::from_slice(&fs::read(dir.join(MANIFEST)).unwrap()).unwrap();
+        fs::read_dir(dir)
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter_map(|entry| {
+                let name = entry.file_name().into_string().ok()?;
+                name.strip_suffix(".seg")?.parse::<u64>().ok()
+            })
+            .filter(|id| !manifest.segments.contains(id))
+            .count()
+    }
+
+    #[test]
+    fn a_restart_in_the_middle_of_a_merge_finds_every_change_through_the_log() {
+        let now = 20_000 * 86_400;
+        let fixture = fixture();
+        let (index, mut model) = reference_index(&fixture, now, 3);
+        start_a_merge(&index);
+        // Changes arrive during the merge: one batch written as a segment,
+        // the last only in the log.
+        let batches = reference_changes(&fixture, now);
+        index.apply(&batches[3]).unwrap();
+        model.apply(&batches[3]);
+        index.flush().unwrap();
+        index.apply(&batches[4]).unwrap();
+        model.apply(&batches[4]);
+        // Pane stops here, the merged segment written but not yet in place:
+        // what is on the disk now is what a restart finds.
+        let stopped = fixture._dir.path().join("stopped mid-merge");
+        fs::create_dir_all(&stopped).unwrap();
+        for entry in fs::read_dir(&fixture.index_dir).unwrap() {
+            let entry = entry.unwrap();
+            if entry.file_name() != LOCK {
+                fs::write(
+                    stopped.join(entry.file_name()),
+                    fs::read(entry.path()).unwrap(),
+                )
+                .unwrap();
+            }
+        }
+        assert_eq!(unlisted_segments(&stopped), 1, "the merged segment");
+        index.pause_merges_before_swap(false);
+        drop(index);
+
+        let (restarted, opened) =
+            FileIndex::open(&stopped, std::slice::from_ref(&fixture.home)).unwrap();
+        assert_eq!(opened, Opened::Existing);
+        assert_matches_reference(&restarted, &model, now, "restarted mid-merge");
+        restarted.hold_merges(true);
+        assert_eq!(unlisted_segments(&stopped), 0, "the cut-short merge gone");
+        restarted.hold_merges(false);
+        restarted.wait_for_merges();
+        assert_matches_reference(&restarted, &model, now, "merged after the restart");
     }
 }

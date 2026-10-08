@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-use super::{Caught, CaughtUpBy, ChangeSource, Changed, Sink, Watching};
+use super::{Caught, CaughtUpBy, ChangeSource, Changed, FolderIds, Sink, Watching};
 use crate::file_index::journal::JournalCursor;
 use crate::file_index::reconcile::reconcile;
 use crate::file_index::scope::Scope;
@@ -46,6 +46,7 @@ impl ChangeSource for Inotify {
         index: &FileIndex,
         scope: &Scope,
         _cursors: &[JournalCursor],
+        _folders: &mut FolderIds<'_>,
         cancel: &AtomicBool,
     ) -> Caught {
         let reconciled = reconcile(
@@ -63,6 +64,11 @@ impl ChangeSource for Inotify {
             how: CaughtUpBy::ReconcilingWalk,
             note: None,
         }
+    }
+
+    /// One watch per indexed folder.
+    fn watches_folders(&self) -> bool {
+        true
     }
 
     fn watch(

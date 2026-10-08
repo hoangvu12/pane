@@ -35,7 +35,7 @@ use std::time::{Duration, Instant, SystemTime};
 use serde::{Deserialize, Serialize};
 
 use super::category::Category;
-use super::changes::{Caught, CaughtUpBy, ChangeSource, Changed, Sink, Watching};
+use super::changes::{Caught, CaughtUpBy, ChangeSource, Changed, FolderIds, Sink, Watching};
 use super::format::{EntryKind, Meta};
 use super::journal::JournalCursor;
 use super::power::{Awake, Pause, RESUME_AFTER, SystemAwake};
@@ -1804,6 +1804,10 @@ impl Coordinator {
     /// that a first walk is due), and starts watching.
     fn catch_up(&mut self) {
         let record = self.index.record();
+        // The folder-id table, read from the index at most once for the
+        // catch-up and the watch setup together (#187).
+        let index = self.index.clone();
+        let mut folders = FolderIds::new(&index);
         if !record.built {
             self.full_walk = true;
             self.walk.clear();
@@ -1812,11 +1816,13 @@ impl Coordinator {
             // room.
             self.missed = true;
         } else {
-            match self
-                .config
-                .source
-                .catch_up(&self.index, &self.scope, &record.cursors, &self.stop)
-            {
+            match self.config.source.catch_up(
+                &self.index,
+                &self.scope,
+                &record.cursors,
+                &mut folders,
+                &self.stop,
+            ) {
                 Caught::Changes {
                     changes,
                     walk,
@@ -1826,6 +1832,7 @@ impl Coordinator {
                     note,
                 } => {
                     let _ = self.index.apply(&changes);
+                    folders.apply(&changes);
                     // An ignore file, a repository or a cache tag that
                     // changed while Pane was not running: its folder is
                     // re-checked with the walks (#186).
@@ -1871,10 +1878,10 @@ impl Coordinator {
         }
         // Watching starts before any walk, so that what changes during it
         // is not lost (Linux adds its folders' watches once they are known).
-        let folders = if self.full_walk {
+        let folders = if self.full_walk || !self.config.source.watches_folders() {
             Vec::new()
         } else {
-            self.indexed_folders()
+            self.indexed_folders(&mut folders)
         };
         let sink = Sink::new(self.sender.clone(), self.queued());
         match self
@@ -1915,16 +1922,9 @@ impl Coordinator {
     }
 
     /// Every folder indexed now that is watched (not on a network share),
-    /// shallowest first.
-    fn indexed_folders(&self) -> Vec<PathBuf> {
-        let mut folders: Vec<PathBuf> = self
-            .index
-            .folder_ids()
-            .into_values()
-            .filter(|folder| !self.on_network(folder))
-            .collect();
-        folders.sort_by_key(|folder| folder.components().count());
-        folders
+    /// shallowest first, from `folders`.
+    fn indexed_folders(&self, folders: &mut FolderIds<'_>) -> Vec<PathBuf> {
+        folders.folders(|folder| self.on_network(folder))
     }
 
     /// Whether `folder` is under a root on a network share, which is not
@@ -2379,9 +2379,13 @@ impl Coordinator {
             record.built = !report.cancelled;
             let _ = self.index.flush();
             let _ = self.index.set_record(record);
-            let folders = self.indexed_folders();
-            if let Some(watching) = &mut self.watching {
-                watching.add_folders(&folders);
+            // Only a source watching each folder needs them read.
+            if self.config.source.watches_folders() {
+                let index = self.index.clone();
+                let folders = self.indexed_folders(&mut FolderIds::new(&index));
+                if let Some(watching) = &mut self.watching {
+                    watching.add_folders(&folders);
+                }
             }
             let ceiling = count_words(self.config.walk.max_entries);
             self.status(|shared| {
