@@ -132,7 +132,7 @@ jobs:
       # The sample's contract checks, and installing packages whose
       # command is the sample: Pane's install checks, then running it.
       - name: Install and run the sample through Pane
-        run: cargo test -p pane-core --test integration -- samples::typescript:: packages::
+        run: cargo test -p pane-core --test integration -- "samples::typescript::" "packages::"
 
   # The one check to require, as in the other workflows: green when every
   # job above passed or was skipped.
