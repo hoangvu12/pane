@@ -328,6 +328,9 @@ impl Watcher {
         self.read_through = count;
         let ticket = self.sink.reading();
         let observation = autoreleasepool(|_| observation());
+        if cfg!(debug_assertions) && std::env::var_os("PANE_TEST_CLIPBOARD_TRACE").is_some() {
+            eprintln!("[DEBUG-clipboard-smoke] count={count}, observation={observation:?}");
+        }
         self.sink.observed(ticket, observation);
     }
 }
