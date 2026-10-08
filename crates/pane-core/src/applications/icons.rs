@@ -526,7 +526,10 @@ pub fn file_fingerprint(path: &Path) -> Option<String> {
 /// the source cannot be read.
 pub fn sources_fingerprint(source: &Path, pictures: &[PathBuf]) -> Option<String> {
     let mut fingerprint = file_fingerprint(source)?;
-    for picture in pictures.iter().filter(|picture| picture.as_path() != source) {
+    for picture in pictures
+        .iter()
+        .filter(|picture| picture.as_path() != source)
+    {
         fingerprint.push_str("\n\n");
         match file_fingerprint(picture) {
             Some(file) => fingerprint.push_str(&file),

@@ -1692,9 +1692,9 @@ impl Launcher {
     #[cfg(any(test, debug_assertions))]
     #[doc(hidden)]
     pub fn clipboard_history_writes(&self) -> u64 {
-        self.installation
-            .as_ref()
-            .map_or(0, |installation| installation.data.clipboard_history().writes())
+        self.installation.as_ref().map_or(0, |installation| {
+            installation.data.clipboard_history().writes()
+        })
     }
 
     /// How many clipboard history items Pane encrypted to write them since
@@ -1703,9 +1703,9 @@ impl Launcher {
     #[cfg(any(test, debug_assertions))]
     #[doc(hidden)]
     pub fn clipboard_items_protected(&self) -> u64 {
-        self.installation
-            .as_ref()
-            .map_or(0, |installation| installation.data.clipboard_history().items_protected())
+        self.installation.as_ref().map_or(0, |installation| {
+            installation.data.clipboard_history().items_protected()
+        })
     }
 
     /// Waits until the scheduler looked at every change of the clock and of

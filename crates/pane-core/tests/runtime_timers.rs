@@ -204,9 +204,11 @@ fn the_runtime_timers_wake_for_each_service_cycle_and_wait_between_them() {
     let between = until(&runtime, "the timers never waited between cycles", waiting);
     let counted = cycles(data.path(), &folder);
     // The next cycle wakes both: they tick and look.
-    let woken = until(&runtime, "a service cycle did not wake the timers", |timers| {
-        timers.ticks > between.ticks && timers.looks > between.looks
-    });
+    let woken = until(
+        &runtime,
+        "a service cycle did not wake the timers",
+        |timers| timers.ticks > between.ticks && timers.looks > between.looks,
+    );
     // Answered, they wait again until the cycle after it.
     until(
         &runtime,

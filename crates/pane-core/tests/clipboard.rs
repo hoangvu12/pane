@@ -568,7 +568,10 @@ fn nothing_is_watched_or_kept_until_history_is_turned_on(fixture: &'static Fixtu
         subtitle(&launcher, PAUSE),
         "On · 2 items kept · Text you copy is kept on this computer"
     );
-    assert_eq!(pane.kept_on_disk(&launcher), ["second line\nand more", "hello"]);
+    assert_eq!(
+        pane.kept_on_disk(&launcher),
+        ["second line\nand more", "hello"]
+    );
     let file = fs::read_to_string(pane.history_path()).unwrap();
     assert!(!file.contains("before"));
     #[cfg(unix)]
@@ -1093,7 +1096,10 @@ fn the_retention_can_be_changed_and_applies_to_kept_items(fixture: &'static Fixt
     block_on(launcher.submit_form());
     assert_eq!(launcher.view().status, result("Items are kept for 1 hour"));
     assert_eq!(pane.listed(&launcher), ["new"]);
-    assert_eq!(pane.history_of_the_package(&launcher)["retentionSeconds"], 3600);
+    assert_eq!(
+        pane.history_of_the_package(&launcher)["retentionSeconds"],
+        3600
+    );
     assert!(titles(&launcher).contains(&"Keep items for 1 hour".to_string()));
     // Kept across a restart.
     quit(launcher);
@@ -1303,7 +1309,10 @@ fn the_history_is_encrypted_on_disk_and_a_damaged_item_is_explained(fixture: &'s
     assert_eq!(pane.kept_on_disk(&launcher), both);
     let raw = || fs::read_to_string(pane.history_path()).unwrap();
     let file = raw();
-    assert!(!file.contains("a secret copied") && !file.contains("another copy"), "{file}");
+    assert!(
+        !file.contains("a secret copied") && !file.contains("another copy"),
+        "{file}"
+    );
     quit(launcher);
     let launcher = pane.start();
     assert_eq!(pane.listed(&launcher), both);

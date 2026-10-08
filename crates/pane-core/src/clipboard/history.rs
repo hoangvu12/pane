@@ -591,10 +591,11 @@ impl HistoryJson {
     /// Whether an item of `owner` holds the image with `digest`.
     fn names_image(&self, owner: &str, digest: &str) -> bool {
         self.packages.get(owner).is_some_and(|history| {
-            history
-                .items
-                .iter()
-                .any(|item| item.image.as_ref().is_some_and(|image| image.digest == digest))
+            history.items.iter().any(|item| {
+                item.image
+                    .as_ref()
+                    .is_some_and(|image| image.digest == digest)
+            })
         })
     }
 
@@ -1306,9 +1307,7 @@ impl HistoryStore {
             });
         if let Err(error) = started {
             self.wake.ended();
-            crate::diagnostic!(
-                "Pane cannot expire clipboard history in the background: {error}"
-            );
+            crate::diagnostic!("Pane cannot expire clipboard history in the background: {error}");
         }
     }
 
@@ -2020,7 +2019,10 @@ mod tests {
         // Read back after a restart (by the same clock, so that nothing
         // expired).
         let (reopened, _) = store_at(dir.path(), DAY);
-        assert_eq!(texts(&reopened.get("a").unwrap()), ["another", "a secret copied"]);
+        assert_eq!(
+            texts(&reopened.get("a").unwrap()),
+            ["another", "a secret copied"]
+        );
     }
 
     /// #130: an item that cannot be decrypted on this computer (damaged, or
