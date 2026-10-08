@@ -1,8 +1,10 @@
 //! The name index itself, in the shape of `minidex` (#126, "The engine"):
 //! a memory table of recent changes backed by a write-ahead log, immutable
-//! segments on disk each with its own term dictionary, tombstones that hide
-//! a deleted folder's entries in older segments, and compaction that merges
-//! the segments into one. Its files are Pane's own, versioned by
+//! segments on disk each with its own term dictionary (and, like the memory
+//! table, the terms having each fragment of their words, for the pass
+//! inside words) and key filter, tombstones that hide a deleted folder's
+//! entries in older segments, and compaction that merges the segments into
+//! one. Its files are Pane's own, versioned by
 //! [`FORMAT_VERSION`]: an index of another version is rebuilt, never read.
 //!
 //! One writer at a time changes the index (its writer lock); queries read
@@ -25,7 +27,8 @@ use super::format::{EntryKind, FORMAT_VERSION, Meta, SEPARATOR, key_path, path_k
 use super::journal::JournalCursor;
 use super::segment::{self, Segment, Stored, Tombstone};
 use super::terms::{
-    FOLDER_TAG, NAME_TAG, Prepared, Roots, hint_day, hint_depth, hint_kind, terms_and_hint,
+    FOLDER_TAG, FRAGMENT, NAME_TAG, Prepared, Roots, fragments, hint_day, hint_depth, hint_kind,
+    terms_and_hint,
 };
 use super::text;
 use super::wal::{self, Op, Wal};
@@ -173,12 +176,18 @@ struct MemEntry {
 }
 
 /// The recent changes, in memory: entries in the order they came, the
-/// newest version of each key, and each term's entries.
+/// newest version of each key, each term's entries, and, as a segment has,
+/// the terms having each fragment of their words.
 #[derive(Default)]
 struct MemTable {
     entries: Vec<MemEntry>,
     by_key: BTreeMap<Vec<u8>, u32>,
     terms: BTreeMap<Vec<u8>, Vec<u32>>,
+    /// Each term, by the number it was given when it first came.
+    term_list: Vec<Vec<u8>>,
+    /// Each fragment (`terms::fragments`) and the numbers of the terms
+    /// having it, ascending.
+    fragments: HashMap<u32, Vec<u32>>,
 }
 
 impl MemTable {
@@ -188,7 +197,16 @@ impl MemTable {
             self.entries[older as usize].newest = false;
         }
         for term in prepared.terms {
-            self.terms.entry(term).or_default().push(id);
+            if let Some(ids) = self.terms.get_mut(&term) {
+                ids.push(id);
+                continue;
+            }
+            let number = self.term_list.len() as u32;
+            for fragment in fragments(&term) {
+                self.fragments.entry(fragment).or_default().push(number);
+            }
+            self.term_list.push(term.clone());
+            self.terms.insert(term, vec![id]);
         }
         self.entries.push(MemEntry {
             key: prepared.key,
@@ -201,6 +219,30 @@ impl MemTable {
 
     fn get(&self, key: &[u8]) -> Option<&MemEntry> {
         self.by_key.get(key).map(|&id| &self.entries[id as usize])
+    }
+
+    /// The numbers of the terms having every fragment of `wanted`,
+    /// ascending.
+    fn terms_with_fragments(&self, wanted: &[u32]) -> Vec<u32> {
+        let mut lists: Vec<&[u32]> = Vec::with_capacity(wanted.len());
+        for fragment in wanted {
+            match self.fragments.get(fragment) {
+                Some(list) => lists.push(list),
+                None => return Vec::new(),
+            }
+        }
+        lists.sort_unstable_by_key(|list| list.len());
+        let Some((first, rest)) = lists.split_first() else {
+            return Vec::new();
+        };
+        let mut found = first.to_vec();
+        for list in rest {
+            if found.is_empty() {
+                break;
+            }
+            found = intersect(&found, list);
+        }
+        found
     }
 
     fn is_empty(&self) -> bool {
@@ -258,16 +300,63 @@ impl Source<'_> {
     }
 
     /// Appends the ids of entries with a term of `tag` holding `word`
-    /// anywhere (at its start too) to `all`: every term of the tag is
-    /// looked at, so this is asked only when the words' starts find too
-    /// few entries ([`FileIndex::search`]). Stops past
-    /// [`SHORT_WORD_ENTRIES`] entries.
+    /// anywhere (at its start too) to `all`, term by term in the terms'
+    /// order: this is asked only when the words' starts find too few
+    /// entries ([`FileIndex::search`]). Stops past [`SHORT_WORD_ENTRIES`]
+    /// entries. Only the terms having every fragment of the word are looked
+    /// at, through the fragments' lists; what it appends to an empty `all`
+    /// is exactly what [`Source::word_inside_scan`] does, reading every
+    /// term.
     fn word_inside(&self, tag: u8, word: &str, all: &mut Vec<u32>) {
         let needle = word.as_bytes();
-        let holds = |term: &[u8]| {
-            term.get(1..)
-                .is_some_and(|rest| rest.windows(needle.len()).any(|part| part == needle))
-        };
+        if needle.len() < FRAGMENT {
+            self.word_inside_scan(tag, word, all);
+            return;
+        }
+        let mut term = Vec::with_capacity(needle.len() + 1);
+        term.push(tag);
+        term.extend_from_slice(needle);
+        let wanted = fragments(&term);
+        match self {
+            Source::Memory(table) => {
+                let mut found: Vec<&[u8]> = table
+                    .terms_with_fragments(&wanted)
+                    .into_iter()
+                    .map(|number| table.term_list[number as usize].as_slice())
+                    .filter(|found| holds(found, needle))
+                    .collect();
+                // In the terms' order, as the scan reads them.
+                found.sort_unstable();
+                for found in found {
+                    if let Some(ids) = table.terms.get(found) {
+                        all.extend_from_slice(ids);
+                        if all.len() >= SHORT_WORD_ENTRIES {
+                            break;
+                        }
+                    }
+                }
+            }
+            Source::Segment(segment) => {
+                // Ordinals ascend in the dictionary's order.
+                for ordinal in segment.terms_with_fragments(&wanted) {
+                    let Some((found, offset)) = segment.term(ordinal) else {
+                        continue;
+                    };
+                    if holds(found, needle) {
+                        segment.postings_into(offset, all);
+                        if all.len() >= SHORT_WORD_ENTRIES {
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// What [`Source::word_inside`] finds, by reading every term of `tag`:
+    /// for a word shorter than a fragment, and for the tests to compare.
+    fn word_inside_scan(&self, tag: u8, word: &str, all: &mut Vec<u32>) {
+        let needle = word.as_bytes();
         match self {
             Source::Memory(table) => {
                 let range = table.terms.range::<[u8], _>((
@@ -275,7 +364,7 @@ impl Source<'_> {
                     Bound::Excluded(&[tag + 1][..]),
                 ));
                 for (found, ids) in range {
-                    if holds(found) {
+                    if holds(found, needle) {
                         all.extend_from_slice(ids);
                         if all.len() >= SHORT_WORD_ENTRIES {
                             break;
@@ -285,7 +374,7 @@ impl Source<'_> {
             }
             Source::Segment(segment) => {
                 segment.terms_with_prefix(&[tag], |found, offset| {
-                    if holds(found) {
+                    if holds(found, needle) {
                         segment.postings_into(offset, all);
                     }
                     if all.len() >= SHORT_WORD_ENTRIES {
@@ -340,6 +429,89 @@ impl Source<'_> {
     }
 }
 
+/// Whether the tagged term `term`'s word holds `needle` anywhere.
+fn holds(term: &[u8], needle: &[u8]) -> bool {
+    term.get(1..)
+        .is_some_and(|rest| rest.windows(needle.len()).any(|part| part == needle))
+}
+
+/// Every tombstone not yet merged away, by prefix, so that checking a key
+/// looks up the folders above it instead of reading every tombstone.
+#[derive(Clone, Default)]
+struct Tombstones {
+    /// The newest tombstone's sequence number for each prefix ending with a
+    /// separator, as every tombstone [`FileIndex::apply`] makes does.
+    by_prefix: BTreeMap<Vec<u8>, u64>,
+    /// The shortest and longest of those prefixes.
+    shortest: usize,
+    longest: usize,
+    /// Tombstones of any other prefix, read one by one.
+    others: Vec<Tombstone>,
+    /// The newest tombstone's sequence number: no tombstone hides a later
+    /// version.
+    newest: u64,
+}
+
+impl Tombstones {
+    fn push(&mut self, tombstone: Tombstone) {
+        self.newest = self.newest.max(tombstone.seq);
+        if tombstone.prefix.last() != Some(&SEPARATOR) {
+            self.others.push(tombstone);
+            return;
+        }
+        let len = tombstone.prefix.len();
+        if self.by_prefix.is_empty() {
+            (self.shortest, self.longest) = (len, len);
+        } else {
+            self.shortest = self.shortest.min(len);
+            self.longest = self.longest.max(len);
+        }
+        let seq = self.by_prefix.entry(tombstone.prefix).or_insert(0);
+        *seq = (*seq).max(tombstone.seq);
+    }
+
+    /// Whether a tombstone hides the version `seq` of `key`
+    /// ([`Tombstone::covers`]).
+    fn covers(&self, key: &[u8], seq: u64) -> bool {
+        if seq >= self.newest {
+            return false;
+        }
+        if !self.by_prefix.is_empty() {
+            // Each folder above `key`: its prefix ends at a separator.
+            let folders = key
+                .iter()
+                .enumerate()
+                .take(self.longest)
+                .skip(self.shortest - 1);
+            for (at, &byte) in folders {
+                if byte == SEPARATOR
+                    && let Some(&newest) = self.by_prefix.get(&key[..=at])
+                    && seq < newest
+                {
+                    return true;
+                }
+            }
+        }
+        self.others
+            .iter()
+            .any(|tombstone| tombstone.covers(key, seq))
+    }
+
+    fn is_empty(&self) -> bool {
+        self.by_prefix.is_empty() && self.others.is_empty()
+    }
+}
+
+impl FromIterator<Tombstone> for Tombstones {
+    fn from_iter<I: IntoIterator<Item = Tombstone>>(tombstones: I) -> Tombstones {
+        let mut all = Tombstones::default();
+        for tombstone in tombstones {
+            all.push(tombstone);
+        }
+        all
+    }
+}
+
 struct State {
     memory: MemTable,
     /// The memory table being written as a segment, still searched.
@@ -348,7 +520,7 @@ struct State {
     /// older one's.
     segments: Vec<Arc<Segment>>,
     /// Every tombstone not yet merged away.
-    tombstones: Vec<Tombstone>,
+    tombstones: Tombstones,
     /// The tombstones the next segment written carries.
     unflushed_tombstones: Vec<Tombstone>,
 }
@@ -370,13 +542,9 @@ impl State {
 
     /// Whether the version `seq` of `key`, found in `sources[at]`, is the
     /// current one: no tombstone covers it and no newer source holds a newer
-    /// version.
+    /// version (a segment whose key filter rules `key` out is not read).
     fn is_current(&self, sources: &[Source<'_>], at: usize, key: &[u8], seq: u64) -> bool {
-        if self
-            .tombstones
-            .iter()
-            .any(|tombstone| tombstone.covers(key, seq))
-        {
+        if self.tombstones.covers(key, seq) {
             return false;
         }
         sources[..at]
@@ -483,7 +651,7 @@ impl FileIndex {
         let next_file = loaded.next_file;
         let wal = Wal::create(dir.join(format!("{next_file}.wal")))?;
         let mut memory = MemTable::default();
-        let mut tombstones: Vec<Tombstone> = loaded
+        let mut tombstones: Tombstones = loaded
             .segments
             .iter()
             .flat_map(|segment| segment.tombstones.iter().cloned())
@@ -757,13 +925,18 @@ impl FileIndex {
     /// every match by the start of words. Never waits for a walk or a
     /// merge.
     pub fn search(&self, query: &Query<'_>) -> Vec<Hit> {
+        self.search_at(query, now_seconds())
+    }
+
+    /// [`FileIndex::search`] as it would answer at `now`, in seconds since
+    /// 1970 (what recent changes are scored against).
+    fn search_at(&self, query: &Query<'_>, now: u64) -> Vec<Hit> {
         let prepared = text::Prepared::new(query.text);
         if prepared.words.is_empty() || query.limit == 0 {
             return Vec::new();
         }
         let wanted = query.offset.saturating_add(query.limit);
         let cap = CANDIDATES.max(wanted.saturating_mul(4));
-        let now = now_seconds();
         let state = read(&self.state);
         let mut hits = self.matching(&state, &prepared, query.kind, cap, false, now);
         if prepared.finds_inside() {
@@ -984,10 +1157,7 @@ impl FileIndex {
         let old_wal = std::mem::replace(&mut writer.wal, new_wal);
         let docs = frozen.by_key.values().filter_map(|&id| {
             let entry = &frozen.entries[id as usize];
-            if tombstones
-                .iter()
-                .any(|tombstone| tombstone.covers(&entry.key, entry.seq))
-            {
+            if tombstones.covers(&entry.key, entry.seq) {
                 return None;
             }
             let (terms, hint) = terms_and_hint(&self.roots, &entry.key, entry.meta.as_ref());
@@ -1030,10 +1200,7 @@ impl FileIndex {
         let path = self.segment_path(id);
         let merged = Merge::new(&segments).filter_map(|stored| {
             let meta = stored.meta?;
-            if tombstones
-                .iter()
-                .any(|tombstone| tombstone.covers(&stored.key, stored.seq))
-            {
+            if tombstones.covers(&stored.key, stored.seq) {
                 return None;
             }
             let (terms, hint) = terms_and_hint(&self.roots, &stored.key, Some(&meta));
@@ -1052,7 +1219,7 @@ impl FileIndex {
         {
             let mut state = write(&self.state);
             state.segments = vec![merged];
-            state.tombstones.clear();
+            state.tombstones = Tombstones::default();
         }
         self.save_manifest(writer)?;
         // Each old segment's map is released with its last reference;
@@ -1156,7 +1323,8 @@ impl Iterator for Merge<'_> {
 /// those with every word in their own name first, then by an exact word,
 /// recent change and shallowness, as their hints tell without reading them.
 /// A word matches a term it starts or, `inside`, one it is anywhere in, when
-/// it has `text::INSIDE_FROM` letters or more.
+/// it has `text::INSIDE_FROM` letters or more (found through the terms'
+/// fragments, [`Source::word_inside`]).
 fn candidates(
     source: &Source<'_>,
     words: &[String],
@@ -1728,31 +1896,42 @@ mod tests {
 
     #[test]
     fn another_format_version_is_rebuilt_never_read() {
-        let fixture = fixture();
-        {
-            let (index, _) = fixture.open();
-            index
-                .apply(
-                    &sample(&fixture)
-                        .into_iter()
-                        .map(Change::Put)
-                        .collect::<Vec<_>>(),
-                )
-                .unwrap();
-            index.flush().unwrap();
+        // The version before this one (an index written before #185's
+        // fragments and key filters) and a later one.
+        for version in [FORMAT_VERSION - 1, FORMAT_VERSION + 1] {
+            let fixture = fixture();
+            {
+                let (index, _) = fixture.open();
+                index
+                    .apply(
+                        &sample(&fixture)
+                            .into_iter()
+                            .map(Change::Put)
+                            .collect::<Vec<_>>(),
+                    )
+                    .unwrap();
+                index.flush().unwrap();
+                index
+                    .set_record(IndexRecord {
+                        built: true,
+                        ..IndexRecord::default()
+                    })
+                    .unwrap();
+            }
+            let manifest = fixture.index_dir.join(MANIFEST);
+            let text = fs::read_to_string(&manifest).unwrap();
+            let other = text.replace(
+                &format!("\"format\": {FORMAT_VERSION}"),
+                &format!("\"format\": {version}"),
+            );
+            assert_ne!(text, other);
+            fs::write(&manifest, other).unwrap();
+            let (index, opened) = fixture.open();
+            assert!(matches!(opened, Opened::Rebuilt(_)), "{version}: {opened:?}");
+            assert!(index.search(&query("march")).is_empty());
+            assert_eq!(index.record(), IndexRecord::default());
+            assert_eq!(index.stats().segments, 0);
         }
-        let manifest = fixture.index_dir.join(MANIFEST);
-        let text = fs::read_to_string(&manifest).unwrap();
-        let other = text.replace(
-            &format!("\"format\": {FORMAT_VERSION}"),
-            &format!("\"format\": {}", FORMAT_VERSION + 1),
-        );
-        assert_ne!(text, other);
-        fs::write(&manifest, other).unwrap();
-        let (index, opened) = fixture.open();
-        assert!(matches!(opened, Opened::Rebuilt(_)), "{opened:?}");
-        assert!(index.search(&query("march")).is_empty());
-        assert_eq!(index.record(), IndexRecord::default());
     }
 
     #[test]
@@ -1824,6 +2003,380 @@ mod tests {
         let folder = fixture.entry("Invoices 2026", EntryKind::Folder, 0);
         assert_eq!(ids.get(&folder.meta.file_id), Some(&folder.path));
         assert_eq!(ids.len(), 1);
+    }
+
+    /// What the index should hold, kept without segments, memory tables or
+    /// tombstones: each current entry by key, the changes applied in order.
+    #[derive(Default)]
+    struct Model(BTreeMap<Vec<u8>, Meta>);
+
+    impl Model {
+        fn apply(&mut self, changes: &[Change]) {
+            for change in changes {
+                match change {
+                    Change::Put(entry) => {
+                        self.0.insert(path_key(&entry.path), entry.meta);
+                    }
+                    Change::Remove(path) => {
+                        self.0.remove(&path_key(path));
+                    }
+                    Change::RemoveUnder(path) => {
+                        let key = path_key(path);
+                        let mut prefix = key.clone();
+                        if prefix.last() != Some(&SEPARATOR) {
+                            prefix.push(SEPARATOR);
+                        }
+                        self.0
+                            .retain(|known, _| *known != key && !known.starts_with(&prefix));
+                    }
+                }
+            }
+        }
+    }
+
+    /// `query` answered by brute force over `model`, as #126's "Matching
+    /// and ranking" and [`FileIndex::search`] describe it: every entry of
+    /// the kind asked for scored by the start of words; when fewer than the
+    /// page asks for are found and a word has three letters or more, every
+    /// other entry scored by words inside words; then best first, the more
+    /// recently modified first, by path, and paged.
+    fn reference(roots: &Roots, model: &Model, query: &Query<'_>, now: u64) -> Vec<Hit> {
+        let prepared = text::Prepared::new(query.text);
+        if prepared.words.is_empty() || query.limit == 0 {
+            return Vec::new();
+        }
+        let scored = |inside: bool| -> Vec<(Vec<u8>, Hit)> {
+            let mut hits = Vec::new();
+            for (key, meta) in &model.0 {
+                if query.kind.is_some_and(|kind| meta.kind != kind) {
+                    continue;
+                }
+                let (folders, name) = roots.split(key);
+                let name = String::from_utf8_lossy(name);
+                let folders: Vec<String> = folders
+                    .iter()
+                    .map(|folder| String::from_utf8_lossy(folder).into_owned())
+                    .collect();
+                let folders: Vec<&str> = folders.iter().map(String::as_str).collect();
+                let candidate = text::Candidate {
+                    name: &name,
+                    folders: &folders,
+                    is_folder: meta.kind == EntryKind::Folder,
+                    modified: meta.modified,
+                };
+                let score = if inside {
+                    text::score_inside(&prepared, &candidate, now)
+                } else {
+                    text::score(&prepared, &candidate, now)
+                };
+                if let Some(score) = score {
+                    let hit = Hit {
+                        path: key_path(key),
+                        meta: *meta,
+                        score,
+                    };
+                    hits.push((key.clone(), hit));
+                }
+            }
+            hits
+        };
+        let mut hits = scored(false);
+        if prepared.finds_inside() && hits.len() < query.offset.saturating_add(query.limit) {
+            hits.extend(scored(true));
+        }
+        finish(hits, query.offset, query.limit, |a, b| {
+            b.score
+                .total_cmp(&a.score)
+                .then(b.meta.modified.cmp(&a.meta.modified))
+        })
+    }
+
+    /// Prefixes, words found inside words, misses, accents and letter
+    /// case, several words, whole names and paths.
+    const REFERENCE_QUERIES: &[&str] = &[
+        "r",
+        "p",
+        "do",
+        "rep",
+        "report",
+        "Report",
+        "REPORT",
+        "pla",
+        "inv",
+        "port",
+        "ort",
+        "lann",
+        "xplan",
+        "oice",
+        "may2026",
+        "upport",
+        "ssport",
+        "ubers",
+        "abcd",
+        "qxzv",
+        "zzzzz",
+        "qx",
+        "plan qxzv",
+        "résumé",
+        "RESUME",
+        "Resume plan",
+        "uber",
+        "ÜBER",
+        "übersicht",
+        "invoices 2026",
+        "sport passport",
+        "documents plan",
+        "port 2026",
+        "ort club",
+        "report.pdf",
+        "Résumé plan ü.txt",
+        "documents/plan",
+        "sport/pass",
+        "reports/",
+    ];
+
+    /// Pages: the limit, the offset and the kind asked for. A page of 1 or
+    /// 3 is filled by the words' starts for some queries, so the pass
+    /// inside words is left out; one of 20 rarely is.
+    const REFERENCE_PAGES: &[(usize, usize, Option<EntryKind>)] = &[
+        (20, 0, None),
+        (3, 0, None),
+        (5, 2, None),
+        (1, 0, None),
+        (20, 0, Some(EntryKind::Folder)),
+    ];
+
+    /// The fixture's first index: folders, and in each some of the names
+    /// below, which start, hold and nearly hold one another ("port",
+    /// "report", "portfolio", "sport"; "abcxbcd" has every fragment of
+    /// "abcd" but not "abcd"), with accents, letter case, camel case and
+    /// digits; modified on days apart, some on the same day.
+    fn reference_entries(fixture: &Fixture, now: u64) -> Vec<Entry> {
+        const FOLDERS: [&str; 9] = [
+            "Documents",
+            "Documents/Work 2026",
+            "Invoices 2026",
+            "Reports",
+            "Sport Club",
+            "Sport Club/Passports",
+            "Projects",
+            "Projects/airportRedesign",
+            "Résumés",
+        ];
+        const NAMES: [&str; 16] = [
+            "report.pdf",
+            "Reports 2026.xlsx",
+            "airport map.png",
+            "Passport scan.jpg",
+            "portfolio.txt",
+            "Résumé plan ü.txt",
+            "resume final.docx",
+            "planning notes.md",
+            "Explanation.md",
+            "invoiceMay2026.pdf",
+            "über uns.html",
+            "ÜBERSICHT.txt",
+            "sport club.txt",
+            "porter stout.txt",
+            "abcxbcd.txt",
+            "plan.txt",
+        ];
+        let day = 86_400;
+        let mut entries = Vec::new();
+        for (at, folder) in FOLDERS.iter().enumerate() {
+            let modified = now - (at as u64 % 4) * 9 * day;
+            entries.push(fixture.entry(folder, EntryKind::Folder, modified));
+        }
+        let places = std::iter::once("").chain(FOLDERS);
+        for (place_at, place) in places.enumerate() {
+            for (name_at, name) in NAMES.iter().enumerate() {
+                if (name_at + place_at) % 3 == 1 {
+                    continue;
+                }
+                let relative = if place.is_empty() {
+                    (*name).to_owned()
+                } else {
+                    format!("{place}/{name}")
+                };
+                let modified = now - ((place_at * 7 + name_at * 13) % 6) as u64 * 11 * day;
+                entries.push(fixture.entry(&relative, EntryKind::File, modified));
+            }
+        }
+        entries
+    }
+
+    /// Five batches of changes after the first index: new files, new
+    /// versions, files deleted, folders deleted (tombstones) with new files
+    /// put back under them, in older segments and in memory.
+    fn reference_changes(fixture: &Fixture, now: u64) -> Vec<Vec<Change>> {
+        let day = 86_400;
+        let file = |relative: &str, days_ago: u64| {
+            Change::Put(fixture.entry(relative, EntryKind::File, now - days_ago * day))
+        };
+        let folder = |relative: &str, days_ago: u64| {
+            Change::Put(fixture.entry(relative, EntryKind::Folder, now - days_ago * day))
+        };
+        let remove = |relative: &str| Change::Remove(fixture.path(relative));
+        let remove_under = |relative: &str| Change::RemoveUnder(fixture.path(relative));
+        vec![
+            vec![
+                file("Documents/airport transfer.txt", 1),
+                file("transport.md", 2),
+                file("report.pdf", 0),
+                remove("Passport scan.jpg"),
+                // Never indexed: a deletion of nothing.
+                remove("portfolio.txt"),
+                remove("Documents/Work 2026/plan.txt"),
+            ],
+            vec![
+                remove_under("Reports"),
+                folder("Reports", 0),
+                file("Reports/report draft.md", 3),
+            ],
+            vec![
+                folder("Archive", 5),
+                file("Archive/old report.pdf", 400),
+                file("Archive/Résumé 2019.pdf", 2000),
+                remove("Documents/Work 2026/planning notes.md"),
+                file("Explanation.md", 1),
+            ],
+            vec![
+                remove_under("Archive"),
+                file("Sport Club/Passports/passport renewal.pdf", 4),
+                remove_under("Sport Club/Passports"),
+                file("Sport Club/Passports/support ticket.txt", 2),
+            ],
+            vec![
+                file("Reports/report draft.md", 0),
+                file("Documents/Report summary.txt", 6),
+                remove("airport map.png"),
+                remove_under("Projects/airportRedesign"),
+                file("Projects/airportRedesign/support.txt", 1),
+                file("Résumés/ÜBERSICHT 2026.txt", 3),
+            ],
+        ]
+    }
+
+    /// Asserts that `index` answers every query of the fixed set, on every
+    /// page, as the brute-force reference does over `model`.
+    fn assert_matches_reference(index: &FileIndex, model: &Model, now: u64, when: &str) {
+        for &text in REFERENCE_QUERIES {
+            for &(limit, offset, kind) in REFERENCE_PAGES {
+                let query = Query {
+                    text,
+                    limit,
+                    offset,
+                    kind,
+                };
+                let found = index.search_at(&query, now);
+                let expected = reference(&index.roots, model, &query, now);
+                assert_eq!(
+                    found, expected,
+                    "{when}: {text:?}, limit {limit}, offset {offset}, {kind:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn search_answers_as_a_brute_force_reference_across_segments_memory_and_tombstones() {
+        let fixture = fixture();
+        let (index, _) = fixture.open();
+        let now = 20_000 * 86_400;
+        let mut model = Model::default();
+        let first = reference_entries(&fixture, now);
+        model.apply(&first.iter().cloned().map(Change::Put).collect::<Vec<_>>());
+        let mut bulk = index.bulk().unwrap();
+        bulk.add(index.prepare(first)).unwrap();
+        bulk.finish().unwrap();
+        assert_matches_reference(&index, &model, now, "one segment");
+
+        // Each batch but the last written as a segment of its own.
+        let batches = reference_changes(&fixture, now);
+        for (at, batch) in batches.iter().enumerate() {
+            index.apply(batch).unwrap();
+            model.apply(batch);
+            if at + 1 < batches.len() {
+                index.flush().unwrap();
+            }
+        }
+        {
+            let state = read(&index.state);
+            assert_eq!(state.segments.len(), batches.len());
+            assert!(!state.memory.is_empty());
+            assert!(!state.tombstones.is_empty());
+            assert!(!state.unflushed_tombstones.is_empty());
+            // The fragments find what reading every term finds, in the
+            // same order, in every segment and in memory.
+            for source in state.sources() {
+                for &text in REFERENCE_QUERIES {
+                    for word in text::query_words(text) {
+                        for tag in [NAME_TAG, FOLDER_TAG] {
+                            let (mut scanned, mut looked_up) = (Vec::new(), Vec::new());
+                            source.word_inside_scan(tag, &word, &mut scanned);
+                            source.word_inside(tag, &word, &mut looked_up);
+                            assert_eq!(looked_up, scanned, "{word:?}");
+                        }
+                    }
+                }
+            }
+        }
+        assert_matches_reference(&index, &model, now, "several segments and memory");
+
+        // Opened again: the log's changes become a segment.
+        drop(index);
+        let (index, opened) = fixture.open();
+        assert_eq!(opened, Opened::Existing);
+        assert_matches_reference(&index, &model, now, "opened again");
+
+        index.compact().unwrap();
+        assert_eq!(index.stats().segments, 1);
+        assert_matches_reference(&index, &model, now, "merged into one segment");
+    }
+
+    #[test]
+    fn a_tombstone_hides_what_it_covers_as_reading_each_one_does() {
+        let tombstones = [
+            Tombstone {
+                prefix: path_key(Path::new("home/Docs/")),
+                seq: 10,
+            },
+            Tombstone {
+                prefix: path_key(Path::new("home/Docs/")),
+                seq: 4,
+            },
+            Tombstone {
+                prefix: path_key(Path::new("home/Docs/Old/")),
+                seq: 20,
+            },
+            // A prefix without a separator at its end.
+            Tombstone {
+                prefix: b"home/Pic".to_vec(),
+                seq: 15,
+            },
+        ];
+        let all: Tombstones = tombstones.iter().cloned().collect();
+        let keys = [
+            path_key(Path::new("home/Docs")),
+            path_key(Path::new("home/Docs/a.txt")),
+            path_key(Path::new("home/Docs/Old/b.txt")),
+            path_key(Path::new("home/Docs/Older/c.txt")),
+            path_key(Path::new("home/docs/a.txt")),
+            path_key(Path::new("home/Pictures/d.png")),
+            path_key(Path::new("home/Doc/e.txt")),
+            path_key(Path::new("home/e.txt")),
+            b"h".to_vec(),
+        ];
+        for key in &keys {
+            for seq in [0, 3, 4, 9, 10, 14, 15, 19, 20, 21] {
+                let each = tombstones
+                    .iter()
+                    .any(|tombstone| tombstone.covers(key, seq));
+                assert_eq!(all.covers(key, seq), each, "{key:?} at {seq}");
+            }
+        }
+        assert!(Tombstones::default().is_empty());
+        assert!(!Tombstones::default().covers(&keys[1], 0));
     }
 
     #[test]

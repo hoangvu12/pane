@@ -633,7 +633,7 @@ enum QueryKind {
     FolderAndName,
     OneLetter,
     /// A word no entry holds, of 3 to 8 letters: the pass inside words
-    /// reads every term.
+    /// runs too (before #185 it read every term).
     Miss,
     /// A word of a name, then a word no entry holds.
     MissAfterWord,

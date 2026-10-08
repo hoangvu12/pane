@@ -129,9 +129,10 @@ In Pane's cache folder, since it can always be rebuilt:
 `$XDG_CACHE_HOME/pane/file-index` on Linux (`file_index::INDEX_DIR`). The
 folder is readable by the user only: mode 0700 (files 0600) on macOS and
 Linux, and on Windows a protected DACL for the user and SYSTEM, inherited
-by its files, as `credentials.json` is written. It carries a format version;
-an index of another version, or one that cannot be read, is deleted and
-rebuilt, never read. The folder is locked: a second Pane on the same cache
+by its files, as `credentials.json` is written. It carries a format version
+(`file_index::FORMAT_VERSION`, 2 since #185 added the fragment index and
+key filters); an index of another version, or one that cannot be read, is
+deleted and rebuilt, never read. The folder is locked: a second Pane on the same cache
 folder does not index, and its status says "Another Pane is using file
 search on this computer". It is never sent anywhere.
 
@@ -754,12 +755,36 @@ which the coordinator above builds on:
   `docs\work\` for anything inside); it ranks just below a name prefix.
   When the words' starts find fewer entries than the page asks for, a
   second pass looks for words of three letters or more inside words
-  ("port" finds "report", in a name or a folder), reading every term of the
-  dictionary, and lists those after every match by the start of words
-  (`text::score_inside`, its score put 100 below). Keys are the
-  path's exact bytes (WTF-8 on Windows), so a name that is not valid
+  ("port" finds "report", in a name or a folder), and lists those after
+  every match by the start of words (`text::score_inside`, its score put
+  100 below). It does not read the whole dictionary (#185): each segment,
+  and the memory table, keeps a **fragment index**, the terms having each
+  run of 3 bytes of their words ("rep", "epo", "por", "ort" for "report"),
+  name and folder terms apart. The pass takes the terms having every
+  fragment of the word (the shortest list first, the others only keeping
+  what it found), checks that each really holds the word, and reads their
+  entries in the dictionary's order, as reading every term did, so the
+  same entries are found and stop at the same place. A word no term holds
+  usually ends at its first fragment. Checking that a candidate is the
+  current version of its path looks up the folders above it among the
+  tombstones (kept by prefix, not read one by one), and asks a newer
+  segment for the path only when the segment's **key filter** (a Bloom
+  filter of its paths, about 1 in 100 wrong) does not rule it out. Keys are
+  the path's exact bytes (WTF-8 on Windows), so a name that is not valid
   Unicode is shown with replacement characters and still opened exactly.
   Each entry keeps its kind, size, modified time, file id and volume.
+- **A segment's file** (`file_index/segment.rs`, format version 2 since
+  #185): the entries, front-coded in blocks of 16; each block's offset and
+  each entry's hint; then each term followed by its postings (the term
+  stored again so that its ordinal, its place in the dictionary's order,
+  leads to it); the `fst` dictionary; the tombstones it carries; each
+  term's offset by ordinal (4 bytes); the fragment lists (each fragment's
+  term ordinals as gaps) and the fragment table (4-byte fragment, 4-byte
+  offset, sorted, searched by halves); the key filter (10 bits per entry,
+  7 bits set by each path); and a footer of 21 numbers. Next to version 1
+  this adds, per term, about 4 bytes of offset, the term again (its length
+  and bytes) and a byte or two per fragment of it, and 1.25 bytes per
+  entry for the filter. An index of version 1 is rebuilt.
 - **Its folder**: `index.json` (the format version, the live segments, and
   Pane's record: whether a first walk finished, each volume's journal
   cursor, and the roots and rules it was built under), `<n>.seg`, `<n>.wal`, and `lock`, which the index holds locked,
@@ -848,7 +873,7 @@ there), `--root <folder>` another folder. It prints, as a table against
   - whole names, 3-letter prefixes, a word, folder and name words, one
     letter;
   - misses: a word no entry holds (3 to 8 letters, so the pass inside
-    words reads every term), and a real word followed by such a word,
+    words runs too), and a real word followed by such a word,
     each checked to find nothing;
   - typed-out names: every prefix of a name, from its first letter to the
     whole name, one keystroke after the other;
@@ -1005,7 +1030,18 @@ milestone is merged).
   across segments and memory, a query found inside words after the words
   it starts (segments and memory alike, not when the words' starts fill
   the page) and a query with `/` or `\` matching path segments in order;
-  `file_index::text` tests the ranks of each.
+  `file_index::text` tests the ranks of each. `store`'s reference test
+  (#185) answers a fixed set of queries (prefixes, words inside words,
+  misses, accents and letter case, several words, paths), on pages of
+  several sizes and the Folder kind, by brute force over a model of the
+  changes, and checks that the index gives the same entries in the same
+  order on one segment, on several segments with changes in memory and
+  tombstones, after opening again and after a merge; on the way, that the
+  fragment index finds what reading every term finds, in the same order.
+  Other `store` and `segment` tests cover the tombstones looked up by
+  prefix against reading each one, the term ordinals, the fragment lists,
+  the key filter, and an index of the previous and of a later format
+  version rebuilt.
 - **Per system**: the NTFS journal read without administrator rights
   (`file_index::journal` tests, #174); inotify reporting a change in a
   watched folder and a folder added later, and stopping when dropped
@@ -1113,8 +1149,10 @@ milestone is merged).
   title (`features::settings::file_search::TITLE`).
 - A query inside a word ("port" in "report") is looked for only when the
   words' starts find fewer entries than the page asks for, and only for
-  words of three letters or more; that pass reads every term of the index,
-  so it is slower than a match by the start of words on a large index.
+  words of three letters or more. That pass reads the terms having every
+  fragment of the word, so a word made of common fragments ("ing", "pdf")
+  reads long lists and is slower than a match by the start of words on a
+  large index.
 - macOS asks before Pane reads Desktop, Documents and Downloads (and
   removable and network volumes); the File Search page says so before the
   first walk and lists a refused folder with how to allow it, telling a
