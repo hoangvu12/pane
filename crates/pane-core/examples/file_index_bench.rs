@@ -4,7 +4,8 @@
 //! leaves it; several segments and changes in memory, as a stream of
 //! changes leaves it) and while changes arrive and segments are merged in
 //! the background (#187), a changed file re-indexed near the root and in a
-//! deep folder under ignore files, the catch-up after 10,000 changes
+//! deep folder under ignore files (the folders above kept between changes,
+//! #186, and with nothing kept), the catch-up after 10,000 changes
 //! (Windows), and memory, against the targets of #126 (Raycast: 450,097
 //! entries in 12.9 s, 61.8 MB on disk).
 //!
@@ -67,10 +68,10 @@ const GUARD_REINDEX_P95: Duration = Duration::from_millis(2_500);
 /// The batches of the stream of changes timed queries see on the second
 /// shape of the index: all but the last are written as a segment of their
 /// own, the last stays in the memory table (at most 10,000 changes, below
-/// the 65,536 entries past which it is written). The index merges a few
-/// segments of similar size at a time in the background (#187), so the
-/// segments are counted once its merges are done: about 2 (the one the
-/// first index left, and the stream's 4 merged), not 5.
+/// the 65,536 entries past which it is written). The index's background
+/// merges (#187) are held off while that shape is timed, so it holds 5
+/// segments (the one the first index left, and the stream's 4) and the
+/// changes in memory; the row while changes arrive lets them run.
 const STREAM_BATCHES: usize = 5;
 
 /// The words and extensions of the generated tree's names, and of the
@@ -332,11 +333,19 @@ fn main() {
         &changes,
         "report",
         (!generated).then_some(root.as_path()),
+        false,
     );
     let deep = deep_folder(&root, &scope, &sample);
     let deep_times = deep.as_ref().map(|deep| {
         let folder = Some(deep.path.as_path());
-        reindex(&index, &scope, &changes, "deep report", folder)
+        reindex(&index, &scope, &changes, "deep report", folder, false)
+    });
+    // The same with nothing kept, every folder above read again each time:
+    // the first change after a start, or after what the scope kept of the
+    // folders above was dropped (#186), as #183 measured every change.
+    let deep_cold = deep.as_ref().map(|deep| {
+        let folder = Some(deep.path.as_path());
+        reindex(&index, &scope, &changes, "deep cold report", folder, true)
     });
 
     // The catch-up after 10,000 changes, from the change journal.
@@ -350,7 +359,9 @@ fn main() {
     // The same queries on the index a stream of changes left: several
     // segments and changes in memory, below the merge threshold. It starts
     // from one segment again, without what the changes above put in the
-    // generated tree's index.
+    // generated tree's index. The background merges (#187) are held off
+    // meanwhile, so that the queries are timed on the segments the stream
+    // wrote, as they are before merges catch up, whatever the runner's speed.
     if generated {
         index
             .apply(&[Change::RemoveUnder(changes.clone())])
@@ -358,14 +369,13 @@ fn main() {
     }
     index.compact().expect("the index merged into one segment");
     let per_batch = (runs[0].entries as usize / 50).clamp(500, 10_000);
-    let mut streamed = stream_changes(&index, &root, &sample, per_batch);
-    // As the merges the stream started leave it, so that runs compare.
-    index.wait_for_merges();
-    streamed.segments = index.stats().segments;
+    index.hold_merges(true);
+    let streamed = stream_changes(&index, &root, &sample, per_batch);
     let several_first = time_queries(&index, &queries);
     let several_warm = time_queries(&index, &queries);
     // The same queries while changes go on arriving and segments are merged
-    // in the background (#187).
+    // in the background (#187), the merges let go.
+    index.hold_merges(false);
     let arriving = while_changes_arrive(&index, &root, &sample, per_batch, &queries);
     drop(index);
     let _ = std::fs::remove_dir_all(&index_dir);
@@ -424,14 +434,21 @@ fn main() {
         millis(percentile(&near_root, 95.0)),
         millis(percentile(&near_root, 50.0)),
     );
-    match (&deep, &deep_times) {
-        (Some(deep), Some(times)) => println!(
-            "| A changed file re-indexed in a deep folder under ignore files, 95th percentile | {} (p50 {}; {} folders down, {} of them or the root with ignore files) | under 10 ms | 4–10 ms |",
-            millis(percentile(times, 95.0)),
-            millis(percentile(times, 50.0)),
-            deep.depth,
-            deep.with_ignore_files,
-        ),
+    match (&deep, &deep_times, &deep_cold) {
+        (Some(deep), Some(times), Some(cold)) => {
+            println!(
+                "| A changed file re-indexed in a deep folder under ignore files, 95th percentile | {} (p50 {}; {} folders down, {} of them or the root with ignore files) | under 10 ms | 4–10 ms |",
+                millis(percentile(times, 95.0)),
+                millis(percentile(times, 50.0)),
+                deep.depth,
+                deep.with_ignore_files,
+            );
+            println!(
+                "| A changed file re-indexed in a deep folder under ignore files, nothing kept (every folder above read again), 95th percentile | {} (p50 {}) | under 10 ms | 4–10 ms |",
+                millis(percentile(cold, 95.0)),
+                millis(percentile(cold, 50.0)),
+            );
+        }
         _ => println!(
             "| A changed file re-indexed in a deep folder under ignore files, 95th percentile | not measured: the walk found no folder | under 10 ms | |"
         ),
@@ -465,8 +482,11 @@ fn main() {
         QueryKind::ALL.len()
     );
     println!(
-        "Several segments and changes in memory: {} segments and {} changes in memory, left by a stream of {} changes in {STREAM_BATCHES} batches of about {per_batch}, once the index merged what the stream wrote (a few segments of similar size at a time, in the background).",
+        "Several segments and changes in memory: {} segments and {} changes in memory, left by a stream of {} changes in {STREAM_BATCHES} batches of about {per_batch}, the background merges held off while they were timed.",
         streamed.segments, streamed.in_memory, streamed.changes,
+    );
+    println!(
+        "Re-indexed: each row's 100 changes are applied as a batch is, the file's own folder read again and the folders above it kept from the change before (#186); the row with nothing kept reads every folder above again each time, as the first change after a start does."
     );
     println!(
         "While changes arrive: {} changes applied while the queries ran, in batches of about {} each written as a segment, a pause of 100 ms after every {STREAM_BATCHES}; {} segments at the end.",
@@ -531,6 +551,10 @@ fn main() {
         if let Some(times) = &deep_times {
             let p95 = percentile(times, 95.0);
             check("re-index p95, deep".into(), p95, GUARD_REINDEX_P95);
+        }
+        if let Some(times) = &deep_cold {
+            let p95 = percentile(times, 95.0);
+            check("re-index p95, deep, nothing kept".into(), p95, GUARD_REINDEX_P95);
         }
         let per_entry = first.bytes as f64 / entries as f64;
         checked += 1;
@@ -605,7 +629,11 @@ fn index_once(
         let index = &index;
         let walker = threads.spawn(move || {
             let report = file_index::walk(scope, walk_options, &cancel, &|batch: Vec<Entry>| {
-                // About one entry in 400 named for the queries.
+                // Named for the queries: the first entry of each batch, and
+                // every 400th after it. The walk hands over one folder's
+                // entries at a time, its own entry first, so this is each
+                // folder walked, and a file of a folder holding more than
+                // 400 entries now and then.
                 for entry in batch.iter().step_by(400) {
                     let _ = sample_sender.send(entry.path.clone());
                 }
@@ -921,8 +949,10 @@ fn time_queries(index: &FileIndex, queries: &[TimedQuery]) -> Vec<Duration> {
 /// ignore file looked at, what the scope keeps of the file's folder
 /// dropped, as when Windows reports the folder changed too, so that its
 /// ignore files are read again, the folders above it kept from the run
-/// before), the change applied and a query finding it. The file is written
-/// in `changes`; with `indexed_in`, it is indexed as if it were in that
+/// before), the change applied and a query finding it. The first change
+/// reads every folder above the file; with `nothing_kept`, every change
+/// does, as the first after a start does. The file is written in
+/// `changes`; with `indexed_in`, it is indexed as if it were in that
 /// folder, which is not written to, and taken out again.
 fn reindex(
     index: &FileIndex,
@@ -930,14 +960,17 @@ fn reindex(
     changes: &Path,
     name: &str,
     indexed_in: Option<&Path>,
+    nothing_kept: bool,
 ) -> Vec<Duration> {
-    // The first change reads every folder above it.
     scope.forget_all_kept();
     let mut times = Vec::new();
     for n in 0..100 {
         let text = format!("changed {name} {n} zqx");
         let file = changes.join(format!("{text}.txt"));
         std::fs::write(&file, b"changed").expect("a changed file");
+        if nothing_kept {
+            scope.forget_all_kept();
+        }
         let started = Instant::now();
         let path = match indexed_in {
             Some(folder) => folder.join(file.file_name().expect("the file's name")),

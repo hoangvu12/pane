@@ -53,6 +53,11 @@ const MERGE_FLOOR: u64 = 1 << 12;
 /// merged even if their sizes differ, so that a query reads at most about
 /// this many.
 const MAX_SEGMENTS: usize = 8;
+/// Tombstones the segments above the oldest may carry, at least, before
+/// every segment is merged into one ([`oldest_run_due`]): only a merge from
+/// the oldest segment drops them, and the tiers alone seldom reach a first
+/// index's large segment.
+const TOMBSTONES_DUE: u64 = 4_096;
 /// Candidates a query reads and scores per segment, at least.
 const CANDIDATES: usize = 1_000;
 /// For a word of one or two characters, entries gathered before the words
@@ -626,13 +631,16 @@ struct Turns {
     wanted: bool,
     /// The merger is looking for runs to merge, or merging one.
     running: bool,
-    /// Tests: no merge starts while held.
+    /// No merge starts while held ([`FileIndex::hold_merges`]).
     held: bool,
     /// Tests: a merge waits before its segment takes the run's place while
     /// this is set; `paused` says it waits.
     pause_before_swap: bool,
     #[cfg_attr(not(test), allow(dead_code))]
     paused: bool,
+    /// Tests: the next merge panics.
+    #[cfg(test)]
+    panic_next: bool,
 }
 
 impl Merges {
@@ -742,11 +750,20 @@ impl Merger {
         while self.merges.next_turn() {
             let _turn = Turn(&self.merges);
             while self.merges.going_on() {
-                match self.merge_due() {
-                    Ok(true) => {}
+                // A merge that panics is given up as one that fails is,
+                // and said so: the merger goes on with its next turn, and
+                // nothing waits for this one.
+                let merged =
+                    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.merge_due()));
+                match merged {
+                    Ok(Ok(true)) => {}
                     // Nothing due, or a merge failed (it is tried again when
                     // segments are next added).
-                    Ok(false) | Err(_) => break,
+                    Ok(Ok(false) | Err(_)) => break,
+                    Err(_) => {
+                        eprintln!("pane: a merge of the file index's segments panicked");
+                        break;
+                    }
                 }
             }
         }
@@ -757,13 +774,23 @@ impl Merger {
     /// place, never while it is written, so that changes go on being
     /// applied meanwhile.
     fn merge_due(&self) -> Result<bool, IndexError> {
+        #[cfg(test)]
+        if std::mem::take(&mut self.merges.turns().panic_next) {
+            panic!("a merge panics, as the test asks");
+        }
         let _merging = lock(&self.merges.merging);
         let segments = read(&self.state).segments.clone();
         let sizes: Vec<u64> = segments
             .iter()
             .map(|segment| u64::from(segment.len()))
             .collect();
-        let Some(run) = tier_to_merge(&sizes) else {
+        // The tombstones only a merge from the oldest segment drops.
+        let carried: u64 = segments
+            .iter()
+            .skip(1)
+            .map(|segment| segment.tombstones.len() as u64)
+            .sum();
+        let Some(run) = tier_to_merge(&sizes).or_else(|| oldest_run_due(&sizes, carried)) else {
             return Ok(false);
         };
         let id = {
@@ -842,6 +869,21 @@ fn tier_to_merge(sizes: &[u64]) -> Option<Range<usize>> {
     Some(start..start + MERGE_FACTOR)
 }
 
+/// Every segment, oldest first, to merge into one when the tombstones the
+/// segments above the oldest carry (`carried`) are more than
+/// [`TOMBSTONES_DUE`] and more than a 32nd of the oldest segment's entries
+/// (`sizes`, oldest first): a merge from the oldest segment is the only one
+/// that drops them, and while they pile up each query checks against them
+/// and they take room on the disk. `None` when they are fewer.
+fn oldest_run_due(sizes: &[u64], carried: u64) -> Option<Range<usize>> {
+    let oldest = *sizes.first()?;
+    if sizes.len() >= 2 && carried > TOMBSTONES_DUE.max(oldest / 32) {
+        Some(0..sizes.len())
+    } else {
+        None
+    }
+}
+
 /// Writes `run`, neighbouring segments oldest first, merged into a new
 /// segment `id` in `dir`: the newest version of each key, without what
 /// `tombstones` hide. When `oldest` (the run starts at the oldest segment,
@@ -849,7 +891,9 @@ fn tier_to_merge(sizes: &[u64]) -> Option<Range<usize>> {
 /// tombstones it carries are dropped; otherwise the merged segment keeps
 /// them for the segments older than it. A tombstone is so dropped only by
 /// a merge covering every segment it could hide. `None` when the index
-/// closed meanwhile (`closing`): the merge is let go and its file deleted.
+/// closed meanwhile (`closing`): the merge is let go at once, before what it
+/// read is sorted and written to the disk, and its file deleted, so that
+/// closing never waits for it.
 fn write_merged(
     dir: &Path,
     roots: &Roots,
@@ -884,12 +928,13 @@ fn write_merged(
                 },
             )
         });
-    segment::write(&path, merged, &carried)?;
+    let written = segment::write_unless(&path, merged, &carried, closing);
     if closing.load(Ordering::Relaxed) {
         // Cut short: never put in place.
         let _ = fs::remove_file(&path);
         return Ok(None);
     }
+    written?;
     Ok(Some(Segment::open(id, path)?))
 }
 
@@ -1241,6 +1286,19 @@ impl FileIndex {
     /// merges leave them. Changes and queries never need to.
     pub fn wait_for_merges(&self) {
         self.merges.wait_until_done();
+    }
+
+    /// Holds merges off (none starts; one under way finishes first), or
+    /// lets them go again: for the benchmark, which times queries on the
+    /// segments a stream of changes leaves before they are merged, and the
+    /// tests. Pane never holds them.
+    pub fn hold_merges(&self, held: bool) {
+        let mut turns = self.merges.turns();
+        turns.held = held;
+        self.merges.changed.notify_all();
+        while held && turns.running {
+            turns = self.merges.wait(turns);
+        }
     }
 
     pub fn record(&self) -> IndexRecord {
@@ -1653,17 +1711,6 @@ impl FileIndex {
     /// opened.
     pub(crate) fn folder_id_reads(&self) -> usize {
         self.folder_id_reads.load(Ordering::Relaxed)
-    }
-
-    /// Holds merges off (none starts; one under way finishes first), or
-    /// lets them go again.
-    pub(crate) fn hold_merges(&self, held: bool) {
-        let mut turns = self.merges.turns();
-        turns.held = held;
-        self.merges.changed.notify_all();
-        while held && turns.running {
-            turns = self.merges.wait(turns);
-        }
     }
 
     /// Makes merges wait before their segment takes the run's place, or
@@ -2892,6 +2939,135 @@ mod tests {
             .collect();
         let tail = many.len() - MERGE_FACTOR;
         assert_eq!(tier_to_merge(&many), Some(tail..many.len()));
+    }
+
+    /// Tombstones piling up above a first index's large segment, which the
+    /// tiers seldom reach, merge every segment into one once they are many
+    /// for its size (#187): only a merge from the oldest drops them.
+    #[test]
+    fn tombstones_piling_up_above_the_oldest_segment_merge_every_segment() {
+        assert_eq!(oldest_run_due(&[], TOMBSTONES_DUE * 10), None);
+        assert_eq!(oldest_run_due(&[400_000], TOMBSTONES_DUE * 10), None);
+        // A 32nd of the oldest segment's entries, or TOMBSTONES_DUE.
+        let sizes = [400_000, 4_000, 1_000];
+        assert_eq!(oldest_run_due(&sizes, 400_000 / 32), None);
+        assert_eq!(oldest_run_due(&sizes, 400_000 / 32 + 1), Some(0..3));
+        assert_eq!(oldest_run_due(&[1_000, 10], TOMBSTONES_DUE), None);
+        assert_eq!(
+            oldest_run_due(&[1_000, 10], TOMBSTONES_DUE + 1),
+            Some(0..2)
+        );
+        // The tiers come first: here none is due, as after a first index.
+        assert_eq!(tier_to_merge(&sizes), None);
+    }
+
+    /// A merge that panics is given up and said so (#187): waiting for the
+    /// merges returns, and the next merge due runs.
+    #[test]
+    fn a_merge_that_panics_is_given_up_and_the_next_one_runs() {
+        let fixture = fixture();
+        let (index, _) = fixture.open();
+        index.hold_merges(true);
+        let flush = |name: &str| {
+            let entry = fixture.entry(name, EntryKind::File, 1);
+            index.apply(&[Change::Put(entry)]).unwrap();
+            index.flush().unwrap();
+        };
+        for n in 0..MERGE_FACTOR {
+            flush(&format!("batch {n}.txt"));
+        }
+        index.merges.turns().panic_next = true;
+        index.hold_merges(false);
+        index.wait_for_merges();
+        assert!(!index.merges.turns().panic_next, "the merge ran");
+        assert_eq!(index.stats().segments, MERGE_FACTOR, "and merged nothing");
+
+        flush("after.txt");
+        index.wait_for_merges();
+        assert!(index.stats().segments < MERGE_FACTOR, "merged once more due");
+        assert_eq!(index.search(&query("batch")).len(), MERGE_FACTOR);
+        assert_eq!(names(&index.search(&query("after"))), ["after.txt"]);
+    }
+
+    /// A word of one or two letters stops gathering entries at
+    /// [`SHORT_WORD_ENTRIES`] however many more of its terms there are, in
+    /// memory and in a segment alike (#185).
+    #[test]
+    fn a_short_word_stops_gathering_entries_at_its_limit() {
+        let fixture = fixture();
+        let (index, _) = fixture.open();
+        index.hold_merges(true);
+        // Distinct words of letters only, each starting with `a`.
+        let word = |mut n: usize| {
+            let mut word = String::from("a");
+            for _ in 0..4 {
+                word.push(char::from(b'a' + (n % 26) as u8));
+                n /= 26;
+            }
+            word
+        };
+        let count = SHORT_WORD_ENTRIES + 10;
+        let changes: Vec<Change> = (0..count)
+            .map(|n| fixture.entry(&format!("{}.txt", word(n)), EntryKind::File, 1))
+            .map(Change::Put)
+            .collect();
+        index.apply(&changes).unwrap();
+        let gathered = |source: &Source<'_>, text: &str| {
+            let (mut all, mut exact) = (Vec::new(), Vec::new());
+            source.word(NAME_TAG, text, &mut all, &mut exact);
+            all.len()
+        };
+        {
+            let state = read(&index.state);
+            assert!(state.segments.is_empty(), "all in memory");
+            let memory = Source::Memory(&state.memory);
+            assert_eq!(gathered(&memory, "a"), SHORT_WORD_ENTRIES);
+            // A longer word is not stopped: every `aa…` word.
+            assert_eq!(gathered(&memory, "aaa"), count.div_ceil(26 * 26));
+        }
+        index.flush().unwrap();
+        let state = read(&index.state);
+        let segment = Source::Segment(&state.segments[0]);
+        assert_eq!(gathered(&segment, "a"), SHORT_WORD_ENTRIES);
+        assert_eq!(gathered(&segment, "aaa"), count.div_ceil(26 * 26));
+    }
+
+    /// A query reads at most [`CANDIDATES`] entries of a segment (more when
+    /// the page asks for more), the best its hints tell (#185): of more
+    /// entries than that matching, the newest and shallowest is among those
+    /// read, and found first.
+    #[test]
+    fn a_query_matching_more_entries_than_it_reads_still_finds_the_best_first() {
+        let fixture = fixture();
+        let (index, _) = fixture.open();
+        let mut entries: Vec<Entry> = (0..CANDIDATES + 200)
+            .map(|n| fixture.entry(&format!("old/drafts/report {n}.txt"), EntryKind::File, 1))
+            .collect();
+        let newest = fixture.entry("report latest.txt", EntryKind::File, now_seconds());
+        entries.push(newest.clone());
+        let mut bulk = index.bulk().unwrap();
+        bulk.add(index.prepare(entries)).unwrap();
+        bulk.finish().unwrap();
+        {
+            let state = read(&index.state);
+            assert_eq!(state.segments.len(), 1);
+            let segment = Source::Segment(&state.segments[0]);
+            let read_ids = candidates(&segment, &["rep".to_owned()], None, CANDIDATES, false);
+            assert_eq!(read_ids.len(), CANDIDATES);
+            let key = path_key(&newest.path);
+            assert!(
+                read_ids
+                    .iter()
+                    .any(|&id| segment.stored(id).is_some_and(|stored| stored.key == key))
+            );
+        }
+        let hits = index.search(&Query {
+            text: "rep",
+            limit: 1,
+            offset: 0,
+            kind: None,
+        });
+        assert_eq!(names(&hits), ["report latest.txt"]);
     }
 
     /// The index with the reference fixture's first index as one segment

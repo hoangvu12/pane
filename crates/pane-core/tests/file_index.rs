@@ -12,9 +12,10 @@
 //! control applied without a restart, a folder taken out for churn included
 //! again, and a folder granted to Files under #29 kept in what is indexed; and
 //! the ignore rules kept between batches of changes (#186): a `.gitignore`
-//! line added and removed, a repository made and deleted, the user's
-//! patterns changed, each holding in later batches and at Enter. The coordinator's catch-up, live changes and
-//! fallbacks driven through the change source's seam are its unit tests
+//! line added and removed, a repository made and deleted, its own
+//! `.git/info/exclude` changed, the user's patterns changed, each holding
+//! in later batches and at Enter. The coordinator's catch-up, live changes
+//! and fallbacks driven through the change source's seam are its unit tests
 //! (`pane_core::file_index::indexer`), and the actions on each row, in
 //! every language, `file_actions.rs`. The packages are the ones
 //! `cargo xtask guests` assembles in `target/guests/packages`.
@@ -912,6 +913,21 @@ fn a_new_repository_starts_applying_its_ignore_rules() {
     eventually(&launcher, "later", lists("later.js"));
     write(&home, "Projects/site/dist/last.js", "js");
     eventually(&launcher, "last", lists("last.js"));
+}
+
+#[test]
+fn a_repositorys_own_exclude_file_applies_while_pane_runs() {
+    let home = Home::new();
+    // `.git` is never indexed: on Linux its `info` is watched apart.
+    write(&home, "Projects/tool/.git/info/exclude", "");
+    write(&home, "Projects/tool/notes.draft", "draft");
+    let (launcher, _runtime) = home.with_files();
+    eventually(&launcher, "notes", lists("notes.draft"));
+
+    write(&home, "Projects/tool/.git/info/exclude", "*.draft\n");
+    eventually(&launcher, "notes", lacks("notes.draft"));
+    write(&home, "Projects/tool/.git/info/exclude", "");
+    eventually(&launcher, "notes", lists("notes.draft"));
 }
 
 #[test]

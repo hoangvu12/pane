@@ -27,6 +27,7 @@ use std::io::{self, BufWriter, Write};
 use std::ops::ControlFlow;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use fst::{IntoStreamer, Streamer};
 use memmap2::Mmap;
@@ -79,9 +80,22 @@ pub(crate) fn write(
     docs: impl Iterator<Item = (u64, Prepared)>,
     tombstones: &[Tombstone],
 ) -> io::Result<()> {
+    write_unless(path, docs, tombstones, &AtomicBool::new(false))
+}
+
+/// [`write`], given up once `cancel` is set when `docs` ends (a merge cut
+/// short ends its entries then): what was read is neither sorted nor put on
+/// the disk, the temporary file is deleted, and the answer is an
+/// [`io::ErrorKind::Interrupted`] error.
+pub(crate) fn write_unless(
+    path: &Path,
+    docs: impl Iterator<Item = (u64, Prepared)>,
+    tombstones: &[Tombstone],
+    cancel: &AtomicBool,
+) -> io::Result<()> {
     let temporary = path.with_extension("tmp");
-    let written =
-        write_to(&temporary, docs, tombstones).and_then(|()| fs::rename(&temporary, path));
+    let written = write_to(&temporary, docs, tombstones, cancel)
+        .and_then(|()| fs::rename(&temporary, path));
     if written.is_err() {
         let _ = fs::remove_file(&temporary);
     }
@@ -92,7 +106,15 @@ fn write_to(
     path: &Path,
     docs: impl Iterator<Item = (u64, Prepared)>,
     tombstones: &[Tombstone],
+    cancel: &AtomicBool,
 ) -> io::Result<()> {
+    let given_up = || {
+        if cancel.load(Ordering::Relaxed) {
+            Err(io::Error::from(io::ErrorKind::Interrupted))
+        } else {
+            Ok(())
+        }
+    };
     let file = create_private(path)?;
     let mut out = Counting {
         inner: BufWriter::with_capacity(1 << 20, file),
@@ -144,6 +166,7 @@ fn write_to(
         previous = doc.key;
         max_seq = max_seq.max(seq);
     }
+    given_up()?;
     let docs_len = out.written - docs_off;
 
     let blocks_off = out.written;
@@ -265,6 +288,7 @@ fn write_to(
     }
     out.write_all(&MAGIC)?;
     let file = out.inner.into_inner().map_err(|error| error.into_error())?;
+    given_up()?;
     file.sync_all()
 }
 
@@ -834,6 +858,23 @@ mod tests {
             file_id: n,
             volume: 1,
         }
+    }
+
+    /// A write given up (a merge cut short as the index closes, #187)
+    /// leaves no file: neither the segment nor its temporary file.
+    #[test]
+    fn a_write_given_up_leaves_no_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().join("home");
+        let roots = Roots::new(&[&home]);
+        let entry = Prepared::entry(&roots, &home.join("plan.txt"), meta(1));
+        let docs = std::iter::once((1, entry));
+        let path = dir.path().join("7.seg");
+        let cancel = AtomicBool::new(true);
+        let written = write_unless(&path, docs, &[], &cancel);
+        assert_eq!(written.unwrap_err().kind(), io::ErrorKind::Interrupted);
+        assert!(!path.exists());
+        assert!(!path.with_extension("tmp").exists());
     }
 
     fn written(count: u64) -> (tempfile::TempDir, Segment, Vec<PathBuf>) {

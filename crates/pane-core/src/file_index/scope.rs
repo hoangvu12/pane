@@ -5,9 +5,10 @@
 //! What the rules learn of a folder when a change is looked at (its ignore
 //! files, whether it is in a repository) is kept by the scope between
 //! batches of changes (#186, [`Scope::admits_kept`]) until a change drops
-//! it ([`Scope::forget_kept`]); a scope built again keeps nothing.
+//! it ([`Scope::forget_kept`]), never for a folder no change is reported
+//! from ([`Scope::keep_nothing_under`]); a scope built again keeps nothing.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -18,7 +19,7 @@ use ignore::gitignore::{Gitignore, GitignoreBuilder, gitconfig_excludes_path};
 use serde::{Deserialize, Serialize};
 
 use super::format::{SEPARATOR, path_key};
-use super::volume::{VolumeKind, VolumeKinds, volume_kind};
+use super::volume::{Asked, VOLUME_ANSWER, VolumeKind, VolumeKinds, ask_within, volume_kind};
 use crate::util::lock;
 
 /// The most folders a scope keeps between batches of changes; past it,
@@ -177,16 +178,28 @@ pub struct Scope {
     home: Option<Vec<u8>>,
     /// What kind of volume holds a folder.
     volumes: VolumeKinds,
-    /// Per root, the kind of volume holding it, asked once.
-    root_volumes: Vec<OnceLock<VolumeKind>>,
+    /// Per root, the kind of volume holding it, asked once it is there.
+    root_volumes: Vec<OnceLock<RootVolume>>,
     /// What [`Scope::admits_kept`] learned of folders, kept between batches
     /// of changes until a change drops it (#186).
     kept: Mutex<Admitted>,
+    /// Folders of which nothing is kept, with everything under them: not
+    /// watched live, so no change would drop it ([`Scope::keep_nothing_under`]).
+    unkept: Mutex<HashSet<PathBuf>>,
     /// The files Git reads to find the user's global ignore file, and that
     /// file, each as it was before `global` was read.
     global_files: Vec<(PathBuf, Stamp)>,
     /// The global ignore file `global` was read from, and how it was then.
     global_file: Option<(PathBuf, Stamp)>,
+}
+
+/// What the system said of the volume holding a root.
+#[derive(Clone, Copy, Debug)]
+struct RootVolume {
+    kind: VolumeKind,
+    /// `false` when it did not answer in time ([`VOLUME_ANSWER`]), and the
+    /// root is taken for a network share.
+    answered: bool,
 }
 
 /// How a file was: its size and modified time, `None` when it was not
@@ -311,6 +324,7 @@ impl Scope {
             volumes,
             root_volumes,
             kept: Mutex::new(Admitted::default()),
+            unkept: Mutex::new(HashSet::new()),
             global_files,
             global_file,
         }
@@ -341,13 +355,42 @@ impl Scope {
     /// the ignore files of a folder and the folders above it are read once,
     /// and kept between batches of changes until [`Scope::forget_kept`]
     /// drops them. Shared by the coordinator's batches and the check before
-    /// a file is acted on.
+    /// a file is acted on. Under a folder [`Scope::keep_nothing_under`]
+    /// named, the ignore files are read again each time.
     pub fn admits_kept(&self, path: &Path, is_dir: bool) -> bool {
+        let unkept = {
+            let unkept = lock(&self.unkept);
+            !unkept.is_empty() && path.ancestors().any(|folder| unkept.contains(folder))
+        };
+        if unkept {
+            return self.admits(path, is_dir, &mut Admitted::default());
+        }
         let mut kept = lock(&self.kept);
         if kept.folders.len() > KEPT_FOLDERS {
             kept.clear();
         }
         self.admits(path, is_dir, &mut kept)
+    }
+
+    /// Keeps nothing from now on of `folders` and the folders under them,
+    /// and drops what is kept of them: they are not watched live (a network
+    /// share, a folder past Linux's watch limit, a root when watching could
+    /// not start), so no change would say when their ignore files change.
+    pub fn keep_nothing_under(&self, folders: &[PathBuf]) {
+        if folders.is_empty() {
+            return;
+        }
+        lock(&self.unkept).extend(folders.iter().cloned());
+        let mut kept = lock(&self.kept);
+        for folder in folders {
+            kept.forget(folder);
+        }
+    }
+
+    /// The folders [`Scope::keep_nothing_under`] named, for the scope built
+    /// in this one's place.
+    pub fn kept_nothing_under(&self) -> Vec<PathBuf> {
+        lock(&self.unkept).iter().cloned().collect()
     }
 
     /// Drops what is kept of `folder` and every folder under it, so that
@@ -363,22 +406,61 @@ impl Scope {
         lock(&self.kept).clear();
     }
 
-    /// The kind of volume holding `path`.
+    /// The kind of volume holding the folder `path`, a mount the walker
+    /// meets under a root: the system's answer within [`VOLUME_ANSWER`]
+    /// (one that does not answer in time is taken for a network share, one
+    /// gone meanwhile is of an unknown kind).
     pub fn volume_kind(&self, path: &Path) -> VolumeKind {
-        (self.volumes)(path)
+        match ask_within(&self.volumes, path, VOLUME_ANSWER) {
+            Asked::Kind(kind) => kind,
+            Asked::Away => VolumeKind::Unknown,
+            Asked::NoAnswer => VolumeKind::Network,
+        }
     }
 
-    /// The kind of volume holding root `root`, asked once for this scope.
+    /// The kind of volume holding root `root`, asked once for this scope
+    /// within [`VOLUME_ANSWER`]: one that does not answer in time is taken
+    /// for a network share ([`Scope::roots_not_answering`]). A root that is
+    /// not there (an unplugged drive) is asked again each time until it is
+    /// back, taken meanwhile as a local disk so that it keeps its entries.
     pub fn root_volume(&self, root: usize) -> VolumeKind {
-        self.root_volumes
-            .get(root)
-            .map_or(VolumeKind::Local, |kind| {
-                *kind.get_or_init(|| self.volume_kind(&self.rules.roots[root]))
-            })
+        let (Some(known), Some(path)) = (self.root_volumes.get(root), self.rules.roots.get(root))
+        else {
+            return VolumeKind::Local;
+        };
+        if let Some(answer) = known.get() {
+            return answer.kind;
+        }
+        let answer = match ask_within(&self.volumes, path, VOLUME_ANSWER) {
+            Asked::Away => return VolumeKind::Local,
+            Asked::Kind(kind) => RootVolume {
+                kind,
+                answered: true,
+            },
+            Asked::NoAnswer => RootVolume {
+                kind: VolumeKind::Network,
+                answered: false,
+            },
+        };
+        known.get_or_init(|| answer).kind
+    }
+
+    /// The roots whose volume the system did not say within
+    /// [`VOLUME_ANSWER`] (a stalled network mount), taken for network
+    /// shares: left out unless other volumes are included, never watched.
+    pub fn roots_not_answering(&self) -> Vec<PathBuf> {
+        self.rules
+            .roots
+            .iter()
+            .zip(&self.root_volumes)
+            .filter(|(_, known)| known.get().is_some_and(|answer| !answer.answered))
+            .map(|(root, _)| root.clone())
+            .collect()
     }
 
     /// Whether the rules leave root `root` out whole: it is on a network
-    /// share or a removable drive, and other volumes are not included.
+    /// share, a removable drive or a volume the system says nothing about,
+    /// and other volumes are not included.
     pub fn leaves_out_root(&self, root: usize) -> bool {
         !self.rules.include_other_volumes && self.root_volume(root) != VolumeKind::Local
     }
@@ -417,8 +499,9 @@ impl Scope {
     }
 
     /// Whether the folder at `path`, on volume `volume` in a folder on
-    /// volume `parent_volume`, is a network share or a removable drive
-    /// mounted there that the rules leave out (other volumes not included).
+    /// volume `parent_volume`, is a network share, a removable drive or a
+    /// volume the system says nothing about, mounted there, that the rules
+    /// leave out (other volumes not included).
     /// On Windows another volume under a root is reached only through a
     /// mount point or a junction, a link never followed, so the volumes
     /// listed are always the folder's own.
@@ -833,6 +916,37 @@ mod tests {
         assert!(!scope.admits_kept(&home.join("repo/src"), true));
     }
 
+    /// Of a folder no change is reported from (not watched live), nothing
+    /// is kept: its ignore files are read each time (#186).
+    #[test]
+    fn nothing_is_kept_of_a_folder_not_watched_live() {
+        let (_dir, home) = home_with(&[
+            "repo/.git/HEAD",
+            "repo/.gitignore",
+            "repo/src/trace.txt",
+            "other/notes.txt",
+        ]);
+        let scope = Scope::new(ScopeRules::for_home(home.clone()));
+        let traced = home.join("repo/src/trace.txt");
+        let notes = home.join("other/notes.txt");
+        assert!(scope.admits_kept(&traced, false));
+        assert!(scope.admits_kept(&notes, false));
+        scope.keep_nothing_under(&[home.join("repo")]);
+
+        fs::write(home.join("repo/.gitignore"), "*.txt\n").unwrap();
+        assert!(!scope.admits_kept(&traced, false), "read again");
+        fs::write(home.join("repo/.gitignore"), "").unwrap();
+        assert!(scope.admits_kept(&traced, false), "read again");
+        // Elsewhere what was learned is kept as before.
+        fs::write(home.join("other/.ignore"), "*.txt\n").unwrap();
+        assert!(scope.admits_kept(&notes, false), "kept");
+
+        // A scope built in its place is told so.
+        let again = Scope::new(ScopeRules::for_home(home.clone()));
+        again.keep_nothing_under(&scope.kept_nothing_under());
+        assert_eq!(again.kept_nothing_under(), [home.join("repo")]);
+    }
+
     #[test]
     fn the_users_folders_and_patterns_and_panes_own_folders_are_left_out() {
         let (_dir, home) = home_with(&[
@@ -909,6 +1023,60 @@ mod tests {
         );
         assert_eq!(scope.watched_roots(), [home, stick]);
         assert_eq!(scope.network_roots(), [share]);
+    }
+
+    /// A root away when it is first asked about (an unplugged drive) keeps
+    /// its entries, and is asked about again once it is back (#184): a
+    /// removable drive plugged in later is left out from then on.
+    #[test]
+    fn a_root_away_is_asked_about_again_once_it_is_back() {
+        let (dir, home) = home_with(&["notes.txt"]);
+        let stick = dir.path().join("stick");
+        let mut rules = ScopeRules::for_home(home.clone());
+        rules.roots.push(stick.clone());
+        let share = dir.path().join("share");
+        let volumes = crate::file_index::volume::tests::fake_volumes(&share, &stick);
+        let scope = Scope::with_volumes(rules, volumes);
+        assert_eq!(scope.kept_roots(), [home.clone(), stick.clone()]);
+        fs::create_dir_all(&stick).unwrap();
+        assert_eq!(scope.root_volume(1), VolumeKind::Removable);
+        assert_eq!(scope.kept_roots(), [home]);
+    }
+
+    /// A root whose volume the system does not say in time (a stalled
+    /// network mount) is taken for a network share and noted, holding up
+    /// nothing longer than that time; a volume mounted under a root that
+    /// the system says nothing about is left out as another volume (#184).
+    #[test]
+    fn a_volume_that_does_not_answer_or_says_nothing_is_left_out() {
+        let (dir, home) = home_with(&["notes.txt", "mounted/x.txt"]);
+        let slow = dir.path().join("slow");
+        fs::create_dir_all(&slow).unwrap();
+        let mut rules = ScopeRules::for_home(home.clone());
+        rules.roots.push(slow.clone());
+        let stalled = slow.clone();
+        let volumes: VolumeKinds = Arc::new(move |path: &Path| {
+            if path.starts_with(&stalled) {
+                std::thread::sleep(VOLUME_ANSWER * 2);
+                VolumeKind::Local
+            } else if path.ends_with("mounted") {
+                VolumeKind::Unknown
+            } else {
+                VolumeKind::Local
+            }
+        });
+        let mounted = home.join("mounted");
+
+        let scope = Scope::with_volumes(rules.clone(), volumes.clone());
+        assert_eq!(scope.kept_roots(), [home.clone()]);
+        assert_eq!(scope.roots_not_answering(), [slow.clone()]);
+        assert!(scope.leaves_out_mount(&mounted, 2, 1));
+
+        rules.include_other_volumes = true;
+        let scope = Scope::with_volumes(rules, volumes);
+        assert_eq!(scope.watched_roots(), [home]);
+        assert_eq!(scope.network_roots(), [slow]);
+        assert!(!scope.leaves_out_mount(&mounted, 2, 1));
     }
 
     #[cfg(windows)]

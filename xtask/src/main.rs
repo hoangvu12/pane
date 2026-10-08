@@ -663,7 +663,13 @@ fn file_index_guard() -> Result<(), String> {
     run(cargo()
         .current_dir(&root)
         .args(["build", "--locked", "--workspace", "--examples"]))?;
-    let target = std::env::var_os("CARGO_TARGET_DIR")
+    // Where cargo built it: `CARGO_TARGET_DIR`, else `CARGO_BUILD_TARGET_DIR`
+    // (`build.target-dir` from the environment), else `target`, in the
+    // development profile's `debug`. A `build.target-dir` in a cargo
+    // configuration file is not read: Pane's `.cargo/config.toml` sets none.
+    let target = ["CARGO_TARGET_DIR", "CARGO_BUILD_TARGET_DIR"]
+        .into_iter()
+        .find_map(std::env::var_os)
         .map(|dir| root.join(dir))
         .unwrap_or_else(|| root.join("target"));
     let program = format!("file_index_bench{}", std::env::consts::EXE_SUFFIX);

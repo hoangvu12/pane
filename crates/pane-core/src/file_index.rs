@@ -174,6 +174,8 @@ mod tests {
             walk: vec![home.join("Documents")],
             listed: Vec::new(),
             unresolved: 0,
+            gone: Vec::new(),
+            unresolved_folders: Vec::new(),
         };
         let (changes, walk) = catch_up_changes(&scope, &catch_up);
         assert_eq!(walk, [home.join("Documents")]);

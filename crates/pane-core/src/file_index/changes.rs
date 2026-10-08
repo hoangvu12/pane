@@ -70,6 +70,10 @@ pub enum Caught {
         walk: Vec<PathBuf>,
         /// Folders (roots, when a volume's records are gone) to reconcile.
         reconcile: Vec<PathBuf>,
+        /// Folders whose ignore rules may have changed in ways the changes
+        /// do not name (an ignore file deleted, one read again), to
+        /// re-check with everything under them (#186).
+        recheck: Vec<PathBuf>,
         /// The cursors to keep once the changes are in the index.
         cursors: Vec<JournalCursor>,
         how: CaughtUpBy,

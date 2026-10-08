@@ -14,9 +14,8 @@ name: CI (branch)
 # cfg-gating class of error) in minutes: one full test run per push is
 # the verification an iterating branch needs, and the full suite on every
 # operating system runs at ci-fast.yml's verify tier and in ci.yml's
-# release matrix. A
-# push that changes only documentation runs nothing but the summary.
-# docs/agents/ci.md describes the tiers.
+# release matrix. A push that changes only documentation runs nothing but
+# the summary. docs/agents/ci.md describes the tiers.
 on:
   push:
     branches-ignore:

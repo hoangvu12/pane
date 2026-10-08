@@ -17,11 +17,17 @@
 //!   and the like), AFS and Lustre are network shares, FAT and exFAT
 //!   removable drives.
 //!
-//! A folder the system says nothing about (it is missing, the call failed)
-//! is taken as local, so that a root that is away keeps its entries.
+//! A folder the system says nothing about (the call failed) is of an
+//! unknown kind, left out as another volume is unless the user includes
+//! them. The scope asks on a helper thread, giving the system
+//! [`VOLUME_ANSWER`] to answer ([`ask_within`]), so that a stalled network
+//! mount holds up only that thread: one that does not answer in time is
+//! taken for a network share. A root that is not there (an unplugged
+//! drive) is asked again once it is back, and keeps its entries meanwhile.
 
 use std::path::Path;
 use std::sync::Arc;
+use std::time::Duration;
 
 /// What kind of volume holds a folder.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -32,6 +38,57 @@ pub enum VolumeKind {
     Network,
     /// A removable drive: a USB stick, a memory card, a disc.
     Removable,
+    /// The system did not say (its call failed): left out as a network
+    /// share or a removable drive is, unless other volumes are included.
+    Unknown,
+}
+
+/// How long the system is given to say what kind of volume holds a folder
+/// (#184): one that does not answer by then is taken for a network share,
+/// so that a stalled network mount never holds up the index.
+pub(crate) const VOLUME_ANSWER: Duration = Duration::from_secs(2);
+
+/// What [`ask_within`] found.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Asked {
+    /// The folder is not there (an unplugged drive).
+    Away,
+    Kind(VolumeKind),
+    /// The system did not answer in time.
+    NoAnswer,
+}
+
+/// Asks `volumes` what kind of volume holds the folder `path`, on a helper
+/// thread of its own, waiting at most `limit`: a stalled network mount
+/// holds up only that thread, left behind to end whenever the system
+/// answers it. The folder is looked at first, on the same thread: one not
+/// there is [`Asked::Away`].
+pub(crate) fn ask_within(volumes: &VolumeKinds, path: &Path, limit: Duration) -> Asked {
+    let (answer, answered) = std::sync::mpsc::channel();
+    let ask = {
+        let volumes = volumes.clone();
+        let path = path.to_path_buf();
+        move || {
+            let kind = path.is_dir().then(|| volumes(path.as_path()));
+            let _ = answer.send(kind);
+        }
+    };
+    let spawned = std::thread::Builder::new()
+        .name("pane-volume-kind".into())
+        .spawn(ask);
+    if spawned.is_err() {
+        // No thread to spare: asked here, as long as it takes.
+        return if path.is_dir() {
+            Asked::Kind(volumes(path))
+        } else {
+            Asked::Away
+        };
+    }
+    match answered.recv_timeout(limit) {
+        Ok(Some(kind)) => Asked::Kind(kind),
+        Ok(None) => Asked::Away,
+        Err(_) => Asked::NoAnswer,
+    }
 }
 
 /// Tells what kind of volume holds a folder (see
@@ -40,7 +97,8 @@ pub enum VolumeKind {
 pub type VolumeKinds = Arc<dyn Fn(&Path) -> VolumeKind + Send + Sync>;
 
 /// The kind of volume holding `path`, as the system says (see the module
-/// docs); [`VolumeKind::Local`] when it does not say.
+/// docs); [`VolumeKind::Unknown`] when it does not say. Blocking, for as
+/// long as the system takes: the scope asks through [`ask_within`].
 pub fn volume_kind(path: &Path) -> VolumeKind {
     system_kind(path)
 }
@@ -107,7 +165,7 @@ fn system_kind(path: &Path) -> VolumeKind {
         return VolumeKind::Network;
     }
     let Some(root) = volume_root(path) else {
-        return VolumeKind::Local;
+        return VolumeKind::Unknown;
     };
     // SAFETY: a NUL-terminated root folder.
     drive_kind(unsafe { GetDriveTypeW(PCWSTR(root.as_ptr())) })
@@ -146,14 +204,17 @@ fn volume_root(path: &Path) -> Option<Vec<u16>> {
 fn system_kind(path: &Path) -> VolumeKind {
     use std::os::unix::ffi::OsStrExt;
 
+    // A path the system cannot be asked about, or a call that fails, says
+    // nothing: left out as another volume is (as Linux's walker did before
+    // #184), unless other volumes are included.
     let Ok(path) = std::ffi::CString::new(path.as_os_str().as_bytes()) else {
-        return VolumeKind::Local;
+        return VolumeKind::Unknown;
     };
     // SAFETY: a plain C structure, for which all zeroes is a valid value.
     let mut stats: libc::statfs = unsafe { std::mem::zeroed() };
     // SAFETY: a NUL-terminated path and a structure of the call's own type.
     if unsafe { libc::statfs(path.as_ptr(), &mut stats) } != 0 {
-        return VolumeKind::Local;
+        return VolumeKind::Unknown;
     }
     #[cfg(target_os = "macos")]
     {
@@ -234,11 +295,42 @@ pub(crate) mod tests {
     fn the_system_says_a_temporary_folder_is_on_a_local_disk() {
         let dir = tempfile::tempdir().unwrap();
         assert_eq!(volume_kind(dir.path()), VolumeKind::Local);
-        // Missing: taken as local, so that a root away keeps its entries.
+        // Missing: statfs fails, and says nothing (Windows still names the
+        // drive a missing path would be on).
+        #[cfg(unix)]
         assert_eq!(
             volume_kind(&dir.path().join("missing")),
-            VolumeKind::Local
+            VolumeKind::Unknown
         );
+    }
+
+    /// The scope's question goes through a helper thread: a folder away is
+    /// told apart, and a system that does not answer in time does not hold
+    /// up the asker (#184).
+    #[test]
+    fn a_volume_that_does_not_answer_in_time_holds_up_only_its_helper() {
+        let dir = tempfile::tempdir().unwrap();
+        let local: VolumeKinds = Arc::new(|_: &Path| VolumeKind::Local);
+        let limit = Duration::from_secs(5);
+        assert_eq!(
+            ask_within(&local, dir.path(), limit),
+            Asked::Kind(VolumeKind::Local)
+        );
+        assert_eq!(
+            ask_within(&local, &dir.path().join("unplugged"), limit),
+            Asked::Away
+        );
+
+        let stalled: VolumeKinds = Arc::new(|_: &Path| {
+            std::thread::sleep(Duration::from_secs(3));
+            VolumeKind::Local
+        });
+        let started = std::time::Instant::now();
+        assert_eq!(
+            ask_within(&stalled, dir.path(), Duration::from_millis(100)),
+            Asked::NoAnswer
+        );
+        assert!(started.elapsed() < Duration::from_secs(2));
     }
 
     #[cfg(windows)]

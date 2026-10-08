@@ -72,6 +72,7 @@ impl ChangeSource for Fake {
             changes: Vec::new(),
             walk: Vec::new(),
             reconcile: Vec::new(),
+            recheck: Vec::new(),
             cursors: vec![cursor()],
             how: CaughtUpBy::Journal,
             note: None,
@@ -537,6 +538,7 @@ fn disabling_stops_watching_and_enabling_again_catches_up_without_walking() {
         changes: vec![Change::Put(Entry::read(&new).unwrap())],
         walk: Vec::new(),
         reconcile: Vec::new(),
+        recheck: Vec::new(),
         cursors: vec![cursor()],
         how: CaughtUpBy::Journal,
         note: None,
@@ -1313,6 +1315,7 @@ fn the_catch_up_and_the_watch_share_one_read_of_the_folder_ids() {
         ],
         walk: Vec::new(),
         reconcile: Vec::new(),
+        recheck: Vec::new(),
         cursors: vec![cursor()],
         how: CaughtUpBy::Journal,
         note: None,
@@ -1374,4 +1377,133 @@ fn a_restart_on_windows_reads_the_folder_ids_once() {
         Some(CaughtUpBy::Journal) => assert_eq!(reads, 1, "read once, for both"),
         how => assert_eq!(reads, 0, "caught up {how:?}, never resolving records"),
     }
+}
+
+/// Makes a repository in the fixture's home folder whose `.gitignore`
+/// ignores nothing yet, holding `src/trace.draft`, and has it indexed.
+fn repository(fixture: &Fixture) -> PathBuf {
+    let repo = fixture.home.join("repo");
+    for (file, text) in [
+        ("repo/.git/HEAD", "ref: refs/heads/main\n"),
+        ("repo/.gitignore", ""),
+        ("repo/src/trace.draft", "x"),
+    ] {
+        let path = fixture.home.join(file);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, text).unwrap();
+    }
+    fixture.fake.report(Changed::Paths(vec![repo.clone()]));
+    fixture.settle();
+    assert_eq!(fixture.names("trace"), ["trace.draft"]);
+    repo
+}
+
+/// A watcher's overflow (#186): an ignore file changed in place while the
+/// system's buffer overflowed changes no folder's time, so the reconciling
+/// walk does not see it; the folder is re-checked whole after it.
+#[test]
+fn an_overflow_rechecks_an_ignore_file_changed_in_place() {
+    let fixture = Fixture::indexed();
+    let repo = repository(&fixture);
+    fs::write(repo.join(".gitignore"), "*.draft\n").unwrap();
+    fixture.fake.report(Changed::Rescan(fixture.home.clone()));
+    fixture.settle();
+    assert!(fixture.names("trace").is_empty());
+    assert_eq!(fixture.names("plan"), ["plan.txt"]);
+}
+
+/// A catch-up whose records do not name what changed a folder's ignore
+/// rules (a hidden `.gitignore` deleted, read without administrator
+/// rights; a folder Linux's reconciling walk read again holding one) asks
+/// for that folder to be re-checked, which runs with the walks (#186).
+#[test]
+fn a_folder_the_catch_up_asks_to_recheck_is_rechecked_with_the_walks() {
+    let fixture = Fixture::indexed();
+    let repo = repository(&fixture);
+    fixture.indexer.set_users(BTreeSet::new());
+    until(|| fixture.fake.watching.load(Ordering::SeqCst) == 0);
+
+    fs::write(repo.join(".gitignore"), "*.draft\n").unwrap();
+    *lock(&fixture.fake.caught) = Some(Caught::Changes {
+        changes: Vec::new(),
+        walk: Vec::new(),
+        reconcile: Vec::new(),
+        recheck: vec![repo],
+        cursors: vec![cursor()],
+        how: CaughtUpBy::Journal,
+        note: None,
+    });
+    fixture.indexer.set_users(users(&[OWNER]));
+    fixture.settle();
+    assert!(fixture.names("trace").is_empty());
+}
+
+/// An ignore file in the home folder re-checks every folder, a few at a
+/// time (#186): the result is the same as one walk, and a change reported
+/// meanwhile is applied too.
+#[test]
+fn an_ignore_file_in_the_home_folder_rechecks_every_folder_a_few_at_a_time() {
+    let fixture = Fixture::indexed();
+    let home = &fixture.home;
+    // More folders than a re-check reads before it lets changes through.
+    let count = RECHECK_FOLDERS * 2;
+    let mut made = Vec::new();
+    for n in 0..count {
+        let folder = home.join(format!("Folder {n}"));
+        fs::create_dir_all(folder.join("deep")).unwrap();
+        fs::write(folder.join(format!("deep/note {n}.draft")), "x").unwrap();
+        made.push(folder);
+    }
+    fixture.fake.report(Changed::Paths(made));
+    fixture.settle();
+    let notes = || {
+        fixture
+            .indexer
+            .search(
+                OWNER,
+                "note",
+                SearchOptions {
+                    limit: MAX_RESULTS,
+                    ..SearchOptions::default()
+                },
+            )
+            .unwrap()
+            .len()
+    };
+    assert_eq!(notes(), count);
+
+    fs::write(home.join(".ignore"), "*.draft\n").unwrap();
+    fixture.fake.report(Changed::Paths(vec![home.join(".ignore")]));
+    let meanwhile = home.join("Documents/meanwhile.txt");
+    fs::write(&meanwhile, "x").unwrap();
+    fixture.fake.report(Changed::Paths(vec![meanwhile]));
+    fixture.settle();
+    assert_eq!(notes(), 0);
+    assert_eq!(fixture.names("meanwhile"), ["meanwhile.txt"]);
+    assert_eq!(fixture.names("plan"), ["plan.txt"]);
+}
+
+/// Of a folder no change is reported from (here past Linux's watch limit),
+/// the scope keeps nothing (#186): the check at Enter reads its ignore
+/// files again, and sees one that changed since.
+#[test]
+fn the_check_at_enter_reads_again_the_rules_of_a_folder_not_watched() {
+    let fixture = Fixture::indexed();
+    let documents = fixture.home.join("Documents");
+    let found = fixture
+        .indexer
+        .search(OWNER, "plan", SearchOptions::default())
+        .unwrap();
+    // Checked once: what the rules learned of Documents was kept.
+    assert!(fixture.indexer.checked(OWNER, &found[0].id).is_ok());
+    fixture
+        .fake
+        .report(Changed::Unwatched(vec![documents.clone()]));
+    until(|| fixture.indexer.status().unwatched == 1);
+
+    fs::write(documents.join(".ignore"), "plan.txt\n").unwrap();
+    assert_eq!(
+        fixture.indexer.checked(OWNER, &found[0].id),
+        Err("it is no longer in the folders file search covers".into())
+    );
 }

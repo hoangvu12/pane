@@ -143,6 +143,9 @@ impl ChangeSource for FsEvents {
             changes: Vec::new(),
             walk: Vec::new(),
             reconcile,
+            // The history, replayed by the live stream, names each ignore
+            // file changed, hidden or not.
+            recheck: Vec::new(),
             cursors: kept,
             how: CaughtUpBy::EventHistory,
             note,
