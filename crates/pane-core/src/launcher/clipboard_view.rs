@@ -22,6 +22,13 @@
 //! copied image — drawn from the PNG the history keeps of it
 //! ([`ClipboardImage`]) — or copied files, by their paths (#167).
 //!
+//! The records are made once per change of the history and shared (#192):
+//! the launcher keeps them with the history's count of changes
+//! (`HistoryStore::changes`), which a copy kept, a deletion, a choice
+//! changed and an expiry move, and every reading made at the same count —
+//! each frame the window draws, the Actions panel's — shares the same
+//! records ([`ClipboardHistoryView::records`]), copying none of them.
+//!
 //! The operations are the history's existing ones — copy a record again,
 //! delete it, pause or resume recording, keep history for another time,
 //! clear it (once the user confirms) — and pasting a record into the
@@ -40,6 +47,7 @@ use std::borrow::Cow;
 use std::fmt;
 use std::future::Future;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use super::own_actions::COPIED;
 use super::{Launcher, Screen, State, Status, owner};
@@ -182,8 +190,9 @@ pub struct ClipboardRecord {
     /// operations; never reused.
     pub id: String,
     /// The full stored text; for an image its title ("Image (1920×1080)"),
-    /// for files their paths, one per line.
-    pub text: String,
+    /// for files their paths, one per line. Shared: a window draws it
+    /// without copying it.
+    pub text: Arc<str>,
     /// What it is: text, a link, a colour, an image or files.
     pub kind: ClipboardKind,
     /// The image it is, if it is one (#167).
@@ -220,7 +229,7 @@ impl ClipboardRecord {
         ClipboardRecord {
             id: id.into(),
             kind: ClipboardKind::of_text(&text),
-            text,
+            text: text.into(),
             image: None,
             files: Vec::new(),
             copied_at,
@@ -233,7 +242,7 @@ impl ClipboardRecord {
     pub fn image(id: impl Into<String>, image: ClipboardImage, copied_at: u64) -> Self {
         ClipboardRecord {
             id: id.into(),
-            text: clipboard::history::image_title(image.width, image.height),
+            text: clipboard::history::image_title(image.width, image.height).into(),
             kind: ClipboardKind::Image,
             image: Some(image),
             files: Vec::new(),
@@ -251,7 +260,8 @@ impl ClipboardRecord {
                 .iter()
                 .map(|file| file.display().to_string())
                 .collect::<Vec<_>>()
-                .join("\n"),
+                .join("\n")
+                .into(),
             kind: ClipboardKind::Files,
             image: None,
             files,
@@ -341,8 +351,9 @@ pub struct ClipboardHistoryView {
     pub owner: PackageIdentity,
     /// The command's own title, as its list names it.
     pub title: String,
-    /// The kept records, newest first, none expired.
-    pub records: Vec<ClipboardRecord>,
+    /// The kept records, newest first, none expired: shared by every
+    /// reading made while the history did not change (#192).
+    pub records: Arc<[ClipboardRecord]>,
     /// Why the history cannot be read now, if it cannot; no records are
     /// listed then.
     pub unreadable: Option<String>,
@@ -387,6 +398,133 @@ impl fmt::Debug for ClipboardHistoryView {
             .field("problem", &self.problem)
             .field("epoch", &self.reading.epoch)
             .finish_non_exhaustive()
+    }
+}
+
+/// What the launcher made of Pane's own clipboard history for the view, as
+/// it was at a count of the history's changes (#192): made again only once
+/// the count moved, and shared by every reading until then.
+#[derive(Default)]
+pub(super) struct Projected {
+    made: Option<Projection>,
+    /// How many times the records were made, for tests.
+    times: u64,
+}
+
+impl Projected {
+    /// What was made of `owner`'s history, shared, if it was made at the
+    /// history's count of changes `changes`.
+    fn shared(&self, owner: &str, changes: u64) -> Option<Shown> {
+        self.made
+            .as_ref()
+            .filter(|made| made.changes == changes && made.owner == owner)
+            .map(|made| made.shown.clone())
+    }
+
+    /// Keeps `made`, in place of what was made before.
+    fn keep(&mut self, made: Projection) {
+        self.times += 1;
+        self.made = Some(made);
+    }
+}
+
+/// The view's records and the history's choices, at a count of changes.
+struct Projection {
+    /// The owner whose history it is.
+    owner: String,
+    /// The history's count of changes it was made at
+    /// (`HistoryStore::changes`).
+    changes: u64,
+    shown: Shown,
+}
+
+/// What a reading shows of the history: cloning it shares the records.
+#[derive(Clone)]
+struct Shown {
+    records: Arc<[ClipboardRecord]>,
+    unreadable: Option<String>,
+    capture: CaptureState,
+    retention_seconds: u64,
+    excluded: usize,
+}
+
+impl Shown {
+    /// No records, and why: the history cannot be read.
+    fn unreadable(reason: String) -> Shown {
+        let history = PackageHistory::default();
+        Shown {
+            records: Vec::<ClipboardRecord>::new().into(),
+            unreadable: Some(reason),
+            capture: history.capture,
+            retention_seconds: history.retention(),
+            excluded: 0,
+        }
+    }
+}
+
+impl Projection {
+    /// The records of `owner`'s history `history` (read at `changes`),
+    /// whose images are where `store` keeps them.
+    fn of(
+        owner: &str,
+        changes: u64,
+        history: Result<PackageHistory, String>,
+        store: &crate::clipboard::history::HistoryStore,
+    ) -> Projection {
+        let history = match history {
+            Ok(history) => history,
+            Err(reason) => {
+                return Projection {
+                    owner: owner.to_owned(),
+                    changes,
+                    shown: Shown::unreadable(reason),
+                };
+            }
+        };
+        let records = history
+            .items
+            .iter()
+            .map(|item| {
+                // An image's PNG is where the store keeps it (#167); an
+                // item that cannot be read (#130) is shown as its
+                // explanation.
+                let image = item.image.as_ref().and_then(|image| {
+                    item.unreadable.is_none().then(|| ClipboardImage {
+                        path: store.image_path(owner, &image.digest),
+                        width: image.width,
+                        height: image.height,
+                    })
+                });
+                let kind = if image.is_some() {
+                    ClipboardKind::Image
+                } else if !item.files.is_empty() {
+                    ClipboardKind::Files
+                } else {
+                    ClipboardKind::of_text(&item.text)
+                };
+                ClipboardRecord {
+                    id: item.id.to_string(),
+                    kind,
+                    text: item.text.as_str().into(),
+                    image,
+                    files: item.files.clone(),
+                    copied_at: item.copied_at,
+                    source: item.source.clone(),
+                    unreadable: item.unreadable.clone(),
+                }
+            })
+            .collect();
+        Projection {
+            owner: owner.to_owned(),
+            changes,
+            shown: Shown {
+                records,
+                unreadable: None,
+                capture: history.capture,
+                retention_seconds: history.retention(),
+                excluded: history.excluded.len(),
+            },
+        }
     }
 }
 
@@ -592,7 +730,7 @@ fn span(seconds: u64) -> String {
 fn pasted_clip(record: &ClipboardRecord) -> Option<crate::system::Clip> {
     match (&record.image, record.files.as_slice()) {
         (Some(_), _) => None,
-        (None, []) => Some(crate::system::Clip::Text(record.text.clone())),
+        (None, []) => Some(crate::system::Clip::Text(record.text.to_string())),
         (None, [file]) => Some(crate::system::Clip::File(file.clone())),
         (None, _) => None,
     }
@@ -611,7 +749,9 @@ impl Launcher {
     /// The clipboard history the split view shows, while Pane's registered
     /// Clipboard History command is open on its own list and its package
     /// runs; `None` on every other screen and for every other command.
-    /// Read-only: see the module documentation.
+    /// Read-only: see the module documentation. Its records are made again
+    /// only once the history changed; until then every reading shares them
+    /// and copies nothing of the history (#192).
     pub fn clipboard_history(&self) -> Option<ClipboardHistoryView> {
         let state = self.lock();
         let (identity, data) = self.verified_clipboard(&state)?;
@@ -626,58 +766,37 @@ impl Launcher {
                 (unavailable.clone(), unavailable)
             }
         };
-        let store = data.clipboard_history();
-        let (history, now, unreadable) = match &store {
-            Ok(store) => match store.get(data.owner()) {
-                Ok(history) => (history, store.now(), None),
-                Err(reason) => (PackageHistory::default(), store.now(), Some(reason)),
-            },
-            Err(refusal) => (PackageHistory::default(), 0, Some(refusal.clone())),
-        };
-        let records = history
-            .items
-            .iter()
-            .map(|item| {
-                // An image's PNG is where the store keeps it (#167); an
-                // item that cannot be read (#130) is shown as its
-                // explanation.
-                let image = item.image.as_ref().and_then(|image| {
-                    let store = store.as_ref().ok()?;
-                    item.unreadable.is_none().then(|| ClipboardImage {
-                        path: store.image_path(data.owner(), &image.digest),
-                        width: image.width,
-                        height: image.height,
-                    })
-                });
-                let kind = if image.is_some() {
-                    ClipboardKind::Image
-                } else if !item.files.is_empty() {
-                    ClipboardKind::Files
-                } else {
-                    ClipboardKind::of_text(&item.text)
+        let owner = data.owner();
+        let (now, shown) = match data.clipboard_history() {
+            Ok(store) => {
+                let changes = store.changes();
+                let kept = self.lock().clipboard_records.shared(owner, changes);
+                let shown = match kept {
+                    Some(shown) => shown,
+                    None => {
+                        // Read, and made, off the launcher's lock.
+                        let (changes, history) = store.get_counted(owner);
+                        let made = Projection::of(owner, changes, history, store);
+                        let shown = made.shown.clone();
+                        self.lock().clipboard_records.keep(made);
+                        shown
+                    }
                 };
-                ClipboardRecord {
-                    id: item.id.to_string(),
-                    kind,
-                    text: item.text.clone(),
-                    image,
-                    files: item.files.clone(),
-                    copied_at: item.copied_at,
-                    source: item.source.clone(),
-                    unreadable: item.unreadable.clone(),
-                }
-            })
-            .collect();
+                (store.now(), shown)
+            }
+            // Code that stopped reads nothing: nothing is kept of it.
+            Err(refusal) => (0, Shown::unreadable(refusal)),
+        };
         Some(ClipboardHistoryView {
             owner: identity,
             title,
-            records,
-            unreadable,
+            records: shown.records,
+            unreadable: shown.unreadable,
             now,
-            capture: history.capture,
+            capture: shown.capture,
             problem,
-            retention_seconds: history.retention(),
-            excluded: history.excluded.len(),
+            retention_seconds: shown.retention_seconds,
+            excluded: shown.excluded,
             copy_unavailable,
             reading: Reading {
                 epoch,
@@ -685,6 +804,15 @@ impl Launcher {
                 component,
             },
         })
+    }
+
+    /// How many times the Clipboard History view's records were made from
+    /// the history (#192), for tests: drawing the view again with nothing
+    /// changed makes none.
+    #[cfg(any(test, debug_assertions))]
+    #[doc(hidden)]
+    pub fn clipboard_records_made(&self) -> u64 {
+        self.lock().clipboard_records.times
     }
 
     /// The icon of the program or file at `path` (a record's

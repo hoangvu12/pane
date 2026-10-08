@@ -485,7 +485,9 @@ is sent anywhere: there is no telemetry, no crash upload and no minidump.
   the launcher's window, and the system ending the session (GPUI's quit
   hooks run for `WM_ENDSESSION` on Windows and the termination notification
   on macOS; SIGTERM, SIGINT and SIGHUP remove it on Linux and macOS before
-  ending Pane as they always did). At the next start each marker found is
+  ending Pane as they always did). A clean quit also writes the clipboard
+  history that waits in a batch (#192, [clipboard history](clipboard-history.md#ownership-and-deletion));
+  the signals do not. At the next start each marker found is
   checked against the system's process table (on Windows the process's
   exit code and creation time, on Linux `/proc/<id>/stat`, on macOS the
   process's BSD information): a process that no longer runs, or a process
