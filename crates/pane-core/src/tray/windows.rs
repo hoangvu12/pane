@@ -344,10 +344,11 @@ impl<S: Shell> NotifyIcon<S> {
 /// The GUID of the tray icon of the program at `program`, its canonical
 /// path: a name-based UUID (version 5, SHA-1, RFC 9562) in Pane's
 /// namespace, of the path's UTF-16 code units, little-endian, as Windows
-/// holds the path.
+/// holds the path — without the verbatim prefix `std::fs::canonicalize`
+/// gives it (`\\?\C:\…` is `C:\…`, `\\?\UNC\server\…` is `\\server\…`).
 fn icon_guid(program: &Path) -> GUID {
     let mut name = Vec::new();
-    for unit in program.as_os_str().encode_wide() {
+    for unit in without_verbatim_prefix(program) {
         name.extend_from_slice(&unit.to_le_bytes());
     }
     let mut hasher = Sha1::new();
@@ -363,6 +364,22 @@ fn icon_guid(program: &Path) -> GUID {
     bytes[6] = (bytes[6] & 0x0F) | 0x50;
     bytes[8] = (bytes[8] & 0x3F) | 0x80;
     GUID::from_u128(u128::from_be_bytes(bytes))
+}
+
+/// The UTF-16 code units of `path` as it is usually written: without the
+/// verbatim prefix `\\?\` (`\\?\UNC\` becomes `\\`).
+fn without_verbatim_prefix(path: &Path) -> Vec<u16> {
+    let units: Vec<u16> = path.as_os_str().encode_wide().collect();
+    let wide = |text: &str| text.encode_utf16().collect::<Vec<u16>>();
+    if let Some(rest) = units.strip_prefix(wide(r"\\?\UNC\").as_slice()) {
+        let mut plain = wide(r"\\");
+        plain.extend_from_slice(rest);
+        plain
+    } else if let Some(rest) = units.strip_prefix(wide(r"\\?\").as_slice()) {
+        rest.to_vec()
+    } else {
+        units
+    }
 }
 
 /// The GUID of this program's tray icon, or why there is none.
@@ -803,15 +820,66 @@ fn setting_named(lparam: LPARAM, name: &str) -> bool {
 
 /// Runs `change` on the entry this thread holds, if it holds one and
 /// nothing is using it already (nothing a click waits on calls back into
-/// it).
-fn with_entry(change: impl FnOnce(&mut Entry)) {
+/// it); whether it ran.
+fn with_entry(change: impl FnOnce(&mut Entry)) -> bool {
     ENTRY.with(|entry| {
         if let Ok(mut held) = entry.try_borrow_mut()
             && let Some(entry) = held.as_mut()
         {
             change(entry);
+            return true;
         }
+        false
+    })
+}
+
+/// A broadcast the icon acts on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Broadcast {
+    /// Explorer started its taskbar (`TaskbarCreated`).
+    TaskbarCreated,
+    /// The theme or high contrast changed.
+    ThemeChanged,
+    /// The display's size or scaling changed.
+    DisplayChanged,
+}
+
+thread_local! {
+    /// The broadcasts that arrived while the entry was in use — its menu
+    /// is open, and the menu's modal loop goes on dispatching this
+    /// window's messages — each once, applied when the menu has closed.
+    static DEFERRED: std::cell::RefCell<Vec<Broadcast>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Applies `broadcast` to the icon, or keeps it for when the entry is free
+/// again (see [`DEFERRED`]), so an Explorer restart or a theme change while
+/// the menu is open is not lost.
+fn broadcast(event: Broadcast) {
+    let applied = with_entry(|entry| match event {
+        Broadcast::TaskbarCreated => entry.icon.taskbar_created(),
+        Broadcast::ThemeChanged => entry.icon.theme_changed(),
+        Broadcast::DisplayChanged => entry.icon.redraw(),
     });
+    if !applied {
+        let _ = DEFERRED.try_with(|deferred| {
+            let mut deferred = deferred.borrow_mut();
+            if !deferred.contains(&event) {
+                deferred.push(event);
+            }
+        });
+    }
+}
+
+/// Applies the broadcasts kept while the entry was in use, in the order
+/// they arrived.
+fn apply_deferred() {
+    let deferred = DEFERRED
+        .try_with(|deferred| std::mem::take(&mut *deferred.borrow_mut()))
+        .unwrap_or_default();
+    for each in deferred {
+        broadcast(each);
+    }
 }
 
 /// The tray window's procedure: the shell's callback messages for the
@@ -844,7 +912,7 @@ fn handle(window: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT
         let event = (lparam.0 & 0xFFFF) as u32;
         with_entry(|entry| {
             let version_4 = entry.icon.version_4;
-            let anchor = version_4.then(|| POINT {
+            let anchor = version_4.then_some(POINT {
                 x: i32::from((wparam.0 & 0xFFFF) as u16 as i16),
                 y: i32::from(((wparam.0 >> 16) & 0xFFFF) as u16 as i16),
             });
@@ -862,11 +930,13 @@ fn handle(window: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT
                 entry.selections.send(action);
             }
         });
+        // What arrived while the menu was open.
+        apply_deferred();
         return LRESULT(0);
     }
     let created = TASKBAR_CREATED.load(Ordering::Relaxed);
     if created != 0 && message == created {
-        with_entry(|entry| entry.icon.taskbar_created());
+        broadcast(Broadcast::TaskbarCreated);
         return LRESULT(0);
     }
     // A theme change, or high contrast turned on or off; the display's
@@ -874,9 +944,9 @@ fn handle(window: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT
     let theme = message == WM_SETTINGCHANGE
         && (wparam.0 as u32 == SPI_SETHIGHCONTRAST.0 || setting_named(lparam, THEME_SETTING));
     if theme {
-        with_entry(|entry| entry.icon.theme_changed());
+        broadcast(Broadcast::ThemeChanged);
     } else if message == WM_DISPLAYCHANGE || message == WM_DPICHANGED {
-        with_entry(|entry| entry.icon.redraw());
+        broadcast(Broadcast::DisplayChanged);
     }
     // SAFETY: the arguments are those this procedure was called with.
     unsafe { DefWindowProcW(window, message, wparam, lparam) }
@@ -970,6 +1040,8 @@ fn serve(message: &MSG, requests: &Requests) {
             }
         }
     }
+    // A broadcast that arrived while a change held the entry.
+    apply_deferred();
 }
 
 /// Applies `shown` to the entry this thread holds. Runs on the tray
@@ -1077,6 +1149,8 @@ mod tests {
         /// another program's path.
         refuse_guids: bool,
         refuse_version: bool,
+        /// Refuses every removal.
+        refuse_deletes: bool,
         light_taskbar: bool,
     }
 
@@ -1105,6 +1179,9 @@ mod tests {
 
         fn delete(&mut self, identity: Identity) -> Result<(), String> {
             self.calls.push(Call::Delete(identity));
+            if self.refuse_deletes {
+                return Err("refused".into());
+            }
             Ok(())
         }
 
@@ -1228,12 +1305,56 @@ mod tests {
         assert!(icon.shown);
     }
 
+    /// A change the system refused, which Settings rolls back by applying
+    /// the preference again, leaves the icon following the preference when
+    /// Explorer restarts: a refused show (the preference hidden) does not
+    /// appear, and a refused hide (the preference shown) comes back.
+    #[test]
+    fn a_refused_change_rolled_back_to_the_preference_follows_it_after_explorer_restarts() {
+        let mut icon = fresh();
+        icon.shell.refuse_adds = true;
+        assert!(matches!(icon.set_visible(true), Err(TrayError::Refused(_))));
+        icon.shell.refuse_adds = false;
+        assert_eq!(icon.set_visible(false), Ok(()), "the rollback");
+        icon.shell.calls.clear();
+        icon.taskbar_created();
+        assert!(!icon.shown);
+        assert!(icon.shell.calls.is_empty(), "{:?}", icon.shell.calls);
+
+        let mut icon = fresh();
+        icon.set_visible(true).unwrap();
+        icon.shell.refuse_deletes = true;
+        assert!(matches!(icon.set_visible(false), Err(TrayError::Refused(_))));
+        icon.shell.refuse_deletes = false;
+        assert_eq!(icon.set_visible(true), Ok(()), "the rollback");
+        icon.shell.calls.clear();
+        icon.taskbar_created();
+        assert!(icon.shown);
+        assert_eq!(
+            icon.shell.calls,
+            [
+                Call::Add(added(Variant::Light)),
+                Call::SetVersion(Identity::Guid(guid())),
+            ]
+        );
+    }
+
     #[test]
     fn the_guid_is_the_same_for_a_path_and_differs_for_another() {
         let installed = Path::new(r"C:\Program Files\Pane\pane.exe");
         let development = Path::new(r"C:\Users\dev\pane\target\debug\pane.exe");
         assert_eq!(icon_guid(installed), icon_guid(installed));
         assert_ne!(icon_guid(installed), icon_guid(development));
+        // The canonical path Pane derives it from is verbatim
+        // (`std::fs::canonicalize`); it names the same program.
+        assert_eq!(
+            icon_guid(Path::new(r"\\?\C:\Program Files\Pane\pane.exe")),
+            icon_guid(installed)
+        );
+        assert_eq!(
+            icon_guid(Path::new(r"\\?\UNC\server\share\pane.exe")),
+            icon_guid(Path::new(r"\\server\share\pane.exe"))
+        );
         // RFC 9562's version 5 of these names in Pane's namespace, as
         // Python's `uuid` computes them over the same bytes.
         assert_eq!(

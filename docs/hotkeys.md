@@ -121,8 +121,10 @@ Settings' **General** page, in the "Open Pane hotkey" row.
   table's row above: a command hotkey with the Open Pane hotkey's keys is
   refused, and a command whose recorded hotkey names the same keys is shown
   "Not active: the Open Pane hotkey uses it". Where Pane could not register
-  the chosen hotkey at start, the row says "Not active: &lt;reason&gt;", and
-  the launcher's window stays open.
+  the chosen hotkey at start, the row says "Not active: &lt;reason&gt;".
+  Nothing else changes: the launcher opens at start as it always does, and
+  once hidden it is shown again by the tray or menu bar entry's Open Pane,
+  where Pane has one.
 - **Same adapters, same limits.** It is registered through the same system
   adapters as command hotkeys (see Per platform below) and carries every
   limit listed under Limits, Wayland's included: on Wayland the row says "Not

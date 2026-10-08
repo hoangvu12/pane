@@ -133,18 +133,28 @@ fn the_about_page_shows_the_notice_and_the_diagnostics_name_the_log(cx: &mut Tes
     assert!(settings_cx.debug_bounds("about-crash-notice").is_some());
     assert!(settings_cx.debug_bounds("about-log-folder").is_some());
 
-    // The diagnostics the page copies name the log's folder.
+    // The diagnostics the page copies name the log's folder, redacted as
+    // the log redacts: the test's folder is under the home folder on
+    // Windows and macOS, which the report names `~`.
     click(&mut settings_cx, "about-diagnostics");
     until_text(&mut settings_cx, "Copied to the clipboard");
     let report = settings_cx
         .read_from_clipboard()
         .and_then(|item| item.text())
         .expect("the report was copied");
-    let logs = data.path().join("logs");
+    let logs = data.path().join("logs").display().to_string();
     assert!(
-        report.contains(&format!("Log folder: {}", logs.display())),
+        report.contains(&format!(
+            "Log folder: {}",
+            pane_core::diagnostics::redacted(&logs)
+        )),
         "{report}"
     );
+    let home = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" });
+    if let Some(home) = home.filter(|home| home.len() >= 3) {
+        let home = Path::new(&home).display().to_string();
+        assert!(!report.contains(&home), "{report}");
+    }
     assert!(
         report.contains("Last run: Pane quit unexpectedly"),
         "{report}"

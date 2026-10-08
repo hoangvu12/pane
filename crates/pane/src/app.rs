@@ -1810,8 +1810,12 @@ impl Render for LauncherWindow {
             Some(shown) => Some(shown.toast.text().into()),
             None => status.clone(),
         };
-        // The announcer says it too (#132).
-        let said = announced.as_ref().map(SharedString::to_string);
+        // The announcer says it too (#132), when it is a toast or an
+        // outcome; "Running…" and progress are the strip's own.
+        let said = announced
+            .as_ref()
+            .filter(|_| announcer::says_message(&view.status, toast.is_some()))
+            .map(SharedString::to_string);
         // The toast's actions take the footer's buttons' place.
         let toast_buttons = match &toast {
             Some(shown) => self.toast_buttons(shown, &theme, cx),

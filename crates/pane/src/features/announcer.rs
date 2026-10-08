@@ -21,8 +21,10 @@
 //!   ", unavailable" after a row that cannot run, and the section's name
 //!   first when the move enters another section ("Fallbacks: Search the
 //!   web, 1 of 2");
-//! - opening a command, a page or the Actions panel: "<name>, <n> results"
-//!   ("<n> commands" in the panel), then the selected row;
+//! - opening a command, the extension list or the Actions panel: "<name>,
+//!   <n> results" ("<n> commands" in the panel), then the selected row; a
+//!   screen whose rows are choices (a confirmation, a package before
+//!   installing it, why a build failed): its title, then the selected row;
 //! - a list that becomes empty: "No results";
 //! - typing: nothing for each keystroke. Once the query's results have
 //!   settled, or [`SETTLE`] after the last keystroke, whichever is later,
@@ -31,21 +33,32 @@
 //!   nothing, unless the selected row is another one.
 //!
 //! Root search says nothing as it comes back on screen: the screen reader
-//! reads its field as the field takes the focus. Forms and custom views
-//! keep their own accessibility; nothing is said for them.
+//! reads its field as the field takes the focus. What was said before is
+//! cleared then, so that nothing earlier is said again if the node is made
+//! anew. Forms and custom views keep their own accessibility; nothing is
+//! said for them, and a panel or menu that lay over one opens anew.
+//!
+//! AccessKit announces a live region when its text changes, so a text said
+//! again (the footer menu opened again on the same item) is cleared for one
+//! frame and set again the next, rather than changed by some invisible
+//! difference.
 //!
 //! The footer's strip keeps its status role and carries its message (the
 //! toast, or the status line) as its name. AccessKit announces only a node
 //! with a live setting of its own, and the strip's children would inherit
-//! one, so the announcer says the message too. When the message and the
-//! selection change together, the message is said first and the
-//! selection's text waits [`STATUS_LEAD`] for it.
+//! one, so the announcer says the message too when it is a toast or an
+//! outcome (a result, an error); "Running…" and progress are the strip's
+//! own. When the message and the selection change together, the message
+//! is said first and the selection's text waits [`STATUS_LEAD`] for it, at
+//! most: a later message does not hold it back again. It is said only if
+//! the list still shows what it was made of; otherwise (a panel closed,
+//! another list or selection, typing) it is dropped.
 
 use std::time::{Duration, Instant};
 
 use gpui::accesskit::Live;
 use gpui::{App, Context, Div, Role, Stateful, Task, div, prelude::*, px};
-use pane_core::{LauncherView, Screen};
+use pane_core::{LauncherView, Screen, Status};
 
 use crate::app::LauncherWindow;
 use crate::features::root_search;
@@ -95,6 +108,10 @@ pub(crate) enum Opening {
     Selection,
     /// The list's name and how many rows it has, then the selected row.
     Named(String, Noun),
+    /// The screen's title alone, then the selected row: a screen whose
+    /// rows are choices rather than results (a confirmation, a package
+    /// before installing it, why a build failed).
+    Titled(String),
 }
 
 /// The selected row, as it is said.
@@ -195,10 +212,32 @@ struct Layer {
     said: Said,
 }
 
+/// What a list showed when its selection's text was made: which list, what
+/// it had selected and its field's text.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Shown {
+    key: String,
+    target: Said,
+    query: Option<String>,
+}
+
+impl Shown {
+    fn of(listing: &Listing) -> Shown {
+        Shown {
+            key: listing.key.clone(),
+            target: listing.target.said(),
+            query: listing.query.clone(),
+        }
+    }
+}
+
 /// A selection's text waiting behind the footer's message.
 struct Held {
     text: String,
     until: Instant,
+    /// What the list showed when the text was made: the text is said only
+    /// if it still does.
+    of: Option<Shown>,
 }
 
 /// The announcer's state, kept by the launcher window.
@@ -206,6 +245,9 @@ struct Held {
 pub(crate) struct Announcer {
     /// The node's name and value: what was said last.
     text: String,
+    /// The text to say again next frame, after a frame without it (see
+    /// [`Announcer::say`]).
+    again: Option<String>,
     /// The screen's list.
     screen: Option<Layer>,
     /// The panel or menu over it, while one is open.
@@ -259,31 +301,65 @@ impl Announcer {
         status: Option<&str>,
         now: Instant,
     ) -> Option<Instant> {
-        if let Some(held) = self.held.take_if(|held| now >= held.until) {
-            self.text = held.text;
+        if let Some(text) = self.again.take() {
+            self.text = text;
+        }
+        let shown = listing.as_ref().map(Shown::of);
+        // A selection's text waiting behind the footer's message is said
+        // once its time is up, if the list still shows what it was made
+        // of: a panel that closed, another list, another selection or
+        // typing since drops it.
+        if let Some(held) = self.held.take_if(|held| now >= held.until)
+            && held.of == shown
+        {
+            self.say(held.text);
         }
         let moved = std::mem::take(&mut self.moved);
-        let selection = listing.and_then(|listing| self.follow(listing, moved, now));
+        let selection = match listing {
+            Some(listing) => self.follow(listing, moved, now),
+            None => {
+                // A form or a custom view: whatever lay over it has closed,
+                // so the next panel or menu opens anew.
+                self.over = None;
+                self.typed = None;
+                None
+            }
+        };
         let message = status
             .filter(|text| self.status.as_deref() != Some(*text))
             .map(str::to_owned);
         self.status = status.map(str::to_owned);
         match (message, selection) {
             // The message first; the selection, this frame's or one
-            // already waiting, after it.
+            // already waiting, after it. A selection already waiting keeps
+            // its time: a later message never holds it back again, so it
+            // is said at most `STATUS_LEAD` after it was made.
             (Some(message), selection) => {
-                self.text = message;
-                let waiting = selection.or_else(|| self.held.take().map(|held| held.text));
-                self.held = waiting.map(|text| Held {
-                    text,
-                    until: now + STATUS_LEAD,
-                });
+                self.say(message);
+                let until = self
+                    .held
+                    .as_ref()
+                    .map_or(now + STATUS_LEAD, |held| held.until);
+                let waiting = match selection {
+                    // A list that opened silently: nothing waits.
+                    Some(text) if text.is_empty() => None,
+                    Some(text) => Some((text, shown)),
+                    None => self.held.take().map(|held| (held.text, held.of)),
+                };
+                self.held = waiting.map(|(text, of)| Held { text, until, of });
             }
             (None, Some(selection)) => match self.held.as_mut() {
-                Some(held) => held.text = selection,
-                None => self.text = selection,
+                Some(held) => {
+                    held.text = selection;
+                    held.of = shown;
+                }
+                None => self.say(selection),
             },
             (None, None) => {}
+        }
+        // The same text said again comes back next frame.
+        if self.again.is_some() {
+            return Some(now);
         }
         // Once typing has waited its time, the search that settles it
         // draws the window itself.
@@ -295,6 +371,21 @@ impl Announcer {
         .flatten()
         .filter(|at| *at > now)
         .min()
+    }
+
+    /// Makes `text` the node's name and value. AccessKit announces a live
+    /// region when its name or value changes, so the text said last, said
+    /// again (the footer menu opened again on the same item), is cleared
+    /// for one frame and set again the next ([`Announcer::frame`] answers
+    /// that the window draws again at once). An empty `text` clears it.
+    fn say(&mut self, text: String) {
+        if !text.is_empty() && text == self.text {
+            self.text.clear();
+            self.again = Some(text);
+        } else {
+            self.again = None;
+            self.text = text;
+        }
     }
 
     /// Follows `listing` this frame: what is to be said of its selection,
@@ -319,7 +410,11 @@ impl Announcer {
                 query: listing.query,
                 said: target,
             });
-            return opening(&listing.opening, listing.count, &listing.target);
+            // A list that opens silently (root search) clears what was
+            // said of the one before, so that nothing earlier is said again
+            // should the node be made anew.
+            let said = opening(&listing.opening, listing.count, &listing.target);
+            return Some(said.unwrap_or_default());
         }
         let layer = layer.as_mut()?;
         if layer.query != listing.query {
@@ -386,7 +481,22 @@ fn opening(opening: &Opening, count: usize, target: &Target) -> Option<String> {
                 None => opened,
             })
         }
+        // A question ("Uninstall Greeter?") ends its own sentence.
+        Opening::Titled(title) => Some(match row {
+            Some(row) if title.ends_with(['?', '.', '!']) => format!("{title} {row}"),
+            Some(row) => format!("{title}. {row}"),
+            None => title.clone(),
+        }),
     }
+}
+
+/// Whether the announcer says the footer's message as the launcher's
+/// `status` and its toast (`toast`, whether one is shown) make it: a toast,
+/// or an outcome (a result, an error). "Running…" and progress are the
+/// strip's own: a progress line that changes fast would otherwise keep
+/// the selection's text waiting behind it.
+pub(crate) fn says_message(status: &Status, toast: bool) -> bool {
+    toast || matches!(status, Status::Result(_) | Status::Error(_))
 }
 
 /// The name of the section row `index` is in, among `sections`.
@@ -417,7 +527,10 @@ impl LauncherWindow {
     }
 
     /// The screen's list as the announcer follows it: root search opens
-    /// silently, every other list with its title and count.
+    /// silently, a command's list and the extension list with their title
+    /// and count, and every other screen, whose rows are choices (a
+    /// confirmation, a package before installing it, the details of a
+    /// pause, a build or a crash), with its title alone.
     fn screen_listing(
         &self,
         view: &LauncherView,
@@ -430,7 +543,17 @@ impl LauncherWindow {
             // their own accessibility.
             Screen::Form(_) | Screen::CustomView(_) | Screen::ExtensionLog { .. } => return None,
             Screen::Root { .. } => Opening::Silent,
-            _ => Opening::Named(view.title.clone(), Noun::Results),
+            Screen::Command | Screen::CommandSearch { .. } | Screen::Extensions { .. } => {
+                Opening::Named(view.title.clone(), Noun::Results)
+            }
+            Screen::Package { .. }
+            | Screen::NetworkDetails { .. }
+            | Screen::ProgramDetails { .. }
+            | Screen::PauseDetails { .. }
+            | Screen::BuildDetails { .. }
+            | Screen::Confirm { .. }
+            | Screen::RuntimeDetails { .. }
+            | Screen::Hotkey { .. } => Opening::Titled(view.title.clone()),
         };
         let selected = view
             .selected
@@ -700,5 +823,150 @@ mod tests {
             announcer.frame(Some(root("", 3, Some(index))), None, now);
         }
         assert_eq!(announcer.text, "Row 2, 3 of 3");
+    }
+
+    #[test]
+    fn only_a_toast_or_an_outcome_is_said_of_the_footer() {
+        assert!(says_message(&Status::Result("Copied".into()), false));
+        assert!(says_message(&Status::Error("Failed".into()), false));
+        assert!(says_message(&Status::Running, true), "a toast");
+        assert!(!says_message(&Status::Running, false));
+        assert!(!says_message(&Status::Progress("3 of 9".into()), false));
+        assert!(!says_message(&Status::Idle, false));
+    }
+
+    /// A later message never holds a waiting selection back again: it is
+    /// said `STATUS_LEAD` after it was made, whatever came between.
+    #[test]
+    fn a_waiting_selection_is_said_in_time_whatever_messages_follow() {
+        let now = Instant::now();
+        let mut announcer = started(now);
+        announcer.user_moved();
+        announcer.frame(Some(root("", 3, Some(1))), Some("First"), now);
+        let later = now + STATUS_LEAD / 2;
+        let wake = announcer.frame(Some(root("", 3, Some(1))), Some("Second"), later);
+        assert_eq!(announcer.text, "Second");
+        assert_eq!(wake, Some(now + STATUS_LEAD), "not armed again");
+        let due = now + STATUS_LEAD;
+        announcer.frame(Some(root("", 3, Some(1))), Some("Second"), due);
+        assert_eq!(announcer.text, "Row 1, 2 of 3");
+    }
+
+    /// A waiting selection the list no longer shows is dropped, not said
+    /// late: here the Actions panel opened over the list meanwhile, then
+    /// closed again; and typing began.
+    #[test]
+    fn a_waiting_selection_the_list_no_longer_shows_is_dropped() {
+        let now = Instant::now();
+        let mut announcer = started(now);
+        announcer.user_moved();
+        announcer.frame(Some(root("", 3, Some(1))), Some("Copied"), now);
+        let panel = Listing {
+            over: true,
+            key: "panel".into(),
+            opening: Opening::Named("Actions".into(), Noun::Commands),
+            ..root("", 2, Some(0))
+        };
+        announcer.frame(Some(panel), Some("Copied"), now);
+        let opened = announcer.text.clone();
+        let due = now + STATUS_LEAD;
+        // The panel's opening waited behind the message; the panel closed
+        // before its time: nothing is said of it.
+        announcer.frame(Some(root("", 3, Some(1))), Some("Copied"), due);
+        assert_eq!(announcer.text, "Copied", "{opened}");
+
+        let mut announcer = started(now);
+        announcer.user_moved();
+        announcer.frame(Some(root("", 3, Some(1))), Some("Copied"), now);
+        announcer.frame(Some(root("r", 3, Some(1))), Some("Copied"), now);
+        announcer.frame(Some(root("r", 3, Some(1))), Some("Copied"), due);
+        assert_eq!(announcer.text, "Copied", "typing began");
+    }
+
+    /// Root search opening clears what the command before it said.
+    #[test]
+    fn coming_back_to_root_search_clears_what_was_said() {
+        let now = Instant::now();
+        let mut announcer = started(now);
+        let command = Listing {
+            key: "command".into(),
+            opening: Opening::Named("Hello".into(), Noun::Results),
+            query: None,
+            ..root("", 7, Some(0))
+        };
+        announcer.frame(Some(command), None, now);
+        assert_ne!(announcer.text, "");
+        announcer.frame(Some(root("", 3, Some(0))), None, now);
+        assert_eq!(announcer.text, "");
+    }
+
+    /// A panel over a form (no list of the announcer's) that closes and
+    /// opens again is said again; the same text is cleared for one frame,
+    /// then set again.
+    #[test]
+    fn a_panel_opened_again_over_a_form_is_said_again() {
+        let now = Instant::now();
+        let mut announcer = started(now);
+        let panel = || Listing {
+            over: true,
+            key: "panel".into(),
+            opening: Opening::Named("Actions".into(), Noun::Commands),
+            ..root("", 2, Some(0))
+        };
+        announcer.frame(None, None, now);
+        announcer.frame(Some(panel()), None, now);
+        let opened = announcer.text.clone();
+        assert_eq!(opened, "Actions, 2 commands. Row 0, 1 of 2");
+        announcer.frame(None, None, now);
+        let wake = announcer.frame(Some(panel()), None, now);
+        assert_eq!(announcer.text, "", "cleared for a frame");
+        assert_eq!(wake, Some(now), "drawn again at once");
+        announcer.frame(Some(panel()), None, now);
+        assert_eq!(announcer.text, opened);
+    }
+
+    /// The footer menu, opened again on the same item, is said again.
+    #[test]
+    fn the_same_text_said_again_is_cleared_for_a_frame_first() {
+        let now = Instant::now();
+        let mut announcer = started(now);
+        let menu = || Listing {
+            over: true,
+            key: "menu".into(),
+            opening: Opening::Selection,
+            query: None,
+            ..root("", 4, Some(0))
+        };
+        announcer.frame(Some(menu()), None, now);
+        assert_eq!(announcer.text, "Row 0, 1 of 4");
+        announcer.frame(Some(root("", 3, Some(0))), None, now);
+        announcer.frame(Some(menu()), None, now);
+        assert_eq!(announcer.text, "");
+        announcer.frame(Some(menu()), None, now);
+        assert_eq!(announcer.text, "Row 0, 1 of 4");
+    }
+
+    /// A screen whose rows are choices says its title, not a count of
+    /// results.
+    #[test]
+    fn a_screen_of_choices_opens_with_its_title() {
+        let now = Instant::now();
+        let mut announcer = started(now);
+        let confirm = Listing {
+            key: "confirm".into(),
+            opening: Opening::Titled("Uninstall Greeter?".into()),
+            query: None,
+            ..root("", 2, Some(0))
+        };
+        announcer.frame(Some(confirm), None, now);
+        assert_eq!(announcer.text, "Uninstall Greeter? Row 0, 1 of 2");
+        let details = Listing {
+            key: "details".into(),
+            opening: Opening::Titled("Why the build failed".into()),
+            query: None,
+            ..root("", 1, Some(0))
+        };
+        announcer.frame(Some(details), None, now);
+        assert_eq!(announcer.text, "Why the build failed. Row 0, 1 of 1");
     }
 }

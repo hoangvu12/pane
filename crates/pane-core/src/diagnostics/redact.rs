@@ -1,14 +1,31 @@
 //! Redaction at the log's writer, before anything is written: the home
 //! folder's path becomes `~`, the user's name `<user>` and the computer's
 //! name `<computer>`. Each is matched without regard to case (and with `/`
-//! and `\` taken as one), and only when it is at least [`MIN_CHARS`]
-//! characters long, so a short name does not eat ordinary words. Other
-//! paths are kept: they are what a diagnosis needs.
+//! and `\` taken as one), only as a whole word or path component (its
+//! neighbours are not letters or digits), and only when it is at least
+//! [`MIN_CHARS`] characters long, so a name does not eat ordinary words: the
+//! user "admin" leaves "administrator" alone. A name that identifies nobody
+//! ([`IDENTIFY_NOBODY`], such as "root" or "localhost") is not redacted, so
+//! "root search" and Pane's own name stay readable. Other paths are kept:
+//! they are what a diagnosis needs.
 
 use std::path::{Path, PathBuf};
 
 /// The fewest characters a name must have to be redacted.
 pub(crate) const MIN_CHARS: usize = 3;
+
+/// User and computer names that many people share and that are also words
+/// Pane's messages use, in lower case: redacting them would hide nothing
+/// and mangle every message that says them. A home folder named after one
+/// is still redacted, as a path.
+const IDENTIFY_NOBODY: [&str; 6] = [
+    "admin",
+    "administrator",
+    "localhost",
+    "pane",
+    "root",
+    "user",
+];
 
 /// What the log replaces before it writes.
 #[derive(Clone, Debug, Default)]
@@ -41,10 +58,12 @@ impl Redactor {
             let home = home.to_string_lossy();
             add(home.trim_end_matches(['/', '\\']), "~");
         }
-        for user in users {
+        let identifies =
+            |name: &&String| !IDENTIFY_NOBODY.contains(&name.trim().to_lowercase().as_str());
+        for user in users.iter().filter(identifies) {
             add(user, "<user>");
         }
-        for computer in computers {
+        for computer in computers.iter().filter(identifies) {
             add(computer, "<computer>");
         }
         needles.sort_by_key(|(needle, _)| std::cmp::Reverse(needle.chars().count()));
@@ -67,22 +86,27 @@ impl Redactor {
         Redactor::new(home.as_deref(), &users, &computer_names())
     }
 
-    /// `text` with every needle replaced.
+    /// `text` with every needle replaced where it stands as a whole word or
+    /// path component.
     pub(crate) fn redact(&self, text: &str) -> String {
         if self.needles.is_empty() {
             return text.to_owned();
         }
         let mut redacted = String::with_capacity(text.len());
         let mut rest = text;
+        // The character before `rest`.
+        let mut before = None;
         'text: while let Some(next) = rest.chars().next() {
             for (needle, replacement) in &self.needles {
-                if let Some(length) = matches_at(rest, needle) {
+                if let Some(length) = matches_at(before, rest, needle) {
                     redacted.push_str(replacement);
+                    before = rest[..length].chars().next_back();
                     rest = &rest[length..];
                     continue 'text;
                 }
             }
             redacted.push(next);
+            before = Some(next);
             rest = &rest[next.len_utf8()..];
         }
         redacted
@@ -90,8 +114,18 @@ impl Redactor {
 }
 
 /// How many bytes of `text` its start matches `needle` with, if it does:
-/// letters in any case, and either slash for either.
-fn matches_at(text: &str, needle: &str) -> Option<usize> {
+/// letters in any case, and either slash for either, and only as a whole
+/// word or path component. A needle that starts with a letter or digit
+/// matches only after a character that is neither (`before`, or the start
+/// of the text), and one that ends with one only before such a character
+/// (or the end), so the user "admin" leaves "administrator" alone and a
+/// computer called "pane" leaves "panel" and "panes" as they are.
+fn matches_at(before: Option<char>, text: &str, needle: &str) -> Option<usize> {
+    let word = |c: char| c.is_alphanumeric();
+    let starts_word = needle.chars().next().is_some_and(word);
+    if starts_word && before.is_some_and(word) {
+        return None;
+    }
     let mut length = 0;
     let mut chars = text.chars();
     for wanted in needle.chars() {
@@ -100,6 +134,10 @@ fn matches_at(text: &str, needle: &str) -> Option<usize> {
             return None;
         }
         length += found.len_utf8();
+    }
+    let ends_word = needle.chars().next_back().is_some_and(word);
+    if ends_word && chars.next().is_some_and(word) {
+        return None;
     }
     Some(length)
 }
@@ -266,6 +304,41 @@ mod tests {
         // Three characters are enough.
         let redactor = Redactor::new(None, &["ali".to_owned()], &["box".to_owned()]);
         assert_eq!(redactor.redact("Ali's BOX"), "<user>'s <computer>");
+    }
+
+    #[test]
+    fn a_name_is_redacted_only_as_a_whole_word_or_path_component() {
+        let redactor = Redactor::new(None, &["alice".to_owned()], &["desk".to_owned()]);
+        assert_eq!(
+            redactor.redact("Alice's desk; malice, desktop, alice2, /home/ALICE/x"),
+            "<user>'s <computer>; malice, desktop, alice2, /home/<user>/x"
+        );
+        // The home folder's path is a whole component too.
+        let redactor = Redactor::new(Some(Path::new("/home/al")), &[], &[]);
+        assert_eq!(
+            redactor.redact("/home/al/notes and /home/alan/notes"),
+            "~/notes and /home/alan/notes"
+        );
+    }
+
+    #[test]
+    fn ordinary_words_are_not_mangled_by_a_user_called_pane_or_admin() {
+        let redactor = Redactor::new(
+            Some(Path::new(r"C:\Users\Admin")),
+            &["pane".to_owned(), "Admin".to_owned(), "root".to_owned()],
+            &["localhost".to_owned()],
+        );
+        let message = "Pane could not open the panel: the Administrator of root search on \
+                       localhost said no";
+        assert_eq!(redactor.redact(message), message);
+        // The home folder is still redacted.
+        assert_eq!(
+            redactor.redact(r"C:\Users\Admin\AppData\Local\Pane"),
+            r"~\AppData\Local\Pane"
+        );
+        // A name that identifies someone still goes where it is a word.
+        let redactor = Redactor::new(None, &["Paneer".to_owned()], &[]);
+        assert_eq!(redactor.redact("Pane ran for paneer"), "Pane ran for <user>");
     }
 
     #[test]

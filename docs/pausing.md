@@ -420,7 +420,10 @@ is sent anywhere: there is no telemetry, no crash upload and no minidump.
   only (mode 0700; on Windows a protected DACL for the user and SYSTEM).
 - **Size and rotation.** One log is appended to across starts. Past 2 MiB it
   becomes `pane.1.log`, the older files shift, and at most 5 older files are
-  kept (6 in all, about 12 MiB at most). Each line starts with its UTC time
+  kept (6 in all, about 12 MiB at most). If `pane.log` cannot be moved (on
+  Windows another program may hold it open), no older file is shifted or
+  removed: Pane keeps appending to it and tries again once it has grown by
+  another 2 MiB. Each line starts with its UTC time
   (`2026-10-08T05:06:07.089Z`); each run starts with a line naming Pane's
   version and its process. A message of several lines (a panic's
   backtrace) keeps them, indented.
@@ -432,12 +435,19 @@ is sent anywhere: there is no telemetry, no crash upload and no minidump.
 - **Redaction.** At the log's writer, before anything is written: the home
   folder's path becomes `~`, the user's name `<user>` and the computer's
   name `<computer>`, each matched without regard to case (and with either
-  slash) and only when it is at least 3 characters long. Other paths are
+  slash), only as a whole word or path component (a user called "admin"
+  leaves "administrator" alone), and only when it is at least 3 characters
+  long. A user or computer name that identifies nobody and is also a word
+  Pane's messages use ("admin", "administrator", "localhost", "pane",
+  "root", "user") is not replaced; a home folder named after one still
+  becomes `~`. Other paths are
   kept, since a diagnosis needs them. Pane's own messages do not carry
   extension data values, local credentials, clipboard history text, query
   text or found file names: a web image that shows its fallback is named by
   its address (`host:port`) only, since the rest of an extension's URL can
-  carry what the user typed. Standard error still gets the message as it
+  carry what the user typed, and any other URL its error names (escaped, or
+  one a redirect led to) is written as `<url>`. Standard error still gets
+  the message as it
   was.
 - **Panics.** A panic hook writes the panic's thread, location, message and
   any captured backtrace (`RUST_BACKTRACE`) to the log before the default
@@ -464,7 +474,9 @@ is sent anywhere: there is no telemetry, no crash upload and no minidump.
   manager, and the status line says it too; its Actions panel has
   **Dismiss Notice**. Settings' About page shows the same notice in its
   **Log** row, beside the diagnostics, with **Open log folder**, and
-  **Copy diagnostics** now includes the log's folder. The notice goes when
+  **Copy diagnostics** now includes the log's folder; the data and log
+  folders it copies are redacted as the log is (the home folder as `~`),
+  so the report can go into a public bug report. The notice goes when
   the user dismisses it, opens the folder, or Pane next quits cleanly and
   starts again.
 

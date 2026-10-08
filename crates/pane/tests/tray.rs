@@ -325,20 +325,36 @@ fn a_change_the_system_refuses_is_explained_and_saved_as_nothing(cx: &mut TestAp
 
     // The system refuses the hide: the reason is explained on the page,
     // the entry is unchanged, and nothing is kept or saved — the record
-    // file is not even made.
+    // file is not even made. The adapter is told the preference again
+    // (shown), so what it keeps for later is the preference, not the
+    // refused hide.
     system.refuse_next(TrayError::Refused("the notification area is full".into()));
     click(&mut settings_cx, "tray-visibility");
     until_diag(&mut settings_cx, |tree| {
         tree.contains("the system refused it: the notification area is full")
     });
-    assert_eq!(system.calls(), vec![true], "the entry was not hidden");
+    assert_eq!(
+        system.calls(),
+        vec![true, true],
+        "the entry was not hidden, and the preference was applied again"
+    );
     assert!(!data.path().join("settings.json").exists());
 
     // The toggle tries again and lands: the entry is hidden and the
     // choice saved, so the refusal did not leave the preference stuck.
     click(&mut settings_cx, "tray-visibility");
     settings_cx.run_until_parked();
-    assert_eq!(system.calls(), vec![true, false]);
+    assert_eq!(system.calls(), vec![true, true, false]);
+    until_record(&mut settings_cx, data.path(), false);
+
+    // A refused show is rolled back the same way: the adapter is told
+    // the preference (hidden) again, and the record still holds it.
+    system.refuse_next(TrayError::Refused("the notification area is full".into()));
+    click(&mut settings_cx, "tray-visibility");
+    until_diag(&mut settings_cx, |tree| {
+        tree.contains("the system refused it: the notification area is full")
+    });
+    assert_eq!(system.calls(), vec![true, true, false, false]);
     until_record(&mut settings_cx, data.path(), false);
 }
 

@@ -71,7 +71,7 @@ pub(crate) const LOG_NOTE: &str = "Pane's own diagnostics, kept on this computer
 
 /// The notice that the run before this one ended unexpectedly (#133), as
 /// root search's row says it.
-pub(crate) const CRASH_NOTICE: &str = "Pane quit unexpectedly last time";
+pub(crate) const CRASH_NOTICE: &str = pane_core::diagnostics::CRASH_NOTICE;
 
 /// The buttons' labels.
 pub(crate) const CHECK_LABEL: &str = "Check for updates";
@@ -582,19 +582,23 @@ fn install_progress(status: &Status, version: &str) -> SharedString {
 /// installation — its version, the system it runs on, where its data
 /// lives, where its log is (and whether the run before ended
 /// unexpectedly) and what its update check last found — and nothing else
-/// (see the module docs).
+/// (see the module docs). The folders are redacted as the log redacts
+/// (#133): the home folder is `~`, and the user's and the computer's names
+/// are left out, so the report can be pasted into a public bug report.
 fn diagnostics(update: &ApplicationUpdate, log: Option<&pane_core::LogNotice>) -> String {
+    let folder =
+        |path: &std::path::Path| pane_core::diagnostics::redacted(&path.display().to_string());
     let mut report = format!("Pane {}", crate::APP_VERSION);
     if let Some(target) = pane_core::Target::current() {
         report.push_str(&format!("\nBuilt for {}", target.id()));
     }
     match crate::data_dir() {
-        Some(dir) => report.push_str(&format!("\nData folder: {}", dir.display())),
+        Some(dir) => report.push_str(&format!("\nData folder: {}", folder(&dir))),
         None => report.push_str("\nData folder: none"),
     }
     match log {
         Some(log) => {
-            report.push_str(&format!("\nLog folder: {}", log.folder.display()));
+            report.push_str(&format!("\nLog folder: {}", folder(&log.folder)));
             if log.quit_unexpectedly {
                 report.push_str("\nLast run: Pane quit unexpectedly");
             }

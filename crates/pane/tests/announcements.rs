@@ -185,13 +185,25 @@ fn root_search_keeps_its_field_focused_and_says_each_move(cx: &mut TestAppContex
     assert_eq!(announcement(cx), said(&shown, 1));
 }
 
+/// Each move is drawn in a frame of its own, and each replaces the text
+/// before it: what is left after the last frame, and after anything that
+/// waits has had its time, is the row where the user stopped.
 #[gpui::test]
 fn several_fast_moves_leave_only_the_last_row(cx: &mut TestAppContext) {
     let (window, cx) = open_samples(cx);
-    cx.simulate_keystrokes("down down down");
+    let mut heard = Vec::new();
+    for index in 1..4 {
+        cx.simulate_keystrokes("down");
+        let shown = view(&window, cx);
+        assert_eq!(shown.selected, Some(index));
+        heard.push(announcement(cx));
+    }
     let shown = view(&window, cx);
-    assert_eq!(shown.selected, Some(3));
-    assert_eq!(announcement(cx), said(&shown, 3));
+    let expected: Vec<String> = (1..4).map(|index| said(&shown, index)).collect();
+    assert_eq!(heard, expected, "each frame replaced the text before it");
+    cx.executor().advance_clock(STATUS_LEAD + SETTLE);
+    cx.run_until_parked();
+    assert_eq!(announcement(cx), said(&shown, 3), "no earlier text remains");
 }
 
 #[gpui::test]
@@ -218,11 +230,19 @@ fn typing_says_the_selected_row_once_settled_if_it_changed(cx: &mut TestAppConte
     cx.simulate_input("java");
     let shown = view(&window, cx);
     assert_eq!(shown.query(), Some("java"));
-    assert_eq!(announcement(cx), "", "nothing while typing");
+    // What the announcer holds after each frame the test draws: it
+    // changes once, from nothing to the row.
+    let mut heard = vec![announcement(cx)];
+    assert_eq!(heard[0], "", "nothing while typing");
     typing_settles(cx);
     until_announced(cx, &said(&shown, 0));
-    typing_settles(cx);
-    assert_eq!(announcement(cx), said(&shown, 0), "said once");
+    heard.push(announcement(cx));
+    for _ in 0..3 {
+        typing_settles(cx);
+        heard.push(announcement(cx));
+    }
+    let changes = heard.windows(2).filter(|pair| pair[0] != pair[1]).count();
+    assert_eq!(changes, 1, "said once: {heard:?}");
 
     // A move while typing settles is said at once (JavaScript sample,
     // second for "sample", was said last: Down twice reaches another).
@@ -399,6 +419,11 @@ fn the_actions_panel_over_root_search_says_its_entries(cx: &mut TestAppContext) 
     assert_panel_follows_moves(cx);
 }
 
+/// The order of a message and a selection drawn in the same frame. The
+/// message is set through the launcher here: a sample's toast arrives from
+/// the extension runtime's thread, so whether it is drawn in the frame of
+/// the next key or before it is a race no test can fix; a real toast is
+/// checked on its own below.
 #[gpui::test]
 fn the_footers_message_is_said_before_the_selection_that_came_with_it(cx: &mut TestAppContext) {
     let (window, cx) = open_samples(cx);
@@ -423,6 +448,51 @@ fn the_footers_message_is_said_before_the_selection_that_came_with_it(cx: &mut T
     cx.executor().advance_clock(STATUS_LEAD);
     cx.run_until_parked();
     assert_eq!(announcement(cx), said(&shown, 1));
+}
+
+/// A sample's real toast is said, and a move after it is said at once:
+/// the toast, which stays, holds nothing back.
+#[gpui::test]
+fn a_commands_toast_is_said_and_a_move_after_it_at_once(cx: &mut TestAppContext) {
+    let (window, cx) = open_actions_sample(cx);
+    let first = view(&window, cx).rows[0].title.clone();
+    // Enter runs the first note's "Open", whose toast names both.
+    cx.simulate_keystrokes("enter");
+    until_announced(cx, &format!("Open: {first}"));
+    cx.simulate_keystrokes("down");
+    let shown = view(&window, cx);
+    assert_eq!(shown.selected, Some(1));
+    assert_eq!(announcement(cx), said(&shown, 1));
+}
+
+/// The footer menu keeps the focus in its list and says its one item, its
+/// place and the menu's size; Down has nowhere to go; opened again, it is
+/// said again.
+#[gpui::test]
+fn the_footer_menu_says_its_item_and_again_when_it_opens_again(cx: &mut TestAppContext) {
+    let (_window, cx) = open_samples(cx);
+    let open_menu = |cx: &mut VisualTestContext| {
+        let button = cx.debug_bounds("footer-menu").expect("the menu button");
+        cx.simulate_click(button.center(), gpui::Modifiers::none());
+        cx.run_until_parked();
+    };
+    open_menu(cx);
+    assert_focus_stays(cx, "Pane menu");
+    assert_eq!(announcement(cx), "Settings, 1 of 1");
+    let (label, position, size) = selected_of(cx, "MenuItem");
+    assert_eq!((label.as_str(), position, size), ("Settings", 1, 1));
+    cx.simulate_keystrokes("down");
+    cx.run_until_parked();
+    assert_eq!(announcement(cx), "Settings, 1 of 1");
+    assert_focus_stays(cx, "Pane menu");
+
+    // Closed and opened again: the same text, cleared for a frame and set
+    // again, so it is said again (the clearing frame is the announcer's
+    // unit tests').
+    cx.simulate_keystrokes("escape");
+    cx.run_until_parked();
+    open_menu(cx);
+    assert_eq!(announcement(cx), "Settings, 1 of 1");
 }
 
 #[gpui::test]

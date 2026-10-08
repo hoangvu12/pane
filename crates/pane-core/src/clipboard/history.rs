@@ -578,12 +578,36 @@ impl HistoryJson {
     /// clipboard history (#130): version 2 there, or where an item is
     /// protected (as one written on Windows and read elsewhere, which is
     /// kept as it was); version 1 otherwise. An item that cannot be
-    /// protected fails the write, so none is ever written as it is there.
+    /// protected there is left out of this write, with a diagnostic, and
+    /// never written as it is; it stays in memory, and the next write tries
+    /// again. The rest, deletions included, is written.
     fn to_json(&self) -> Result<String, String> {
+        let mut failed = None;
         for item in self.items() {
-            item.seal()
-                .map_err(|why| format!("could not protect an item: {why}"))?;
+            if let Err(why) = item.seal() {
+                failed = Some(why);
+            }
         }
+        let sealed_only: BTreeMap<String, PackageHistory>;
+        let packages = match failed {
+            None => &self.packages,
+            Some(why) => {
+                crate::diagnostic!(
+                    "Pane could not protect a clipboard history item: {why}. It is left out of \
+                     the file, and kept until a later write can protect it."
+                );
+                sealed_only = self
+                    .packages
+                    .iter()
+                    .map(|(owner, history)| {
+                        let mut history = history.clone();
+                        history.items.retain(|item| item.sealed.stored.get().is_some());
+                        (owner.clone(), history)
+                    })
+                    .collect();
+                &sealed_only
+            }
+        };
         let protected = self.items().any(|item| item.sealed.stored.get().is_some());
         let file = WrittenJson {
             version: if protection::PROTECTS || protected {
@@ -591,7 +615,7 @@ impl HistoryJson {
             } else {
                 VERSION
             },
-            packages: &self.packages,
+            packages,
         };
         serde_json::to_string_pretty(&file).map_err(|error| error.to_string())
     }

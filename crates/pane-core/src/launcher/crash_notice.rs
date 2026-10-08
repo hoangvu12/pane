@@ -16,14 +16,11 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use super::{Entry, Launcher, Row, Screen, Status, off_thread};
-use crate::diagnostics::CrashRecord;
+use crate::diagnostics::{CRASH_NOTICE as NOTICE, CrashRecord};
 
 /// The id of root search's row telling that Pane quit unexpectedly last
 /// time.
 pub const UNEXPECTED_QUIT: &str = "pane.unexpected-quit";
-
-/// What the row and the status line say.
-const NOTICE: &str = "Pane quit unexpectedly last time";
 
 /// This run's crash record, and whether its notice is still shown.
 #[derive(Default)]

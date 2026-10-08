@@ -81,8 +81,20 @@ Extension data Pane keeps for a package identity that is not installed, recorded
 _Avoid_: Orphaned data, leftovers (a leftover is a managed folder awaiting removal)
 
 **Local credential**:
-A secret an extension keeps on this computer through Pane, such as a sign-in token. Deleting it does not revoke a remote session.
+A secret an extension keeps on this computer through Pane, such as a sign-in token. Deleting it does not revoke a remote session. On Windows its value is encrypted on disk for the current user (DPAPI); on macOS and Linux it is kept as it is in a file only the user can read.
 _Avoid_: Account, session
+
+**Unreadable credential**:
+A local credential, or a clipboard history item, that Pane cannot decrypt on this computer: the user's password was reset by an administrator, the data folder came from another user or computer, or its bytes were damaged. It is explained to the extension that reads it ("Sign in again") and counted as unreadable on its extension's row, and kept as it was until the extension replaces it or it is deleted; Pane never drops or regenerates it.
+_Avoid_: Corrupt credential, lost credential (it is kept)
+
+**Pane's log**:
+The file in Pane's logs folder where everything Pane writes to standard error also goes, redacted (the home folder, the user's and the computer's names), size-capped and rate-limited. It never leaves the computer, and holds no extension data, credentials, clipboard text or query text.
+_Avoid_: Telemetry, crash report (nothing is sent), extension log
+
+**Crash notice**:
+"Pane quit unexpectedly last time": the root result, status line and About page notice a start shows when the run before ended without a clean quit, found from the marker that run left in the logs folder. It opens the logs folder, and goes when dismissed, when the folder is opened, or after the next clean quit.
+_Avoid_: Crash dialog, crash report
 
 **Root search**:
 The launcher's main search and result view before a specific command is opened.
@@ -163,6 +175,10 @@ _Avoid_: Calculation, conversion, answer card (the card is how it is drawn)
 **No-results notice**:
 What root search shows above its fallbacks when nothing else is listed for a query that is not blank: the query, and what the user can do — pick a fallback, install an extension, or offer a command as one on its extension's page in Settings. The notice selects nothing itself; root search preselects the first fallback below it, so Enter sends it the query (ADR 0031).
 _Avoid_: Empty state (a screen's own line when it has no rows), zero state
+
+**Announcer**:
+The launcher window's one hidden, polite live region, which tells a screen reader what the selection does while the focus stays in a field, a menu or a list: "<title>, <i> of <n>" for a move, a list's name and count as it opens, "No results", and the footer's toasts and outcomes before the selection that came with them.
+_Avoid_: Active descendant (rows no longer claim the focus), notification
 
 **File index**:
 The host's index of the names of the files and folders under the index scope, kept in Pane's cache folder, readable by the user only and locked against a second Pane, caught up at start from what the system recorded and kept current from its change notifications while a package that uses it (`"fileIndex": true`) is enabled and not paused. It answers file search: root search's file rows, Search Files, and any package's search through `pane:extension/file-index`, each entry named by an id Pane gave it and checked again before Pane acts on it. Disabling the last package that uses it stops watching at once and keeps it on disk; uninstalling it deletes it.

@@ -633,6 +633,7 @@ impl LauncherWindow {
             let (selector, color) = super::toast::style_look(shown.toast.style, &theme);
             (selector, shown.toast.text(), color)
         });
+        let outcome = super::announcer::says_message(&view.status, toast.is_some());
         let status = match &view.status {
             _ if toast.is_some() => toast,
             Status::Idle => None,
@@ -641,8 +642,12 @@ impl LauncherWindow {
             Status::Result(answer) => Some(("status-result", answer.clone(), theme.success)),
             Status::Error(message) => Some(("status-error", message.clone(), theme.danger)),
         };
-        // The window's announcer says it too (#132).
-        let said = status.as_ref().map(|(_, text, _)| text.clone());
+        // The window's announcer says it too (#132), when it is a toast or
+        // an outcome.
+        let said = status
+            .as_ref()
+            .filter(|_| outcome)
+            .map(|(_, text, _)| text.clone());
         let (selector, lead) = match &status {
             Some((selector, text, color)) => (
                 *selector,

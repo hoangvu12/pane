@@ -295,6 +295,18 @@ function Stop-Pane($process) {
     if ($process.HasExited) { throw "Pane exited during the smoke" }
     Stop-Process -Id $process.Id
     $process.WaitForExit()
+    Remove-Crash-Marker $process.Id
+}
+# Stop-Process ends Pane as a crash would, so the marker its start wrote in
+# the logs folder stays (#133), and the next start on the same data would
+# list "Pane quit unexpectedly last time" in root search and say it in the
+# status line, shifting the rows and the outcome the phases check. A clean
+# quit removes the marker; after Stop-Process the smoke removes it. The
+# logs folder is `logs` in PANE_DATA_DIR when that is set, as Pane's own
+# logs_dir says, and %LOCALAPPDATA%\Pane\logs otherwise.
+function Remove-Crash-Marker($id) {
+    $logs = if ($env:PANE_DATA_DIR) { Join-Path $env:PANE_DATA_DIR "logs" } else { Join-Path $env:LOCALAPPDATA "Pane\logs" }
+    Remove-Item -Force -ErrorAction SilentlyContinue (Join-Path $logs "running-$id.json")
 }
 
 # Waits until $file contains $text ($present) or no longer does (-not

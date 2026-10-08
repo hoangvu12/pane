@@ -9,7 +9,8 @@
 //! the disk.
 //!
 //! Writing never panics and never fails the caller: a file that cannot be
-//! opened, written or rotated only loses lines.
+//! opened or written only loses lines, and one that cannot be moved to
+//! rotate it keeps its lines, and the older files, until it can.
 
 use std::collections::HashMap;
 use std::fs::{self, File, OpenOptions};
@@ -58,6 +59,9 @@ struct Inner {
     file: Option<File>,
     /// Its size as last known.
     size: u64,
+    /// The size past which it is rotated next: the log's cap, or, after a
+    /// rotation that could not move `pane.log`, its size then plus the cap.
+    rotate_at: u64,
     /// What each site wrote in its current window, by its fixed text.
     sites: HashMap<String, Site>,
 }
@@ -90,6 +94,7 @@ impl Log {
             inner: Mutex::new(Inner {
                 file,
                 size,
+                rotate_at: max_size,
                 sites: HashMap::new(),
             }),
         }
@@ -180,7 +185,7 @@ impl Log {
         // A message of several lines (a panic's backtrace) keeps them,
         // indented under its time.
         let line = format!("{} {}\n", utc(now), text.replace('\n', "\n  "));
-        if inner.size >= self.max_size {
+        if inner.size >= inner.rotate_at {
             self.rotate(inner);
         }
         let Some(file) = inner.file.as_mut() else {
@@ -193,23 +198,47 @@ impl Log {
 
     /// Makes `pane.log` the newest older file, shifting the others and
     /// dropping the oldest past [`KEPT`], and starts a new `pane.log`.
+    ///
+    /// `pane.log` is moved aside first. If it cannot be (on Windows another
+    /// program may hold it open without allowing that), no older file is
+    /// shifted or dropped: Pane keeps appending to it and tries again once
+    /// it has grown by another cap, so a log that cannot move never costs
+    /// the older files, nor a rotation for every line.
     fn rotate(&self, inner: &mut Inner) {
         // Closed first: Windows renames an open file only if it was opened
         // to allow it.
         inner.file = None;
-        let _ = fs::remove_file(self.folder.join(older(KEPT)));
-        for number in (1..KEPT).rev() {
-            let _ = fs::rename(
-                self.folder.join(older(number)),
-                self.folder.join(older(number + 1)),
-            );
-        }
-        let _ = fs::rename(self.folder.join(FILE), self.folder.join(older(1)));
         let path = self.folder.join(FILE);
+        let aside = self.folder.join(ROTATING);
+        let mut moved = fs::rename(&path, &aside).is_ok();
+        if moved {
+            let _ = fs::remove_file(self.folder.join(older(KEPT)));
+            for number in (1..KEPT).rev() {
+                let _ = fs::rename(
+                    self.folder.join(older(number)),
+                    self.folder.join(older(number + 1)),
+                );
+            }
+            // If it cannot become `pane.1.log`, it goes back to be appended
+            // to (and if that fails too, a new `pane.log` starts).
+            if fs::rename(&aside, self.folder.join(older(1))).is_err()
+                && fs::rename(&aside, &path).is_ok()
+            {
+                moved = false;
+            }
+        }
         inner.file = open_file(&path).ok();
         inner.size = fs::metadata(&path).map(|meta| meta.len()).unwrap_or(0);
+        inner.rotate_at = if moved {
+            self.max_size
+        } else {
+            inner.size.saturating_add(self.max_size)
+        };
     }
 }
+
+/// Where `pane.log` is moved while the older files shift.
+const ROTATING: &str = "pane.rotating.log";
 
 /// The name of the `number`th older file: `pane.1.log` is the newest.
 pub(crate) fn older(number: usize) -> String {
@@ -405,6 +434,59 @@ mod tests {
         }
         let count = fs::read_dir(folder.path()).unwrap().count();
         assert_eq!(count, 1 + KEPT, "never more than five older files");
+    }
+
+    /// A `pane.log` that cannot be moved (on Windows, another program
+    /// holding it open) costs no older file, and is not tried again for
+    /// every line.
+    #[test]
+    fn a_log_that_cannot_move_keeps_the_older_files() {
+        let folder = tempfile::tempdir().unwrap();
+        for number in 1..=KEPT {
+            fs::write(folder.path().join(older(number)), format!("older {number}\n")).unwrap();
+        }
+        // A folder where `pane.log` would be moved makes the move fail on
+        // every system.
+        let blocker = folder.path().join(ROTATING);
+        fs::create_dir(&blocker).unwrap();
+        fs::write(blocker.join("held"), "held").unwrap();
+        let (clock, _) = clock_at(start());
+        let log = Log::open_with(folder.path(), Redactor::none(), clock, 200);
+        for number in 0..20 {
+            log.write(
+                &format!("site {number}"),
+                &format!("line {number:03} of the rotation test, padded out"),
+            );
+        }
+        for number in 1..=KEPT {
+            assert_eq!(
+                fs::read_to_string(folder.path().join(older(number))).unwrap(),
+                format!("older {number}\n"),
+                "pane.{number}.log is untouched"
+            );
+        }
+        let current = lines(folder.path(), FILE);
+        assert_eq!(current.len(), 20, "every line is kept in pane.log");
+
+        // Once it can move, it rotates as before: four lines (some 270
+        // bytes) pass the next try, and the lines it held become the newest
+        // older file, just before the one that was `pane.1.log`.
+        fs::remove_dir_all(&blocker).unwrap();
+        for number in 20..24 {
+            log.write(
+                &format!("site {number}"),
+                &format!("line {number:03} of the rotation test, padded out"),
+            );
+        }
+        let older_files: Vec<String> = (1..=KEPT)
+            .map(|number| fs::read_to_string(folder.path().join(older(number))).unwrap())
+            .collect();
+        let held = older_files
+            .iter()
+            .position(|text| text.contains("line 000"))
+            .unwrap();
+        assert_eq!(older_files[held + 1], "older 1\n", "{older_files:#?}");
+        assert!(!folder.path().join(ROTATING).exists());
     }
 
     /// The number in a line the rotation test wrote.

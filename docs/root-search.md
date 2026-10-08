@@ -555,20 +555,28 @@ Checked through GPUI's accessibility tree
     the pointer): "<title>, <i> of <n>", with ", unavailable" after a row
     that cannot run, and the section's name first when the move enters
     another section ("Fallbacks: Echo, 1 of 1");
-  - opening a command or a page: "<name>, <n> results", then the selected
-    row; the Actions panel: "Actions for <target>, <n> commands", then its
-    selected entry; the footer menu: its selected entry;
+  - opening a command or the extension list: "<name>, <n> results", then
+    the selected row; a screen whose rows are choices (a confirmation, a
+    package before installing it, why a build failed or a package paused):
+    its title, then the selected row; the Actions panel: "Actions for
+    <target>, <n> commands", then its selected entry; the footer menu: its
+    selected entry, said again each time it opens (the same text is cleared
+    for one frame, then set again);
+  - root search coming back: nothing, and what was said before is cleared;
   - a list that becomes empty: "No results";
   - typing: nothing per keystroke; once the query's results have settled,
     or 300 ms after the last keystroke, whichever is later, the selected row
     if it is not the one last said;
   - a selection Pane changes itself (a late result, a refreshed list):
     nothing, unless the selected row is another one;
-  - the footer's message (a toast, or the status line), which the strip
-    keeps as its name under its `Status` role: AccessKit announces only a
-    node with a live setting of its own, so the announcer says it too.
+  - the footer's message when it is a toast or an outcome (a result, an
+    error), which the strip keeps as its name under its `Status` role:
+    AccessKit announces only a node with a live setting of its own, so the
+    announcer says it too. "Running…" and progress are the strip's alone.
     When the message and the selection change together, the message is said
-    first and the selection 500 ms later.
+    first and the selection 500 ms later, at most: a later message does not
+    hold it back again, and it is dropped if the list no longer shows it (a
+    panel closed, another list or selection, typing began).
 - A command's list keeps the focus on the list (or on its search field),
   the Actions panel on its search field ("Search actions"), the footer menu
   on the menu, and Clipboard History and Search Files on their fields; in
@@ -666,7 +674,11 @@ the fallbacks named "Fallbacks", opening a command saying its name and
 count and then its row, the same in a command's list and in the Actions
 panel (over a command's list and over root search), the footer's message
 said before a selection that changed with it while the footer keeps its
-status role, and a selection Pane changes itself said only for another row.
+status role, a sample's toast said and a move after it said at once, the
+footer menu's item said and said again when it opens again, and a
+selection Pane changes itself said only for another row; in
+`crates/pane/tests/window.rs`, Clipboard History's field keeping the focus,
+its rows' places, a move and "No results" for a filter that keeps nothing.
 
 Native checks: the GUI smoke scripts' search phase (screenshots 24 to 26)
 types "typescr", presses Enter, runs "Wait briefly" and asserts the screen

@@ -32,7 +32,7 @@
 use std::cell::Cell;
 use std::io;
 use std::path::Path;
-use std::sync::{Arc, Mutex, Once, PoisonError};
+use std::sync::{Arc, Mutex, Once, OnceLock, PoisonError};
 
 mod log;
 mod marker;
@@ -52,6 +52,10 @@ macro_rules! diagnostic {
         $crate::diagnostics::report($format, &::std::format!($format $($arguments)*))
     };
 }
+
+/// What Pane says after a run ended unexpectedly: the log's line at start,
+/// root search's row and the status line, and Settings' About page.
+pub const CRASH_NOTICE: &str = "Pane quit unexpectedly last time";
 
 /// The log diagnostics go to, once [`start`] opened it.
 static SINK: Mutex<Option<Arc<Log>>> = Mutex::new(None);
@@ -74,22 +78,38 @@ pub fn report(site: &str, message: &str) {
 }
 
 /// [`report`] for a message whose fixed text is the part before its first
-/// `:`, as the platform adapters' messages are.
+/// `:` or `(`, as the platform adapters' messages are ("Windows refused
+/// the tray icon (…); …").
 pub fn report_line(message: &str) {
-    let site = message.split(':').next().unwrap_or(message);
+    let site = message.split([':', '(']).next().unwrap_or(message);
     report(site, message);
+}
+
+/// `text` redacted as the log redacts what it writes: this computer's home
+/// folder's path becomes `~`, the user's name `<user>` and the computer's
+/// `<computer>`. For what Pane offers the user to copy into a report, such
+/// as the About page's diagnostics.
+pub fn redacted(text: &str) -> String {
+    static REDACTOR: OnceLock<Redactor> = OnceLock::new();
+    REDACTOR.get_or_init(Redactor::of_this_system).redact(text)
 }
 
 /// Writes `message` to the log only.
 fn to_log(site: &str, message: &str) {
-    // A panic inside the writer comes back here through the panic hook:
-    // that line is lost rather than the lock taken twice.
+    if let Some(log) = sink() {
+        writing(|| log.write(site, message));
+    }
+}
+
+/// Runs `write`, which takes the log's lock, unless this thread is writing
+/// to the log already: a panic inside the writer comes back to the log
+/// through the panic hook, and that line is lost rather than the lock taken
+/// twice.
+fn writing(write: impl FnOnce()) {
     if matches!(WRITING.try_with(|writing| writing.replace(true)), Ok(true)) {
         return;
     }
-    if let Some(log) = sink() {
-        log.write(site, message);
-    }
+    write();
     let _ = WRITING.try_with(|writing| writing.set(false));
 }
 
@@ -117,15 +137,12 @@ fn test_sink() -> Option<Arc<Log>> {
 pub fn start(folder: &Path, version: &str) -> CrashRecord {
     let _ = create_private_dir(folder);
     let log = Arc::new(Log::open(folder, Redactor::of_this_system()));
-    log.begin_run(version);
+    writing(|| log.begin_run(version));
     *SINK.lock().unwrap_or_else(PoisonError::into_inner) = Some(log);
     install_panic_hook();
     let record = CrashRecord::open(folder, version, &SystemProcesses);
     if record.ended_unexpectedly() {
-        report(
-            "Pane quit unexpectedly last time",
-            "Pane quit unexpectedly last time",
-        );
+        report(CRASH_NOTICE, CRASH_NOTICE);
     }
     #[cfg(unix)]
     signals::remove_marker_on_signals(record.marker());
@@ -135,7 +152,7 @@ pub fn start(folder: &Path, version: &str) -> CrashRecord {
 /// Writes what the log held back, as a clean quit does before Pane ends.
 pub(crate) fn finish() {
     if let Some(log) = sink() {
-        log.finish();
+        writing(|| log.finish());
     }
 }
 
@@ -266,10 +283,10 @@ mod signals {
     }
 }
 
-/// A test's own log for diagnostics written on its thread, so tests that
-/// run at once never share one.
 #[cfg(test)]
 thread_local! {
+    /// A test's own log for diagnostics written on its thread, so tests
+    /// that run at once never share one.
     static TEST_SINK: std::cell::RefCell<Option<Arc<Log>>> =
         const { std::cell::RefCell::new(None) };
 }
@@ -329,6 +346,25 @@ mod tests {
         );
         assert!(
             text.contains("Pane could not read the clipboard: it is busy"),
+            "{text}"
+        );
+    }
+
+    /// A platform adapter's message keeps its reason out of its site, so
+    /// the rate limit holds back a repeated failure whatever its reason.
+    #[test]
+    fn a_platform_messages_site_ends_before_its_reason() {
+        let folder = tempfile::tempdir().unwrap();
+        let captured = capture_into(folder.path(), Redactor::none());
+        for number in 0..12 {
+            report_line(&format!(
+                "Windows refused the tray icon (error {number}); it is tried again"
+            ));
+        }
+        let text = captured.text();
+        assert_eq!(
+            text.matches("Windows refused the tray icon").count(),
+            super::log::LINES_PER_WINDOW as usize,
             "{text}"
         );
     }

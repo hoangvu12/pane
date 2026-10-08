@@ -106,7 +106,11 @@ extension is rebuilt.
 - **Conversion.** When Pane starts on Windows, a version-1 file (as an
   earlier Pane wrote it) is converted to version 2, every value protected,
   in one atomic write. If that write fails, Pane keeps reading the version-1
-  file and tries again at the next start; no value is lost. An older Pane
+  file and tries again at the next start; no value is lost. A later write
+  of the file (an uninstall or a deletion, which reads the file again
+  first) protects the values it still holds as they are before writing it.
+  If Windows could encrypt none of them, the file is written as version 1
+  again, never as plain values in a version-2 file. An older Pane
   refuses a version-2 file, as it refuses any other version, and never
   overwrites it.
 - **A value that cannot be decrypted** — an administrator reset the
@@ -117,8 +121,10 @@ extension is rebuilt.
   on this computer: Windows could not decrypt it (<reason>). Sign in again."
   `credentials.set` replaces it. Pane keeps it as it was through every other
   write. Its other values still read. Manage extensions counts it, as in
-  "keeps 2 credentials, 1 unreadable" (the counts themselves need no
-  decryption; only saying which cannot be read tries them). A password
+  "keeps 2 credentials, 1 unreadable": the counts themselves need no
+  decryption, and only the row that describes an identity tries that
+  identity's values to say which cannot be read. Confirmations count
+  without decrypting anything. A password
   preference that cannot be read is as if it was never set, so its Settings
   page asks for it again.
 - **What it protects against:** another user of the computer, a copy of the

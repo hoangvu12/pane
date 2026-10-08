@@ -113,10 +113,12 @@ global-hotkey = "0.8"
 # CE's and global-hotkey's AppKit code. The system icon of a file or an
 # application (#142): NSWorkspace's icon, its images and their PNG. Copied
 # images and files in clipboard history (#167): a copy's pasteboard items
-# (every file URL), and a TIFF made into a PNG and back.
+# (every file URL), and a TIFF made into a PNG and back. The menu bar
+# item's template image (#131): its size (NSSize, NSGeometry's with
+# objc2-core-foundation's CGSize).
 objc2.workspace = true
 objc2-app-kit = { version = "0.3", default-features = false, features = ["NSControl", "NSMenu", "NSMenuItem", "NSPasteboard", "NSPasteboardItem", "NSResponder", "NSStatusBar", "NSStatusBarButton", "NSStatusItem", "NSView", "NSButton", "NSWorkspace", "NSImage", "NSImageRep", "NSBitmapImageRep", "objc2-core-foundation"] }
-objc2-foundation = { version = "0.3", default-features = false, features = ["NSArray", "NSData", "NSDictionary", "NSError", "NSFileManager", "NSString", "NSURL", "std"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["NSArray", "NSData", "NSDictionary", "NSError", "NSFileManager", "NSGeometry", "NSString", "NSURL", "objc2-core-foundation", "std"] }
 # The file index's change source (#175): an FSEvents stream opened from a
 # saved event id, so that FSEvents replays what changed while Pane was not
 # running and then reports live changes (MIT, already in the tree through

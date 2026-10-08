@@ -3895,6 +3895,47 @@ mod clipboard_split {
         assert!(cx.debug_bounds("row-Resume Recording").is_some());
         assert!(cx.debug_bounds("clipboard-list").is_none());
     }
+
+    /// Clipboard History keeps the focus in its field (#132): its opening
+    /// is said with its name and count, then the selected record; each row
+    /// says its place and the list's size; one Down is said with the
+    /// record's place; and a filter that keeps nothing says "No results".
+    #[gpui::test]
+    fn clipboard_history_keeps_its_field_focused_and_says_each_record(cx: &mut TestAppContext) {
+        let world = World::new();
+        let launcher = world.launcher(cx, &["first", "second", "third"]);
+        let (window, cx) = open_history(cx, launcher);
+        let field = Some("Search clipboard history");
+        assert_eq!(super::focused_label(cx).as_deref(), field);
+        let opened = super::wait::until(cx, |cx| {
+            let said = super::announcement(cx);
+            said.ends_with("third, 1 of 3").then_some(said)
+        });
+        assert!(opened.contains(", 3 results. "), "{opened}");
+
+        let options: Vec<serde_json::Value> = super::accessible_nodes(cx)
+            .into_iter()
+            .filter(|node| node["role"] == "ListBoxOption")
+            .collect();
+        assert_eq!(options.len(), 3, "{options:#?}");
+        for option in &options {
+            assert_eq!(option["size_of_set"], 3, "{option}");
+            assert!(option["position_in_set"].is_u64(), "{option}");
+        }
+
+        cx.simulate_keystrokes("down");
+        settle(&window, cx);
+        assert_eq!(super::focused_label(cx).as_deref(), field);
+        assert!(super::no_row_has_focus(&super::a11y::a11y(cx)));
+        assert_eq!(super::announcement(cx), "second, 2 of 3");
+
+        // A filter that keeps nothing.
+        cx.simulate_input("zzz");
+        settle(&window, cx);
+        super::typing_settles(cx);
+        super::until_announced(cx, "No results");
+        assert_eq!(super::focused_label(cx).as_deref(), field);
+    }
 }
 
 /// Alpha, Bravo and Charlie (the Rust, JavaScript and TypeScript samples,

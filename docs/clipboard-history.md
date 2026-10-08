@@ -417,10 +417,14 @@ capture stays local by default all the same.
   expire, are deleted and are counted without decrypting anything, and an
   image's PNG goes with its item; the PNGs themselves are not encrypted
   (readable by the user only, as before). An item is encrypted once, when it
-  is first written, and later writes reuse those bytes. A version-1 file is
-  converted when Pane starts, every item kept, in one atomic write; if that
-  write fails, Pane reads it as it is and tries again at the next start. An
-  older Pane refuses a version-2 file and never overwrites it. An item that
+  is first written, and later writes reuse those bytes. An item Windows
+  cannot encrypt is never written as it is: it is left out of that write
+  (the log says so), kept in memory, and tried again at the next write,
+  while the rest of the change, deletions included, is written. A version-1
+  file is converted when Pane starts, every item kept, in one atomic write;
+  if that write fails, Pane reads it as it is and tries again at the next
+  start. An older Pane refuses a version-2 file and never overwrites it. An
+  item that
   cannot be decrypted (the user's password reset by an administrator, a
   folder from another user or computer, damaged bytes) is listed in its
   place as "Pane cannot read this copy on this computer: Windows could not

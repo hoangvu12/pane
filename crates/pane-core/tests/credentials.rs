@@ -322,14 +322,66 @@ fn a_conversion_that_cannot_be_written_is_tried_again_at_the_next_start(fixture:
 #[cfg(not(windows))]
 fn a_conversion_that_cannot_be_written_is_tried_again_at_the_next_start(_fixture: &Fixture) {}
 
+/// Windows: after a conversion at start that could not be written, an
+/// uninstall, which reads the file again (still version 1), protects what
+/// it writes: another package's token is never written as it is.
+#[cfg(windows)]
+fn a_removal_after_a_failed_conversion_protects_what_it_writes(fixture: &Fixture) {
+    use std::os::windows::fs::OpenOptionsExt;
+    /// `FILE_SHARE_READ`: others may read it, never replace or delete it.
+    const SHARE_READ: u32 = 1;
+    let pane = Pane::installed(fixture);
+    save_everything(&pane.start());
+    let another = PackageIdentity::local(pane.data.path()).unwrap().key();
+    let earlier = serde_json::json!({
+        "version": 1,
+        "packages": {
+            pane.key(): { "token": TOKEN },
+            another.clone(): { "token": "another-token" },
+        },
+    });
+    pane.write_credentials(&earlier);
+
+    let held = fs::OpenOptions::new()
+        .read(true)
+        .share_mode(SHARE_READ)
+        .open(pane.credentials_path())
+        .unwrap();
+    let launcher = pane.start();
+    drop(held);
+    assert!(matches!(
+        confirm(&launcher, "Uninstall Settings sample", "Uninstall and keep saved data"),
+        Status::Result(_)
+    ));
+    let text = fs::read_to_string(pane.credentials_path()).unwrap();
+    assert!(!text.contains("another-token"), "{text}");
+    let file = pane.credentials();
+    assert_eq!(file["version"], 2);
+    assert!(file["packages"][&another]["token"]["dpapi"].is_string(), "{file}");
+    assert!(file["packages"].get(pane.key()).is_none(), "{file}");
+}
+
+#[cfg(not(windows))]
+fn a_removal_after_a_failed_conversion_protects_what_it_writes(_fixture: &Fixture) {}
+
 /// Windows: a token whose protected bytes are damaged gives the extension
 /// the explaining error, while its other values still read and save; Pane
 /// keeps the damaged value as it was, also across restarts, and the
-/// extension's `set` (Sign in) replaces it.
+/// extension's `set` (Sign in) replaces it. A damaged credential under
+/// another key leaves the token reading, and is kept as it was too.
 #[cfg(windows)]
 fn a_damaged_token_is_explained_kept_and_replaced_by_signing_in(fixture: &Fixture) {
     let pane = Pane::installed(fixture);
     save_everything(&pane.start());
+    // Another credential of the package is damaged: the token still reads.
+    let mut file = pane.credentials();
+    file["packages"][&pane.key()]["other"] = serde_json::json!({ "dpapi": "AAAA" });
+    pane.write_credentials(&file);
+    let launcher = pane.start();
+    assert_eq!(kept(&launcher), Status::Result(EVERYTHING_KEPT.into()));
+    drop(launcher);
+
+    // Then the token itself.
     let mut file = pane.credentials();
     file["packages"][&pane.key()]["token"]["dpapi"] = "AAAA".into();
     pane.write_credentials(&file);
@@ -350,6 +402,7 @@ fn a_damaged_token_is_explained_kept_and_replaced_by_signing_in(fixture: &Fixtur
     );
     assert_eq!(kept(&launcher), Status::Result(EVERYTHING_KEPT.into()));
     assert_ne!(pane.credentials()["packages"][&pane.key()]["token"]["dpapi"], "AAAA");
+    assert_eq!(pane.credentials()["packages"][&pane.key()]["other"]["dpapi"], "AAAA");
 }
 
 #[cfg(not(windows))]
@@ -419,6 +472,7 @@ contract!(
     a_credentials_file_of_an_unknown_version_is_refused_and_kept,
     a_version_1_file_is_converted_at_start,
     a_conversion_that_cannot_be_written_is_tried_again_at_the_next_start,
+    a_removal_after_a_failed_conversion_protects_what_it_writes,
     a_damaged_token_is_explained_kept_and_replaced_by_signing_in,
     manage_extensions_counts_an_unreadable_credential,
 );

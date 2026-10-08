@@ -232,7 +232,9 @@ struct DataJson {
 struct FileJson<V> {
     version: u64,
     packages: BTreeMap<String, BTreeMap<String, V>>,
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    // A constructor rather than `default`, which would make serde require
+    // `V: Default`, and `Stored` has none.
+    #[serde(default = "BTreeMap::new", skip_serializing_if = "BTreeMap::is_empty")]
     preferences: BTreeMap<String, BTreeMap<String, V>>,
 }
 
@@ -294,6 +296,23 @@ impl DataJson {
             .flat_map(BTreeMap::values_mut)
     }
 
+    /// Protects, where this system protects `kind` (local credentials on
+    /// Windows, #130), the values still written as they are: whether any
+    /// was, and why one could not be, if one could not.
+    fn protect_plain_values(&mut self, kind: DataKind) -> (bool, Option<String>) {
+        let mut protected = false;
+        let mut failed = None;
+        if kind.protects_values() {
+            for value in self.values_mut() {
+                match value.protect_in_place() {
+                    Ok(done) => protected |= done,
+                    Err(why) => failed = Some(why),
+                }
+            }
+        }
+        (protected, failed)
+    }
+
     /// The file as written, at `version`, each value made by `each`.
     fn file<V>(&self, version: u64, each: impl Fn(&Value) -> V) -> FileJson<V> {
         let written = |values: &Values| -> BTreeMap<String, BTreeMap<String, V>> {
@@ -336,11 +355,16 @@ impl DataJson {
     }
 
     /// The text of `kind`'s file holding these values: version 1 while
-    /// this system does not protect the kind and every value is written as
-    /// it is (a value protected elsewhere, as in a folder copied from
-    /// Windows, is kept as it was), version 2 otherwise.
+    /// every value is written as it is (a value protected elsewhere, as in
+    /// a folder copied from Windows, is kept as it was), version 2
+    /// otherwise. Where this system protects the kind, an empty file is
+    /// version 2, and values that are all still as they are (Windows could
+    /// encrypt none of them) are written as version 1, as an earlier Pane
+    /// wrote them, never as plain values in a version-2 file.
     fn to_json(&self, kind: DataKind) -> serde_json::Result<String> {
-        if !kind.protects_values() && self.values().all(Value::is_plain) {
+        let all_plain = self.values().all(Value::is_plain);
+        let none = self.values().next().is_none();
+        if all_plain && !(kind.protects_values() && none) {
             let file = self.file(DATA_VERSION, |value| {
                 value.plain_text().unwrap_or_default().to_owned()
             });
@@ -392,14 +416,7 @@ impl KindFile {
         let Ok(file) = &mut self.file else {
             return;
         };
-        let mut protected = false;
-        let mut failed = None;
-        for value in file.values_mut() {
-            match value.protect_in_place() {
-                Ok(done) => protected |= done,
-                Err(why) => failed = Some(why),
-            }
-        }
+        let (protected, failed) = file.protect_plain_values(kind);
         if let Some(why) = failed {
             crate::diagnostic!(
                 "Pane could not protect a value in {}: {why}. It is kept as it is until Pane \
@@ -959,32 +976,20 @@ impl ExtensionData {
 
     /// What Pane keeps of `kinds`, read from their files now, so that a file
     /// repaired or changed by another Pane since is counted as it is. Each
-    /// file is read once, however many identities are then described. A
-    /// value that cannot be read on this computer (#130) is counted, and
-    /// said to be unreadable.
+    /// file is read once, however many identities are then described.
+    /// Counting decrypts nothing; only [`Kept::describe_unreadable`] tries
+    /// the protected values of the one identity it describes (#130).
     pub fn kept_now(&self, kinds: &[DataKind]) -> Kept {
         Kept(
             kinds
                 .iter()
                 .map(|&kind| {
                     if kind == DataKind::ClipboardHistory {
-                        let counts = self.clipboard.counts_now().map(|counts| {
-                            counts
-                                .into_iter()
-                                .map(|(owner, kept)| (owner, Count::readable(kept)))
-                                .collect()
-                        });
+                        let counts = self.clipboard.counts_now().map(KindKept::Counted);
                         return (kind, counts);
                     }
                     let path = self.lock().of(kind).path.clone();
-                    let counts = read(&path, kind).map(|file| {
-                        file.packages
-                            .keys()
-                            .chain(file.preferences.keys())
-                            .map(|owner| (owner.clone(), file.tally(owner)))
-                            .collect()
-                    });
-                    (kind, counts)
+                    (kind, read(&path, kind).map(KindKept::Read))
                 })
                 .collect(),
         )
@@ -1039,7 +1044,21 @@ impl ExtensionData {
                 }
                 (data.path.clone(), data.changes)
             };
-            let fresh = read(&path, kind);
+            let mut fresh = read(&path, kind);
+            // Values the file still holds as they are (a conversion at
+            // start that could not be written, #130) are protected before
+            // it is written again, as at start.
+            let failed = match &mut fresh {
+                Ok(file) => file.protect_plain_values(kind).1,
+                Err(_) => None,
+            };
+            if let Some(why) = failed {
+                crate::diagnostic!(
+                    "Pane could not protect a value in {}: {why}. It is kept as it is until Pane \
+                     next starts.",
+                    path.display()
+                );
+            }
             let mut store = self.lock();
             let data = store.of(kind);
             if data.pending > 0 || data.changes != before {
@@ -1101,10 +1120,38 @@ impl PreferenceWrites {
     }
 }
 
-/// A kind's count of values by identity key (for clipboard history, its
-/// items; an identity that keeps only its choices counts 0), or why the
-/// kind's file cannot be read.
-type Counts = Result<BTreeMap<String, Count>, String>;
+/// One kind's values as they were read at one moment, or why the kind's
+/// file cannot be read.
+type Counts = Result<KindKept, String>;
+
+/// One kind's values as they were read.
+enum KindKept {
+    /// Clipboard history: how many items each identity key keeps (an
+    /// identity that keeps only its choices counts 0).
+    Counted(BTreeMap<String, usize>),
+    /// Any other kind: its file.
+    Read(DataJson),
+}
+
+impl KindKept {
+    /// How many values the identity with key `owner` keeps, if it keeps
+    /// any; with `unreadable`, also how many of them cannot be read on this
+    /// computer, which tries each of its protected values (#130).
+    fn count(&self, owner: &str, unreadable: bool) -> Option<Count> {
+        match self {
+            KindKept::Counted(counts) => counts.get(owner).copied().map(Count::readable),
+            KindKept::Read(file) => {
+                if !file.packages.contains_key(owner) && !file.preferences.contains_key(owner) {
+                    None
+                } else if unreadable {
+                    Some(file.tally(owner))
+                } else {
+                    Some(Count::readable(file.count(owner)))
+                }
+            }
+        }
+    }
+}
 
 /// Some kinds' files as they were read at one moment, to say what Pane keeps
 /// for a package: each kind's [`Counts`].
@@ -1114,16 +1161,28 @@ impl Kept {
     /// How many values of each kind Pane keeps for `identity`, such as
     /// "1 setting and 1 content record", or `None` if it keeps none. A kind
     /// whose file is missing keeps none; one whose file cannot be read says
-    /// so, and values that cannot be read on this computer (#130) are
-    /// counted and said to be: "2 credentials, 1 unreadable".
+    /// so. Nothing is decrypted: a value that cannot be read on this
+    /// computer is counted like any other, as confirmations count (#130).
     pub fn describe(&self, identity: &PackageIdentity) -> Option<String> {
+        self.describe_counting(identity, false)
+    }
+
+    /// [`Kept::describe`], and how many of `identity`'s values cannot be
+    /// read on this computer (#130): "2 credentials, 1 unreadable". It
+    /// tries `identity`'s protected values only, for the Manage extensions
+    /// row that describes it.
+    pub fn describe_unreadable(&self, identity: &PackageIdentity) -> Option<String> {
+        self.describe_counting(identity, true)
+    }
+
+    fn describe_counting(&self, identity: &PackageIdentity, unreadable: bool) -> Option<String> {
         let key = identity.key();
         let parts: Vec<String> = self
             .0
             .iter()
             .filter_map(|(kind, counts)| {
                 let (one, many) = kind.counted();
-                let count = counts.as_ref().map(|counts| counts.get(&key).copied());
+                let count = counts.as_ref().map(|kept| kept.count(&key, unreadable));
                 if *kind == DataKind::ClipboardHistory
                     && matches!(count, Ok(Some(Count { kept: 0, .. })))
                 {
@@ -1807,10 +1866,13 @@ mod tests {
             assert!(error.contains(": Windows could not decrypt it ("), "{error}");
         }
         assert_eq!(code.get(credentials, "other"), Ok(Some("still read".into())));
-        // Counted without reading them, and said to be unreadable.
+        // Counted without reading them, and said to be unreadable where
+        // Manage extensions describes the identity.
         assert_eq!(data.count(credentials, &identity), Ok(3));
+        let kept = data.kept_now(&[credentials]);
+        assert_eq!(kept.describe(&identity).as_deref(), Some("3 credentials"));
         assert_eq!(
-            data.kept_now(&[credentials]).describe(&identity).as_deref(),
+            kept.describe_unreadable(&identity).as_deref(),
             Some("3 credentials, 2 unreadable")
         );
         // A password that cannot be read is asked for again.
@@ -1848,7 +1910,10 @@ mod tests {
         );
         let reopened = ExtensionData::open(dir.path());
         assert_eq!(
-            reopened.kept_now(&[credentials]).describe(&identity).as_deref(),
+            reopened
+                .kept_now(&[credentials])
+                .describe_unreadable(&identity)
+                .as_deref(),
             Some("3 credentials")
         );
     }
