@@ -5,6 +5,8 @@ on:
     paths-ignore:
       - crates/pane-core/tests/**
       - .github/workflows/clipboard-copy-probe.yml
+      - .github/workflows/ci-fast.yml
+      - .config/nextest.toml
 permissions:
   contents: read
 jobs:

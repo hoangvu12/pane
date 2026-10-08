@@ -157,6 +157,7 @@ jobs:
         run: cargo xtask ci-tests -E "$TESTS"
         env:
           TESTS: ${{ inputs.tests }}
+          PANE_TEST_CLIPBOARD_TRACE: "1"
 
   # The JS/TS sample components are committed (guests/prebuilt), and the
   # verify tier's prebuilt-samples check fails once their sources, the

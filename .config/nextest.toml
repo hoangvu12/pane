@@ -32,5 +32,5 @@ priority = 100
 real-clipboard = { max-threads = 1 }
 
 [[profile.default.overrides]]
-filter = "binary(clipboard_adapter)"
+filter = "binary(~clipboard_adapter)"
 test-group = "real-clipboard"
