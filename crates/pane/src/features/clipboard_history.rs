@@ -476,6 +476,12 @@ impl LauncherWindow {
     }
 
     fn clipboard_confirm(&mut self, _: &Confirm, window: &mut Window, cx: &mut Context<Self>) {
+        // As in the launcher's confirm handler, let the open panel take
+        // Enter from the key press, once per press, instead of pasting.
+        if self.actions_open() {
+            cx.propagate();
+            return;
+        }
         self.paste_selected_record(window, cx);
     }
 

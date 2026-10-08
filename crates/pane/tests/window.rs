@@ -3594,6 +3594,40 @@ mod clipboard_split {
         assert!(world.clipboard.copy("again", None));
     }
 
+    #[gpui::test]
+    fn the_actions_filter_runs_recording_actions_with_enter(cx: &mut TestAppContext) {
+        let world = World::new();
+        let launcher = world.launcher(cx, &["kept"]);
+        let (window, cx) = open_history(cx, launcher);
+
+        for (label, selector, expected) in [
+            (
+                "Pause Recording",
+                "action-Pause Recording",
+                CaptureState::Paused,
+            ),
+            (
+                "Resume Recording",
+                "action-Resume Recording",
+                CaptureState::On,
+            ),
+        ] {
+            cx.simulate_keystrokes(super::OPEN_ACTIONS);
+            settle(&window, cx);
+            cx.simulate_input(label);
+            settle(&window, cx);
+            assert!(cx.debug_bounds(selector).is_some());
+            assert!(cx.debug_bounds("action-Paste").is_none());
+            cx.simulate_keystrokes("enter");
+            settle(&window, cx);
+            let capture = cx.read_entity(&window, |window, _| {
+                window.launcher().clipboard_history().unwrap().capture
+            });
+            assert_eq!(capture, expected);
+            assert!(world.clipboard.written().is_empty(), "Enter must not paste");
+        }
+    }
+
     /// Clear History asks first, over the view, then deletes every record.
     #[gpui::test]
     fn clear_history_asks_then_clears(cx: &mut TestAppContext) {
