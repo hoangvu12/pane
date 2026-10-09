@@ -323,7 +323,7 @@ function Remove-Crash-Marker($id) {
 
 # Waits until $file contains $text ($present) or no longer does (-not
 # $present), trying $tries times (100 by default: 10 seconds; the first
-# setup of the installed Pane needs far more, as a payload's components
+# setup of the installed Pane needs far more, as a revision's components
 # are checked one at a time).
 function Wait-For($file, $text, [bool]$present, $tries = 100) {
     for ($i = 0; $i -lt $tries; $i++) {

@@ -1883,7 +1883,7 @@ start_installed() {
 start_installed
 # Pane's own data in the clean home (its path holds a space, so it is quoted).
 installed=$home/Library/Application\ Support/Pane/extensions
-# Generous: a slow runner may take a while to check both payloads'
+# Generous: a slow runner may take a while to check the five revisions'
 # components (300 s each). A wait that fails records the screen and the
 # clean home's files — the artifact upload skips hidden folders, so the
 # records are copied out where it can see them.
