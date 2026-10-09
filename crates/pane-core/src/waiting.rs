@@ -54,19 +54,59 @@ pub(crate) struct Reason {
     /// "<title> is waiting for <what>", what a call to its operations is
     /// answered with.
     pub(crate) calling: String,
-    /// What the fix row beside the reason offers.
+    /// Each requirement that is not met, in the order the manifest
+    /// declares them, each with the chain down to what is actually
+    /// missing and the fix for it: what a package's page in Settings
+    /// lists, one requirement row beside one fix row (#157). The row above
+    /// joins the chains; the fix below is the first's.
+    pub(crate) requirements: Vec<Requirement>,
+    /// What the fix row beside the reason offers: the first requirement's
+    /// fix.
+    pub(crate) fix: Fix,
+}
+
+impl Reason {
+    /// What the package waits for, as the extension list's status line
+    /// says it (#157): its requirements' chains joined, "Greeter, which
+    /// is disabled".
+    pub(crate) fn what(&self) -> String {
+        let whats: Vec<String> = self
+            .requirements
+            .iter()
+            .map(|requirement| requirement.what.clone())
+            .collect();
+        platform::join(&whats)
+    }
+}
+
+/// One requirement of a waiting package that is not met (see `Reason`):
+/// the chain down to what is actually missing, and what fixes it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Requirement {
+    /// "Greeter, which is disabled", or, down a chain, "Notes Sync, which
+    /// waits for Auth: Auth is disabled": the chain down to what is
+    /// actually missing, not the package that waits for it.
+    pub(crate) what: String,
+    /// What fixes it: the chain's root cause, as the fix row beside the
+    /// requirement shows it (see `Fix`).
     pub(crate) fix: Fix,
 }
 
 /// What fixes a wait, as the fix row beside the reason shows it: "Enable
-/// <title>", "Retry <title>" or "Open Manage extensions".
+/// <title>", "Retry <title>", "Install <title> again" or "Open Manage
+/// extensions".
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Fix {
     /// Enable the disabled package the chain of waits ends at.
     Enable(PackageIdentity),
     /// Retry the paused package the chain of waits ends at.
     Retry(PackageIdentity),
-    /// Nothing Pane can do directly: what it waits for is not installed.
+    /// Install again the package the chain of waits ends at, which is not
+    /// installed. From root search the row beside the reason offers
+    /// Manage extensions, whose pages install it (#157); the page of the
+    /// package that waits installs it directly.
+    Install(PackageIdentity),
+    /// Nothing Pane can do directly: the chain of waits cannot be named.
     Manage,
 }
 
@@ -259,8 +299,8 @@ fn root_of(
 }
 
 /// Why `package` waits, from its unmet required dependencies: what its
-/// commands' rows say, what a call to its operations is answered with, and
-/// what fixes it.
+/// commands' rows say, what a call to its operations is answered with,
+/// each requirement that is not met, and what fixes the first of them.
 fn reason(
     packages: &[InstalledPackage],
     able: &[bool],
@@ -269,30 +309,59 @@ fn reason(
     package: &InstalledPackage,
 ) -> Reason {
     let unmets = unmet_of(packages, able, paused, title_of, package);
-    let whats: Vec<String> = unmets
+    let requirements: Vec<Requirement> = unmets
         .iter()
-        .map(|unmet| what_of(packages, able, paused, title_of, package, unmet))
+        .map(|unmet| {
+            let what = what_of(packages, able, paused, title_of, package, unmet);
+            Requirement {
+                what,
+                fix: fix_of(packages, able, paused, title_of, package, unmet),
+            }
+        })
+        .collect();
+    let whats: Vec<String> = requirements
+        .iter()
+        .map(|requirement| requirement.what.clone())
         .collect();
     let what = platform::join(&whats);
-    // The first requirement's root cause is what the fix row fixes.
-    let root = unmets.first().and_then(|first| match first.state {
-        // The dependency itself is what is actually missing.
-        Some(state) => Some((first.identity.clone(), state)),
-        // It waits for another: the chain's root is what is missing.
-        None => {
-            let path = [package.identity.clone(), first.identity.clone()];
-            root_of(packages, able, paused, title_of, &path)
-                .map(|(identity, _, state)| (identity, state))
-        }
-    });
     Reason {
         row: format!("Needs {what}"),
         calling: format!("{} is waiting for {what}", package.title()),
-        fix: match root {
-            Some((identity, Unmet::Disabled)) => Fix::Enable(identity),
-            Some((identity, Unmet::Paused)) => Fix::Retry(identity),
-            _ => Fix::Manage,
-        },
+        fix: requirements
+            .first()
+            .map(|requirement| requirement.fix.clone())
+            .unwrap_or(Fix::Manage),
+        requirements,
+    }
+}
+
+/// What fixes one unmet requirement of `package`: the chain's root cause,
+/// as the fix row beside the requirement shows it. The requirement itself
+/// being what is actually missing, the fix is for it; waiting for another,
+/// it is for what that one waits for.
+fn fix_of(
+    packages: &[InstalledPackage],
+    able: &[bool],
+    paused: &dyn Fn(&PackageIdentity) -> bool,
+    title_of: &dyn Fn(&PackageIdentity) -> String,
+    package: &InstalledPackage,
+    unmet: &UnmetDependency,
+) -> Fix {
+    match unmet.state {
+        // The dependency is what is actually missing.
+        Some(Unmet::Disabled) => Fix::Enable(unmet.identity.clone()),
+        Some(Unmet::Paused) => Fix::Retry(unmet.identity.clone()),
+        Some(Unmet::NotInstalled) => Fix::Install(unmet.identity.clone()),
+        // It waits for another: the chain's root is what to fix.
+        None => {
+            let path = [package.identity.clone(), unmet.identity.clone()];
+            match root_of(packages, able, paused, title_of, &path) {
+                Some((identity, _, Unmet::Disabled)) => Fix::Enable(identity),
+                Some((identity, _, Unmet::Paused)) => Fix::Retry(identity),
+                Some((identity, _, Unmet::NotInstalled)) => Fix::Install(identity),
+                None => Fix::Manage,
+            }
+        }
     }
 }
 

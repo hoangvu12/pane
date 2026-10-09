@@ -1130,6 +1130,185 @@ fn requires(
         .any(|recorded| reached(installed, recorded).is_some_and(|p| p.identity == *target))
 }
 
+/// The requirement groups among `installed`: each a set of two or more
+/// packages that require one another, directly or through others, as
+/// their `pane.json` files declare — a required dependency, or a required
+/// capability one uses and another provides (a package's own provision
+/// never serves its own use, so it is never its own requirement; a use
+/// narrowed to commands or every provider never gates the package, so it
+/// makes no requirement either). The groups are found from the
+/// declarations alone, whatever the packages' states: a group of healthy
+/// packages runs, as ADR 0041 decides, and a group one member of which
+/// cannot run waits as a whole (see `waiting`). Each group's members in
+/// installed order, and the groups in installed order of their first
+/// member; a package is in one group at most. Reads only the installed
+/// records; runs nothing. Manage extensions shows the group on every
+/// member's page (#157).
+pub(crate) fn requirement_groups(
+    installed: &[InstalledPackage],
+) -> Vec<Vec<PackageIdentity>> {
+    let requires = requirements_among(installed);
+    // Tarjan's strongly connected components, over the packages' indices.
+    let mut found = Groups {
+        requires: &requires,
+        next: 0,
+        seen: vec![None; installed.len()],
+        low: vec![usize::MAX; installed.len()],
+        stack: Vec::new(),
+        stacked: vec![false; installed.len()],
+        groups: Vec::new(),
+    };
+    for package in 0..installed.len() {
+        if found.seen[package].is_none() {
+            found.visit(package);
+        }
+    }
+    let mut groups = found.groups;
+    groups.sort_unstable();
+    groups
+        .into_iter()
+        .map(|group| {
+            group
+                .into_iter()
+                .map(|package| installed[package].identity.clone())
+                .collect()
+        })
+        .collect()
+}
+
+/// Which of `installed` each package requires, by index, as its `pane.json`
+/// declares: its required dependencies needed on this system, and the
+/// providers of each capability it requires (a package's own provision
+/// never serving its own use).
+fn requirements_among(installed: &[InstalledPackage]) -> Vec<Vec<usize>> {
+    installed
+        .iter()
+        .map(|package| {
+            let Ok(manifest) = &package.manifest else {
+                return Vec::new();
+            };
+            let mut required: Vec<usize> = manifest
+                .dependencies
+                .iter()
+                .filter(|dependency| dependency.required && dependency.needed_here())
+                .filter_map(|dependency| package.dependency_identity(&dependency.id))
+                .filter_map(|recorded| index_of(installed, package, recorded))
+                .collect();
+            // A capability requirement reaches every provider of the
+            // capability installed besides the package itself; a use of
+            // every provider, or one narrowed to commands, never gates the
+            // package and makes no requirement.
+            for used in manifest
+                .uses
+                .iter()
+                .filter(|used| used.required && !used.use_all && used.commands.is_none())
+            {
+                required.extend(
+                    installed
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, other)| {
+                            other.identity != package.identity
+                                && provides_here(other, &used.capability)
+                        })
+                        .map(|(index, _)| index),
+                );
+            }
+            required.sort_unstable();
+            required.dedup();
+            required
+        })
+        .collect()
+}
+
+/// The index among `installed` of the package the recorded `identity` was
+/// resolved to, if it is installed; a package requiring itself is no
+/// requirement of anything.
+fn index_of(
+    installed: &[InstalledPackage],
+    of: &InstalledPackage,
+    identity: &PackageIdentity,
+) -> Option<usize> {
+    let found = reached(installed, identity)?;
+    let index = installed
+        .iter()
+        .position(|other| other.identity == found.identity)?;
+    (found.identity != of.identity).then_some(index)
+}
+
+/// Whether `package` provides `capability` on this system, as its manifest
+/// declares: it names the capability among `provides` and the entry is for
+/// this system.
+pub(crate) fn provides_here(package: &InstalledPackage, capability: &str) -> bool {
+    let Ok(manifest) = &package.manifest else {
+        return false;
+    };
+    manifest.provides.iter().any(|provides| {
+        provides.capability == capability
+            && platform::unavailable(provides.platforms.as_deref(), "it").is_none()
+    })
+}
+
+/// Tarjan's traversal over the packages' indices, closing each strongly
+/// connected group it finds (see [`requirement_groups`]).
+struct Groups<'a> {
+    /// What each package requires, by index.
+    requires: &'a [Vec<usize>],
+    /// The index the next visited package takes.
+    next: usize,
+    /// Each package's visit index, once visited.
+    seen: Vec<Option<usize>>,
+    /// Each package's low link: the least index it reaches back to.
+    low: Vec<usize>,
+    /// The packages whose groups are not closed yet.
+    stack: Vec<usize>,
+    /// Which packages `stack` holds.
+    stacked: Vec<bool>,
+    /// The groups of two or more packages found, each in index order.
+    groups: Vec<Vec<usize>>,
+}
+
+impl Groups<'_> {
+    /// Visits `package`: notes its index and low link, follows what it
+    /// requires, and closes the group it roots, if the group has a member
+    /// besides it.
+    fn visit(&mut self, package: usize) {
+        self.seen[package] = Some(self.next);
+        self.low[package] = self.next;
+        self.next += 1;
+        self.stack.push(package);
+        self.stacked[package] = true;
+        let requires = self.requires[package].clone();
+        for &required in &requires {
+            match self.seen[required] {
+                None => {
+                    self.visit(required);
+                    self.low[package] = self.low[package].min(self.low[required]);
+                }
+                Some(index) if self.stacked[required] => {
+                    self.low[package] = self.low[package].min(index);
+                }
+                Some(_) => {}
+            }
+        }
+        if self.seen[package] == Some(self.low[package]) {
+            let mut group = Vec::new();
+            while let Some(member) = self.stack.pop() {
+                self.stacked[member] = false;
+                group.push(member);
+                if member == package {
+                    break;
+                }
+            }
+            // A package alone requires itself through no one: groups of
+            // one are not cycles.
+            if group.len() > 1 {
+                group.sort_unstable();
+                self.groups.push(group);
+            }
+        }
+    }
+}
 /// Installing a package with its planned dependencies failed.
 pub(crate) struct Failure {
     /// Why, naming the package that could not be installed.

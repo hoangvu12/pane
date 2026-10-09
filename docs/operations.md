@@ -154,6 +154,15 @@ A package declares the capabilities it provides under `provides` in its
   refuses a malformed name, an operation listed twice, a missing component
   or one without the export, or the same capability provided twice at one
   major.
+- An extension's page in Settings lists the capabilities it provides,
+  each marked chosen or not chosen — whether it is the provider Pane
+  routes the capability's calls to — with the installed extensions that
+  use it. Until the user picks a provider
+  ([#154](https://github.com/hoangvu12/pane/issues/154) wires the
+  choice), the first provider installed is the marked one. A capability
+  one package uses and another provides counts as a requirement between
+  them, so the pages also show the cycles it makes
+  ([dependencies](dependencies.md#what-manage-extensions-shows)).
 
 ### Using
 

@@ -115,7 +115,10 @@ use application_update::{Application, Updates};
 use choices::Record;
 use developing::Developing;
 pub use developing::{BuildFailure, Development};
-pub use extensions::{ExtensionMark, ExtensionOperation, OperationKind};
+pub use extensions::{
+    ExtensionDetails, ExtensionMark, ExtensionOperation, ExtensionWait, FixAction, OperationKind,
+    ProvidedCapability, RequirementCycle, RequirementFix, UnmetRequirement,
+};
 pub use hotkeys::HotkeyOutcome;
 use hotkeys::{Bindings, OpenPane};
 pub use item_actions::{ItemAction, ItemActions, UnboundShortcut};
@@ -3953,7 +3956,11 @@ impl Launcher {
                     Entry::Retry(target),
                 )
             }
-            Fix::Manage => (
+            // What it waits for is not installed: from root search, the
+            // way to install it is Manage extensions, whose pages offer
+            // the install (the fix row on the waiting package's page
+            // installs it directly, #157).
+            Fix::Install(_) | Fix::Manage => (
                 Row {
                     id: MANAGE_EXTENSIONS.into(),
                     title: "Open Manage extensions".into(),
