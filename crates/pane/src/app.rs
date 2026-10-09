@@ -323,6 +323,20 @@ impl LauncherWindow {
         self.motion.menu_popup_presentation()
     }
 
+    /// Test support: the loading bar the last frame drew, as its strength
+    /// (0 hidden to 1 shown) and its sweep's highlight (its left edge and
+    /// width as shares of the line, `None` when the line is still);
+    /// `None` when the last frame drew no line, which is also all work
+    /// beneath the threshold ever reports (#248). Test and debug builds
+    /// only.
+    #[cfg(any(test, debug_assertions))]
+    #[doc(hidden)]
+    pub fn loading_presentation(&self) -> Option<(f32, Option<(f32, f32)>)> {
+        self.motion
+            .loading_presentation()
+            .map(|bar| (bar.strength, bar.sweep))
+    }
+
     /// Redraws whenever the launcher changes in the background, as
     /// `changes` (the other end of the launcher's
     /// [`with_development`](Launcher::with_development)) reports: a package
@@ -1778,16 +1792,26 @@ impl Render for LauncherWindow {
         }
         self.keep_dates_current(listing.shows_a_date, cx);
         // What moves this frame — the arriving content, the footer menu
-        // popup's entrance or exit, the number hints' slide — and whether
-        // another frame is needed; see [`FrameMotion`] and
-        // `crate::ui::motion` for the whole policy.
+        // popup's entrance or exit, the number hints' slide, the loading
+        // bar — and whether another frame is needed; see [`FrameMotion`]
+        // and `crate::ui::motion` for the whole policy.
         let frame = self.motion.frame(
             discriminant(&view.screen),
             self.menu.is_some(),
+            self.launcher.pending_since(),
             cx.reduce_motion(),
             cx.background_executor().now(),
         );
-        let (arriving, menu_in_flight, numbers) = (frame.arriving, frame.menu_popup, frame.numbers);
+        let (arriving, menu_in_flight, numbers, loading) = (
+            frame.arriving,
+            frame.menu_popup,
+            frame.numbers,
+            frame.loading,
+        );
+        // Work still beneath the loading bar's threshold has one frame
+        // due when it passes, which nothing else draws (#248; see
+        // [`crate::features::loading`]).
+        self.wake_loading(loading.wake, cx);
         // The background image's backdrop, baked for this window's scale
         // (ADR 0028); the visuals below are over it once it is ready.
         let scale = window.scale_factor();
@@ -1847,9 +1871,12 @@ impl Render for LauncherWindow {
         let row_numbers: Vec<Option<usize>> = (0..view.rows.len().min(9))
             .map(|index| row_number(&view, &slots, index))
             .collect();
-        // The footer's status: while the launcher runs, works, answers or
+        // The footer's status: while the launcher works, answers or
         // fails, the strip is that message; `None` while it is idle, when
-        // the strip becomes the selected action (below).
+        // the strip becomes the selected action (below). Waited-for work
+        // — the status running — says nothing in the strip: the loading
+        // bar under the search field's rule is what the user waits with
+        // (#248).
         // Whether an action runs or the status line has something to say:
         // the primary action steps aside then, toast or not.
         let status_busy = view.status != Status::Idle;
@@ -1857,11 +1884,11 @@ impl Render for LauncherWindow {
             match view.status.clone() {
                 // An extension's toast speaks where the status line would
                 // (#141), while the launcher is idle or working.
-                Status::Idle | Status::Running if toast.is_some() => {
+                Status::Idle | Status::Running { .. } if toast.is_some() => {
                     ("status-toast", None, theme.text_body)
                 }
                 Status::Idle => ("status-idle", None, theme.text_muted),
-                Status::Running => ("status-running", Some("Running…".into()), theme.warning),
+                Status::Running { .. } => ("status-running", None, theme.text_muted),
                 Status::Progress(work) => ("status-progress", Some(work.into()), theme.warning),
                 // An outcome is the toast itself now (#249), drawn
                 // through the toast controls and timed to leave; the
@@ -1871,16 +1898,19 @@ impl Render for LauncherWindow {
                 Status::Error(message) => ("status-error", Some(message.into()), theme.danger),
             };
         // The strip's name for assistive technology: the status, or the
-        // toast's title and message.
+        // toast's title and message — or, only once waited-for work has
+        // outlasted the loading bar's threshold, the busy state, so a
+        // quick action is never announced as busy (#248).
         let announced: Option<SharedString> = match &toast {
             Some(shown) => Some(shown.toast.text().into()),
-            None => status.clone(),
+            None => status.clone().or(loading.busy.then(|| "Running…".into())),
         };
         // The announcer says it too (#132), when it is a toast or an
-        // outcome; "Running…" and progress are the strip's own.
+        // outcome — or the busy state, past the threshold; progress stays
+        // the strip's own.
         let said = announced
             .as_ref()
-            .filter(|_| announcer::says_message(&view.status, toast.is_some()))
+            .filter(|_| announcer::says_message(&view.status, toast.is_some(), loading.busy))
             .map(SharedString::to_string);
         // The toast in the footer's middle, in the hint's place, with
         // the window as it is this frame: its size decides whether a
@@ -2019,6 +2049,7 @@ impl Render for LauncherWindow {
                 self.render_search(
                     query,
                     root_search::ROOT_PLACEHOLDER,
+                    loading.bar,
                     div().children(pins),
                     cx,
                 )
@@ -2029,7 +2060,13 @@ impl Render for LauncherWindow {
                     self.actions.is_some(),
                     &theme,
                 );
-                self.render_search(query, root_search::ROOT_PLACEHOLDER, results, cx)
+                self.render_search(
+                    query,
+                    root_search::ROOT_PLACEHOLDER,
+                    loading.bar,
+                    results,
+                    cx,
+                )
             }
             // The opened command's own search field, the same control.
             Screen::CommandSearch { query } => {
@@ -2038,7 +2075,13 @@ impl Render for LauncherWindow {
                     self.actions.is_some(),
                     &theme,
                 );
-                self.render_search(query, root_search::COMMAND_PLACEHOLDER, results, cx)
+                self.render_search(
+                    query,
+                    root_search::COMMAND_PLACEHOLDER,
+                    loading.bar,
+                    results,
+                    cx,
+                )
             }
             // A package's Logs screen draws its lines itself, and holds the
             // keyboard focus (#213).
@@ -2126,10 +2169,13 @@ impl Render for LauncherWindow {
                     // The footer: the launcher's status strip (see
                     // [`crate::ui::footer`]). On the left, the Pane mark (the
                     // app menu's button) and the hint — or, while a status
-                    // shows (running, progress, a result or an error), the
-                    // message instead, wrapping, growing and scrolling as it
-                    // always has; on the right, the selected result's primary
-                    // action and, on root search, Actions. The strip keeps its
+                    // shows (progress, a result or an error), the message
+                    // instead, wrapping, growing and scrolling as it always
+                    // has; on the right, the selected result's primary
+                    // action and, on root search, Actions. Waited-for work
+                    // (the status running) shows no message: the loading bar
+                    // under the search field's rule is what the user waits
+                    // with (#248). The strip keeps its
                     // identity (id, role, status-* debug selectors) in every
                     // shape, so a test or a smoke can always find the
                     // launcher's footer where it was. The open menu's popup and

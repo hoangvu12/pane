@@ -323,7 +323,7 @@ impl LauncherWindow {
     /// controls. Work in progress in words keeps its words in the footer.
     pub(crate) fn footer_toast(&self, status: &Status) -> Option<ShownToast> {
         match status {
-            Status::Idle | Status::Running => self.launcher.toast(),
+            Status::Idle | Status::Running { .. } => self.launcher.toast(),
             Status::Result(text) => Some(ShownToast {
                 id: 0,
                 revision: 0,
