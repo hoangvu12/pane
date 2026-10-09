@@ -1357,10 +1357,9 @@ fn capability_select(
                 cx,
             )
         });
-        this.extensions.capability_selects.insert(
-            name.clone(),
-            CapabilitySelect { select, live },
-        );
+        this.extensions
+            .capability_selects
+            .insert(name.clone(), CapabilitySelect { select, live });
     }
     let kept = &this.extensions.capability_selects[&name];
     *kept.live.borrow_mut() = SelectLive {

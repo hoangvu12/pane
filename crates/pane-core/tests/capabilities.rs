@@ -334,9 +334,7 @@ fn provides(operations: &str, platforms: &str) -> String {
 
 /// The `uses` of a fixture package using `capability`, as manifest members.
 fn uses_of(capability: &str, operations: &str) -> String {
-    format!(
-        r#","uses": [{{ "capability": "{capability}", "operations": [{operations}] }}]"#
-    )
+    format!(r#","uses": [{{ "capability": "{capability}", "operations": [{operations}] }}]"#)
 }
 
 /// The `uses` of a fixture package using the fixture's capability, as
@@ -1177,7 +1175,9 @@ fn the_providers_query_answers_the_chosen_provider_first() {
     open_item(&launcher, "Greet from Rust", "Who provides the greeting");
     assert_eq!(
         shown(&launcher),
-        result(&format!("{GREET} is provided by JavaScript greet provider sample"))
+        result(&format!(
+            "{GREET} is provided by JavaScript greet provider sample"
+        ))
     );
 }
 
@@ -1292,7 +1292,10 @@ fn the_choice_falls_back_while_the_chosen_provider_is_paused() {
     );
     // The chosen provider served: `b`'s instance was never started.
     let running = block_on(dirs.runtime.running());
-    assert!(!running.contains(&component_of(&launcher, &dirs.identity("b"))), "{running:?}");
+    assert!(
+        !running.contains(&component_of(&launcher, &dirs.identity("b"))),
+        "{running:?}"
+    );
 
     // Pane pauses the chosen provider after it crashes three times.
     for _ in 0..3 {
@@ -1309,7 +1312,10 @@ fn the_choice_falls_back_while_the_chosen_provider_is_paused() {
         result(r#"answered: {"greeting":"Hello, Ada","operation":"fixture:greet@1/greet"}"#)
     );
     let running = block_on(dirs.runtime.running());
-    assert!(running.contains(&component_of(&launcher, &dirs.identity("b"))), "{running:?}");
+    assert!(
+        running.contains(&component_of(&launcher, &dirs.identity("b"))),
+        "{running:?}"
+    );
     let listed = launcher.capabilities();
     assert_eq!(
         listed[0].fallback,
@@ -1336,7 +1342,11 @@ fn the_choice_falls_back_while_the_chosen_provider_waits() {
         { "id": "dep", "source": "local:../d",
           "operations": [{ "id": "echo", "version": 1 }] }
     ]"#;
-    dirs.fixture("c", "", &format!("{}{}", provides(PROVIDED, ""), dependency));
+    dirs.fixture(
+        "c",
+        "",
+        &format!("{}{}", provides(PROVIDED, ""), dependency),
+    );
     dirs.fixture(
         "d",
         "",
@@ -1415,8 +1425,12 @@ fn the_choice_is_kept_across_an_update_of_the_chosen_provider() {
             ("pane.json", pane_json.into_bytes()),
             (
                 "sample_greet_js.wasm",
-                fs::read(guest("packages").join("sample-greet-js").join("sample_greet_js.wasm"))
-                    .unwrap(),
+                fs::read(
+                    guest("packages")
+                        .join("sample-greet-js")
+                        .join("sample_greet_js.wasm"),
+                )
+                .unwrap(),
             ),
         ]
     };

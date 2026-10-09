@@ -231,7 +231,10 @@ impl Launcher {
                     .iter()
                     .filter(|package| {
                         package.manifest.as_ref().is_ok_and(|manifest| {
-                            manifest.uses.iter().any(|used| used.capability == capability)
+                            manifest
+                                .uses
+                                .iter()
+                                .any(|used| used.capability == capability)
                         })
                     })
                     .map(InstalledPackage::title)
@@ -240,7 +243,9 @@ impl Launcher {
                     .chosen
                     .provider_of(&capability)
                     .filter(|chosen| {
-                        providers.iter().any(|package| package.identity.key() == *chosen)
+                        providers
+                            .iter()
+                            .any(|package| package.identity.key() == *chosen)
                     })
                     .map_or_else(|| providers[0].identity.key(), ToOwned::to_owned);
                 let fallback = fallback_note(&installed, &capability, &selected);
