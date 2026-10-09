@@ -40,7 +40,7 @@ fn repository() -> PathBuf {
 }
 
 /// A fresh copy of the sample's sources in Cargo's test folder's `name`,
-/// keeping what earlier runs built there, with the path to `pane-guest` and
+/// keeping what earlier runs built there, with the path to `pane-extension` and
 /// the repository's toolchain file, saved with `greeting`.
 fn sample(name: &str, greeting: &str) -> PathBuf {
     let from = repository().join("guests/hello-rust");
@@ -50,9 +50,9 @@ fn sample(name: &str, greeting: &str) -> PathBuf {
     for file in ["Cargo.toml", "Cargo.lock", "pane.json"] {
         fs::copy(from.join(file), to.join(file)).unwrap();
     }
-    let guest = repository().join("guests/pane-guest");
+    let guest = repository().join("guests/pane-extension");
     let manifest = fs::read_to_string(to.join("Cargo.toml")).unwrap().replace(
-        r#"path = "../pane-guest""#,
+        r#"path = "../pane-extension""#,
         &format!("path = {:?}", guest.to_str().unwrap()),
     );
     fs::write(to.join("Cargo.toml"), manifest).unwrap();
@@ -71,7 +71,7 @@ fn save(folder: &Path, greeting: &str) {
     let source = fs::read_to_string(repository().join("guests/hello-rust/src/lib.rs")).unwrap();
     assert!(source.contains(GREETING), "{GREETING}");
     assert!(source.contains(SAY_HELLO), "{SAY_HELLO}");
-    let logged = format!("pane_guest::info!(\"saying hello\");\n            {SAY_HELLO}");
+    let logged = format!("pane_extension::info!(\"saying hello\");\n            {SAY_HELLO}");
     let source = source
         .replace(GREETING, greeting)
         .replace(SAY_HELLO, &logged);
