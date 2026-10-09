@@ -248,11 +248,9 @@ fn the_extension_list_says_in_its_status_line_what_a_package_waits_for() {
         .into_iter()
         .find(|row| row.title == "Caller")
         .expect("the caller's row");
+    let subtitle = row.subtitle.as_deref().expect("the caller's status line");
     assert!(
-        row.subtitle
-            .as_deref()
-            .is_some_and(|subtitle| subtitle
-                .starts_with("Enabled · Waiting for Rust operations sample, which is disabled")),
+        subtitle.starts_with("Enabled · Waiting for Rust operations sample, which is disabled"),
         "{row:?}"
     );
 
@@ -266,12 +264,8 @@ fn the_extension_list_says_in_its_status_line_what_a_package_waits_for() {
         .into_iter()
         .find(|row| row.title == "Caller")
         .expect("the caller's row");
-    assert!(
-        row.subtitle
-            .as_deref()
-            .is_some_and(|subtitle| subtitle.starts_with("Enabled ·")),
-        "{row:?}"
-    );
+    let subtitle = row.subtitle.as_deref().expect("the caller's status line");
+    assert!(subtitle.starts_with("Enabled ·"), "{row:?}");
 }
 
 #[test]
@@ -321,9 +315,9 @@ fn a_package_s_page_lists_each_unmet_requirement_with_the_chain_and_fixes_it() {
     // A fix that no longer applies — what it fixes came back — does
     // nothing: it would not disable the package again.
     block_on(launcher.run_extension_fix(&fix));
-    assert!(launcher.packages().iter().any(|package| package
-        .identity == dirs.identity("c")
-        && package.enabled));
+    assert!(launcher.packages().iter().any(|package| {
+        package.identity == dirs.identity("c") && package.enabled
+    }));
 }
 
 #[test]
@@ -376,12 +370,9 @@ fn the_fix_row_installs_a_not_installed_dependency_again() {
         "version": 1,
         "packages": { dirs.identity(GREETER).key(): { "style": "formal" } }
     });
+    let settings = dirs.extensions().join("settings.json");
     fs::create_dir_all(dirs.extensions()).unwrap();
-    fs::write(
-        dirs.extensions().join("settings.json"),
-        saved.to_string(),
-    )
-    .unwrap();
+    fs::write(settings, saved.to_string()).unwrap();
     let caller = caller(&dirs, &greeter());
     let launcher = dirs.launcher();
     dirs.install(&launcher, &caller);
@@ -534,12 +525,10 @@ fn a_healthy_cycle_of_dependencies_is_shown_on_every_member_and_runs() {
         launcher.extension_wait(&dirs.identity("x")),
         Some(ExtensionWait::Whole("Package y, which is disabled".into()))
     );
-    let Unavailable::Waiting(reason) =
-        row(&launcher, "Fixture x").unavailable.expect("x waits")
-    else {
-        panic!("x waits");
-    };
-    assert_eq!(reason, "Needs Package y, which is disabled");
+    match row(&launcher, "Fixture x").unavailable.expect("x waits") {
+        Unavailable::Waiting(reason) => assert_eq!(reason, "Needs Package y, which is disabled"),
+        other => panic!("x waits, not {other:?}"),
+    }
     for (name, other) in [("x", "y"), ("y", "x")] {
         let details = launcher
             .extension_details(&dirs.identity(name))
