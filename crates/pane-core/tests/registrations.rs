@@ -596,8 +596,7 @@ fn beyond_the_limits_bounds_and_declarations_is_refused() {
     open_fixture(&launcher);
     run_fixture_item(&launcher, "Register many items");
     assert!(
-        said(shown(&launcher))
-            .contains("1000 of Pane's limit of 1000 dynamic root items"),
+        said(shown(&launcher)).contains("1000 of Pane's limit of 1000 dynamic root items"),
         "the items limit is not named: {:?}",
         shown(&launcher)
     );
@@ -605,8 +604,7 @@ fn beyond_the_limits_bounds_and_declarations_is_refused() {
     open_fixture(&launcher);
     run_fixture_item(&launcher, "Register many timers");
     assert!(
-        said(shown(&launcher))
-            .contains("64 of Pane's limit of 64 timers"),
+        said(shown(&launcher)).contains("64 of Pane's limit of 64 timers"),
         "the timers limit is not named: {:?}",
         shown(&launcher)
     );
@@ -624,15 +622,13 @@ fn beyond_the_limits_bounds_and_declarations_is_refused() {
     );
     run_fixture_item(&launcher, "Provide the capability");
     assert!(
-        said(shown(&launcher))
-            .contains("provides `fixture:held@1` whenever it can run"),
+        said(shown(&launcher)).contains("provides `fixture:held@1` whenever it can run"),
         "the unmarked provision is not refused: {:?}",
         shown(&launcher)
     );
     run_fixture_item(&launcher, "Provide the undeclared capability");
     assert!(
-        said(shown(&launcher))
-            .contains("declares no `provides` entry"),
+        said(shown(&launcher)).contains("declares no `provides` entry"),
         "the undeclared provision is not refused: {:?}",
         shown(&launcher)
     );
@@ -640,8 +636,7 @@ fn beyond_the_limits_bounds_and_declarations_is_refused() {
     pane.save_setting(&identity, "folder", "/not/there");
     run_fixture_item(&launcher, "Watch the folder");
     assert!(
-        said(shown(&launcher))
-            .contains("there is nothing there"),
+        said(shown(&launcher)).contains("there is nothing there"),
         "the unwatchable path is not refused: {:?}",
         shown(&launcher)
     );
