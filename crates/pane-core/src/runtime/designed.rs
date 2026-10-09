@@ -195,7 +195,22 @@ impl DesignedTree {
                 document.len()
             )));
         }
-        let wire: WireDocument = serde_json::from_str(document)
+        // The document parses to a JSON value first: serde's own recursion
+        // bound (128) is a document nesting more than Pane draws can never
+        // pass, and reading the wire type from the value has no bound of
+        // its own to trip over on a tree as deep as the limit allows.
+        // A document that trips it is over the depth limit, the
+        // extension's error: the view keeps its last good tree.
+        let value: Value = serde_json::from_str(document).map_err(|error| {
+            if error.to_string().contains("recursion limit exceeded") {
+                ReadError::Guest(format!(
+                    "the view's tree is deeper than the {MAX_DEPTH} levels that are drawn"
+                ))
+            } else {
+                ReadError::Unreadable(format!("its tree: {error}"))
+            }
+        })?;
+        let wire: WireDocument = serde_json::from_value(value)
             .map_err(|error| ReadError::Unreadable(format!("its tree: {error}")))?;
         let (major, minor) = version(&wire.version).ok_or_else(|| {
             ReadError::Unreadable(format!(
