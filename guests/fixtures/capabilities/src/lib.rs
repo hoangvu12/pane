@@ -90,12 +90,7 @@ const ITEMS: [(&str, &str, &str, &str); 10] = [
         "forward",
         r#"{"via":"capability","to":"fixture:greet@1","operation":"greet","input":{"name":"Ada"}}"#,
     ),
-    (
-        "Call a chain whose last call is a capability",
-        "",
-        "",
-        "",
-    ),
+    ("Call a chain whose last call is a capability", "", "", ""),
     ("Call b's capability operation by identity", "", "", ""),
 ];
 
@@ -180,7 +175,10 @@ async fn outcome(item_id: &str) -> Result<String, String> {
             .collect();
         return Ok(match who.as_slice() {
             [] => format!("the {capability} capability has no provider"),
-            titles => format!("the {capability} capability is provided by {}", titles.join(", ")),
+            titles => format!(
+                "the {capability} capability is provided by {}",
+                titles.join(", ")
+            ),
         });
     }
     let answer = call(capability, operation, input.into())
@@ -233,7 +231,11 @@ impl publish::Guest for Fixture {
                 let request: Value =
                     serde_json::from_str(&input).map_err(|error| format!("{error}"))?;
                 let field = |name: &str| request.get(name).and_then(Value::as_str).unwrap_or("");
-                let input = request.get("input").cloned().unwrap_or(Value::Null).to_string();
+                let input = request
+                    .get("input")
+                    .cloned()
+                    .unwrap_or(Value::Null)
+                    .to_string();
                 match field("via") {
                     "capability" => call(field("to"), field("operation"), input)
                         .await

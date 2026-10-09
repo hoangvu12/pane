@@ -18,8 +18,8 @@
 use pane_extension::alloc::{format, string::String, string::ToString, vec::Vec};
 use pane_extension::capabilities::{available, call, providers};
 use pane_extension::feedback::{Toast, show_toast};
-use pane_extension::{Command, CustomView, Item, List, NoCustomView};
 use pane_extension::operations::CallErrorKind;
+use pane_extension::{Command, CustomView, Item, List, NoCustomView};
 use serde_json::{Value, json};
 
 /// The capabilities this package uses, as its pane.json declares them.
@@ -59,7 +59,9 @@ async fn outcome(item_id: &str) -> Result<String, String> {
     match item_id {
         // A required use that no installed package provides is the user's
         // to fix; Pane's reason is the answer.
-        "greet" => call_name(GREET, "greet").await.map_err(|error| error.explain()),
+        "greet" => call_name(GREET, "greet")
+            .await
+            .map_err(|error| error.explain()),
         "farewell" => match call_name(FAREWELL, "farewell").await {
             Ok(farewell) => Ok(farewell),
             // An optional use with no provider degrades gracefully: say so
