@@ -384,7 +384,7 @@ fn button_element(
     let label: SharedString = button.label.clone().into();
     let debug = match focus {
         Some(_) => format!("designed-button-{}", button.label),
-        None => format!("designed-button-static-{}", button.label),
+        None => format!("designed-button-static-{}-{}", path, button.label),
     };
     let ring = controls::focus_ring(theme);
     let (fill, edge, ink) = tone(button.tone, theme);
