@@ -79,9 +79,8 @@ pub use launcher::{
     PreferencesTarget, Presentation, ProvidedCapability, Question, QuickSlot, RequirementCycle,
     RequirementFix, ResultAction, ResultActionItem, ResultActions, Row, RowKind, RowPresentation,
     Screen, Section, SelectedAction, SettingsTarget, SetupHeader, ShortcutCatalog, ShortcutCommand,
-    ShortcutGroup, SlotChange, Status, SubmenuState, Unavailable, UnboundShortcut, UnmetRequirement,
-    UpdateHold,
-    answer_sections, root_sections,
+    ShortcutGroup, SlotChange, Status, SubmenuState, Unavailable, UnboundShortcut,
+    UnmetRequirement, UpdateHold, answer_sections, root_sections,
 };
 pub use links::LinkOpener;
 pub use operations::{MAX_CALL_DEPTH, MAX_OPERATION_JSON};

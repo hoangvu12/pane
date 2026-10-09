@@ -1248,9 +1248,9 @@ fn fix_row_of(state: &State, identity: &PackageIdentity, fix: &Fix) -> Option<Re
             default: Some(default),
             ..
         } => format!("Install {default} (named by {})", state.title_of(identity)),
-        FixAction::InstallProvider {
-            capability, ..
-        } => format!("Install an extension that provides {capability}"),
+        FixAction::InstallProvider { capability, .. } => {
+            format!("Install an extension that provides {capability}")
+        }
         FixAction::ChooseProvider => "Choose a provider in Settings".into(),
     };
     Some(RequirementFix { title, action })
