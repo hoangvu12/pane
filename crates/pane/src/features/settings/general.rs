@@ -68,6 +68,7 @@ use gpui::{
     Role, Stateful, Toggled, Window, actions, div, prelude::*,
 };
 use pane_core::Launcher;
+use pane_core::Platform;
 use pane_core::autostart::Registration;
 use pane_core::hotkeys::Shortcut;
 
@@ -277,6 +278,10 @@ pub(crate) struct GeneralView {
     pub(crate) resettable: bool,
     /// Why the chosen binding is not registered, if it is not.
     pub(crate) problem: Option<String>,
+    /// How the binding is dispatched when it is active, if it is not the
+    /// system's own registration: through Pane's own keyboard hook
+    /// (Windows, #252), which the row says below the binding.
+    pub(crate) route: Option<String>,
     /// What the last recording was refused with, if anything.
     pub(crate) rejection: Option<String>,
     /// The saved launch-at-login preference, whether choosing it does
@@ -339,6 +344,10 @@ fn render(
         recording: this.general.recording,
         resettable: choice != default,
         problem: this.launcher.open_pane_problem(),
+        route: this
+            .launcher
+            .open_pane_route()
+            .note_on(&choice, Platform::current()),
         rejection: this.general.rejection.clone(),
         login: preference,
         login_offered: unavailable.is_none(),
@@ -569,6 +578,19 @@ fn recorder_row(
             "open-pane-note",
             format!("Not active: {problem}"),
             theme.warning,
+            theme,
+        )
+        .into_any_element()
+    }));
+    // The route of a binding the system refused and Pane's own keyboard
+    // hook took (Windows, #252): the row says it below the binding, as
+    // the Shortcuts page's cells do — the binding works, and behaves
+    // differently (nothing while an elevated application is in front).
+    lines.extend(view.route.as_ref().map(|route| {
+        note(
+            "open-pane-route",
+            format!("Dispatched {route}"),
+            theme.text_muted,
             theme,
         )
         .into_any_element()

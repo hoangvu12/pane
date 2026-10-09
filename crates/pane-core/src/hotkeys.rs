@@ -6,7 +6,11 @@
 //! registered; the system is reached through one small trait, [`Hotkeys`],
 //! with one adapter per system, chosen by [`native`]:
 //!
-//! - Windows: `RegisterHotKey` on a thread of Pane's own ([`windows`]);
+//! - Windows: `RegisterHotKey` on a thread of Pane's own for the chords
+//!   Windows accepts, and a low-level keyboard hook of Pane's own
+//!   (`WH_KEYBOARD_LL`) for the chords Windows refuses — another
+//!   application has the shortcut, or Windows keeps it — so a refused
+//!   shortcut is never an error ([`windows`], ADR 0039);
 //! - macOS: Carbon's `RegisterEventHotKey`, through the `global-hotkey`
 //!   crate, which needs no Accessibility permission ([`macos`]);
 //! - Linux on X11: a passive key grab on the root window (`XGrabKey`)
@@ -17,12 +21,29 @@
 //!
 //! An adapter reports each press of a registered shortcut to a
 //! [`PressSender`]; the window reads them from the matching [`Presses`] and
-//! asks the launcher to open the bound command.
+//! asks the launcher to open the bound command. How a shortcut is
+//! dispatched — the system's registration or Pane's keyboard hook — is the
+//! adapter's to say ([`Hotkeys::route`]), and the binding's row shows it
+//! ([`Route::note_on`]).
 
 use std::fmt;
 use std::sync::Arc;
 
 use crate::platform::Platform;
+
+/// The tag Pane puts in the extra information of every key it injects
+/// (SendInput's `dwExtraInfo`): "PANE". Pane's keyboard hook passes
+/// tagged events through untouched, so Pane never reacts to its own
+/// input — the Start-menu mask, a paste, a simulated copy — and the tools
+/// that remap keys can tell Pane's injections from the user's. Keys
+/// another tool injects carry that tool's marker, or none.
+pub const INJECTED_TAG: usize = 0x50414E45;
+
+/// The binding recognizer: the pure state machine that decides, from the
+/// key events the Windows hook sees, whether one of the bound chords was
+/// pressed. Compiled on every system, so its logic is tested everywhere.
+mod recognizer;
+pub use recognizer::{Decision, KeyEvent, Recognizer};
 
 #[cfg(target_os = "linux")]
 mod x11;
@@ -65,6 +86,13 @@ impl Shortcut {
         key: &str,
     ) -> Result<Shortcut, String> {
         let key = key.to_ascii_lowercase();
+        // Ctrl+Alt+Delete, the one shortcut the key set cannot express
+        // that is refused for a reason of its own: Windows keeps it on
+        // the secure screen, and no program can take it. On any system,
+        // so the reason is tested everywhere.
+        if key == "delete" && control && alt && !shift && !super_key {
+            return Err("Ctrl+Alt+Delete is reserved: no program can intercept it".into());
+        }
         let supported = match key.as_bytes() {
             [b'a'..=b'z' | b'0'..=b'9'] => true,
             _ => key == "space" || (1..=FUNCTION_KEYS).any(|number| key == format!("f{number}")),
@@ -166,10 +194,21 @@ impl Shortcut {
 
     /// Why Pane does not bind this shortcut on this system, if it does not:
     /// it has no Ctrl, Alt or Super (Command) key, so it would take over
-    /// typing, or the system or other applications use it.
+    /// typing, or no program can intercept it (Win+L on Windows,
+    /// Ctrl+Alt+Delete everywhere). On Windows a shortcut the system keeps
+    /// for itself is no longer refused: Pane's own keyboard hook takes it
+    /// instead and its row warns what Windows does with it (#252,
+    /// ADR 0039).
     pub fn refusal(&self) -> Option<String> {
+        self.refusal_on(Platform::current())
+    }
+
+    /// Why Pane does not bind this shortcut on `platform`, if it does
+    /// not; the rules are named by platform so every system's are tested
+    /// on every system.
+    fn refusal_on(&self, platform: Option<Platform>) -> Option<String> {
         if !(self.control || self.alt || self.super_key) {
-            let modifiers = match Platform::current() {
+            let modifiers = match platform {
                 Some(Platform::Macos) => "Control, Option or Command",
                 Some(Platform::Windows) => "Ctrl, Alt or the Windows key",
                 _ => "Ctrl, Alt or Super",
@@ -178,18 +217,29 @@ impl Shortcut {
                 "{self} needs {modifiers}, so that it does not take over typing"
             ));
         }
-        let reserved = reserved(Platform::current());
-        reserved
+        reserved(platform)
             .iter()
             .find(|(id, _)| Shortcut::parse(id).is_ok_and(|reserved| reserved == *self))
             .map(|(_, why)| format!("{self} is reserved: {why}"))
-            .or_else(|| self.editing_refusal())
+            .or_else(|| self.editing_refusal(platform))
+    }
+
+    /// What the system does with this shortcut while Pane does not take
+    /// it first, where `platform` keeps it for itself and Pane's own
+    /// keyboard hook can take it (Windows, #252): the warning a
+    /// hook-dispatched binding's row shows beside its route. `None` where
+    /// the system does not keep it.
+    fn kept_by(&self, platform: Option<Platform>) -> Option<&'static str> {
+        kept(platform)
+            .iter()
+            .find(|(id, _)| Shortcut::parse(id).is_ok_and(|kept| kept == *self))
+            .map(|(_, why)| *why)
     }
 
     /// Ctrl (Command on macOS) with only a letter or digit: every
     /// application uses those for its own commands, such as copying.
-    fn editing_refusal(&self) -> Option<String> {
-        let primary = if Platform::current() == Some(Platform::Macos) {
+    fn editing_refusal(&self, platform: Option<Platform>) -> Option<String> {
+        let primary = if platform == Some(Platform::Macos) {
             self.super_key && !self.control
         } else {
             self.control && !self.super_key
@@ -205,17 +255,14 @@ impl Shortcut {
     }
 }
 
-/// Shortcuts the system keeps for itself, each with why, on `platform`.
+/// Shortcuts no program can intercept, which stay refused, each with why,
+/// on `platform`.
 fn reserved(platform: Option<Platform>) -> &'static [(&'static str, &'static str)] {
     match platform {
-        Some(Platform::Windows) => &[
-            ("alt+f4", "Windows closes the active window with it"),
-            ("super+l", "Windows locks the computer with it"),
-            ("super+d", "Windows shows the desktop with it"),
-            ("super+e", "Windows opens File Explorer with it"),
-            ("super+r", "Windows opens Run with it"),
-            ("alt+space", "Windows opens the window menu with it"),
-        ],
+        Some(Platform::Windows) => &[(
+            "super+l",
+            "Windows locks the computer with it, and no program can intercept it",
+        )],
         Some(Platform::Macos) => &[
             ("super+space", "macOS opens Spotlight with it"),
             ("ctrl+space", "macOS switches input sources with it"),
@@ -241,6 +288,27 @@ fn reserved(platform: Option<Platform>) -> &'static [(&'static str, &'static str
             ("ctrl+alt+f11", "Linux switches to another console with it"),
             ("ctrl+alt+f12", "Linux switches to another console with it"),
         ],
+    }
+}
+
+/// Shortcuts the system keeps for itself that Pane still takes through
+/// its own keyboard hook (Windows, #252), each with what the system does
+/// with the shortcut while Pane does not take it first — the warning a
+/// hook-dispatched binding's row shows. Windows refuses to register these
+/// for any application, but the hook recognizes the chord all the same,
+/// so they are warnings rather than refusals. Empty everywhere but
+/// Windows: the other systems' adapters have no hook, so their kept
+/// shortcuts stay refused (see [`reserved`]).
+fn kept(platform: Option<Platform>) -> &'static [(&'static str, &'static str)] {
+    match platform {
+        Some(Platform::Windows) => &[
+            ("alt+f4", "Windows closes the active window with it"),
+            ("super+d", "Windows shows the desktop with it"),
+            ("super+e", "Windows opens File Explorer with it"),
+            ("super+r", "Windows opens Run with it"),
+            ("alt+space", "Windows opens the window menu with it"),
+        ],
+        _ => &[],
     }
 }
 
@@ -309,12 +377,95 @@ pub trait Hotkeys: Send + Sync + 'static {
     /// `None` when they can.
     fn unavailable(&self) -> Option<String>;
 
-    /// Registers `shortcut` system-wide.
+    /// Registers `shortcut` system-wide. On Windows a registration the
+    /// system refuses — another application has the shortcut, or Windows
+    /// keeps it — is not an error: the adapter falls back to its own
+    /// keyboard hook and answers `Ok` (ADR 0039), so only what no adapter
+    /// can take is refused.
     fn register(&self, shortcut: &Shortcut) -> Result<(), HotkeyError>;
 
     /// Releases `shortcut`, registered earlier, so that other applications
     /// may use it and it is no longer reported.
     fn unregister(&self, shortcut: &Shortcut);
+
+    // The rest is the seam the keyboard hook fallback adds (#252): until
+    // an adapter answers them, each says the system's registration and
+    // that no hook is in use.
+
+    /// How `shortcut`, registered earlier, is dispatched: through the
+    /// system's own registration, or through Pane's own keyboard hook,
+    /// where the system refused the registration or cannot express the
+    /// binding (Windows, #252). Asked once a registration succeeded, so
+    /// the binding's row can say which — [`Route::note_on`].
+    fn route(&self, _shortcut: &Shortcut) -> Route {
+        Route::System
+    }
+
+    /// The state of Pane's own keyboard hook, where this system's adapter
+    /// uses one; `None` where none is, which is everywhere but Windows'
+    /// adapter with a binding the system refused. The Settings pages and
+    /// Copy Diagnostics show it (#259).
+    fn hook_health(&self) -> Option<HookHealth> {
+        None
+    }
+}
+
+/// How a registered shortcut is dispatched: through the system's own
+/// registration, or through Pane's own low-level keyboard hook, where the
+/// system refused the registration or cannot express the binding
+/// (Windows, #252). Rows and the Shortcuts page say which, so a binding
+/// that behaves differently — the hook's does nothing while an elevated
+/// application is in front, since Windows does not deliver those keys to
+/// the hook of a normal process — is understood.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Route {
+    /// The system's own registration: `RegisterHotKey` on Windows,
+    /// Carbon's hot keys on macOS, an `XGrabKey` grab on X11.
+    #[default]
+    System,
+    /// Pane's own `WH_KEYBOARD_LL` keyboard hook, which works while Pane
+    /// runs and takes the shortcut from whoever had it, Windows included.
+    Hook,
+}
+
+impl Route {
+    /// What a hotkey's row appends for a binding dispatched this way on
+    /// `platform`: nothing for the system's registration; for the hook,
+    /// the route and the elevated-application limit, with what the system
+    /// does with `shortcut` where it keeps it for itself, which Pane
+    /// takes first while it runs. The platform is named so the wording is
+    /// tested on every system.
+    pub fn note_on(&self, shortcut: &Shortcut, platform: Option<Platform>) -> Option<String> {
+        if *self == Route::System {
+            return None;
+        }
+        let mut note = "through Pane's keyboard hook, which does nothing while an \
+                        elevated application is in front"
+            .to_string();
+        if let Some(kept) = shortcut.kept_by(platform) {
+            note.push_str("; ");
+            note.push_str(kept);
+            note.push_str(", which Pane takes first while it runs");
+        }
+        Some(note)
+    }
+}
+
+/// The state of Pane's own keyboard hook, where this system's adapter
+/// uses one (Windows, #252): what the Settings pages and Copy Diagnostics
+/// say of it. `None` where no hook is in use.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct HookHealth {
+    /// How many times Windows removed the hook and Pane installed it
+    /// again.
+    pub reinstalls: u32,
+    /// Whether the hook's code and data pages are pinned in memory, so a
+    /// trimmed working set cannot fault the callback past Windows' hook
+    /// timeout.
+    pub pinned: bool,
+    /// Why Pane gave up keeping the hook installed, if it did: its
+    /// hook-based bindings do nothing until Pane starts again.
+    pub given_up: Option<String>,
 }
 
 /// Where an adapter reports presses of registered shortcuts.
@@ -427,4 +578,106 @@ pub(crate) fn none() -> Arc<dyn Hotkeys> {
     Arc::new(Unavailable(
         "Not available: this Pane has no global hotkeys".into(),
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{HookHealth, INJECTED_TAG, Route, Shortcut};
+    use crate::platform::Platform;
+
+    fn shortcut(text: &str) -> Shortcut {
+        Shortcut::parse(text).expect("a valid shortcut")
+    }
+
+    /// The Windows rules are checked on every system: `refusal_on` and
+    /// `note_on` take the platform, so what Windows does is pinned without
+    /// a Windows machine.
+    const WINDOWS: Option<Platform> = Some(Platform::Windows);
+
+    #[test]
+    fn windows_reserved_shortcuts_are_warnings_rather_than_refusals() {
+        // What Windows keeps for itself is no longer refused: the hook
+        // takes the chord, and the row warns what Windows does with it.
+        for (id, does) in [
+            ("alt+f4", "Windows closes the active window with it"),
+            ("super+d", "Windows shows the desktop with it"),
+            ("super+e", "Windows opens File Explorer with it"),
+            ("super+r", "Windows opens Run with it"),
+            ("alt+space", "Windows opens the window menu with it"),
+        ] {
+            let shortcut = shortcut(id);
+            assert_eq!(shortcut.refusal_on(WINDOWS), None, "{id} is refused");
+            let note = Route::Hook.note_on(&shortcut, WINDOWS).unwrap();
+            assert!(note.contains("through Pane's keyboard hook"), "{note}");
+            assert!(note.contains("elevated application"), "{note}");
+            assert!(note.contains(does), "{note}");
+            assert!(note.contains("Pane takes first while it runs"), "{note}");
+        }
+        // A shortcut Windows does not keep warns of nothing but the route.
+        let note = Route::Hook
+            .note_on(&shortcut("ctrl+alt+g"), WINDOWS)
+            .unwrap();
+        assert_eq!(
+            note,
+            "through Pane's keyboard hook, which does nothing while an elevated application \
+             is in front"
+        );
+        // The system's registration says nothing.
+        assert_eq!(
+            Route::System.note_on(&shortcut("ctrl+alt+g"), WINDOWS),
+            None
+        );
+    }
+
+    #[test]
+    fn what_no_program_can_intercept_is_still_refused_with_the_reason() {
+        // Win+L: Windows locks the computer with it, and the lock screen
+        // is below every hook.
+        assert_eq!(
+            shortcut("super+l").refusal_on(WINDOWS),
+            Some(
+                "Win+L is reserved: Windows locks the computer with it, and no program can \
+                 intercept it"
+                    .into()
+            )
+        );
+        // Ctrl+Alt+Delete: the secure screen owns it, on every system, so
+        // it is refused before the key set's own wording.
+        assert_eq!(
+            Shortcut::parse("ctrl+alt+delete").unwrap_err(),
+            "Ctrl+Alt+Delete is reserved: no program can intercept it"
+        );
+        // Other systems keep their own refusals: only Windows' list moved
+        // to warnings.
+        assert!(
+            shortcut("alt+f4")
+                .refusal_on(Some(Platform::Linux))
+                .is_some()
+        );
+        assert!(
+            shortcut("super+l")
+                .refusal_on(Some(Platform::Linux))
+                .is_some()
+        );
+        assert!(
+            shortcut("super+space")
+                .refusal_on(Some(Platform::Macos))
+                .is_some()
+        );
+        assert_eq!(shortcut("alt+f4").refusal_on(WINDOWS), None);
+    }
+
+    #[test]
+    fn the_injected_tag_spells_pane() {
+        // "PANE" as four bytes: the marker every key Pane injects carries
+        // in the event's extra information, spelled for a tool that reads
+        // the markers other tools leave on their injections.
+        let spelled: [u8; 4] = (INJECTED_TAG as u32).to_be_bytes();
+        assert_eq!(spelled, *b"PANE");
+        // The hook health an adapter answers for starts neutral.
+        let health = HookHealth::default();
+        assert_eq!(health.reinstalls, 0);
+        assert!(!health.pinned);
+        assert_eq!(health.given_up, None);
+    }
 }

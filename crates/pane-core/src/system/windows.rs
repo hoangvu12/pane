@@ -240,12 +240,11 @@ impl System for WindowsSystem {
 const NOT_WATCHING: &str = "Pane could not follow the application in front, so it cannot \
      paste into it; restarting Pane may fix that";
 
-/// Pane's own tag on the input it injects: "PANE". Every key Pane sends
-/// carries it in its extra information, so its own keyboard hook (#252)
-/// and other tools' know the keys are Pane's, not the user's. #252 owns
-/// the constant in `hotkeys.rs`; this one stands until that lands, and
-/// the merge unifies them.
-const INJECTED_TAG: usize = 0x50414E45;
+/// Pane's own tag on the input it injects: "PANE" ([`crate::hotkeys::INJECTED_TAG"]).
+/// Every key Pane sends carries it in its extra information, so its own
+/// keyboard hook (#252) and other tools' know the keys are Pane's, not
+/// the user's.
+const INJECTED_TAG: usize = crate::hotkeys::INJECTED_TAG;
 
 /// How long the paste worker waits for the target to come to the front —
 /// after the plain foreground call, and again after it attaches to the

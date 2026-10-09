@@ -24,6 +24,9 @@ use super::Joinable;
 pub(crate) const WM_WAKE: u32 = WM_APP + 1;
 /// Ends a thread's message loop.
 pub(crate) const WM_STOP: u32 = WM_APP + 2;
+/// A keyboard-hook binding was pressed: the hook thread posts it to the
+/// hotkey thread, whose `wParam` names the binding (see `hotkeys`).
+pub(crate) const WM_FIRED: u32 = WM_APP + 3;
 
 /// How often, and how long apart, Pane tries to post a message to a thread
 /// whose queue is full.

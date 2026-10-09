@@ -56,11 +56,27 @@ including on the hotkey screen ("Hotkey for Greeting") that the launcher's
 | A key other than a letter, digit, F1–F12 or Space | "Pane cannot use Left in a hotkey: end it with a letter, a digit, F1 to F12 or Space" |
 | No Ctrl, Alt or Super (Windows key, Command) | "Shift+G needs Ctrl, Alt or Super, so that it does not take over typing." |
 | Ctrl (Command on macOS) with only a letter or digit | "Ctrl+C is used by applications for their own commands, such as copying; add Alt or Shift." |
-| A shortcut the system keeps (list per system in [`pane_core::hotkeys`](../crates/pane-core/src/hotkeys.rs)) | "Alt+F4 is reserved: Windows closes the active window with it." |
+| Ctrl+Alt+Delete | "Ctrl+Alt+Delete is reserved: no program can intercept it" |
+| A shortcut no program can intercept (Win+L on Windows; the lists per system are in [`pane_core::hotkeys`](../crates/pane-core/src/hotkeys.rs)) | "Win+L is reserved: Windows locks the computer with it, and no program can intercept it" |
+| A shortcut the system keeps, on macOS and Linux (list per system in [`pane_core::hotkeys`](../crates/pane-core/src/hotkeys.rs)) | "Alt+F4 is reserved: Windows closes the active window with it." |
 | The hotkey of another command | "Ctrl+Alt+G already opens Greeting: remove it there first, or press another shortcut." |
 | The [Open Pane hotkey](#the-open-pane-hotkey) | "Ctrl+Alt+Space opens Pane itself: choose another shortcut for Greeting, or change Pane's hotkey in Settings." |
-| Used by another application (the system refuses it) | "Ctrl+Alt+G cannot be used: another application or the system already uses it. Press another shortcut." |
+| Used by another application (the system refuses it) — on macOS and Linux | "Ctrl+Alt+G cannot be used: another application or the system already uses it. Press another shortcut." |
 | Any other refusal by the system | "… cannot be used: the system refused it: &lt;reason&gt;. …" |
+
+On Windows ([#125](https://github.com/pane-app/pane/issues/125), ADR 0039) a
+shortcut another application has, or one Windows keeps for itself (Alt+F4,
+Win+D, Win+E, Win+R, Alt+Space and the rest), is not refused any more: Pane
+registers the chord with `RegisterHotKey` when Windows accepts it, and its
+own `WH_KEYBOARD_LL` low-level keyboard hook recognizes the chord when
+Windows does not. The binding works while Pane runs, and its row — the
+extension list's, the Shortcuts page's and the General page's — says it is
+"through Pane's keyboard hook, which does nothing while an elevated
+application is in front", and, for a shortcut Windows keeps, what Windows
+does with it, "which Pane takes first while it runs". The hook is installed
+only while a binding needs it. Still refused, as the table above says: what
+no program can intercept, and a binding another of Pane's bindings already
+has.
 
 A refused shortcut leaves the earlier hotkey working. Keys the recorder uses
 (Enter, Space, Escape, Tab, arrows) are not recorded; a modifier pressed alone
@@ -136,9 +152,10 @@ Settings' **General** page, in the "Open Pane hotkey" row.
 - The command hotkeys are Pane's own records, not the extension's data (the
   Open Pane hotkey's is `settings.json`, above):
   `hotkeys.json` beside `installed.json`, by command id (the package
-  identity's key and the manifest's command id), `{ "version": 1, "hotkeys":
-  { "local:/…#greeting": "ctrl+alt+g" } }`. Written atomically; an
-  unreadable file is not overwritten (assigning then explains why).
+  identity's key and the manifest's command id), `{ "version": 2, "hotkeys":
+  { "local:/…#greeting": "ctrl+alt+g" } }` — a record of version 1, whose
+  grammar is this one's, still reads. Written atomically; an unreadable file
+  is not overwritten (assigning then explains why).
 - A hotkey is registered exactly while its command is offered: the package is
   enabled and the command is available on this system. **Disabling** a
   package releases its hotkeys at once and keeps the choice; **enabling** it
@@ -174,8 +191,8 @@ Settings' **General** page, in the "Open Pane hotkey" row.
 
 | | Windows ([#32](https://github.com/pane-app/pane/issues/32)) | macOS ([#33](https://github.com/pane-app/pane/issues/33)) | Linux ([#34](https://github.com/pane-app/pane/issues/34)) |
 | --- | --- | --- | --- |
-| Registered with | `RegisterHotKey` (`MOD_NOREPEAT`) on a thread of Pane's own with its own message loop | Carbon `RegisterEventHotKey` through the `global-hotkey` crate (0.8, Apache-2.0 OR MIT), on the main run loop | `XGrabKey` on the root window through `x11rb`, on the key whose first level (no Shift) gives the key, with every Caps Lock, Num Lock and Scroll Lock combination (their modifiers read from the server's modifier mapping), XKB detectable auto-repeat; grabs are made again when the keyboard mapping changes (`MappingNotify`) |
-| Conflict with another application | `ERROR_HOTKEY_ALREADY_REGISTERED` → "already uses it" (Windows refuses some of its own shortcuts the same way) | Refused only if another application registered it exclusively ("the system refused it: …"); system shortcuts are covered by Pane's reserved list | `BadAccess` → "already uses it" (also a shortcut the window manager grabs) |
+| Registered with | `RegisterHotKey` (`MOD_NOREPEAT`) on a thread of Pane's own with its own message loop; a chord Windows refuses — another application's or Windows' own — is recognized by Pane's own `WH_KEYBOARD_LL` low-level keyboard hook instead, on a thread of its own at the highest thread priority, installed only while a binding needs it, with locked pages, a raw-input watchdog that reinstalls a hook Windows silently removed, modifiers re-read from the system on a session unlock, a resume and a contradiction, and Pane's injected keys tagged and passed through untouched (#125, ADR 0039) | Carbon `RegisterEventHotKey` through the `global-hotkey` crate (0.8, Apache-2.0 OR MIT), on the main run loop | `XGrabKey` on the root window through `x11rb`, on the key whose first level (no Shift) gives the key, with every Caps Lock, Num Lock and Scroll Lock combination (their modifiers read from the server's modifier mapping), XKB detectable auto-repeat; grabs are made again when the keyboard mapping changes (`MappingNotify`) |
+| Conflict with another application | `ERROR_HOTKEY_ALREADY_REGISTERED` — Windows refuses some of its own shortcuts the same way — and the hook takes the binding, so it is never an error: the row says it is dispatched "through Pane's keyboard hook" (and does nothing while an elevated application is in front, since Windows does not deliver those keys to a hook of a normal process) | Refused only if another application registered it exclusively ("the system refused it: …"); system shortcuts are covered by Pane's reserved list | `BadAccess` → "already uses it" (also a shortcut the window manager grabs) |
 | Permission | None | None: Carbon hot keys need no Accessibility or Input Monitoring permission (an event tap would) | None on X11 |
 | Unavailable | | | **Wayland** (Pane's window uses Wayland whenever `WAYLAND_DISPLAY` is set): every hotkey row says "Not available on Linux with Wayland: Wayland does not let an application see keys pressed in other applications, and Pane does not use the desktop's global shortcuts portal yet. Assign a shortcut in the desktop's keyboard settings instead, or run Pane on X11." Activating it shows that reason; the commands still open from root search. Without any display, or an X11 display that cannot be reached, the rows say so. |
 | Brought to the front | GPUI's `activate_window` (restores a minimized window) | `makeKeyAndOrderFront` and `activateIgnoringOtherApps` | `_NET_ACTIVE_WINDOW`, which a window manager may refuse (focus-stealing prevention) |
@@ -222,12 +239,24 @@ cannot assign, read or declare one (no WIT or manifest change).
   likewise: a hotkey recorded inline and cleared, the collisions with another
   command and with the Open Pane hotkey ("… opens Pane itself: …") explained,
   and the catalog following the package lifecycle and a restart.
+- The recognizer ([`crates/pane-core/tests/hotkey_recognizer.rs`](../crates/pane-core/tests/hotkey_recognizer.rs)),
+  on every system: the pure state machine the Windows hook feeds, driven by
+  synthetic key-event sequences — chords fired with exactly their modifiers
+  held and whatever keys between, auto-repeat firing nothing, stuck modifiers
+  resynchronized so no phantom chord fires, Pane's own tagged injected keys
+  passed through untouched, and other tools' injected keys firing the binding
+  without being swallowed or counted as the user's.
 - Adapters ([`crates/pane-core/tests/hotkey_adapters.rs`](../crates/pane-core/tests/hotkey_adapters.rs)):
   on Linux against an Xvfb of the test's own (`PANE_XVFB` or `PATH`; skipped without one,
   never the desktop the tests run in): a grab, a second client refused as
   taken, a real `xdotool key ctrl+alt+p` reported once, and after release the
-  other client can grab it. On Windows: registered, refused to a second
-  registration as taken, and free again once released. macOS registers with
+  other client can grab it. On Windows: a chord another application holds
+  is taken through Pane's own keyboard hook instead, released with the
+  registration, and the dropped adapter's registrations are free again;
+  where `PANE_TEST_REAL_INPUT=1` is set (CI's Windows runner), the hook
+  reports a chord injected with a test tag, installs only while a binding
+  needs it, and the watchdog repairs a hook removed behind the adapter's
+  back. macOS registers with
   the main run loop, which a test thread does not run, so only the GUI smoke
   checks it.
 - Native GUI smokes, one identical phase on all three systems (screenshots 52
@@ -239,7 +268,12 @@ cannot assign, read or declare one (no WIT or manifest change).
   check Greeting opened and, on Windows and macOS, that Pane is in front;
   check `hotkeys.json`, restart and press again (Greeting opens); disable
   the extension, press again and check nothing changed (and, on Windows and
-  macOS, that Pane stayed behind). See the [Linux](platforms/linux.md#global-hotkeys-32-33-34),
+  macOS, that Pane stayed behind). On Windows only, a hook-dispatched
+  binding (screenshots 77 to 79): the smoke holds a chord from its own
+  process first, assigns it to the sample's command in Pane, checks the row
+  says the binding is dispatched through Pane's keyboard hook, and pressing
+  it — injected, as a tool's keys are — opens the command. See the
+  [Linux](platforms/linux.md#global-hotkeys-32-33-34),
   [macOS](platforms/macos.md#global-hotkeys-33) and
   [Windows](platforms/windows.md#global-hotkeys-32) notes for where it has run.
 

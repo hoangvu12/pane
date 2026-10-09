@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use futures::executor::block_on;
-use pane_core::hotkeys::{HotkeyError, Hotkeys, Shortcut};
+use pane_core::hotkeys::{HotkeyError, Hotkeys, Route, Shortcut};
 use pane_core::{Launcher, PackageIdentity, Runtime, SavedData, Screen, Status, Unavailable};
 use tempfile::TempDir;
 
@@ -34,11 +34,29 @@ struct FakeSystem {
     taken: Mutex<Vec<Shortcut>>,
     /// Why hotkeys cannot be used at all, if they cannot.
     unavailable: Option<String>,
+    /// Whether this system's adapter falls back to a keyboard hook of
+    /// its own when the system refuses a registration, as Windows' does
+    /// (#252): a taken shortcut is then not an error but a binding
+    /// through the hook. A system without one (macOS, X11) keeps the
+    /// old behavior: taken is an error, explained.
+    hooks: bool,
+    /// The shortcuts dispatched through the hook rather than the system's
+    /// registration.
+    hooked: Mutex<Vec<Shortcut>>,
 }
 
 impl FakeSystem {
     fn new() -> Arc<FakeSystem> {
         Arc::new(FakeSystem::default())
+    }
+
+    /// A system whose adapter falls back to its own keyboard hook when
+    /// the system refuses a registration (Windows, #252).
+    fn hooking() -> Arc<FakeSystem> {
+        Arc::new(FakeSystem {
+            hooks: true,
+            ..FakeSystem::default()
+        })
     }
 
     fn registered(&self) -> Vec<String> {
@@ -80,6 +98,18 @@ impl Hotkeys for FakeSystem {
             return Err(HotkeyError::Refused(reason.clone()));
         }
         if self.taken.lock().unwrap().contains(shortcut) {
+            if self.hooks {
+                // The hook takes the binding the system refused (ADR 0039):
+                // not an error, and the row says the route.
+                self.hooked.lock().unwrap().push(shortcut.clone());
+                let mut registered = self.registered.lock().unwrap();
+                assert!(
+                    !registered.contains(shortcut),
+                    "{shortcut} registered twice"
+                );
+                registered.push(shortcut.clone());
+                return Ok(());
+            }
             return Err(HotkeyError::Taken);
         }
         let mut registered = self.registered.lock().unwrap();
@@ -92,10 +122,19 @@ impl Hotkeys for FakeSystem {
     }
 
     fn unregister(&self, shortcut: &Shortcut) {
+        self.hooked.lock().unwrap().retain(|kept| kept != shortcut);
         let mut registered = self.registered.lock().unwrap();
         let before = registered.len();
         registered.retain(|kept| kept != shortcut);
         assert_ne!(before, registered.len(), "{shortcut} was not registered");
+    }
+
+    fn route(&self, shortcut: &Shortcut) -> Route {
+        if self.hooked.lock().unwrap().contains(shortcut) {
+            Route::Hook
+        } else {
+            Route::System
+        }
     }
 }
 
@@ -684,4 +723,138 @@ fn a_hotkey_that_cannot_be_recorded_is_undone_in_pane_and_on_disk() {
     assert!(
         row_subtitle(&launcher, "Hotkey for Greeting").starts_with(&key("ctrl+alt+g").to_string())
     );
+}
+
+#[test]
+fn a_shortcut_another_application_uses_is_taken_through_pane_s_keyboard_hook() {
+    let dirs = Dirs::new();
+    let system = FakeSystem::hooking();
+    system.take("ctrl+alt+g");
+    let launcher = dirs.launcher(&system);
+    dirs.install(&launcher, "sample-settings");
+
+    // The system refuses the registration, as another application having
+    // the shortcut; Pane's own keyboard hook takes the binding instead
+    // (ADR 0039), so it is not an error.
+    assign(&launcher, "Greeting", "ctrl+alt+g");
+    assert_eq!(system.registered(), ["ctrl+alt+g"]);
+    assert!(system.hooked.lock().unwrap().contains(&key("ctrl+alt+g")));
+    assert_eq!(
+        launcher.view().status,
+        Status::Result(format!("{} now opens Greeting", key("ctrl+alt+g")))
+    );
+    // The row reports the binding's dispatch route, with the
+    // elevated-application limitation that comes with it.
+    manage(&launcher);
+    let subtitle = row_subtitle(&launcher, "Hotkey for Greeting");
+    assert!(
+        subtitle.contains("through Pane's keyboard hook"),
+        "{subtitle}"
+    );
+    assert!(subtitle.contains("elevated application"), "{subtitle}");
+    // The Shortcuts catalog carries the route for the page that shows it.
+    let catalog = launcher.shortcut_catalog();
+    let greeting = catalog
+        .groups
+        .iter()
+        .flat_map(|group| group.commands.iter())
+        .find(|command| command.title == "Greeting")
+        .unwrap();
+    assert_eq!(greeting.hotkey_route, Route::Hook);
+    assert_eq!(greeting.hotkey_inactive, None);
+
+    // The binding works, from whatever application had the focus.
+    launcher.back();
+    assert!(system.press(&launcher, "ctrl+alt+g"));
+    assert_eq!(launcher.view().title, "Greeting");
+
+    // It works the same after a restart, the shortcut still taken, and
+    // the row still says the route.
+    drop(launcher);
+    let restarted_system = FakeSystem::hooking();
+    restarted_system.take("ctrl+alt+g");
+    let restarted = dirs.launcher(&restarted_system);
+    assert_eq!(restarted_system.registered(), ["ctrl+alt+g"]);
+    manage(&restarted);
+    let subtitle = row_subtitle(&restarted, "Hotkey for Greeting");
+    assert!(
+        subtitle.contains("through Pane's keyboard hook"),
+        "{subtitle}"
+    );
+    assert!(restarted_system.press(&restarted, "ctrl+alt+g"));
+    assert_eq!(restarted.view().title, "Greeting");
+
+    // Removing the hotkey releases the hook binding, as it releases a
+    // registration.
+    manage(&restarted);
+    activate(&restarted, "Hotkey for Greeting");
+    activate(&restarted, "Remove hotkey");
+    assert!(restarted_system.hooked.lock().unwrap().is_empty());
+    assert!(restarted_system.registered().is_empty());
+}
+
+#[test]
+fn the_open_pane_hotkey_falls_back_to_the_hook_too() {
+    let dirs = Dirs::new();
+    let system = FakeSystem::hooking();
+    system.take("ctrl+alt+space");
+    let launcher = dirs.launcher(&system);
+    dirs.install(&launcher, "sample-settings");
+
+    // The default Open Pane hotkey is taken by another application: the
+    // system refuses it, Pane's own keyboard hook takes the binding
+    // instead — not an error — and the General page's row says the route
+    // through `open_pane_route`.
+    launcher.set_open_pane(key("ctrl+alt+space")).unwrap();
+    assert_eq!(launcher.open_pane_route(), Route::Hook);
+    assert_eq!(launcher.open_pane_problem(), None);
+    assert!(launcher.opens_pane(&key("ctrl+alt+space")));
+    assert_eq!(system.registered(), ["ctrl+alt+space"]);
+}
+
+#[test]
+fn what_no_program_can_intercept_is_still_refused_through_the_launcher() {
+    let dirs = Dirs::new();
+    let system = FakeSystem::hooking();
+    let launcher = dirs.launcher(&system);
+    dirs.install(&launcher, "sample-settings");
+
+    // Win+L stays refused with the reason, even on a system whose adapter
+    // falls back to a keyboard hook: the lock screen is below every hook.
+    // (macOS leaves Win+L free, so there is nothing to refuse there.)
+    assign(&launcher, "Greeting", "super+l");
+    if let Some(refusal) = key("super+l").refusal() {
+        assert_eq!(error(&launcher), format!("{refusal}."));
+        assert!(matches!(launcher.view().screen, Screen::Hotkey { .. }));
+        assert!(system.registered().is_empty());
+        assert!(system.hooked.lock().unwrap().is_empty());
+    }
+}
+
+#[test]
+fn a_hotkey_record_of_version_1_still_reads_and_the_new_version_round_trips() {
+    let dirs = Dirs::new();
+    let system = FakeSystem::new();
+    let launcher = dirs.launcher(&system);
+    dirs.install(&launcher, "sample-settings");
+    assign(&launcher, "Greeting", "ctrl+alt+g");
+    drop(launcher);
+
+    // The record is written in the new version (#252), and a fresh Pane
+    // reads it and registers the binding again.
+    let record = dirs.packages_dir().join("hotkeys.json");
+    let text = fs::read_to_string(&record).unwrap();
+    assert!(text.contains("\"version\": 2"), "{text}");
+    let restarted_system = FakeSystem::new();
+    let restarted = dirs.launcher(&restarted_system);
+    assert_eq!(restarted_system.registered(), ["ctrl+alt+g"]);
+    drop(restarted);
+
+    // A version 1 record, as an older Pane wrote it, reads the same.
+    fs::write(&record, text.replace("\"version\": 2", "\"version\": 1")).unwrap();
+    let older_system = FakeSystem::new();
+    let older = dirs.launcher(&older_system);
+    assert_eq!(older_system.registered(), ["ctrl+alt+g"]);
+    assert!(older_system.press(&older, "ctrl+alt+g"));
+    assert_eq!(older.view().title, "Greeting");
 }

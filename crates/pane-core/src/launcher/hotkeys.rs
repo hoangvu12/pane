@@ -57,19 +57,29 @@ use super::{
     Entry, Launcher, LauncherView, Opening, Row, Screen, State, Status, Unavailable, off_thread,
 };
 use crate::generation::EndMark;
-use crate::hotkeys::Shortcut;
+use crate::hotkeys::{Route, Shortcut};
 use crate::launch::LaunchSource;
 use crate::launcher::CommandRegistration;
 use crate::packages::{CommandId, CommandMode, InstalledPackage, PackageIdentity};
+use crate::platform::Platform;
 
 /// Each command's hotkey by command id, recorded in `hotkeys.json` as
-/// `{ "version": 1, "hotkeys": { "<command id>": "ctrl+alt+g" } }`.
+/// `{ "version": 2, "hotkeys": { "<command id>": "ctrl+alt+g" } }` —
+/// a record of version 1 still reads.
 pub(super) type HotkeyChoices = BTreeMap<String, Shortcut>;
 
 impl Choices for HotkeyChoices {
     const FILE: &'static str = "hotkeys.json";
-    const VERSION: u64 = 1;
+    const VERSION: u64 = 2;
     const WHAT: &'static str = "hotkeys";
+
+    /// Version 1 reads too: this version holds the same chords by command
+    /// id (the tap, double-tap and side-specific kinds of #260 are the
+    /// grammar a later version adds). Only the version number moved, so
+    /// a record an older Pane wrote keeps working.
+    fn reads(version: u64) -> bool {
+        version == 1 || version == Self::VERSION
+    }
 
     /// An entry that is not a shortcut is left out.
     fn read(fields: &Map<String, Value>) -> Result<Self, String> {
@@ -167,12 +177,27 @@ impl Bindings {
     pub(super) fn recorded(&self) -> Vec<&str> {
         self.chosen().keys().map(String::as_str).collect()
     }
+
+    /// How the hotkey registered for `command` is dispatched, when one
+    /// is: through the system's registration, or through Pane's own
+    /// keyboard hook (Windows, #252), for the rows to say.
+    pub(super) fn route_of(&self, command: &str) -> Route {
+        self.registered
+            .get(command)
+            .map(|registered| registered.route)
+            .unwrap_or_default()
+    }
 }
 
-/// A command's hotkey registered with the system, and its place on its
-/// package's generation's undo list (see the module docs).
+/// A command's hotkey registered with the system, how it is dispatched,
+/// and its place on its package's generation's undo list (see the module
+/// docs).
 struct Registered {
     shortcut: Shortcut,
+    /// How the binding is dispatched: the system's registration, or
+    /// Pane's own keyboard hook, where the system refused it (Windows,
+    /// #252).
+    route: Route,
     generation: EndMark,
 }
 
@@ -185,6 +210,9 @@ struct Registered {
 pub(super) struct OpenPane {
     /// What is registered with the system, if anything.
     registered: Option<Shortcut>,
+    /// How it is dispatched: the system's registration, or Pane's own
+    /// keyboard hook, where the system refused it (Windows, #252).
+    route: Route,
     /// Why the recorded choice is not the one registered, if it is not —
     /// a registration the system refused, a choice it would refuse, or a
     /// collision with a command's hotkey.
@@ -290,6 +318,7 @@ impl Launcher {
             match self.hotkeys.register(&shortcut) {
                 Ok(()) => {
                     bindings.problems.remove(&command);
+                    let route = self.hotkeys.route(&shortcut);
                     let generation = marks
                         .remove(&command)
                         .unwrap_or_else(|| EndMark::on(None, "hotkey", || {}));
@@ -297,6 +326,7 @@ impl Launcher {
                         command,
                         Registered {
                             shortcut,
+                            route,
                             generation,
                         },
                     );
@@ -420,7 +450,20 @@ impl Launcher {
                 let state = match bindings.chosen().get(&command.id) {
                     Some(shortcut) => match bindings.problems.get(&command.id) {
                         Some(problem) => format!("{shortcut} · Not active: {problem}"),
-                        None => format!("{shortcut} · Opens it from any application"),
+                        None => {
+                            // A binding the system refused (Windows, #252)
+                            // works through Pane's own keyboard hook
+                            // instead, and the row says so, with what
+                            // Windows does with the shortcut where it
+                            // keeps it.
+                            let route = bindings.route_of(&command.id);
+                            match route.note_on(shortcut, Platform::current()) {
+                                Some(note) => {
+                                    format!("{shortcut} · Opens it from any application {note}")
+                                }
+                                None => format!("{shortcut} · Opens it from any application"),
+                            }
+                        }
                     },
                     None => "None · Choose keys that open it from any application".into(),
                 };
@@ -648,17 +691,21 @@ impl Launcher {
             return Err(reason);
         }
         // The new one first, so a refusal leaves the old one working.
+        // On Windows a registration the system refuses is not an error:
+        // the adapter's own keyboard hook takes the binding (ADR 0039).
         if let Err(error) = self.hotkeys.register(&shortcut) {
             return Err(format!(
                 "{shortcut} cannot be used: {error}. Press another shortcut."
             ));
         }
+        let route = self.hotkeys.route(&shortcut);
         let generation = self.hotkey_mark(state, command);
         let bindings = &mut state.bindings;
         if let Some(old) = bindings.registered.insert(
             command.to_owned(),
             Registered {
                 shortcut: shortcut.clone(),
+                route,
                 generation,
             },
         ) {
@@ -782,6 +829,14 @@ impl Launcher {
         self.lock().open_pane.registered.as_ref() == Some(shortcut)
     }
 
+    /// How the registered Open Pane binding is dispatched: through the
+    /// system's registration, or through Pane's own keyboard hook, where
+    /// the system refused it (Windows, #252). The General page says it
+    /// beside the binding, with [`Route::note_on`].
+    pub fn open_pane_route(&self) -> Route {
+        self.lock().open_pane.route
+    }
+
     /// Makes `shortcut` the Open Pane hotkey, as the user recorded it on
     /// the General page: it is checked against the combinations the
     /// system keeps for itself and against the command hotkeys, then
@@ -826,6 +881,7 @@ impl Launcher {
             self.hotkeys.unregister(&open);
         }
         // Nothing is registered, so nothing is explained as not.
+        state.open_pane.route = Route::default();
         state.open_pane.problem = None;
     }
 
@@ -853,14 +909,18 @@ impl Launcher {
                  shortcut."
             ));
         }
-        // The new one first, so a refusal leaves the old one working.
+        // The new one first, so a refusal leaves the old one working. On
+        // Windows a registration the system refuses is not an error: the
+        // adapter's own keyboard hook takes the binding (ADR 0039).
         if let Err(error) = self.hotkeys.register(&shortcut) {
             return Err(format!("{shortcut} cannot be used: {error}."));
         }
+        let route = self.hotkeys.route(&shortcut);
         let open_pane = &mut state.open_pane;
         if let Some(old) = open_pane.registered.replace(shortcut) {
             self.hotkeys.unregister(&old);
         }
+        open_pane.route = route;
         open_pane.problem = None;
         Ok(())
     }

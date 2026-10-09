@@ -35,8 +35,16 @@ use crate::keyboard::Keyboard;
 /// The file the settings are recorded in, in Pane's data folder.
 const FILE: &str = "settings.json";
 
-/// The record's version; a record of another version is not read.
-const VERSION: u64 = 1;
+/// The record's version as this Pane writes it.
+const VERSION: u64 = 2;
+
+/// Whether this Pane reads a record of `version`: its own, and 1, the
+/// record an older Pane wrote. Only the version number moved with the
+/// Open Pane field's grammar open to the later binding kinds (#125);
+/// a chord's id is still all it holds, so version 1 reads as it is.
+fn reads(version: u64) -> bool {
+    version == VERSION || version == 1
+}
 
 /// The theme the user chose for Pane's windows: follow the operating
 /// system's appearance, or force one of the two palettes.
@@ -348,7 +356,7 @@ impl HostSettings {
         let fields: Map<String, Value> = serde_json::from_str(&text)
             .map_err(|error| format!("{} is invalid: {error}", file.display()))?;
         match fields.get("version").and_then(Value::as_u64) {
-            Some(VERSION) => {}
+            Some(version) if reads(version) => {}
             Some(version) => {
                 return Err(format!(
                     "{} has version {version}, which this Pane does not read",
@@ -816,7 +824,16 @@ mod tests {
 
     #[test]
     fn another_versions_record_is_not_read() {
-        let problem = reading(r#"{ "version": 2, "theme": "light" }"#);
+        // Version 1 still reads (the Open Pane field's first grammar, a
+        // chord's id); version 3, a later Pane's, does not.
+        assert_eq!(
+            reading(r#"{ "version": 1, "theme": "light" }"#).unwrap(),
+            HostSettings {
+                theme: ThemePreference::Light,
+                ..HostSettings::default()
+            }
+        );
+        let problem = reading(r#"{ "version": 3, "theme": "light" }"#);
         assert!(problem.is_err(), "{problem:?}");
         assert!(
             problem

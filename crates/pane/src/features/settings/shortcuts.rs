@@ -56,7 +56,8 @@ use gpui_elements::editable_text::actions::DEFAULT_INPUT_CONTEXT;
 use gpui_elements::editable_text::{EditableTextState, StringStorage, TextChanged, text_input};
 use pane_core::hotkeys::Shortcut;
 use pane_core::{
-    AliasOutcome, HotkeyOutcome, Launcher, ShortcutCatalog, ShortcutCommand, ShortcutGroup,
+    AliasOutcome, HotkeyOutcome, Launcher, Platform, ShortcutCatalog, ShortcutCommand,
+    ShortcutGroup,
 };
 
 use super::{Page, SettingsWindow, search};
@@ -1531,6 +1532,17 @@ fn hotkey_cell(
         .hotkey_inactive
         .as_ref()
         .map(|why| format!("Not active: {why}"));
+    // The route of a binding the system refused and Pane's own keyboard
+    // hook took (Windows, #252): the page says it beside the hotkey, as
+    // the extension list's rows do — the binding works, and behaves
+    // differently (nothing while an elevated application is in front).
+    let route = command
+        .hotkey_inactive
+        .is_none()
+        .then(|| command.hotkey.as_ref())
+        .flatten()
+        .and_then(|shortcut| command.hotkey_route.note_on(shortcut, Platform::current()))
+        .map(|note| format!("Dispatched {note}"));
     // What assistive technology is told after the cell's name: while the
     // recorder listens, why the last capture was refused — as the alias
     // editor's field announces its error — with the reason the hotkey is
@@ -1662,6 +1674,14 @@ fn hotkey_cell(
                 format!("shortcut-hotkey-inactive-{}", command.id),
                 why,
                 theme.warning,
+                theme,
+            ))
+        })
+        .when_some(route, |cell, note| {
+            cell.child(cell_note(
+                format!("shortcut-hotkey-route-{}", command.id),
+                note,
+                theme.text_muted,
                 theme,
             ))
         })

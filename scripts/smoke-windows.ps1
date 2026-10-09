@@ -28,6 +28,8 @@ public static class Win {
     [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
     [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int command);
     [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")] public static extern bool RegisterHotKey(IntPtr h, int id, uint modifiers, uint key);
+    [DllImport("user32.dll")] public static extern bool UnregisterHotKey(IntPtr h, int id);
 }
 "@
 # Screenshots, screen bounds and SetCursorPos then all use physical pixels,
@@ -847,6 +849,43 @@ $shots = "57-disabled", "58-disabled-pressed" | ForEach-Object { Join-Path $OutD
 python "$PSScriptRoot/check_screenshot.py" --same @shots
 if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: the released hotkey still did something" }
 Stop-Pane $process
+
+# A hook-dispatched binding: the smoke holds Ctrl+Alt+J from its own
+# process first, as another application would (RegisterHotKey from this
+# PowerShell thread), so Windows refuses the chord to Pane and Pane's own
+# low-level keyboard hook takes the binding instead (#252, ADR 0039):
+# assigning it to Greeting in Settings says so on the row ("Dispatched
+# through Pane's keyboard hook"), and pressing it with the launcher
+# unfocused opens Greeting exactly as the registered chord does. A data
+# folder of its own.
+$data = Join-Path $OutDir "hook-hotkeys-data"
+if (Test-Path $data) { Remove-Item -Recurse -Force $data }
+$env:PANE_DATA_DIR = $data
+# MOD_NOREPEAT 0x4000 | MOD_CONTROL 0x2 | MOD_ALT 0x1, 'J' 0x4A: an
+# unlikely combination, so the session's own shortcuts are not disturbed.
+if (-not [Win]::RegisterHotKey([IntPtr]::Zero, 0x5A4A, 0x4003, 0x4A)) { throw "the smoke could not hold the chord" }
+$process = Start-Pane "stderr-hook.log" @("--install", "target/guests/packages/sample-settings")
+Send "{ENTER}"; Start-Sleep -Seconds 2   # Install; Greeting is selected
+Open-Extension "Settings sample"
+Press-Named "Hotkey for Greeting:" -Prefix   # the recorder listens
+Send "^%j"
+Wait-For (Join-Path $data "extensions/hotkeys.json") '"ctrl+alt+j"' $true
+Wait-Shown "Dispatched through Pane's keyboard hook" -Prefix
+Capture "77-hook-assigned.png"   # the row says the binding's dispatch route
+Close-Settings   # root search
+Minimize-Pane $process
+Capture "78-hook-unfocused.png"   # evidence only: Pane is not on screen
+# SendKeys injects the keys, as a tool would: the hook recognizes the
+# chord of another tool's injected keys all the same.
+[System.Windows.Forms.SendKeys]::SendWait("^%j"); Start-Sleep -Seconds 3
+Check-Pane-In-Front $process
+Capture "79-hook-opened.png"
+Check "79-hook-opened.png" "selected" 3000   # Greeting's first item, selected
+$shots = "78-hook-unfocused", "79-hook-opened" | ForEach-Object { Join-Path $OutDir "$_.png" }
+python "$PSScriptRoot/check_screenshot.py" --distinct @shots
+if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: the hook-dispatched hotkey opened nothing" }
+Stop-Pane $process
+[void][Win]::UnregisterHotKey([IntPtr]::Zero, 0x5A4A)
 
 # Pausing a broken extension: the settings sample's last item, Crash, crashes
 # on purpose; the third crash within five minutes pauses the package and

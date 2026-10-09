@@ -240,6 +240,10 @@ _Avoid_: File browser, Finder, file manager (Pane only finds and acts on files)
 A key combination the user assigns to an installed command in Pane, which opens that command in Pane's window while any application has focus; Pane keeps it as its own record and registers it with the system only while the command's extension is enabled.
 _Avoid_: Shortcut (any key combination, including Pane's own keys), keybinding, alias
 
+**Keyboard hook**:
+Pane's own `WH_KEYBOARD_LL` low-level keyboard hook on Windows, which recognizes the chords `RegisterHotKey` cannot take — another application has the shortcut, or Windows keeps it — so a refused shortcut is never an error: the binding works while Pane runs, does nothing while an elevated application is in front, and its row says it is dispatched through the hook. Installed only while a binding needs it, and kept alive by a watchdog that reinstalls it when Windows removes it (ADR 0039).
+_Avoid_: Keylogger, global hook, event tap (a different mechanism, needing permission on macOS)
+
 **Alias**:
 A word the user gives an installed command in Pane; typing it in root search lists that command first, and, for a query-taking command, typing it before some text lists a row that sends the text to the command when invoked. Pane keeps it as its own record by command id; a disabled package's commands offer none.
 _Avoid_: Keyword (an author's search term), shortcut, nickname
