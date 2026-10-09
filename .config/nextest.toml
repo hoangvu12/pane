@@ -34,3 +34,10 @@ real-clipboard = { max-threads = 1 }
 [[profile.default.overrides]]
 filter = "binary(~clipboard_adapter)"
 test-group = "real-clipboard"
+
+# The real-input test (#253) replaces the clipboard too, and pastes with
+# real input, so it joins the one-at-a-time group of the real-clipboard
+# tests: each test is a process of its own under nextest.
+[[profile.default.overrides]]
+filter = "test(real_input::)"
+test-group = "real-clipboard"

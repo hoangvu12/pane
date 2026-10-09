@@ -58,6 +58,7 @@ mod preferences;
 mod programs;
 mod quick_slots;
 mod quicklinks;
+mod real_input;
 mod reload;
 mod repositories;
 mod result_actions;
