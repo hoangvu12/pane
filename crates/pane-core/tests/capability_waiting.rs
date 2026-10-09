@@ -426,8 +426,11 @@ fn a_consumer_waits_while_its_provider_waits_for_a_dependency() {
     // The provider requires the operations sample, which its install
     // installs with it.
     let provider = dirs.edited(PROVIDERS[0].0, |manifest| {
-        manifest["dependencies"] =
-            serde_json::from_str(&format!("[{}]", needs("sample-operations"))).unwrap();
+        manifest["dependencies"] = serde_json::from_str(
+            r#"[{ "id": "greeter", "source": "local:../sample-operations",
+                 "operations": [{ "id": "greet", "version": 1 }] }]"#,
+        )
+        .unwrap();
     });
     dirs.sample("sample-operations");
     let launcher = dirs.launcher();
@@ -675,6 +678,7 @@ fn a_use_of_every_provider_never_waits_and_available_reflects_providers() {
         shown(&launcher),
         result("pane-samples:farewell@1 has a provider: Package farewell")
     );
+    launcher.show_root_search();
     assert_eq!(row(&launcher, command).unavailable, None);
 
     // Disabled again: `available` answers none.
