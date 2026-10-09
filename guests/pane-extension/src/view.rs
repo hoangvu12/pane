@@ -405,8 +405,10 @@ impl View for NoDesignedView {
 }
 
 /// The state of one designed view the extension opened, as Pane's resource
-/// holds it: the view, and the listeners of its last two renders.
-pub(crate) struct Open<V: View> {
+/// holds it: the view, and the listeners of its last two renders. The SDK
+/// makes it around the state [`Command::open_designed_view`] answers
+/// with; the resource's one type.
+pub struct Open<V: View> {
     state: RefCell<V>,
     /// The listeners of the last two renders, newest last: the render
     /// number and its listeners by callback id.
@@ -507,14 +509,14 @@ fn write_node(tree: &mut String, node: &Node) -> Result<(), String> {
     match node {
         Node::Column { layout, children } => {
             tree.push_str("{\"type\":\"column\"");
-            write_layout(tree, layout);
+            write_layout(tree, layout)?;
             tree.push_str(",\"children\":[");
             write_nodes(tree, children)?;
             tree.push_str("]}");
         }
         Node::Row { layout, children } => {
             tree.push_str("{\"type\":\"row\"");
-            write_layout(tree, layout);
+            write_layout(tree, layout)?;
             tree.push_str(",\"children\":[");
             write_nodes(tree, children)?;
             tree.push_str("]}");
