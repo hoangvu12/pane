@@ -18,7 +18,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use futures::executor::block_on;
-use pane_core::{ExtensionWait, Launcher, PackageIdentity, Runtime, SavedData, Status, Unavailable};
+use pane_core::{
+    ExtensionWait, Launcher, PackageIdentity, Runtime, SavedData, Status, Unavailable,
+};
 use tempfile::TempDir;
 
 #[path = "support/guests.rs"]
@@ -84,7 +86,11 @@ impl Dirs {
     fn echo_fixture(&self, name: &str, dependencies: &str) -> PathBuf {
         let folder = self.folder(name);
         fs::create_dir_all(&folder).unwrap();
-        fs::copy(guest("operations_fixture.wasm"), folder.join("fixture.wasm")).unwrap();
+        fs::copy(
+            guest("operations_fixture.wasm"),
+            folder.join("fixture.wasm"),
+        )
+        .unwrap();
         let manifest = format!(
             r#"{{
                 "manifestVersion": 1,
@@ -108,7 +114,11 @@ impl Dirs {
     fn capability_fixture(&self, name: &str, commands: &str, members: &str) -> PathBuf {
         let folder = self.folder(name);
         fs::create_dir_all(&folder).unwrap();
-        fs::copy(guest("capabilities_fixture.wasm"), folder.join("fixture.wasm")).unwrap();
+        fs::copy(
+            guest("capabilities_fixture.wasm"),
+            folder.join("fixture.wasm"),
+        )
+        .unwrap();
         let manifest = format!(
             r#"{{
                 "manifestVersion": 1,
@@ -163,7 +173,11 @@ fn uses_greeter() -> String {
 fn caller(dirs: &Dirs, dependencies: &str) -> PathBuf {
     let folder = dirs.folder("caller");
     fs::create_dir_all(&folder).unwrap();
-    fs::copy(guest("sample_operations_js.wasm"), folder.join("caller.wasm")).unwrap();
+    fs::copy(
+        guest("sample_operations_js.wasm"),
+        folder.join("caller.wasm"),
+    )
+    .unwrap();
     let manifest = format!(
         r#"{{
             "manifestVersion": 1,
@@ -195,11 +209,7 @@ fn requirement_of(launcher: &Launcher, identity: &PackageIdentity) -> pane_core:
     let details = launcher
         .extension_details(identity)
         .unwrap_or_else(|| panic!("{identity} is not installed"));
-    assert!(
-        details.requirements.len() < 2,
-        "{:?}",
-        details.requirements
-    );
+    assert!(details.requirements.len() < 2, "{:?}", details.requirements);
     details.requirements.into_iter().next().unwrap()
 }
 
@@ -315,9 +325,12 @@ fn a_package_s_page_lists_each_unmet_requirement_with_the_chain_and_fixes_it() {
     // A fix that no longer applies — what it fixes came back — does
     // nothing: it would not disable the package again.
     block_on(launcher.run_extension_fix(&fix));
-    assert!(launcher.packages().iter().any(|package| {
-        package.identity == dirs.identity("c") && package.enabled
-    }));
+    assert!(
+        launcher
+            .packages()
+            .iter()
+            .any(|package| { package.identity == dirs.identity("c") && package.enabled })
+    );
 }
 
 #[test]
@@ -339,7 +352,10 @@ fn the_fix_row_retries_a_paused_dependency_and_the_dependent_comes_back() {
     let launcher = dirs.launcher();
 
     let requirement = requirement_of(&launcher, &caller);
-    assert_eq!(requirement.title, "Needs Rust operations sample, which is paused");
+    assert_eq!(
+        requirement.title,
+        "Needs Rust operations sample, which is paused"
+    );
     let fix = requirement.fix.expect("the fix row");
     assert_eq!(fix.title, "Retry Rust operations sample");
 
@@ -476,9 +492,11 @@ fn what_a_package_provides_shows_which_provider_serves_and_its_consumers() {
     assert!(of_consumer.provides.is_empty(), "{of_consumer:?}");
 
     // A package that is not installed has no page.
-    assert!(launcher
-        .extension_details(&PackageIdentity::npm("not-installed"))
-        .is_none());
+    assert!(
+        launcher
+            .extension_details(&PackageIdentity::npm("not-installed"))
+            .is_none()
+    );
 }
 
 #[test]
