@@ -180,8 +180,15 @@ fn button_of(node: &Node, label: &str) -> Option<(u32, Option<String>)> {
             .fallback
             .as_deref()
             .and_then(|fallback| button_of(fallback, label))
-            .or_else(|| node.children.iter().find_map(|child| button_of(child, label))),
-        _ => node.children.iter().find_map(|child| button_of(child, label)),
+            .or_else(|| {
+                node.children
+                    .iter()
+                    .find_map(|child| button_of(child, label))
+            }),
+        _ => node
+            .children
+            .iter()
+            .find_map(|child| button_of(child, label)),
     }
 }
 

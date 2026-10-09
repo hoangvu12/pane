@@ -61,15 +61,12 @@ fn open(cx: &mut TestAppContext, theme: &str) -> (Opened, &mut VisualTestContext
             cx,
         )
     });
-    let launcher = Launcher::with_packages(
-        Runtime::start(),
-        Vec::new(),
-        data.path().join("extensions"),
-    );
+    let launcher =
+        Launcher::with_packages(Runtime::start(), Vec::new(), data.path().join("extensions"));
     cx.executor().allow_parking();
     cx.update(pane::bind_keys);
-    let assembled = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../target/guests/packages/sample-view");
+    let assembled =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/guests/packages/sample-view");
     assert!(
         assembled.exists(),
         "{} is missing; run `cargo xtask guests`",
@@ -82,7 +79,9 @@ fn open(cx: &mut TestAppContext, theme: &str) -> (Opened, &mut VisualTestContext
     let (window, cx) = cx.add_window_view(|window, cx| LauncherWindow::new(launcher, window, cx));
     cx.simulate_input("designed view sample");
     cx.simulate_keystrokes("enter");
-    until(&window, cx, |view| matches!(view.screen, Screen::DesignedView(_)));
+    until(&window, cx, |view| {
+        matches!(view.screen, Screen::DesignedView(_))
+    });
     (
         Opened {
             _sources: sources,
@@ -177,9 +176,7 @@ fn view(window: &Entity<LauncherWindow>, cx: &mut VisualTestContext) -> Launcher
 }
 
 #[gpui::test]
-fn the_components_resolve_their_tokens_to_the_theme_in_both_appearances(
-    cx: &mut TestAppContext,
-) {
+fn the_components_resolve_their_tokens_to_the_theme_in_both_appearances(cx: &mut TestAppContext) {
     for (theme, pill, danger) in [
         ("dark", DARK_PILL, DARK_DANGER),
         ("light", LIGHT_PILL, LIGHT_DANGER),
@@ -213,11 +210,7 @@ fn the_components_resolve_their_tokens_to_the_theme_in_both_appearances(
         let mut destructive = gpui::rgb_to_hsla(gpui::rgba(danger));
         destructive.alpha *= DESTRUCTIVE_ALPHA;
         assert!(
-            paints_background_at(
-                cx,
-                reset,
-                gpui::solid_background(destructive)
-            ),
+            paints_background_at(cx, reset, gpui::solid_background(destructive)),
             "{theme}: the destructive button fills with the danger tone"
         );
         let _ = &opened;
@@ -249,9 +242,7 @@ fn the_components_announce_their_roles_and_names(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn real_key_events_press_the_buttons_and_the_window_shows_the_new_tree(
-    cx: &mut TestAppContext,
-) {
+fn real_key_events_press_the_buttons_and_the_window_shows_the_new_tree(cx: &mut TestAppContext) {
     let (opened, cx) = open(cx, "dark");
     let window = opened.window;
 

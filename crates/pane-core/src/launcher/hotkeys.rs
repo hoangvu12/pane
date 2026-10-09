@@ -60,7 +60,7 @@ use crate::generation::EndMark;
 use crate::hotkeys::Shortcut;
 use crate::launch::LaunchSource;
 use crate::launcher::CommandRegistration;
-use crate::packages::{CommandId, CommandMode, InstalledPackage, PackageIdentity};
+use crate::packages::{CommandId, InstalledPackage, PackageIdentity};
 
 /// Each command's hotkey by command id, recorded in `hotkeys.json` as
 /// `{ "version": 1, "hotkeys": { "<command id>": "ctrl+alt+g" } }`.

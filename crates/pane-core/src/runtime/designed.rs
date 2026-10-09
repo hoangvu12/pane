@@ -260,7 +260,7 @@ struct WireNode {
     #[serde(default)]
     requires: Option<u64>,
     #[serde(default)]
-    fallback: Option<WireNode>,
+    fallback: Option<Box<WireNode>>,
     #[serde(default)]
     children: Option<Vec<Value>>,
     #[serde(flatten)]
@@ -284,7 +284,9 @@ fn node(wire: WireNode, depth: usize, nodes: &mut usize) -> Result<Node, ReadErr
     // A node whose `requires` this Pane does not meet is one it does not
     // know: it asks for a later minor version than the one Pane renders,
     // and degrades as an unknown node does.
-    let meets = wire.requires.is_none_or(|required| required <= COMPONENT_SET.1);
+    let meets = wire
+        .requires
+        .is_none_or(|required| required <= COMPONENT_SET.1);
     let unknown = !matches!(wire.kind.as_str(), "column" | "row" | "text" | "button") || !meets;
     let kind = if unknown {
         NodeKind::Unknown(wire.kind.clone())
@@ -309,7 +311,7 @@ fn node(wire: WireNode, depth: usize, nodes: &mut usize) -> Result<Node, ReadErr
         .collect::<Result<Vec<Node>, ReadError>>()?;
     let fallback = wire
         .fallback
-        .map(|fallback| node(fallback, depth + 1, nodes).map(Box::new))
+        .map(|fallback| node(*fallback, depth + 1, nodes).map(Box::new))
         .transpose()?;
     Ok(Node {
         kind,
@@ -413,13 +415,11 @@ fn token<T>(
 /// `{top, right, bottom, left}` naming some of them. `Err` when the tree
 /// gives something that is not one of these.
 fn padding(value: Option<&Value>) -> Result<Padding, String> {
-    let side = |fields: &Map<String, Value>, name: &str| {
-        match fields.get(name) {
-            None | Some(Value::Null) => Ok(None),
-            Some(value) => space_of(value)
-                .map(Some)
-                .ok_or_else(|| format!("its padding's {name} is not a space token")),
-        }
+    let side = |fields: &Map<String, Value>, name: &str| match fields.get(name) {
+        None | Some(Value::Null) => Ok(None),
+        Some(value) => space_of(value)
+            .map(Some)
+            .ok_or_else(|| format!("its padding's {name} is not a space token")),
     };
     match value {
         None | Some(Value::Null) => Ok(Padding::default()),
@@ -639,7 +639,9 @@ mod tests {
         // and with no fallback and no children draws nothing.
         assert!(matches!(&tree.root.kind, NodeKind::Unknown(name) if name == "stack"));
         assert!(matches!(
-            &tree.root.children[0].fallback.map(|fallback| fallback.kind.clone()),
+            &tree.root.children[0]
+                .fallback
+                .map(|fallback| fallback.kind.clone()),
             Some(NodeKind::Text(_))
         ));
         assert!(matches!(
@@ -700,10 +702,12 @@ mod tests {
             "{error}"
         );
         // Text: one node with too much in it.
-        let long = format!(r#"{{"type":"text","text":"{}"}}"#, "a".repeat(MAX_TEXT_CHARS + 1));
+        let long = format!(
+            r#"{{"type":"text","text":"{}"}}"#,
+            "a".repeat(MAX_TEXT_CHARS + 1)
+        );
         assert!(
-            over(&long)
-                .contains(&format!("characters; at most {MAX_TEXT_CHARS} are drawn")),
+            over(&long).contains(&format!("characters; at most {MAX_TEXT_CHARS} are drawn")),
             "{}",
             over(&long)
         );

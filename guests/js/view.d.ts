@@ -117,20 +117,39 @@ export declare function useRef<T>(initial: T): { current: T };
 /** A value computed once, recomputed when `deps` changes. */
 export declare function useMemo<T>(make: () => T, deps: unknown[]): T;
 
-/**
- * The view a command's `openView` answers with: `component` rendered as
- * its tree, its state kept across renders, its listeners called by the
- * events Pane sends. `props`, when given, are passed to the component.
- */
+/** The event Pane sends a designed view: the id of the callback its tree
+ * named, with the sequence number of the render whose tree the user saw
+ * and the key of the node the event was raised on. */
+export interface UiEvent {
+  render: number;
+  key: string;
+  callback: number;
+  payload: string;
+}
+
+/** What a designed view's `render` answers: its tree, and how long Pane
+ * waits before asking again (ignored until timers land). */
+export interface Rendered {
+  tree: string;
+  refreshAfterMs?: number | null;
+}
+
+/** What handling a designed view's event does next: every field is
+ * ignored until the navigation stack lands. */
+export interface Outcome {
+  push: unknown;
+  replace: unknown;
+  pop: string | null;
+}
+
+/** The view a command's `openView` answers with (pane.d.ts's
+ * `DesignedView`): `component` rendered as its tree, its state kept
+ * across renders, its listeners called by the events Pane sends.
+ * `props`, when given, are passed to the component. */
 export declare function createView<Props extends Record<string, unknown>>(
   component: (props: Props) => Children,
   props?: Props,
 ): {
-  render(context: string): Promise<{ tree: string; refreshAfterMs: number | null }>;
-  handleEvent(event: {
-    render: number;
-    key: string;
-    callback: number;
-    payload: string;
-  }): Promise<{ push: unknown; replace: unknown; pop: string | null }>;
+  render(context: string): Promise<Rendered>;
+  handleEvent(event: UiEvent): Promise<Outcome>;
 };

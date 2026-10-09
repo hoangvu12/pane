@@ -42,6 +42,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "designed-fixture"
+version = "0.1.0"
+dependencies = [
+ "dlmalloc",
+ "wit-bindgen",
+]
+
+[[package]]
 name = "dlmalloc"
 version = "0.2.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -444,6 +452,13 @@ version = "0.1.0"
 dependencies = [
  "pane-extension",
  "wasip3",
+]
+
+[[package]]
+name = "sample-view"
+version = "0.1.0"
+dependencies = [
+ "pane-extension",
 ]
 
 [[package]]

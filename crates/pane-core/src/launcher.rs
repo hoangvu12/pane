@@ -75,14 +75,14 @@ use crate::launch::{LaunchRecord, LaunchSource};
 use crate::links::{LinkOpener, NoOpener};
 use crate::operations::Installed;
 use crate::packages::{
-    InstalledPackage, PackageError, PackageIdentity, RetainedData, SavedData, SourcePackage, Store,
-    paused_reason,
+    CommandMode, InstalledPackage, PackageError, PackageIdentity, RetainedData, SavedData,
+    SourcePackage, Store, paused_reason,
 };
 use crate::platform;
 use crate::runtime::{
-    CallError, CustomViewInfo, CustomViewRole, DesignedEvent, DesignedRendered, DesignedTree,
-    FieldKind, FieldValue, Form, Frame, Item, Point, ResultListing, RootAction,
-    RootResult as ComputedResult, Runtime, ScreenForm, View, ViewEvent, ViewId, WeakRuntime,
+    CallError, CustomViewInfo, CustomViewRole, DesignedTree, FieldKind, FieldValue, Form, Frame,
+    Item, Point, ResultListing, RootAction, RootResult as ComputedResult, Runtime, ScreenForm,
+    View, ViewEvent, ViewId, WeakRuntime,
 };
 use crate::search::{self, Keys, Query};
 
@@ -763,7 +763,7 @@ struct State {
     custom_view: Option<OpenCustomView>,
     /// The designed view on screen, if one is open: the command's own
     /// screen, rather than one opened from an item of its list.
-    designed_view: Option<OpenDesignedView>,
+    designed_view: Option<designed_views::OpenDesignedView>,
     /// The open command's items' icons, tooltips and accessories, by item
     /// id (see `looks`).
     looks: looks::Looks,

@@ -29,15 +29,15 @@
 
 use std::collections::HashMap;
 
-use gpui::prelude::FluentBuilder as _;
+use gpui::ColorExt as _;
+use gpui::prelude::*;
 use gpui::{
     AnyElement, App, Context, Div, FocusHandle, Hsla, KeyBinding, Pixels, Role, SharedString,
     actions, div, px,
 };
-use gpui::ColorExt as _;
 use pane_core::{
-    Align, Button as ButtonNode, DesignedTree, DesignedViewSnapshot, Justify, Layout, Node,
-    NodeKind, Space, Text as TextNode, TextLevel, TextStyle, Tone, ViewId,
+    Align, Button as ButtonNode, ButtonTone, DesignedTree, DesignedViewSnapshot, Justify, Layout,
+    Node, NodeKind, Space, Text as TextNode, TextLevel, TextStyle, ViewId,
 };
 
 use crate::app::LauncherWindow;
@@ -75,11 +75,7 @@ impl LauncherWindow {
     /// launcher's screen, and reconciles the button focus handles with the
     /// tree it now shows: a newly opened view takes the keyboard on its
     /// first button, and focus returns to the list when the view closes.
-    pub(crate) fn sync_designed_view(
-        &mut self,
-        window: &mut gpui::Window,
-        cx: &mut Context<Self>,
-    ) {
+    pub(crate) fn sync_designed_view(&mut self, window: &mut gpui::Window, cx: &mut Context<Self>) {
         // The screen alone: the tree changes with each answer, and the
         // shapes of two trees of one view decide which focus handles are
         // kept.
@@ -133,10 +129,9 @@ impl LauncherWindow {
         window: &mut gpui::Window,
         cx: &mut Context<Self>,
     ) {
-        let pending = self.launcher.send_designed_event(
-            callback,
-            if key.is_empty() { None } else { Some(&key) },
-        );
+        let pending = self
+            .launcher
+            .send_designed_event(callback, if key.is_empty() { None } else { Some(&key) });
         self.show_until_done(pending, window, cx);
     }
 
@@ -205,13 +200,11 @@ fn node(
         },
         NodeKind::Column(layout) => {
             let children = children(node, path, focus, theme, cx);
-            named(container(true, layout, children), name.as_deref())
-                .into_any_element()
+            named(container(true, layout, children), name.as_deref()).into_any_element()
         }
         NodeKind::Row(layout) => {
             let children = children(node, path, focus, theme, cx);
-            named(container(false, layout, children), name.as_deref())
-                .into_any_element()
+            named(container(false, layout, children), name.as_deref()).into_any_element()
         }
         NodeKind::Text(text) => {
             named(text_element(text, theme), name.as_deref()).into_any_element()
@@ -427,23 +420,23 @@ fn button_element(
 /// The colors of a button's tone, resolved onto the theme: its fill, its
 /// 1px inner edge (a plain button's ring), and its label's ink. #237's
 /// token layer extracts this mapping with the shared button.
-fn tone(tone: Option<Tone>, theme: &Theme) -> (Hsla, Option<Hsla>, Hsla) {
+fn tone(tone: Option<ButtonTone>, theme: &Theme) -> (Hsla, Option<Hsla>, Hsla) {
     match tone {
         // The plain pill a Settings button draws.
-        None | Some(Tone::Default) => (
+        None | Some(ButtonTone::Default) => (
             theme.results.pill_fill,
             Some(theme.results.pill_edge),
             theme.text_title,
         ),
         // The ghost pill: transparent, its label in the body ink.
-        Some(Tone::Secondary) | Some(Tone::Ghost) => {
+        Some(ButtonTone::Secondary) | Some(ButtonTone::Ghost) => {
             (gpui::transparent_black(), None, theme.text_body)
         }
         // The accent: the accent's fill, its ink on it.
-        Some(Tone::Accent) => (theme.accent, None, theme.accent_ink),
+        Some(ButtonTone::Accent) => (theme.accent, None, theme.accent_ink),
         // The destructive tone: the danger colour, at the fill an icon's
         // danger disc uses.
-        Some(Tone::Destructive) => (
+        Some(ButtonTone::Destructive) => (
             Hsla::opacity(&theme.danger, 0.18),
             Some(theme.danger),
             theme.danger,
@@ -452,12 +445,12 @@ fn tone(tone: Option<Tone>, theme: &Theme) -> (Hsla, Option<Hsla>, Hsla) {
 }
 
 /// What a button of `tone` fills with while the pointer is over it.
-fn hover_fill(tone: Option<Tone>, theme: &Theme) -> Hsla {
+fn hover_fill(tone: Option<ButtonTone>, theme: &Theme) -> Hsla {
     match tone {
-        Some(Tone::Secondary) | Some(Tone::Ghost) => theme.control_hover,
-        Some(Tone::Accent) => Hsla::opacity(&theme.accent, 0.9),
-        Some(Tone::Destructive) => Hsla::opacity(&theme.danger, 0.24),
-        None | Some(Tone::Default) => theme.results.pill_hover,
+        Some(ButtonTone::Secondary) | Some(ButtonTone::Ghost) => theme.control_hover,
+        Some(ButtonTone::Accent) => Hsla::opacity(&theme.accent, 0.9),
+        Some(ButtonTone::Destructive) => Hsla::opacity(&theme.danger, 0.24),
+        None | Some(ButtonTone::Default) => theme.results.pill_hover,
     }
 }
 

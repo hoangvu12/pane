@@ -22,6 +22,7 @@
 /// <reference path="./clipboard.d.ts" />
 
 import type { LaunchRecord } from "pane:extension/commands@0.1.0";
+import type { Outcome, Rendered, UiEvent } from "./view.js";
 
 export type {
   ArgumentValue,
@@ -354,19 +355,14 @@ export interface DesignedView {
    * version of the UI component set Pane supports. Throwing reports an
    * error to the user; the view keeps its last good tree.
    */
-  render(context: string): Promise<{ tree: string; refreshAfterMs?: number | null }>;
+  render(context: string): Promise<Rendered>;
   /**
    * Handle the user's input to the view: `event.callback`, the id the tree
    * named for what was pressed, with the sequence number of the render
    * whose tree the user saw. Pane then calls `render`. Throwing reports an
    * error to the user; the view stays open.
    */
-  handleEvent(event: {
-    render: number;
-    key: string;
-    callback: number;
-    payload: string;
-  }): Promise<void>;
+  handleEvent(event: UiEvent): Promise<Outcome>;
 }
 
 /**

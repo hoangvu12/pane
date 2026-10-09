@@ -68,6 +68,10 @@ pub use deadlines::Limits;
 pub use deadlines::Timers;
 pub use deadlines::{COMPUTE_LIMIT, UNRESPONSIVE_LIMIT, WARN_AFTER};
 pub(crate) use deadlines::{HostCall, Hosted, Watch};
+pub use designed::{
+    Align, Button, COMPONENT_SET, DesignedTree, Justify, Layout, MAX_DEPTH, MAX_NODES,
+    MAX_TREE_BYTES, Node, NodeKind, Padding, Space, Text, TextLevel, TextStyle, Tone as ButtonTone,
+};
 #[cfg(any(test, debug_assertions))]
 #[doc(hidden)]
 pub use faults::Fault;
@@ -86,10 +90,6 @@ pub use tree::{Accessory, AccessoryContent, ItemLook, MAX_ACCESSORIES};
 pub use tree::{
     Action, ActionKind, ActionStyle, ActionSubmenu, Answer, Item, ScreenForm, SubmenuEntries,
     TREE_VERSION, View,
-};
-pub use designed::{
-    Button, COMPONENT_SET, DesignedTree, Justify, Layout, MAX_DEPTH, MAX_NODES, MAX_TEXT_CHARS,
-    MAX_TREE_BYTES, Node, NodeKind, Padding, Space, Text, TextLevel, TextStyle, Tone,
 };
 
 pub(crate) mod bindings {
@@ -1682,10 +1682,7 @@ impl Runtime {
         event: DesignedEvent,
     ) -> impl Future<Output = Result<DesignedRendered, CallError>> + Send + 'static {
         let (reply, response) = oneshot::channel();
-        self.call(
-            Request::DesignedViewEvent { view, event, reply },
-            response,
-        )
+        self.call(Request::DesignedViewEvent { view, event, reply }, response)
     }
 
     /// Closes the designed view `view`: the guest's view is dropped, after
@@ -3979,9 +3976,7 @@ impl Host {
                 let view = instance.bindings.pane_extension_command().view();
                 instance
                     .store
-                    .run_concurrent(async |store| {
-                        view.call_render(store, resource, context).await
-                    })
+                    .run_concurrent(async |store| view.call_render(store, resource, context).await)
                     .await
             })
             .await?;
