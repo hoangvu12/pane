@@ -16,7 +16,7 @@ use std::time::Duration;
 
 use futures::executor::block_on;
 use pane_core::clipboard::{Clock as _, ManualClock, SystemClock};
-use pane_core::{Launcher, PackageIdentity, Runtime, SavedData, Status};
+use pane_core::{Launcher, PackageIdentity, Runtime, SavedData, Screen, Status};
 use tempfile::TempDir;
 
 #[path = "support/platforms.rs"]
@@ -1010,14 +1010,17 @@ impl Dirs {
     }
 
     /// Chooses the sample `provider` as the provider of `GREET`, as
-    /// Settings' dropdown does, waiting for the record.
+    /// Settings' dropdown does, waiting for the record: read back parsed,
+    /// since a Windows path's backslashes are escaped in the JSON.
     fn choose(&self, launcher: &Launcher, provider: &str) {
         let key = self.sample_identity(provider).key();
         let chosen = launcher.choose_provider(GREET, &key).unwrap();
         block_on(chosen).unwrap();
         let recorded = fs::read_to_string(self.choices_file()).unwrap();
-        assert!(
-            recorded.contains(&format!("\"{key}\"")),
+        let read: serde_json::Value = serde_json::from_str(&recorded).unwrap();
+        assert_eq!(
+            read["chosen"][GREET].as_str(),
+            Some(key.as_str()),
             "{provider} is recorded: {recorded}"
         );
     }
@@ -1029,31 +1032,27 @@ fn a_provider_that_is_not_one_is_refused() {
     let dirs = Dirs::new();
     let launcher = dirs.launcher();
     install(&launcher, &dirs.sample(PROVIDERS[1].0));
+    let js = dirs.sample_identity(PROVIDERS[1].0).key();
     let refused = launcher
-        .choose_provider(GREET, &dirs.sample_identity(PROVIDERS[0].0).key())
+        .choose_provider(GREET, "local:/nowhere")
         .err()
         .expect("not a provider of the capability");
     assert_eq!(
         refused,
         format!(
-            "`{}` does not provide `{GREET}`: the installed extensions that provide it are \
-             JavaScript greet provider sample",
-            dirs.sample_identity(PROVIDERS[0].0).key()
+            "`local:/nowhere` does not provide `{GREET}`: the installed extensions that provide \
+             it are JavaScript greet provider sample"
         )
     );
     let refused = launcher
-        .choose_provider(
-            "pane-samples:farewell@1",
-            &dirs.sample_identity(PROVIDERS[1].0).key(),
-        )
+        .choose_provider("pane-samples:farewell@1", &js)
         .err()
         .expect("no one provides the capability");
     assert_eq!(
         refused,
         format!(
-            "`{}` does not provide `pane-samples:farewell@1`: no installed extension provides \
-             `pane-samples:farewell@1`",
-            dirs.sample_identity(PROVIDERS[1].0).key()
+            "`{js}` does not provide `pane-samples:farewell@1`: no installed extension provides \
+             `pane-samples:farewell@1`"
         )
     );
     assert!(!dirs.choices_file().exists());
@@ -1460,6 +1459,11 @@ fn the_choice_is_kept_across_an_update_of_the_chosen_provider() {
     );
 
     // A newer version updates the package by itself, keeping its identity.
+    // The command's screen is left first: the update's outcome shows on
+    // root search.
+    while !matches!(launcher.view().screen, Screen::Root { .. }) {
+        launcher.back();
+    }
     registry.publish(name, "0.2.0", npm_registry::pack(&provider("0.2.0")));
     clock.advance(Duration::from_secs(2));
     assert!(

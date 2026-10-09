@@ -2710,7 +2710,6 @@ fn the_capabilities_dropdown_changes_the_provider_and_the_next_call_answers_from
             .filter(|chosen| chosen == &ts)
     });
     assert_eq!(recorded, ts);
-    drop(opened);
     let restarted = Launcher::with_packages(Runtime::start(), vec![], extensions);
     let capability = &restarted.capabilities()[0];
     assert_eq!(capability.selected, ts);
@@ -2747,7 +2746,9 @@ fn the_capabilities_section_shows_the_fallback_while_the_chosen_provider_cannot_
     assert_eq!(opened.launcher.capabilities()[0].fallback, None);
 
     // The chosen provider disabled: the note says who serves instead, and
-    // the call falls back to that provider.
+    // the call falls back to that provider. The page is refreshed as the
+    // test waits, since a change made outside the window (here, on the
+    // launcher itself) draws when the window next paints.
     futures::executor::block_on(opened.launcher.set_enabled(&ts, false));
     let deadline = Instant::now() + Duration::from_secs(10);
     while settings_cx
@@ -2759,6 +2760,7 @@ fn the_capabilities_section_shows_the_fallback_while_the_chosen_provider_cannot_
             .cx
             .executor()
             .advance_clock(Duration::from_millis(600));
+        settings_cx.update(|window, _| window.refresh());
         settings_cx.run_until_parked();
     }
     assert_eq!(
@@ -2776,6 +2778,7 @@ fn the_capabilities_section_shows_the_fallback_while_the_chosen_provider_cannot_
     // Enabled again: the choice returns to the chosen provider, and the
     // note goes.
     futures::executor::block_on(opened.launcher.set_enabled(&ts, true));
+    assert_eq!(opened.launcher.capabilities()[0].fallback, None);
     let deadline = Instant::now() + Duration::from_secs(10);
     while settings_cx
         .debug_bounds("capability-note-pane-samples:greet@1")
@@ -2786,6 +2789,7 @@ fn the_capabilities_section_shows_the_fallback_while_the_chosen_provider_cannot_
             .cx
             .executor()
             .advance_clock(Duration::from_millis(600));
+        settings_cx.update(|window, _| window.refresh());
         settings_cx.run_until_parked();
     }
     assert_eq!(
