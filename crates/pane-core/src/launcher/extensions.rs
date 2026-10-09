@@ -126,6 +126,14 @@ impl Launcher {
                 retained::rows(&state.retained, &installation.data);
             rows.extend(retained_rows);
             entries.extend(retained_entries);
+            // The update results of the latest pass that recorded, before
+            // the global automatic-update choice, last of all: what the
+            // last pass did is found beside what governs the next one.
+            if !state.update_results.results.is_empty() {
+                let (row, entry) = results_row();
+                rows.push(row);
+                entries.push(entry);
+            }
             // The global automatic-update choice comes last, after every
             // package's rows: the packages are the list, and what governs
             // them all is found beneath them.
@@ -180,9 +188,23 @@ fn opened_by_operation(screen: &Screen) -> bool {
             | Screen::ProgramDetails { .. }
             | Screen::BuildDetails { .. }
             | Screen::ExtensionLog { .. }
+            | Screen::UpdateResults { .. }
             | Screen::RuntimeDetails { .. }
             | Screen::Hotkey { .. }
     )
+}
+
+/// The extension list's row for the update results of the latest pass
+/// that recorded, before the global choice: what the last pass did to
+/// every extension it considered.
+fn results_row() -> (Row, Entry) {
+    let row = Row {
+        id: "update-results".into(),
+        title: "Update Results".into(),
+        subtitle: Some("What the last check updated, skipped or failed".into()),
+        unavailable: None,
+    };
+    (row, Entry::UpdateResults)
 }
 
 /// What one of the extensions' operations does (#168): Settings offers each
@@ -238,6 +260,9 @@ pub enum OperationKind {
     RestartRuntime,
     /// Deletes the data kept for an extension no longer installed.
     DeleteRetainedData,
+    /// Shows the update results of the latest pass that recorded: every
+    /// extension it considered, grouped as Updated, Skipped and Failed.
+    UpdateResults,
 }
 
 impl OperationKind {
@@ -266,6 +291,7 @@ impl OperationKind {
             OperationKind::RuntimeDetails => "Why the Runtime Stopped",
             OperationKind::RestartRuntime => "Restart the Runtime",
             OperationKind::DeleteRetainedData => "Delete Retained Data",
+            OperationKind::UpdateResults => "Update Results",
         }
     }
 }
@@ -466,6 +492,7 @@ fn operation(state: &State, row: Row, entry: &Entry) -> Option<ExtensionOperatio
             None,
             None,
         ),
+        Entry::UpdateResults => (OperationKind::UpdateResults, None, None, None),
         _ => return None,
     };
     Some(ExtensionOperation {

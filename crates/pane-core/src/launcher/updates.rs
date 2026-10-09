@@ -5,8 +5,9 @@
 //! the user asking (US72–US75, T15).
 //!
 //! The updater is a thread of Pane's own, shaped like the scheduler's and
-//! the services thread's, driven by the launcher's clock: it checks
-//! shortly after Pane starts and then every
+//! the services thread's, driven by the launcher's clock: it checks a
+//! minute after Pane starts — never competing with Pane's own start — and
+//! then every
 //! [`CHECK_EVERY`](CHECK_EVERY) hours, in the background, so the window
 //! never waits for the registry or the repository. A check reads only the
 //! metadata — the registry's for an npm package, the repository's
@@ -40,13 +41,21 @@
 //! global choice and a per-package one (rows in the extension list,
 //! recorded in `updates.json` beside `installed.json`). A local folder's
 //! or a development copy's code is never replaced here: only npm and Git
-//! packages update by themselves. A check or an update that fails explains
-//! in the status line, and the installed copy is left as it is.
+//! packages update by themselves. A check or an update that fails is
+//! recorded, and the installed copy is left as it is.
 //!
-//! **Provisional, pending the user's decision:** the cadence (a check
-//! shortly after Pane starts, then every 24 hours, by the launcher's
-//! clock), the wait before the first check (a second, so that the
-//! registry a development build is given is in place first), the retry
+//! **The results.** Each pass records what it came to per package, as
+//! Pane's own record beside `updates.json` (`update-results.json`, see
+//! `update_results`): a package the pass does not look at is skipped with
+//! why, a check or an update that fails is recorded as failed — and a
+//! failure is announced once, the next time the launcher is shown —
+//! while a successful update is quiet, its outcome the record itself,
+//! which the results screen shows. The status-line messages a single
+//! background update once set are replaced by that.
+//!
+//! **Provisional, pending the user's decision:** the cadence (a check a
+//! minute after Pane starts, then every 24 hours, by the launcher's
+//! clock), the retry
 //! every second while a package is in use, and that a disabled or paused
 //! package is not updated (updating a paused one would unpause it, which
 //! is the user's choice to make).
@@ -57,22 +66,23 @@ use std::sync::{Arc, Mutex, MutexGuard, Weak};
 use std::time::Duration;
 
 use super::install::{self, Stopped};
+use super::update_results::Pass;
 use super::{
-    Changing, Entry, Launcher, Mode, PackageIdentity, Row, Screen, State, Status, WeakLauncher,
-    off_thread,
+    Changing, Entry, Launcher, Mode, PackageIdentity, Row, State, Status, WeakLauncher, off_thread,
 };
 use crate::atomic::{Readers, write_atomically};
 use crate::clipboard::Clock;
 use crate::dependencies;
 use crate::git;
 use crate::npm;
-use crate::packages::{InstalledPackage, SourcePackage};
+use crate::packages::{InstalledPackage, PackageError, SourcePackage};
 
-/// How long Pane waits after it starts before the first check, so that a
-/// development build's registry ([`crate::npm::Registry::local`]) is in
-/// place first: the launcher is configured within microseconds, while
-/// this leaves a wide margin. Provisional.
-const FIRST_CHECK_AFTER: Duration = Duration::from_secs(1);
+/// How long Pane waits after it starts before the first check, so that
+/// the check never competes with Pane's own start, as Raycast's does.
+/// Provisional, pending the user's decision on update timing; the
+/// launcher's clock keeps it (see [`Launcher::with_clock`]), so tests
+/// stay fast.
+const FIRST_CHECK_AFTER: Duration = Duration::from_secs(60);
 
 /// How often Pane checks for a newer version of each eligible package:
 /// the launcher's clock tells when. Provisional, like scheduled work's
@@ -223,8 +233,8 @@ impl Drop for UpdateHold {
     }
 }
 
-/// What the updater keeps: the clock it follows, when it next checks, and
-/// one staged update per package.
+/// What the updater keeps: the clock it follows, when it next checks,
+/// one staged update per package, and the pass it is running.
 struct Checking {
     clock: Arc<dyn Clock>,
     /// When the next check is, in clock milliseconds.
@@ -232,6 +242,11 @@ struct Checking {
     /// The updates Pane has downloaded and checked and not applied yet,
     /// each holding its download alive until then.
     staged: Vec<Staged>,
+    /// The pass whose outcomes collect: begun by each check, amended by
+    /// what applies afterwards (an update the boundary deferred applies
+    /// in a later look, still this pass), until the next check begins
+    /// another. What it came to is Pane's record (see `update_results`).
+    pass: Option<Pass>,
 }
 
 /// A new version of one package, downloaded and checked, waiting for the
@@ -261,6 +276,7 @@ impl Updates {
                 clock,
                 next_check,
                 staged: Vec::new(),
+                pass: None,
             }),
             settled: Settled::default(),
             hold: Arc::default(),
@@ -367,25 +383,45 @@ impl Updates {
     }
 
     /// Checks every eligible installed package for a newer version and
-    /// stages what it finds, explaining what failed: a package whose
-    /// metadata cannot be read, and a newer version that cannot be
-    /// downloaded or does not pass the checks an install makes. The
+    /// stages what it finds, collecting what the pass came to per package
+    /// as its results record (see `update_results`): a package whose
+    /// metadata cannot be read fails it, a newer version that cannot be
+    /// downloaded or does not pass the checks an install makes fails it
+    /// too — except one that needs a newer Pane or is not available on
+    /// this system, which is skipped with that reason — and every
+    /// package the pass does not look at is skipped with why. The
     /// installed copy is left as it is either way.
     fn check(&self, launcher: &Launcher) {
         // What to check: the eligible installed npm and Git packages,
         // skipping any something is already happening to (an install, an
         // update, a change the user asked for), which the next check
-        // catches.
-        let candidates: Vec<InstalledPackage> = {
+        // catches. The pass the outcomes collect for, and the rows for
+        // every installed package the pass does not look at, with why it
+        // does not: a pass that records says what became of every
+        // extension it considered.
+        let (candidates, mut pass) = {
             let state = launcher.lock();
-            state
+            let candidates: Vec<InstalledPackage> = state
                 .packages
                 .iter()
                 .filter(|package| {
                     eligible(&state, package) && !state.changing.contains_key(&package.identity)
                 })
                 .cloned()
-                .collect()
+                .collect();
+            let mut pass = Pass::after(&state.update_results);
+            for package in &state.packages {
+                if candidates
+                    .iter()
+                    .any(|candidate| candidate.identity == package.identity)
+                {
+                    continue;
+                }
+                if let Some((identity, title, why)) = skipped_row(launcher, &state, package) {
+                    pass.skipped(identity, title, &why);
+                }
+            }
+            (candidates, pass)
         };
         // A package that is no longer a candidate, or whose installed copy
         // is not at the version or commit its staged update was staged
@@ -400,9 +436,9 @@ impl Updates {
         });
         for package in candidates {
             if let Some(npm) = package.npm.clone() {
-                self.check_npm(launcher, &package, npm);
+                self.check_npm(launcher, &package, npm, &mut pass);
             } else if let Some(git) = package.git.clone() {
-                self.check_git(launcher, &package, git);
+                self.check_git(launcher, &package, git, &mut pass);
             }
         }
         let mut state = self.lock();
@@ -410,22 +446,32 @@ impl Updates {
             .clock
             .now()
             .saturating_add(CHECK_EVERY.as_millis() as u64);
+        drop(state);
+        // The pass it is from now on: what applies afterwards (now, or
+        // once a deferred update's package is quiet) lands in it.
+        self.lock().pass = Some(pass.clone());
+        launcher.note_update_pass(&pass);
         self.settled.checked_pass();
     }
 
     /// Checks one installed npm package for a newer version and stages
-    /// what it finds. The registry's metadata alone says what the latest
-    /// version is: nothing is fetched while that is the version installed.
-    fn check_npm(&self, launcher: &Launcher, package: &InstalledPackage, npm: npm::NpmPackage) {
+    /// what it finds, collecting the outcome in `pass`. The registry's
+    /// metadata alone says what the latest version is: nothing is fetched
+    /// while that is the version installed.
+    fn check_npm(
+        &self,
+        launcher: &Launcher,
+        package: &InstalledPackage,
+        npm: npm::NpmPackage,
+        pass: &mut Pass,
+    ) {
         let registry = self.lock_sources().registry.clone();
         match npm::latest_version(&registry, &npm.name) {
             Err(reason) => {
-                report(
-                    &mut launcher.lock(),
-                    Status::Error(format!(
-                        "{} was not checked for a newer version: {reason}",
-                        package.title()
-                    )),
+                pass.failed(
+                    package.identity.clone(),
+                    package.title(),
+                    &format!("It was not checked for a newer version: {reason}"),
                 );
             }
             Ok(latest) => {
@@ -447,7 +493,8 @@ impl Updates {
                     // No version: the latest, and not pinned by the update.
                     version: None,
                 };
-                if let Some(staged) = self.stage(launcher, install::Request::Npm(spec), package) {
+                let request = install::Request::Npm(spec);
+                if let Some(staged) = self.stage(launcher, request, package, pass) {
                     self.lock().staged.push(staged);
                 }
             }
@@ -455,22 +502,27 @@ impl Updates {
     }
 
     /// Checks one installed Git package for the newer commit of its
-    /// tracked branch and stages what it finds. The repository's reference
-    /// listing alone says what its branch points to now: nothing is
-    /// fetched while that is the commit installed.
-    fn check_git(&self, launcher: &Launcher, package: &InstalledPackage, git: git::InstalledGit) {
+    /// tracked branch and stages what it finds, collecting the outcome in
+    /// `pass`. The repository's reference listing alone says what its
+    /// branch points to now: nothing is fetched while that is the commit
+    /// installed.
+    fn check_git(
+        &self,
+        launcher: &Launcher,
+        package: &InstalledPackage,
+        git: git::InstalledGit,
+        pass: &mut Pass,
+    ) {
         // The repository as the installed copy's record names it, fetched
         // from where it was fetched before; a record Pane cannot read
         // names no repository.
         let spec = match git::GitSpec::parse(&git.url) {
             Ok(spec) => spec,
             Err(reason) => {
-                report(
-                    &mut launcher.lock(),
-                    Status::Error(format!(
-                        "{} was not checked for a newer version: {reason}",
-                        package.title()
-                    )),
+                pass.failed(
+                    package.identity.clone(),
+                    package.title(),
+                    &format!("It was not checked for a newer version: {reason}"),
                 );
                 return;
             }
@@ -480,12 +532,10 @@ impl Updates {
         let asked_as = git.revision.asked_as();
         match git::resolve_reference(&spec.repository, asked_as.as_deref()) {
             Err(reason) => {
-                report(
-                    &mut launcher.lock(),
-                    Status::Error(format!(
-                        "{} was not checked for a newer version: {reason}",
-                        package.title()
-                    )),
+                pass.failed(
+                    package.identity.clone(),
+                    package.title(),
+                    &format!("It was not checked for a newer version: {reason}"),
                 );
             }
             Ok(revision) => {
@@ -509,7 +559,8 @@ impl Updates {
                     reference: asked_as,
                     ..spec
                 };
-                if let Some(staged) = self.stage(launcher, install::Request::Git(spec), package) {
+                let request = install::Request::Git(spec);
+                if let Some(staged) = self.stage(launcher, request, package, pass) {
                     self.lock().staged.push(staged);
                 }
             }
@@ -519,15 +570,18 @@ impl Updates {
     /// Downloads and checks what `request` names — the latest version of
     /// an npm package, or the moved commit of a Git package's tracked
     /// branch — as an install checks a package, working out what it means
-    /// for its dependencies, against the installed copy `installed`: the
-    /// update to stage, or `None` with the status line saying why the
-    /// installed copy stays. Blocks on the network and the checks; runs no
-    /// code of the package.
+    /// for its dependencies, against the installed copy `installed`, and
+    /// collects the outcome in `pass`: the update to stage, or `None`
+    /// with the pass recording why the installed copy stays — a newer
+    /// version that needs a newer Pane or is not available on this system
+    /// skipped with that reason, anything else failed. Blocks on the
+    /// network and the checks; runs no code of the package.
     fn stage(
         &self,
         launcher: &Launcher,
         request: install::Request,
         installed: &InstalledPackage,
+        pass: &mut Pass,
     ) -> Option<Staged> {
         let title = installed.title();
         // The updater's own sources: a WeakLauncher keeps the launcher's
@@ -538,12 +592,26 @@ impl Updates {
         let package = match checked {
             Ok(package) => package,
             Err(reason) => {
-                report(
-                    &mut launcher.lock(),
-                    Status::Error(format!(
-                        "{title} was not updated: {reason}. It keeps running its installed code."
-                    )),
-                );
+                // A newer version this Pane cannot run, or that does not
+                // work on this system, is skipped with that reason:
+                // skipping never looks like a fault. Anything else — the
+                // source could not be reached, the download did not match
+                // its integrity, the revision holds only the source —
+                // failed, and the installed copy keeps running.
+                match &reason {
+                    PackageError::IncompatibleApi(_)
+                    | PackageError::NewerManifest(_)
+                    | PackageError::UnsupportedPlatform(_) => {
+                        pass.refused(installed.identity.clone(), title, &reason.to_string());
+                    }
+                    _ => {
+                        pass.failed(
+                            installed.identity.clone(),
+                            title,
+                            &format!("It was not updated: {reason}"),
+                        );
+                    }
+                }
                 return None;
             }
         };
@@ -567,11 +635,14 @@ impl Updates {
             // The same checks an install makes, with the same words: what
             // the newer version needs is not there.
             let problems: Vec<String> = plan.problems.iter().map(ToString::to_string).collect();
-            let message = format!(
-                "{title} was not updated to {staged_revision}: {}. It keeps running its installed code.",
-                problems.join("; ")
+            pass.failed(
+                installed.identity.clone(),
+                title,
+                &format!(
+                    "It was not updated to {staged_revision}: {}",
+                    problems.join("; ")
+                ),
             );
-            report(&mut launcher.lock(), Status::Error(message));
             return None;
         }
         Some(Staged {
@@ -595,8 +666,25 @@ impl Updates {
         }
     }
 
+    /// Notes what applying one staged update came to — `came` — in the
+    /// pass now running, and records the pass (see
+    /// [`Launcher::note_update_pass`]): the pass's checks ended, but what
+    /// it staged lands in it as it applies, also once a deferred update's
+    /// package grows quiet in a later look.
+    fn note(&self, launcher: &Launcher, came: Came) {
+        let pass = {
+            let mut checking = self.lock();
+            let Some(pass) = checking.pass.as_mut() else {
+                return;
+            };
+            came.add(pass);
+            pass.clone()
+        };
+        launcher.note_update_pass(&pass);
+    }
+
     /// Applies one staged update: `Yes` when it replaced the installed
-    /// copy (or was applied and its failure explained), `Deferred` when
+    /// copy (or was applied and its failure recorded), `Deferred` when
     /// the package is in use or busy, so it is tried again, and `Dropped`
     /// when it is not for the package as it is now.
     fn apply_one(&self, launcher: &Launcher, update: Staged) -> Applied {
@@ -604,6 +692,7 @@ impl Updates {
         // What the update installs, checked as it was staged: the version
         // of an npm package, the commit of a Git one.
         let target = staged_at(&update.package).unwrap_or_default();
+        let from = update.installed.clone();
         let mut claimed;
         {
             let mut state = launcher.lock();
@@ -661,9 +750,12 @@ impl Updates {
         for identity in &claimed {
             state.release(identity);
         }
-        match result {
+        // What applying came to, for the pass's record: said once the
+        // state is unlocked (the record replaces it). Nothing is said on
+        // the status line — the record and, for a failure, the
+        // announcement are the outcome.
+        let came = match result {
             Ok(outcome) => {
-                let message = install::outcome_message(&Mode::Update(identity), &outcome);
                 for dependency in outcome.dependencies {
                     launcher.put_installed(&mut state, dependency);
                 }
@@ -674,18 +766,17 @@ impl Updates {
                     // A command of the replaced copy opened in the moment
                     // between the boundary check and the replacement.
                     launcher.show_root(&mut state, first);
-                    state.view.status = Status::Result(message);
                 } else {
                     // The list and root search show the new version's
                     // commands; another screen keeps its own status.
                     launcher.refresh(&mut state);
-                    if matches!(
-                        state.view.screen,
-                        Screen::Root { .. } | Screen::Extensions { .. }
-                    ) {
-                        state.view.status = Status::Result(message);
-                    }
                 }
+                Some(Came::Updated {
+                    identity: identity.clone(),
+                    title: state.title_of(&identity),
+                    from: revision(&from),
+                    to: revision(&target),
+                })
             }
             // What the update needs changed while it was being applied:
             // the next check plans again.
@@ -693,15 +784,56 @@ impl Updates {
             Err(Stopped::Failed(failure)) => {
                 let message = launcher.install_left_behind(&mut state, &failure);
                 launcher.refresh(&mut state);
-                let title = state.title_of(&identity);
-                report(
-                    &mut state,
-                    Status::Error(format!("{title} was not updated: {message}")),
-                );
+                Some(Came::Failed {
+                    identity: identity.clone(),
+                    title: state.title_of(&identity),
+                    why: format!("It was not updated: {message}"),
+                })
             }
-        }
+        };
         launcher.changed();
+        drop(state);
+        if let Some(came) = came {
+            self.note(launcher, came);
+        }
         Applied::Yes
+    }
+}
+
+/// What applying one staged update came to, for the pass's record: added
+/// to the pass ([`Updates::note`]) once the launcher's state is unlocked.
+enum Came {
+    /// The package was updated, from `from` to `to`.
+    Updated {
+        identity: PackageIdentity,
+        title: String,
+        from: String,
+        to: String,
+    },
+    /// It failed, `why` saying what failed.
+    Failed {
+        identity: PackageIdentity,
+        title: String,
+        why: String,
+    },
+}
+
+impl Came {
+    /// Adds this outcome to the pass now running.
+    fn add(self, pass: &mut Pass) {
+        match self {
+            Came::Updated {
+                identity,
+                title,
+                from,
+                to,
+            } => pass.updated(identity, title, &from, &to),
+            Came::Failed {
+                identity,
+                title,
+                why,
+            } => pass.failed(identity, title, &why),
+        }
     }
 }
 
@@ -722,6 +854,91 @@ fn eligible(state: &State, package: &InstalledPackage) -> bool {
         && !state.paused.is_paused(&package.identity)
         && state.update_controls.automatic
         && !state.update_controls.off.contains(&package.identity.key())
+}
+
+/// The Skipped row for the installed `package`, which the pass does not
+/// look at (the reverse of [`eligible`], with the words the record
+/// keeps): its identity, its title and why the pass did not look.
+/// `None` when the pass looks at it, or has nothing to say of it — a
+/// default extension, which Pane updates from its artifact source, not
+/// from this pass.
+fn skipped_row(
+    launcher: &Launcher,
+    state: &State,
+    package: &InstalledPackage,
+) -> Option<(PackageIdentity, String, String)> {
+    // Something else is being done to it right now: the next check
+    // catches it.
+    if let Some(what) = state.changing.get(&package.identity) {
+        return Some((
+            package.identity.clone(),
+            package.title(),
+            format!("It {}", what.doing()),
+        ));
+    }
+    // From a source this pass does not update: a local folder's or a
+    // development copy's code is never replaced here.
+    if package.npm.is_none() && package.git.is_none() {
+        if package.identity.default_id().is_some() {
+            return None;
+        }
+        return Some((
+            package.identity.clone(),
+            package.title(),
+            if launcher.is_developed(&package.identity) {
+                "It is a development copy".into()
+            } else {
+                "It is a local copy, from a folder".into()
+            },
+        ));
+    }
+    if package.npm.as_ref().is_some_and(|npm| npm.pinned) {
+        return Some((
+            package.identity.clone(),
+            package.title(),
+            "Its version is pinned".into(),
+        ));
+    }
+    if package
+        .git
+        .as_ref()
+        .is_some_and(|git| git.revision.pinned())
+    {
+        return Some((
+            package.identity.clone(),
+            package.title(),
+            "Its revision is pinned".into(),
+        ));
+    }
+    if !package.enabled {
+        return Some((
+            package.identity.clone(),
+            package.title(),
+            "It is disabled".into(),
+        ));
+    }
+    if state.paused.is_paused(&package.identity) {
+        return Some((
+            package.identity.clone(),
+            package.title(),
+            "It is paused after an error".into(),
+        ));
+    }
+    if !state.update_controls.automatic {
+        return Some((
+            package.identity.clone(),
+            package.title(),
+            "Automatic updates of extensions are off".into(),
+        ));
+    }
+    if state.update_controls.off.contains(&package.identity.key()) {
+        return Some((
+            package.identity.clone(),
+            package.title(),
+            "Automatic updates of it are off".into(),
+        ));
+    }
+    None
 }
 
 /// What marks the revision `package` is installed at: the version of an
@@ -780,15 +997,13 @@ fn quiet(launcher: &Launcher, state: &State, package: &InstalledPackage) -> bool
     }
 }
 
-/// Shows `status` where a background update's outcome belongs: the status
-/// line of root search or the extension list. Another screen keeps its
-/// own status, whatever the user is doing there.
-fn report(state: &mut State, status: Status) {
-    if matches!(
-        state.view.screen,
-        Screen::Root { .. } | Screen::Extensions { .. }
-    ) {
-        state.view.status = status;
+/// What an Updated row says for the revision `at`: an npm version as it
+/// is, a Git commit id as people read it, its first 12 digits.
+fn revision(at: &str) -> String {
+    if at.len() == 40 && at.chars().all(|c| c.is_ascii_hexdigit()) {
+        at[..12].to_owned()
+    } else {
+        at.to_owned()
     }
 }
 

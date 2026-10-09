@@ -40,7 +40,10 @@ use std::time::{Duration, Instant};
 use futures::executor::block_on;
 use pane_core::clipboard::{Clock as _, ManualClock, SystemClock};
 use pane_core::npm::Registry as NpmRegistry;
-use pane_core::{Launcher, PackageIdentity, Runtime, Screen, Status};
+use pane_core::{
+    Launcher, OperationKind, PackageIdentity, Runtime, Screen, SettingsTarget, Status, ToastStyle,
+    WindowPresence,
+};
 use tempfile::TempDir;
 
 #[path = "support/feedback.rs"]
@@ -131,18 +134,11 @@ impl Dirs {
 
     /// A launcher on this data folder downloading from the local registry,
     /// whose checks the test's clock moves along: advancing it past a
-    /// second brings the first check, and past a day the next one.
+    /// minute brings the first check, and past a day the next one.
     fn launcher(&self) -> Launcher {
         Launcher::with_packages(Ok(self.runtime.clone()), vec![], self.packages_dir())
             .with_npm_registry(NpmRegistry::local(self.registry.url()).unwrap())
             .with_clock(self.clock.clone())
-    }
-
-    /// A launcher on the system's clock, whose first check comes by
-    /// itself about a second after it starts, as Pane's does at its start.
-    fn launcher_by_the_system_clock(&self) -> Launcher {
-        Launcher::with_packages(Ok(self.runtime.clone()), vec![], self.packages_dir())
-            .with_npm_registry(NpmRegistry::local(self.registry.url()).unwrap())
     }
 
     /// Publishes the sample at `version`, tagged latest, asking for the
@@ -230,10 +226,11 @@ impl Dirs {
     }
 
     /// Asks the launcher for a check: the clock moves past when the next
-    /// one is due. Waits until the check completed and whatever it staged
-    /// was applied or deferred.
+    /// one is due — the first check comes a minute after Pane starts.
+    /// Waits until the check completed and whatever it staged was
+    /// applied or deferred.
     fn check(&self, launcher: &Launcher) {
-        self.clock.advance(Duration::from_secs(2));
+        self.clock.advance(Duration::from_secs(62));
         assert!(
             launcher.wait_for_updates(Duration::from_secs(30)),
             "the updater did not settle"
@@ -396,6 +393,25 @@ fn error_of(launcher: &Launcher) -> String {
     }
 }
 
+/// A Git commit id as the update results say it: its first 12 digits.
+fn short_commit(commit: &str) -> String {
+    commit[..commit.len().min(12)].to_owned()
+}
+
+/// The settings sample's files as a package named `name` at `version`
+/// publishes them: the `package.json` renamed to match the name the
+/// registry holds, so the tarball holds the package asked for.
+fn named_files(name: &str, version: &str) -> Vec<(&'static str, Vec<u8>)> {
+    let mut files = settings_files(version, "0.1", "");
+    for (path, contents) in &mut files {
+        if *path == "package.json" {
+            let package = format!("{{ \"name\": \"{name}\", \"version\": \"{version}\" }}");
+            *contents = package.into_bytes();
+        }
+    }
+    files
+}
+
 /// Waits until `what` holds, asserting it did within `limit`; `what`'s
 /// name says what it was in the panic.
 fn wait_until(what: &str, limit: Duration, mut check: impl FnMut() -> bool) {
@@ -464,10 +480,13 @@ fn a_newer_version_updates_the_package_by_itself_keeping_its_data() {
     dirs.publish("0.2.0", "0.1");
     dirs.check(&launcher);
 
-    assert_eq!(
-        launcher.view().status,
-        Status::Result("Updated Settings from npm to 0.2.0".into())
-    );
+    // The update is recorded as its outcome, and the status line stays
+    // at rest: a successful background update is quiet.
+    let recorded = launcher.update_results();
+    assert_eq!(recorded.updated.len(), 1);
+    assert_eq!(recorded.updated[0].title, "Settings from npm");
+    assert_eq!(recorded.updated[0].detail, "0.1.0 → 0.2.0");
+    assert_eq!(launcher.view().status, Status::Idle);
     assert_eq!(dirs.installed_version(), "0.2.0");
     assert_eq!(dirs.record().get("pinned"), None);
     // The old code's generation ended: its instance is gone.
@@ -506,10 +525,6 @@ fn a_command_that_is_running_finishes_before_the_update_replaces_it() {
     // The update is staged and deferred: the installed copy is unchanged,
     // the user was not interrupted and the command is still running.
     assert_eq!(dirs.installed_version(), "0.1.0");
-    assert_ne!(
-        launcher.view().status,
-        Status::Result("Updated Settings from npm to 0.2.0".into())
-    );
     assert_eq!(dirs.slow_save(), Some("started"));
 
     // The running command finishes: nothing replaced it mid-command.
@@ -525,7 +540,7 @@ fn a_command_that_is_running_finishes_before_the_update_replaces_it() {
     wait_until(
         "the deferred update applied",
         Duration::from_secs(30),
-        || launcher.view().status == Status::Result("Updated Settings from npm to 0.2.0".into()),
+        || dirs.installed_version() == "0.2.0" && launcher.update_results().updated.len() == 1,
     );
     assert_eq!(dirs.installed_version(), "0.2.0");
     // What the command saved is kept.
@@ -544,11 +559,13 @@ fn a_pinned_package_is_never_updated_automatically() {
     dirs.publish("0.2.0", "0.1");
     dirs.check(&launcher);
 
-    // Not even asked about: a pinned version is not a candidate. The
-    // status line still says what happened before, not that anything was
+    // Not even asked about: a pinned version is not a candidate. Nothing
+    // is recorded either — the pass found nothing new — and the status
+    // line still says what happened before, not that anything was
     // updated.
     assert_eq!(dirs.installed_version(), "0.1.0");
     assert_eq!(dirs.registry.requests().len(), asked);
+    assert!(launcher.update_results().is_empty());
     assert_eq!(
         launcher.view().status,
         Status::Result("Installed Settings from npm".into())
@@ -623,21 +640,24 @@ fn an_incompatible_new_version_is_refused_with_its_explanation() {
     let launcher = dirs.launcher();
     dirs.install(&launcher, "0.1.0");
 
-    // The new version needs an API this Pane does not provide.
+    // The new version needs an API this Pane does not provide: skipped
+    // with that reason, so skipping never looks like a fault — nothing
+    // failed, and the record holds the row under Skipped.
     dirs.publish("0.2.0", "0.2");
     dirs.check(&launcher);
 
-    let error = error_of(&launcher);
+    let recorded = launcher.update_results();
+    assert!(recorded.updated.is_empty() && recorded.failed.is_empty());
+    let detail = &recorded.skipped[0].detail;
     assert!(
-        error.starts_with(
-            "Settings from npm was not updated: Incompatible package: it needs Pane extension \
-             API 0.2, but this Pane provides 0.1."
+        detail.starts_with(
+            "Incompatible package: it needs Pane extension API 0.2, but this Pane provides 0.1."
         ),
-        "{error}"
+        "{detail}"
     );
     assert!(
-        error.contains("It keeps running its installed code."),
-        "{error}"
+        detail.ends_with("It keeps running its installed code."),
+        "{detail}"
     );
     assert_eq!(dirs.installed_version(), "0.1.0");
     // The installed copy still runs.
@@ -661,47 +681,61 @@ fn a_new_version_whose_dependency_cannot_be_installed_is_refused() {
     );
     dirs.check(&launcher);
 
-    let error = error_of(&launcher);
+    let recorded = launcher.update_results();
+    assert_eq!(recorded.failed.len(), 1);
+    let detail = &recorded.failed[0].detail;
     assert!(
-        error.starts_with("Settings from npm was not updated to 0.2.0: "),
-        "{error}"
+        detail.starts_with("It was not updated to 0.2.0: "),
+        "{detail}"
     );
     assert!(
-        error.contains("npm package nobody was not found in the registry"),
-        "{error}"
+        detail.contains("npm package nobody was not found in the registry"),
+        "{detail}"
     );
     assert!(
-        error.contains("It keeps running its installed code."),
-        "{error}"
+        detail.ends_with("It keeps running its installed code."),
+        "{detail}"
     );
     assert_eq!(dirs.installed_version(), "0.1.0");
 }
 
 #[test]
-fn an_unreachable_registry_is_explained_and_leaves_the_installed_copy_alone() {
+fn an_unreachable_registry_is_recorded_and_leaves_the_installed_copy_alone() {
     let dirs = Dirs::new();
     let launcher = dirs.launcher();
     dirs.install(&launcher, "0.1.0");
     drop(launcher);
 
-    // A registry that refuses connections, as one that is down does.
+    // A registry that refuses connections, as one that is down does. The
+    // launcher is hidden while the pass runs, so the failure is announced
+    // only when it is next shown (the announcement test).
     let closed = unreachable::ClosedPort::new();
     let url = format!("{}/", closed.url());
     let launcher = Launcher::with_packages(Ok(dirs.runtime.clone()), vec![], dirs.packages_dir())
         .with_npm_registry(NpmRegistry::local(&url).unwrap())
         .with_clock(dirs.clock.clone());
+    launcher.set_window_presence(WindowPresence::Hidden);
     dirs.check(&launcher);
 
-    let error = error_of(&launcher);
+    let recorded = launcher.update_results();
+    assert_eq!(recorded.failed.len(), 1);
+    let detail = &recorded.failed[0].detail;
     assert!(
-        error.starts_with(&format!(
-            "Settings from npm was not checked for a newer version: Could not reach the npm \
+        detail.starts_with(&format!(
+            "It was not checked for a newer version: Could not reach the npm \
              registry {url} for {NAME}:"
         )),
-        "{error}"
+        "{detail}"
+    );
+    assert!(
+        detail.ends_with("It keeps running its installed code."),
+        "{detail}"
     );
     assert_eq!(dirs.installed_version(), "0.1.0");
-    // The installed copy still runs.
+    // Nothing is announced while the launcher is hidden.
+    assert_eq!(launcher.toast(), None);
+    // The installed copy still runs, shown again as its user is.
+    launcher.set_window_presence(WindowPresence::Shown);
     assert_eq!(
         run(&launcher, "Use a casual greeting"),
         Status::Result("Saved the casual greeting".into())
@@ -724,17 +758,15 @@ fn the_check_repeats_on_its_cadence() {
     // A newer version is published; a day passes on the clock, and the
     // next check finds it.
     dirs.publish("0.2.0", "0.1");
-    dirs.clock.advance(Duration::from_secs(24 * 3600 + 2));
+    dirs.clock.advance(Duration::from_secs(24 * 3600 + 10));
     assert!(
         launcher.wait_for_updates(Duration::from_secs(30)),
         "the updater did not settle"
     );
 
     assert_eq!(dirs.installed_version(), "0.2.0");
-    assert_eq!(
-        launcher.view().status,
-        Status::Result("Updated Settings from npm to 0.2.0".into())
-    );
+    assert_eq!(launcher.update_results().updated.len(), 1);
+    assert_eq!(launcher.update_results().updated[0].detail, "0.1.0 → 0.2.0");
 }
 
 #[test]
@@ -761,19 +793,21 @@ fn after_a_restart_the_first_check_updates_the_package() {
     drop(launcher);
 
     dirs.publish("0.2.0", "0.1");
-    // A new Pane, by the system's clock: its first check comes about a
-    // second after it starts, by itself.
-    let launcher = dirs.launcher_by_the_system_clock();
+    // A new Pane, on the same data: its first check comes a minute after
+    // it starts, by the clock it follows, and updates the package —
+    // quietly, as a successful background update is.
+    let launcher = dirs.launcher();
+    dirs.clock.advance(Duration::from_secs(62));
     assert!(
         launcher.wait_for_updates(Duration::from_secs(30)),
         "the updater did not settle"
     );
 
     assert_eq!(dirs.installed_version(), "0.2.0");
-    assert_eq!(
-        launcher.view().status,
-        Status::Result("Updated Settings from npm to 0.2.0".into())
-    );
+    assert_eq!(launcher.view().status, Status::Idle);
+    let recorded = launcher.update_results();
+    assert_eq!(recorded.updated.len(), 1);
+    assert_eq!(recorded.updated[0].detail, "0.1.0 → 0.2.0");
 }
 
 #[test]
@@ -860,7 +894,7 @@ fn an_action_asked_while_the_update_applies_is_refused_not_stopped() {
     // the update once it has claimed the package, before the replacement
     // is written, asks its things inside the claim, and lets it go on.
     let hold = launcher.hold_update_applies();
-    dirs.clock.advance(Duration::from_secs(2));
+    dirs.clock.advance(Duration::from_secs(62));
     let component = component_of(&launcher);
     {
         let deadline = Instant::now() + Duration::from_secs(120);
@@ -918,12 +952,13 @@ fn a_new_version_that_fails_to_start_is_not_rolled_back() {
     dirs.publish_component("0.2.0", fs::read(guest("failing_start.wasm")).unwrap());
     dirs.check(&launcher);
 
-    // The update applied: the record shows the NEW version — the earlier
-    // code is not restored — and the saved setting is kept.
-    assert_eq!(
-        launcher.view().status,
-        Status::Result("Updated Settings from npm to 0.2.0".into())
-    );
+    // The update applied and is recorded: the row shows the old and the
+    // new version — the earlier code is not restored — and the saved
+    // setting is kept.
+    assert_eq!(launcher.view().status, Status::Idle);
+    let recorded = launcher.update_results();
+    assert_eq!(recorded.updated.len(), 1);
+    assert_eq!(recorded.updated[0].detail, "0.1.0 → 0.2.0");
     assert_eq!(dirs.installed_version(), "0.2.0");
     assert!(dirs.settings().contains("casual"));
 
@@ -994,16 +1029,22 @@ fn a_moved_tracked_branch_updates_the_package_by_itself() {
 
     // The update applied by itself: the record keeps the identity, the
     // tracked branch and the pin, at the branch's new commit, and the
-    // status line says what happened.
-    assert_eq!(
-        launcher.view().status,
-        Status::Result("Updated Greeter from Git to 0.2.0".into())
-    );
+    // row says the old and the new commit.
     let record = dirs.git_record("greeter");
     assert_eq!(record["git"], dirs.git_identity("greeter").as_str());
     assert_eq!(record["gitRef"], "refs/heads/release");
     assert_eq!(record["gitCommit"], moved.as_str());
     assert_eq!(record.get("pinned"), None);
+    let recorded = launcher.update_results();
+    assert_eq!(recorded.updated.len(), 1);
+    assert_eq!(
+        recorded.updated[0].detail,
+        format!(
+            "{} → {}",
+            short_commit(&greeter.release),
+            short_commit(&moved)
+        )
+    );
     dirs.wait_for_no_downloads();
 
     // The new copy runs, and a check that finds the branch at its new
@@ -1102,15 +1143,14 @@ fn a_tracked_branch_now_holding_only_the_source_is_refused() {
     greeter.move_release_to_source();
     dirs.check(&launcher);
 
-    let status = launcher.view().status.clone();
-    let Status::Error(explanation) = &status else {
-        panic!("not an error: {status:?}")
-    };
+    let recorded = launcher.update_results();
+    assert_eq!(recorded.failed.len(), 1);
+    let detail = &recorded.failed[0].detail;
     assert!(
-        explanation.starts_with("Greeter from Git was not updated: Branch release (commit ")
-            && explanation.contains("holds only the source of")
-            && explanation.ends_with("It keeps running its installed code."),
-        "{explanation}"
+        detail.starts_with("It was not updated: Branch release (commit ")
+            && detail.contains("holds only the source of")
+            && detail.ends_with("It keeps running its installed code."),
+        "{detail}"
     );
     assert_eq!(dirs.git_commit("greeter"), greeter.release);
     assert_eq!(
@@ -1118,4 +1158,234 @@ fn a_tracked_branch_now_holding_only_the_source_is_refused() {
         Status::Result(GIT_HELLO.into())
     );
     dirs.wait_for_no_downloads();
+}
+
+/// The npm name of the second package the group test installs, pinned: a
+/// package the pass does not look at, whatever the registry holds.
+const PINNED: &str = "@pane-tests/pinned";
+
+#[test]
+fn a_pass_records_what_it_updated_skipped_and_failed_in_order() {
+    let dirs = Dirs::new();
+    let launcher = dirs.launcher();
+    // An unpinned npm package: the pass updates it.
+    dirs.install(&launcher, "0.1.0");
+    // A pinned npm package: the pass does not look at it. Its tarball's
+    // `package.json` names it, as the registry's does.
+    dirs.registry
+        .publish(PINNED, "0.1.0", pack(&named_files(PINNED, "0.1.0")));
+    block_on(launcher.install_npm(&format!("{PINNED}@0.1.0")));
+    // A local folder package: a local copy, never replaced by a pass.
+    let sources = tempfile::tempdir().unwrap();
+    let folder = local_package(sources.path());
+    block_on(launcher.install_package(&folder));
+    // A Git package whose tracked branch moved to a revision holding only
+    // the source: the pass fails it.
+    let greeter = dirs.git_repository("greeter");
+    block_on(launcher.install_git(&format!("{}@release", greeter.url)));
+    to_root(&launcher);
+
+    dirs.publish("0.2.0", "0.1");
+    greeter.move_release_to_source();
+    dirs.check(&launcher);
+
+    // The record: one Updated row, two Skipped with their reasons, one
+    // Failed with its explanation, in that order (the view hides the
+    // empty groups, and lists these in the groups' order).
+    let recorded = launcher.update_results();
+    assert_eq!(recorded.updated.len(), 1);
+    assert_eq!(recorded.updated[0].title, "Settings from npm");
+    assert_eq!(recorded.updated[0].detail, "0.1.0 → 0.2.0");
+    assert_eq!(recorded.skipped.len(), 2);
+    let skipped = |key: String| {
+        recorded
+            .skipped
+            .iter()
+            .find(|row| row.identity.key() == key)
+            .unwrap_or_else(|| panic!("no row for {key}"))
+    };
+    assert_eq!(
+        skipped(PackageIdentity::npm(PINNED).key()).detail,
+        "Its version is pinned"
+    );
+    assert_eq!(
+        skipped(PackageIdentity::local(&folder).unwrap().key()).detail,
+        "It is a local copy, from a folder"
+    );
+    assert_eq!(recorded.failed.len(), 1);
+    let detail = &recorded.failed[0].detail;
+    assert!(
+        detail.starts_with("It was not updated: Branch release (commit ")
+            && detail.ends_with("It keeps running its installed code."),
+        "{detail}"
+    );
+    // The updated package really is, and the others are as they were.
+    assert_eq!(dirs.installed_version(), "0.2.0");
+    assert_eq!(dirs.git_commit("greeter"), greeter.release);
+}
+
+#[test]
+fn the_record_persists_across_a_restart_and_a_quiet_pass_keeps_it() {
+    let dirs = Dirs::new();
+    let launcher = dirs.launcher();
+    dirs.install(&launcher, "0.1.0");
+    let sources = tempfile::tempdir().unwrap();
+    let folder = local_package(sources.path());
+    block_on(launcher.install_package(&folder));
+
+    dirs.publish("0.2.0", "0.1");
+    dirs.check(&launcher);
+    let recorded = launcher.update_results();
+    assert_eq!(recorded.updated.len(), 1);
+    assert_eq!(recorded.skipped.len(), 1);
+    drop(launcher);
+
+    // A new Pane on the same data: the record is read again, before any
+    // check of its own has run.
+    let launcher = dirs.launcher();
+    assert_eq!(launcher.update_results(), recorded);
+
+    // Its first check finds nothing new — everything is up to date — and
+    // a pass that found nothing new does not replace the record.
+    dirs.check(&launcher);
+    assert_eq!(launcher.update_results(), recorded, "the record stays");
+}
+
+#[test]
+fn a_failed_pass_is_announced_once_the_next_time_the_launcher_is_shown() {
+    let dirs = Dirs::new();
+    let launcher = dirs.launcher();
+    dirs.install(&launcher, "0.1.0");
+    drop(launcher);
+
+    // A registry that refuses connections, as one that is down does. The
+    // launcher is hidden while the pass runs: the failure waits for the
+    // next time the launcher is shown.
+    let closed = unreachable::ClosedPort::new();
+    let url = format!("{}/", closed.url());
+    let launcher = Launcher::with_packages(Ok(dirs.runtime.clone()), vec![], dirs.packages_dir())
+        .with_npm_registry(NpmRegistry::local(&url).unwrap())
+        .with_clock(dirs.clock.clone());
+    launcher.set_window_presence(WindowPresence::Hidden);
+    dirs.check(&launcher);
+    assert_eq!(dirs.installed_version(), "0.1.0");
+    assert_eq!(launcher.toast(), None, "nothing announced while hidden");
+
+    // Shown: the failure is announced, once, with View Details.
+    launcher.set_window_presence(WindowPresence::Shown);
+    let toast = launcher.toast().expect("the failure is announced");
+    assert_eq!(toast.toast.style, ToastStyle::Failure);
+    assert_eq!(toast.toast.title, "1 extension update failed");
+    assert_eq!(
+        toast
+            .toast
+            .primary
+            .as_ref()
+            .map(|action| action.title.as_str()),
+        Some("View Details")
+    );
+
+    // The toast's time runs out, and showing the launcher again says
+    // nothing more for the same failure.
+    launcher.toast_left(toast.id, toast.revision);
+    launcher.set_window_presence(WindowPresence::Hidden);
+    launcher.set_window_presence(WindowPresence::Shown);
+    assert_eq!(launcher.toast(), None, "not repeated for the same failure");
+
+    // A day passes and the next pass fails again, hidden: a new failing
+    // pass re-arms the announcement.
+    launcher.set_window_presence(WindowPresence::Hidden);
+    dirs.clock.advance(Duration::from_secs(24 * 3600 + 10));
+    assert!(
+        launcher.wait_for_updates(Duration::from_secs(30)),
+        "the updater did not settle"
+    );
+    assert_eq!(launcher.toast(), None, "hidden: nothing announced yet");
+    launcher.set_window_presence(WindowPresence::Shown);
+    let again = launcher.toast().expect("the new failure is announced");
+    assert_ne!(again.id, toast.id, "another toast");
+    assert_eq!(again.toast.title, "1 extension update failed");
+}
+
+#[test]
+fn the_first_check_comes_a_minute_after_pane_starts() {
+    let dirs = Dirs::new();
+    let launcher = dirs.launcher();
+    dirs.install(&launcher, "0.1.0");
+    dirs.publish("0.2.0", "0.1");
+    let asked = dirs.registry.requests().len();
+
+    // Before the minute is up, nothing is checked: no request is made and
+    // the installed copy stays.
+    dirs.clock.advance(Duration::from_secs(59));
+    thread::sleep(Duration::from_millis(500));
+    assert_eq!(
+        dirs.registry.requests().len(),
+        asked,
+        "nothing checked before a minute"
+    );
+    assert_eq!(dirs.installed_version(), "0.1.0");
+
+    // Past the minute, the first check runs and applies what it finds.
+    dirs.clock.advance(Duration::from_secs(3));
+    assert!(
+        launcher.wait_for_updates(Duration::from_secs(30)),
+        "the updater did not settle"
+    );
+    assert_eq!(dirs.installed_version(), "0.2.0");
+    assert_eq!(launcher.update_results().updated.len(), 1);
+}
+
+#[test]
+fn the_update_results_screen_shows_the_groups_and_settings_opens_it() {
+    let dirs = Dirs::new();
+    let launcher = dirs.launcher();
+    dirs.install(&launcher, "0.1.0");
+    dirs.publish("0.2.0", "0.1");
+    dirs.check(&launcher);
+
+    // The extension list offers the record as an operation of the
+    // launcher's, which Settings runs without moving the user off their
+    // screen; the row is there once anything is recorded.
+    manage(&launcher);
+    assert!(
+        titles(&launcher)
+            .iter()
+            .any(|title| title == "Update Results")
+    );
+    let operation = launcher
+        .extension_operations()
+        .into_iter()
+        .find(|operation| operation.kind == OperationKind::UpdateResults)
+        .expect("the operation is offered");
+    assert_eq!(operation.owner, None);
+    block_on(launcher.run_extension_operation(&operation));
+
+    // The screen: its rows one per result, each opening its extension's
+    // page in Settings, which the window does with the selected row.
+    let view = launcher.view();
+    assert!(matches!(view.screen, Screen::UpdateResults { query } if query.is_empty()));
+    assert_eq!(view.title, "Update Results");
+    assert_eq!(view.rows.len(), 1);
+    assert_eq!(view.rows[0].title, "Settings from npm");
+    assert_eq!(view.rows[0].subtitle.as_deref(), Some("0.1.0 → 0.2.0"));
+    assert!(matches!(
+        launcher.selected_settings_target(),
+        Some(SettingsTarget::Extension(_))
+    ));
+
+    // The search field filters the rows, and the selection follows what
+    // is listed.
+    block_on(launcher.set_query("settings"));
+    assert_eq!(launcher.view().rows.len(), 1);
+    assert_eq!(launcher.view().selected, Some(0));
+    block_on(launcher.set_query("nowhere"));
+    assert_eq!(launcher.view().rows.len(), 0);
+    assert_eq!(launcher.view().selected, None);
+    block_on(launcher.set_query(""));
+    assert_eq!(launcher.view().rows.len(), 1);
+
+    // Back returns to the extension list the flow was entered from.
+    launcher.back();
+    assert!(matches!(launcher.view().screen, Screen::Extensions { .. }));
 }

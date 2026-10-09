@@ -140,7 +140,7 @@ folder on this computer.
 
 An eligible Git package updates by itself, as [an npm package
 does](npm.md#updating-by-itself) (#50): the same updater thread, on the
-same cadence (a second after Pane starts, then every 24 hours, by the
+same cadence (a minute after Pane starts, then every 24 hours, by the
 launcher's clock) and under the same controls (the global row in the
 extension list and a per-package one, in `updates.json`), applying at the
 same safe activation boundary — never during a command of the package
@@ -148,9 +148,9 @@ the user asked for that has not answered, nor while one of its screens is
 on display, retrying every second until the package is quiet — and
 applying as the preview's Update row does: the identity, saved data,
 disabled state, hotkeys and aliases are kept, the old generation ends,
-managed background work restarts with the new code, and the outcome says
-so in the status line of root search or the extension list ("Updated
-Greeter from Git to 0.2.0").
+managed background work restarts with the new code, and the outcome is
+the pass's update results, a quiet row with the old and the new commit
+("1a2b3c4d5e6f → 6f5e4d3c2b1a").
 
 What differs is what a check reads and what it fetches. A check of a
 tracked package asks the repository for its reference listing alone —
@@ -160,10 +160,11 @@ commit installed. When it has moved, the new commit is fetched (with
 `deepen 1`, as an install fetches it) and checked exactly as an install
 checks a package; a check or an update that fails — the repository gone,
 the branch deleted, the moved-to revision source-only, its manifest or
-API or components or helpers no longer passing — explains in the status
-line ("Greeter from Git was not updated: Branch release (commit …) of the
+API or components or helpers no longer passing — is a Failed row in the
+update results ("It was not updated: Branch release (commit …) of the
 Git repository … holds only the source of …; It keeps running its
-installed code") and leaves the installed copy as it is.
+installed code"), announced once the next time the launcher is shown,
+and leaves the installed copy as it is.
 
 **Which packages update** (as [npm's](npm.md#which-packages-update)):
 an installed Git package that is tracked — installed from the default

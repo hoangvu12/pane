@@ -46,7 +46,7 @@ const PACKAGES_DIR: &str = "packages";
 /// The identity of an installed package, derived from its source and
 /// independent of its display title. A local package is identified by its
 /// folder's resolved absolute path, as the operating system reports it.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct PackageIdentity(Source);
 
 /// A package's source, as `installed.json` records it: `"local": "<folder>"`,

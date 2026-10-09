@@ -398,9 +398,10 @@ fn focus(
 
 /// Whether the launcher's screen is one an extension's operation opened:
 /// a confirmation, a package's preview, pause, build, network, program or
-/// runtime details. While it is, the pages draw it from the launcher's
-/// live view, so its confirmations show and are answered here; otherwise
-/// they read the launcher, whose screen stays wherever the user left it.
+/// runtime details, or the update results. While it is, the pages draw it
+/// from the launcher's live view, so its confirmations show and are
+/// answered here; otherwise they read the launcher, whose screen stays
+/// wherever the user left it.
 pub(crate) fn in_extension_flow(screen: &Screen) -> bool {
     matches!(
         screen,
@@ -411,6 +412,7 @@ pub(crate) fn in_extension_flow(screen: &Screen) -> bool {
             | Screen::RuntimeDetails { .. }
             | Screen::NetworkDetails { .. }
             | Screen::ProgramDetails { .. }
+            | Screen::UpdateResults { .. }
     )
 }
 
@@ -426,6 +428,7 @@ fn details_screen(screen: &Screen) -> bool {
             | Screen::NetworkDetails { .. }
             | Screen::ProgramDetails { .. }
             | Screen::Package { .. }
+            | Screen::UpdateResults { .. }
     )
 }
 
@@ -860,7 +863,11 @@ fn render(
             .into_any_element()
     });
     let body = if flow {
-        flow_screen(&live, &theme, cx)
+        if matches!(live.screen, Screen::UpdateResults { .. }) {
+            update_results_screen(this, &live, &theme, cx)
+        } else {
+            flow_screen(&live, &theme, cx)
+        }
     } else {
         match this.extension.clone() {
             Some(key) => extension_page(this, &key, &theme, window, cx),
@@ -944,6 +951,96 @@ fn flow_screen(
         .children(details)
         .children((!rows.is_empty()).then(|| controls::list_card(rows, theme)))
         .children(back);
+    vec![
+        controls::section(Some(live.title.clone().into()), body, theme)
+            .debug_selector(|| "extensions-title".into())
+            .into_any_element(),
+    ]
+}
+
+/// The update results screen in place of the page (#256): the launcher's
+/// record of the latest pass that recorded, its groups in the order
+/// Updated, Skipped, Failed, the empty ones hidden, each row the
+/// extension's icon, title and outcome, opening that extension's page —
+/// as the screen's own rows do in the launcher window. The way back is
+/// the page's own Back button, as a details screen's is.
+fn update_results_screen(
+    this: &mut SettingsWindow,
+    live: &LauncherView,
+    theme: &Theme,
+    cx: &mut Context<SettingsWindow>,
+) -> Vec<AnyElement> {
+    let results = this.launcher.update_results();
+    let mut groups = Vec::new();
+    let mut at: usize = 0;
+    for (label, group) in [
+        ("Updated", &results.updated),
+        ("Skipped", &results.skipped),
+        ("Failed", &results.failed),
+    ] {
+        if group.is_empty() {
+            continue;
+        }
+        let mut items: Vec<AnyElement> = Vec::new();
+        for row in group {
+            let index = at;
+            at += 1;
+            let key = row.identity.key();
+            let title = row.title.clone();
+            let icon = crate::features::icons::row_icon_of(&this.launcher, &key, theme);
+            let tile = row_icon_at(
+                &icon,
+                TileSize::Row,
+                ("extension-item-icon", index),
+                &format!("extension-{title}"),
+                theme,
+            );
+            let lines = vec![
+                controls::field_description(row.detail.clone(), theme.text_muted, theme)
+                    .truncate()
+                    .into_any_element(),
+            ];
+            let selector = format!("extension-row-{title}");
+            items.push(
+                controls::list_item(
+                    ("extension-row", index),
+                    Some(tile),
+                    title.clone(),
+                    lines,
+                    theme,
+                )
+                .debug_selector(move || selector)
+                .role(Role::Link)
+                .aria_label(title)
+                .on_click(cx.listener(move |this, _: &gpui::ClickEvent, _, cx| {
+                    this.show_extension(Some(key.clone()), cx);
+                }))
+                .into_any_element(),
+            );
+        }
+        groups.push(
+            controls::section(Some(label.into()), controls::list_card(items, theme), theme)
+                .debug_selector(move || format!("section-{label}"))
+                .into_any_element(),
+        );
+    }
+    let back = controls::button("extension-back", "Back", true, theme)
+        .debug_selector(|| "extension-back".into())
+        .role(Role::Button)
+        .aria_label("Back")
+        .on_click(cx.listener(|this, _: &gpui::ClickEvent, _, cx| {
+            // The way out of the results screen, as the launcher window's
+            // Escape is there.
+            this.launcher.back();
+            launcher_changed_outside(cx);
+            cx.notify();
+        }));
+    let body = div()
+        .flex()
+        .flex_col()
+        .gap(theme.geometry.settings.section_label_gap)
+        .children(groups)
+        .child(div().flex().child(back));
     vec![
         controls::section(Some(live.title.clone().into()), body, theme)
             .debug_selector(|| "extensions-title".into())

@@ -211,10 +211,24 @@ impl Launcher {
             {
                 files.indexer().launcher_shown();
             }
-            if state.feedback.presence == presence {
+            let same = state.feedback.presence == presence;
+            if !same {
+                state.feedback.presence = presence;
+            }
+            // A failure the update record holds and has not announced
+            // yet is announced now, the launcher being shown: a failure
+            // recorded while it was hidden waits for this showing, and
+            // one recorded while it was shown is announced at once (in
+            // `note_update_pass`) — as is one a start of Pane still
+            // holds, the window saying so the first time. Said once the
+            // presence above is set, so the toast is the footer's, not a
+            // HUD.
+            if presence == WindowPresence::Shown {
+                self.announce_update_failures(&mut state);
+            }
+            if same {
                 return;
             }
-            state.feedback.presence = presence;
             if presence != WindowPresence::Shown {
                 leave_if_animated(&mut state.feedback);
             }
@@ -332,6 +346,11 @@ impl Launcher {
             });
         match chosen {
             None => {}
+            // Pane's own View Details: the results screen replaces
+            // whatever the launcher shows; the toast keeps its time.
+            Some((_, _, ToastDoes::ShowUpdateResults)) => {
+                self.show_update_results(&mut state);
+            }
             Some((owner, command, ToastDoes::Copy(_))) => {
                 let copied = Toast::new(ToastStyle::Success, "Copied the error to the clipboard");
                 self.put_toast(&mut state, owner, command, copied);

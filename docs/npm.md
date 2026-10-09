@@ -92,11 +92,12 @@ compatible newer version, at a safe moment, without the user asking
 update a tracked Git package from the newer commit of its branch
 ([git](git.md#updating-by-itself); #50).
 
-**When it checks.** Once shortly after Pane starts (a second after, so
-that a development build's registry is in place first) and then every 24
+**When it checks.** Once a minute after Pane starts (so that the check
+never competes with Pane's own start) and then every 24
 hours while Pane runs, by the launcher's clock
 ([`Launcher::with_clock`](../crates/pane-core/src/launcher.rs), the
-system's in release builds). A check reads only the registry's metadata
+system's in release builds; tests move the clock). A check reads only the
+registry's metadata
 for each eligible package's name: nothing is downloaded while the latest
 version is the installed one. Both the cadence and the initial wait are
 provisional, as the spec leaves the delivery timing open.
@@ -106,8 +107,8 @@ downloading and checking the tarball (its integrity and everything the
 refusals below cover), reading the `pane.json` (the manifest, the
 extension API it needs, its platforms and its helpers for this system)
 and working out its dependencies as a plan. A newer version that cannot
-is explained in the status line — "Settings from npm was not updated:
-Incompatible package: it needs Pane extension API 0.2, but this Pane
+be taken is skipped in the pass's update results with that reason — "Incompatible
+package: it needs Pane extension API 0.2, but this Pane
 provides 0.1. It keeps running its installed code." — and the installed
 copy is left exactly as it is; the next check tries it again. What was
 downloaded stays staged, holding its download folder, until it is
@@ -137,9 +138,10 @@ makes: the identity, the saved data (settings, content, credentials),
 the disabled state, the hotkeys and the aliases are kept; the old code's
 generation ends, stopping what is still pending of it; and the new code
 runs from the next call, as an update starts no code itself. The outcome
-says so in the status line of root search or the extension list ("Updated
-Settings from npm to 0.2.0"); another screen keeps its own status, and
-the list shows the new version.
+is the pass's update results ("0.1.0 → 0.2.0" in the view): a
+successful background update is quiet — the list shows the new version —
+while a failure is announced once, the next time the launcher is shown,
+with the toast that opens the results.
 
 ### Which packages update
 
