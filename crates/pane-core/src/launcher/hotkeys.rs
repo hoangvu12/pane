@@ -45,6 +45,11 @@
 //! longer offered, or keeps it for the generation then current. A paused
 //! package stays enabled, so its hotkeys stay registered and explain the
 //! pause when pressed, as before.
+//!
+//! Game mode (#125) sits beside these: while it is on and a game is in
+//! front, every binding above — the commands' and the Open Pane hotkey
+//! — is released and nothing registers until the game leaves the front
+//! (see [`Game`]).
 
 use std::collections::{BTreeMap, HashMap};
 use std::future::Future;
@@ -56,6 +61,7 @@ use super::choices::{Choices, Record};
 use super::{
     Entry, Launcher, LauncherView, Opening, Row, Screen, State, Status, Unavailable, off_thread,
 };
+use crate::game_mode::{Foreground, GameMode, is_game};
 use crate::generation::EndMark;
 use crate::hotkeys::{HookHealth, Route, Shortcut};
 use crate::launch::LaunchSource;
@@ -230,6 +236,37 @@ impl OpenPane {
     }
 }
 
+/// Game mode's state in the launcher (#125): the settings in force, the
+/// window in front as the foreground source last reported it, and
+/// whether Pane's hotkeys are paused for a game. The pause is decided
+/// on each foreground change — a system event, never a timer — and on
+/// each change of the settings, by [`Launcher::decide_game`].
+#[derive(Default)]
+pub(super) struct Game {
+    /// The settings in force: off, with no programs, by default.
+    mode: GameMode,
+    /// The window in front as the foreground source last reported it, if
+    /// it ever did; the decision is made on each report and again on
+    /// each change of the settings.
+    front: Option<Foreground>,
+    /// Whether a game is in front while game mode is on, so every hotkey
+    /// is released.
+    paused: bool,
+    /// The Open Pane binding released while a game is in front, to
+    /// register again when it leaves.
+    held: Option<Shortcut>,
+}
+
+impl Game {
+    /// Reads the settings recorded in `dir`.
+    pub(super) fn open(dir: &Path) -> Game {
+        Game {
+            mode: GameMode::open(dir),
+            ..Game::default()
+        }
+    }
+}
+
 /// The commands offered by enabled packages, each with why it is
 /// unavailable on this system, if it is. A root provider is never offered:
 /// no hotkey opens it, and one recorded before it became one stays
@@ -247,6 +284,14 @@ impl Launcher {
     /// are offered and available here, releasing the others; each that the
     /// system refuses is noted with why.
     pub(super) fn sync_hotkeys(&self, state: &mut State) {
+        // A game is in front (game mode, #125): nothing is registered and
+        // nothing is to be until the game leaves, when
+        // `resume_hotkeys` runs this again. The choices stay recorded,
+        // and changes to them — a package disabled, a command gone — are
+        // picked up then, as they are read from the records here.
+        if state.game.paused {
+            return;
+        }
         let wanted: Vec<(String, Shortcut)> = if self.hotkeys.unavailable().is_some() {
             Vec::new()
         } else {
@@ -871,6 +916,161 @@ impl Launcher {
             state.open_pane.problem = Some(reason.clone());
         }
         applied
+    }
+
+    /// Game mode's settings as they are in force (#125): whether it is
+    /// on, and the programs to treat as games. The Keyboard page reads
+    /// them; [`Launcher::set_game_mode`] applies a change, and
+    /// [`crate::game_mode`] says how they are kept.
+    pub fn game_mode(&self) -> GameMode {
+        self.lock().game.mode.clone()
+    }
+
+    /// Whether a foreground source is attached, so game mode can work
+    /// here: the system's ([`crate::game_mode::native`]), or a fake the
+    /// tests give. The Keyboard page offers the choice only where it
+    /// is, and says why elsewhere.
+    pub fn game_mode_offered(&self) -> bool {
+        self.foreground.is_some()
+    }
+
+    /// Makes `mode` the game mode settings, taking effect at once: a
+    /// pause or a resume follows whatever window the source reported in
+    /// front last. Await the returned future to record them, written
+    /// off the calling thread; a record that cannot be written goes back
+    /// to what was recorded, with the pause following it. The future's
+    /// `Err` also names a mode that cannot be recorded at all — a
+    /// program that is not a plain name — which changes nothing.
+    pub fn set_game_mode(
+        &self,
+        mode: GameMode,
+    ) -> impl Future<Output = Result<(), String>> + Send + 'static {
+        let applied = {
+            let mut state = self.lock();
+            match mode.refusal() {
+                Some(reason) => Err(reason),
+                None => {
+                    let before = std::mem::replace(&mut state.game.mode, mode);
+                    self.decide_game(&mut state);
+                    Ok(before)
+                }
+            }
+        };
+        let launcher = self.clone();
+        async move {
+            let before = applied?;
+            let saved = match launcher.installation.as_ref() {
+                Some(installation) => {
+                    let dir = installation.dir.clone();
+                    let mode = launcher.lock().game.mode.clone();
+                    off_thread(move || mode.save(&dir)).await
+                }
+                None => Err("this launcher keeps no game mode".into()),
+            };
+            if let Err(problem) = saved {
+                // What was recorded is back in Pane, with the pause
+                // following it, as a hotkey change's rollback does.
+                let mut state = launcher.lock();
+                state.game.mode = before;
+                launcher.decide_game(&mut state);
+                return Err(problem);
+            }
+            Ok(())
+        }
+    }
+
+    /// The window in front changed, as the foreground source reported
+    /// it — the system event game mode decides on, never a timer. While
+    /// a game is in front and game mode is on, every Pane hotkey is
+    /// released, the Open Pane binding included; they come back when
+    /// the game leaves the front. Whether they are paused now, which the
+    /// tray icon's tooltip says. Called on the source's own thread (see
+    /// `crate::game_mode`).
+    pub fn foreground_changed(&self, front: &Foreground) -> bool {
+        let mut state = self.lock();
+        state.game.front = Some(front.clone());
+        self.decide_game(&mut state)
+    }
+
+    /// Whether Pane's hotkeys are paused for a game (#125): released,
+    /// every one, while a game is in front and game mode is on. The tray
+    /// icon's tooltip says so while they are, and the window reads this
+    /// as it follows the launcher's changes.
+    pub fn hotkeys_paused(&self) -> bool {
+        self.lock().game.paused
+    }
+
+    /// Decides game mode on the window in front as last reported and the
+    /// settings in force, pausing or resuming Pane's hotkeys as the
+    /// answer changed: whether they are paused now. The window is told
+    /// through the launcher's change notification, so the tray icon's
+    /// tooltip follows it on the window's thread.
+    fn decide_game(&self, state: &mut State) -> bool {
+        let paused = state.game.mode.on
+            && state
+                .game
+                .front
+                .as_ref()
+                .is_some_and(|front| is_game(&state.game.mode, front));
+        if paused != state.game.paused {
+            state.game.paused = paused;
+            if paused {
+                self.pause_for_game(state);
+            } else {
+                self.resume_hotkeys(state);
+            }
+            self.developing.changed();
+        }
+        paused
+    }
+
+    /// Releases every hotkey registered with the system for a game in
+    /// front, game mode's pause: the commands' and the Open Pane
+    /// binding, the choices staying recorded so they can come back —
+    /// unlike the quit path ([`Launcher::release_hotkeys`]), which
+    /// forgets nothing but holds nothing either. The keyboard hook is
+    /// left with no binding, which uninstalls it (it is kept only while
+    /// a binding needs it, #252): everything passes through to the game.
+    fn pause_for_game(&self, state: &mut State) {
+        for (_, registered) in state.bindings.registered.drain() {
+            self.hotkeys.unregister(&registered.shortcut);
+        }
+        if let Some(open) = state.open_pane.registered.take() {
+            self.hotkeys.unregister(&open);
+            state.game.held = Some(open);
+            // Nothing is registered, so nothing is explained as not.
+            state.open_pane.route = Route::default();
+            state.open_pane.problem = None;
+        }
+    }
+
+    /// Registers Pane's hotkeys again, the game having left the front:
+    /// the Open Pane binding the pause held first — so a command whose
+    /// recorded hotkey names its keys is explained rather than takes
+    /// them — then exactly the chosen hotkeys whose commands are
+    /// offered, the sync path every other change takes.
+    fn resume_hotkeys(&self, state: &mut State) {
+        let held = state.game.held.take();
+        if state.open_pane.registered.is_none()
+            && let Some(open) = held
+        {
+            match self.hotkeys.register(&open) {
+                Ok(()) => {
+                    let route = self.hotkeys.route(&open);
+                    state.open_pane.registered = Some(open);
+                    state.open_pane.route = route;
+                    state.open_pane.problem = None;
+                }
+                Err(error) => {
+                    // The binding worked before the game; another
+                    // application may have taken its keys meanwhile. The
+                    // choice is kept with the reason, for the General
+                    // page, as a refused startup application is.
+                    state.open_pane.problem = Some(format!("{open} cannot be used: {error}."));
+                }
+            }
+        }
+        self.sync_hotkeys(state);
     }
 
     /// Releases every hotkey registered with the system — the commands'

@@ -189,6 +189,19 @@ Settings' **General** page, in the "Open Pane hotkey" row.
   active: another application or the system already uses it" and tried again
   with every change to the installed packages and at the next start; the
   command itself is unaffected.
+- **Game mode** (#125, Windows only, off by default) pauses them all: while
+  it is on, each foreground change — a system event, never a timer — is
+  decided (Windows reports a full-screen Direct3D application in front
+  through its notification state, or the program of the window is one the
+  user listed, so windowed games are covered), and while a game is in front
+  every hotkey, the Open Pane hotkey included, is released — the keyboard
+  hook too, which is installed only while a binding needs it, so it goes
+  with them and the game gets every key. They come back by themselves when
+  the game leaves the front, through the same registration path. The
+  settings are `game-mode.json` beside `installed.json` (the on/off choice
+  and the programs to treat as games, matched by program file name), set on
+  the Settings window's Keyboard page, which offers the choice only on
+  Windows; the tray icon's tooltip says while the hotkeys are paused.
 
 ## Per platform
 
@@ -260,6 +273,19 @@ cannot assign, read or declare one (no WIT or manifest change).
   resynchronized so no phantom chord fires, Pane's own tagged injected keys
   passed through untouched, and other tools' injected keys firing the binding
   without being swallowed or counted as the user's.
+- Game mode ([`crates/pane-core/tests/game_mode.rs`](../crates/pane-core/tests/game_mode.rs)
+  and the decision's own tests in
+  [`crates/pane-core/src/game_mode.rs`](../crates/pane-core/src/game_mode.rs)),
+  on every system with a fake foreground source and a fake system: the
+  decision over fake facts of the window in front (full-screen or not,
+  listed or not); the settings' record; a full-screen game or a listed
+  program pausing every hotkey — the Open Pane binding included — and
+  their return when it leaves the front, driven by events alone; turning it
+  off resuming; the settings kept across a restart. The Keyboard page's
+  rows ([`crates/pane/tests/game_mode.rs`](../crates/pane/tests/game_mode.rs)),
+  on GPUI's test platform: the choice toggled and recorded, a program
+  named and removed, a game in front pausing the launcher's registrations,
+  and the choice not offered without a foreground source.
 - Adapters ([`crates/pane-core/tests/hotkey_adapters.rs`](../crates/pane-core/tests/hotkey_adapters.rs)):
   on Linux against an Xvfb of the test's own (`PANE_XVFB` or `PATH`; skipped without one,
   never the desktop the tests run in): a grab, a second client refused as

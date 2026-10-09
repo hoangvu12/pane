@@ -229,6 +229,16 @@ fn main() {
         // whose run loop receives the presses on macOS.
         let (press_sender, mut presses) = pane_core::hotkeys::channel();
         let launcher = launcher.with_hotkeys(pane_core::hotkeys::native(press_sender));
+        // Game mode's foreground source (#125): the system's own
+        // foreground event hook on Windows, which the launcher
+        // subscribes to, deciding on each window that comes to the front
+        // whether a game is in it — so Pane's hotkeys pause and return by
+        // themselves while game mode is on. Everywhere else there is
+        // none: game mode is Windows only, and the Keyboard page says so.
+        let launcher = match pane_core::game_mode::native() {
+            Some(source) => launcher.with_foreground(source),
+            None => launcher,
+        };
         // The tray or menu-bar entry: Pane's item in the system's tray
         // (Windows) or menu bar (macOS), whose menu opens the launcher,
         // Settings and Quit — the entry the General page's visibility

@@ -822,6 +822,20 @@ impl Settings {
             let _ = tray.set_visible(false);
         }
     }
+
+    /// Says in the entry's tooltip whether Pane's hotkeys are paused for
+    /// a game in front (game mode, #125): the entry tells so while they
+    /// are, and says only Pane again once they return. Nothing is kept —
+    /// the pause is the launcher's, read as the window follows its
+    /// changes — and a refusal is the entry's own state, not a status
+    /// to surface, as the entry's other changes report theirs; where no
+    /// entry is attached, there is nothing to tell.
+    pub(crate) fn set_tray_paused(&self, paused: bool) {
+        if let Some(tray) = &self.tray {
+            let _ = tray.set_hotkeys_paused(paused);
+        }
+    }
+
     /// Records `shortcut` as the Open Pane hotkey, the application-owned
     /// binding that summons the launcher from any application. It is
     /// applied through the attached launcher *first* — checked against the

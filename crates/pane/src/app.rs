@@ -147,6 +147,10 @@ pub struct LauncherWindow {
     /// Test and debug builds only.
     #[cfg(any(test, debug_assertions))]
     drawn_over: bool,
+    /// Whether the tray entry's tooltip said Pane's hotkeys were paused
+    /// the last time the window looked (game mode, #125), so a change is
+    /// the only thing it tells the entry again.
+    tray_paused: bool,
 }
 
 /// What the list was last scrolled for. When any of it changes, the list
@@ -223,6 +227,7 @@ impl LauncherWindow {
             home: quick_slots::Home::default(),
             motion: FrameMotion::new(),
             presence: Presence::default(),
+            tray_paused: false,
             #[cfg(any(test, debug_assertions))]
             drawn: None,
             #[cfg(any(test, debug_assertions))]
@@ -334,6 +339,16 @@ impl LauncherWindow {
                         this.unhide(window, cx);
                         window.activate_window();
                         cx.activate(true);
+                    }
+                    // Game mode paused or resumed Pane's hotkeys for a
+                    // game in front (#125): the tray icon's tooltip
+                    // follows, on the window's thread as the entry's
+                    // changes are.
+                    let paused = this.launcher.hotkeys_paused();
+                    if paused != this.tray_paused {
+                        this.tray_paused = paused;
+                        crate::settings::shared(cx)
+                            .update(cx, |settings, _| settings.set_tray_paused(paused));
                     }
                     this.sync_screen(window, cx);
                     cx.notify();

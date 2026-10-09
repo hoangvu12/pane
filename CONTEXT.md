@@ -244,6 +244,10 @@ _Avoid_: Shortcut (any key combination, including Pane's own keys), keybinding, 
 Pane's own `WH_KEYBOARD_LL` low-level keyboard hook on Windows, which recognizes the chords `RegisterHotKey` cannot take — another application has the shortcut, or Windows keeps it — so a refused shortcut is never an error: the binding works while Pane runs, does nothing while an elevated application is in front, and its row says it is dispatched through the hook. Installed only while a binding needs it, and kept alive by a watchdog that reinstalls it when Windows removes it (ADR 0039).
 _Avoid_: Keylogger, global hook, event tap (a different mechanism, needing permission on macOS)
 
+**Game mode**:
+An optional setting, Windows only and off by default, that pauses Pane's hotkeys while a game is in front: each foreground change — a system event, never a timer — is decided (Windows reports a full-screen Direct3D application in front through its notification state, or the program of the window is one the user listed, so windowed games are covered), and while a game is in front every hotkey, the Open Pane hotkey included, is released, so the game gets every key; they come back by themselves when the game leaves the front, and the tray icon's tooltip says while they are paused (ADR 0039).
+_Avoid_: Do-not-disturb, focus mode (a different feature), fullscreen detection (one signal the decision uses)
+
 **Alias**:
 A word the user gives an installed command in Pane; typing it in root search lists that command first, and, for a query-taking command, typing it before some text lists a row that sends the text to the command when invoked. Pane keeps it as its own record by command id; a disabled package's commands offer none.
 _Avoid_: Keyword (an author's search term), shortcut, nickname
