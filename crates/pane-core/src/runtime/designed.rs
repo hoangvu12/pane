@@ -253,8 +253,8 @@ impl ReadError {
 /// a bound on the depth its parse reaches, without parsing it. Text in
 /// strings does not count.
 fn nesting_of(document: &str) -> usize {
-    let mut nesting = 0;
-    let mut deepest = 0;
+    let mut nesting: usize = 0;
+    let mut deepest: usize = 0;
     let mut in_string = false;
     let mut escaped = false;
     for character in document.chars() {
