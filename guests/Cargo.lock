@@ -37,6 +37,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "registrations-fixture"
+version = "0.1.0"
+dependencies = [
+ "pane-extension",
+]
+
+[[package]]
 name = "cfg-if"
 version = "1.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -427,6 +434,14 @@ name = "sample-query"
 version = "0.1.0"
 dependencies = [
  "pane-extension",
+]
+
+[[package]]
+name = "sample-registrations"
+version = "0.1.0"
+dependencies = [
+ "pane-extension",
+ "serde_json",
 ]
 
 [[package]]
