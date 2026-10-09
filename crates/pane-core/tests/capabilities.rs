@@ -16,7 +16,7 @@ use std::time::Duration;
 
 use futures::executor::block_on;
 use pane_core::clipboard::{Clock as _, ManualClock, SystemClock};
-use pane_core::{Launcher, PackageIdentity, Runtime, SavedData, Screen, Status};
+use pane_core::{Launcher, PackageIdentity, Runtime, SavedData, Screen, Status, Unavailable};
 use tempfile::TempDir;
 
 #[path = "support/platforms.rs"]
@@ -451,7 +451,9 @@ fn a_package_is_never_routed_to_its_own_capability() {
     let running = block_on(dirs.runtime.running());
     assert_eq!(running.len(), 2, "{running:?}");
 
-    // Alone, `a` provides what it uses and is told it never serves itself.
+    // Alone, `a` provides what it uses: a package never serves its own
+    // use, so it waits for another provider, and Enter offers to install
+    // one.
     let alone = Dirs::new();
     alone.fixture(
         "a",
@@ -460,12 +462,56 @@ fn a_package_is_never_routed_to_its_own_capability() {
     );
     let launcher = alone.install_fixtures(&["a"]);
     assert_eq!(
-        fixture_run(&launcher, "Call the greet capability"),
-        error(
-            "not-found: no installed extension other than Package a provides \
-             `fixture:greet@1`, and a package never serves its own use"
-        )
+        waiting_reason(&launcher, "Capabilities fixture"),
+        "Needs fixture:greet@1: no extension provides it"
     );
+    open(&launcher, "Capabilities fixture");
+    assert!(matches!(
+        launcher.view().screen,
+        Screen::WaitingDetails { .. }
+    ));
+    assert_eq!(
+        rows::titles(&launcher),
+        ["Install an extension that provides fixture:greet@1"]
+    );
+    // Installing another provider brings it back by itself, without
+    // touching `a`.
+    alone.fixture("b", "", &provides(PROVIDED, ""));
+    install(&launcher, &alone.folder("b"));
+    launcher.show_root_search();
+    assert_eq!(row(&launcher, "Capabilities fixture").unavailable, None);
+    assert_eq!(
+        fixture_run(&launcher, "Call the greet capability"),
+        result(r#"answered: {"greeting":"Hello, Ada","operation":"fixture:greet@1/greet"}"#)
+    );
+}
+
+/// From root search, activates the row titled `title`: opening a command,
+/// or, for a waiting one, showing its reason with the row that fixes it.
+fn open(launcher: &Launcher, title: &str) {
+    rows::to_root(launcher);
+    rows::select_title(launcher, title);
+    block_on(launcher.activate_selected());
+}
+
+/// The root search row titled `title`.
+fn row(launcher: &Launcher, title: &str) -> pane_core::Row {
+    let view = launcher.view();
+    view.rows
+        .into_iter()
+        .find(|row| row.title == title)
+        .unwrap_or_else(|| panic!("no row {title:?} in {:?}", rows::titles(launcher)))
+}
+
+/// Why the command titled `title` cannot run, as a waiting reason.
+fn waiting_reason(launcher: &Launcher, title: &str) -> String {
+    let reason = row(launcher, title)
+        .unavailable
+        .unwrap_or_else(|| panic!("{title:?} is available"));
+    let Unavailable::Waiting(reason) = reason else {
+        panic!("expected {title:?} to wait, got {reason:?}");
+    };
+    reason
 }
 
 /// A call to a capability or an operation the caller's manifest does not
@@ -534,10 +580,11 @@ fn the_operation_s_own_error_and_a_crash_reach_the_caller() {
     );
 }
 
-/// A provider Pane paused after it failed answers `unavailable`, naming
-/// the capability and what to do.
+/// A provider Pane paused after it failed leaves its consumer waiting for
+/// the capability, and Enter offers to retry it: the chain's root cause is
+/// what the fix row fixes.
 #[test]
-fn a_paused_provider_answers_unavailable() {
+fn a_paused_provider_leaves_its_consumer_waiting_and_retry_fixes_it() {
     let dirs = Dirs::new();
     let launcher = dirs.a_and_b();
 
@@ -547,25 +594,36 @@ fn a_paused_provider_answers_unavailable() {
             "crashed: Package b crashed:",
         );
     }
+    // `b` is paused after its crashes: no provider can serve the
+    // capability, so `a` waits for it.
+    launcher.show_root_search();
     assert_eq!(
-        fixture_run(&launcher, "Call the greet capability"),
-        error(
-            "unavailable: no installed extension providing `fixture:greet@1` can serve it \
-             now: Package b is paused after an error; retry it in Settings"
-        )
+        waiting_reason(&launcher, "Capabilities fixture"),
+        "Needs fixture:greet@1: Package b is paused"
     );
+    open(&launcher, "Capabilities fixture");
+    assert_eq!(rows::titles(&launcher), ["Retry Package b"]);
 
-    block_on(launcher.retry_start(&dirs.identity("b")));
+    // The fix row retries the provider; the consumer comes back by itself.
+    rows::select_title(&launcher, "Retry Package b");
+    block_on(launcher.activate_selected());
+    assert_eq!(
+        launcher.view().status,
+        Status::Result("Started Package b".into())
+    );
+    assert!(matches!(launcher.view().screen, Screen::Root { .. }));
+    assert_eq!(row(&launcher, "Capabilities fixture").unavailable, None);
     assert_eq!(
         fixture_run(&launcher, "Call the greet capability"),
         result(r#"answered: {"greeting":"Hello, Ada","operation":"fixture:greet@1/greet"}"#)
     );
 }
 
-/// A provider waiting for what it needs answers `unavailable`, naming the
-/// capability and what it waits for.
+/// A provider waiting for what it needs leaves its consumer waiting in
+/// turn, and the chain names what is actually missing: the root cause the
+/// fix row fixes.
 #[test]
-fn a_waiting_provider_answers_unavailable() {
+fn a_waiting_provider_leaves_its_consumer_waiting_and_the_chain_names_the_root() {
     let dirs = Dirs::new();
     // `b` provides the capability and requires `c`, whose operations it
     // never calls.
@@ -591,27 +649,32 @@ fn a_waiting_provider_answers_unavailable() {
         result(r#"answered: {"greeting":"Hello, Ada","operation":"fixture:greet@1/greet"}"#)
     );
 
-    // `c` disabled, `b` waits for it: its capability is served by no one.
+    // `c` disabled, `b` waits for it: no provider can serve the capability,
+    // so `a` waits for it, naming what is actually missing.
     block_on(launcher.set_enabled(&dirs.identity("c"), false));
+    launcher.show_root_search();
     assert_eq!(
-        fixture_run(&launcher, "Call the greet capability"),
-        error(
-            "unavailable: no installed extension providing `fixture:greet@1` can serve it \
-             now: Package b is waiting for Package c, which is disabled"
-        )
+        waiting_reason(&launcher, "Capabilities fixture"),
+        "Needs fixture:greet@1: Package b, which waits for Package c: Package c is disabled"
     );
+    // The fix is for the root cause, not the provider that waits for it.
+    open(&launcher, "Capabilities fixture");
+    assert_eq!(rows::titles(&launcher), ["Enable Package c"]);
 
     block_on(launcher.set_enabled(&dirs.identity("c"), true));
+    launcher.show_root_search();
+    assert_eq!(row(&launcher, "Capabilities fixture").unavailable, None);
     assert_eq!(
         fixture_run(&launcher, "Call the greet capability"),
         result(r#"answered: {"greeting":"Hello, Ada","operation":"fixture:greet@1/greet"}"#)
     );
 }
 
-/// A provider whose capability works only on other systems answers
-/// `unavailable`, naming the capability.
+/// A provider whose capability works only on other systems cannot serve
+/// here, so its consumer waits for the capability, and Enter offers to
+/// install one that can.
 #[test]
-fn a_provider_for_other_systems_answers_unavailable() {
+fn a_provider_for_other_systems_leaves_its_consumer_waiting() {
     let [other, _] = platforms::other_systems();
     let dirs = Dirs::new();
     dirs.fixture("a", COMMAND, &uses(USED));
@@ -623,12 +686,16 @@ fn a_provider_for_other_systems_answers_unavailable() {
     let launcher = dirs.install_fixtures(&["a", "b"]);
 
     assert_eq!(
-        fixture_run(&launcher, "Call the greet capability"),
-        error(&format!(
-            "unavailable: no installed extension providing `fixture:greet@1` can serve it \
-             now: Package b: {}",
+        waiting_reason(&launcher, "Capabilities fixture"),
+        format!(
+            "Needs fixture:greet@1: Package b: {}",
             platforms::only("this capability", platforms::name(other))
-        ))
+        )
+    );
+    open(&launcher, "Capabilities fixture");
+    assert_eq!(
+        rows::titles(&launcher),
+        ["Install an extension that provides fixture:greet@1"]
     );
 }
 
@@ -648,10 +715,23 @@ fn the_fixture_s_providers_query_answers_the_available_providers() {
         result("the fixture:farewell@1 capability has no provider")
     );
 
+    // `b` disabled leaves no provider that can serve: the query answers
+    // none, and `a`'s command waits for the capability rather than calling
+    // into an empty list — the use is one provider.
     block_on(launcher.set_enabled(&dirs.identity("b"), false));
+    launcher.show_root_search();
+    assert_eq!(
+        waiting_reason(&launcher, "Capabilities fixture"),
+        "Needs fixture:greet@1: Package b is disabled"
+    );
+
+    // Enabled again: the query answers the provider, and `a` runs.
+    block_on(launcher.set_enabled(&dirs.identity("b"), true));
+    launcher.show_root_search();
+    assert_eq!(row(&launcher, "Capabilities fixture").unavailable, None);
     assert_eq!(
         fixture_run(&launcher, "Ask who provides the greet capability"),
-        result("the fixture:greet@1 capability has no provider")
+        result("the fixture:greet@1 capability is provided by Package b")
     );
 }
 

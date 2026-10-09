@@ -13,7 +13,9 @@ provide and another calls by name — came with
 [#153](https://github.com/pane-app/pane/issues/153), following
 [ADR 0041](adr/0041-extensions-compose-through-capabilities-that-pane-brokers.md);
 choosing which installed extension provides one came with
-[#154](https://github.com/pane-app/pane/issues/154).
+[#154](https://github.com/pane-app/pane/issues/154), and commands waiting
+for one and fanning a call out to every provider came with
+[#156](https://github.com/pane-app/pane/issues/156).
 
 ## Contract
 
@@ -174,8 +176,9 @@ A package declares the capabilities it uses under `uses` in its
   package provides the capability; a call to one nobody provides answers
   `not-found` and gates nothing.
 - `use` (optional): `"one"` (the default) or `"all"` — how many providers
-  the package calls. Read and checked; calling every provider comes with a
-  later slice.
+  the package calls. A use of one provider is served by the provider that
+  can serve it ([below](#calling-a-capability)); a use of every provider
+  is called on each of them ([below](#fanning-out-to-every-provider)).
 - `default` (optional): a provider source, written as a dependency's source
   is, for Pane to install when no provider is installed, so that the
   package works at once. Read and checked — a package from npm or Git
@@ -187,8 +190,11 @@ A package declares the capabilities it uses under `uses` in its
   the capability. An installed provider, even a disabled one, is used
   instead; an optional use's default is never installed.
 - `commands` (optional): the command ids that need the capability; without
-  it, the use belongs to the whole package. Read and checked; commands
-  waiting for a capability come with a later slice.
+  it, the use belongs to the whole package. A required use of one provider
+  makes those commands wait while no provider can serve it
+  ([below](#waiting-for-a-capability),
+  [dependencies](dependencies.md#waiting-for-a-required-dependency));
+  without `commands`, every command of the package waits.
 - A call to a capability or operation the package does not declare here is
   `refused`, and the message says to declare it. A repeated capability in
   `uses` is refused at install, as an empty `commands` list or one naming
@@ -212,7 +218,9 @@ providers: func(capability: string) -> list<provider>;
   rest in install order (see [Choosing a provider](#choosing-a-provider)),
   each candidate enabled, not paused, not waiting for what it needs, and
   built for this system. A later install changes nothing. The provider is
-  started only when it is called, as any target is.
+  started only when it is called, as any target is. A plain call to a
+  `use: "all"` capability reaches the provider a call of one provider
+  would.
 - **Never itself.** A package never serves its own use: it gets another
   provider. Alone, the call is `not-found`, saying so.
 - **Errors** reuse the kinds of any call, and each message names the
@@ -228,8 +236,55 @@ providers: func(capability: string) -> list<provider>;
   empty. The SDKs offer `available(capability)` on
   top of it, for an optional use.
 
-In Rust, `pane_extension::capabilities::{call, providers, available}`; in
-JavaScript and TypeScript, `@pane-app/extension/capabilities` (or the module
+### Fanning out to every provider
+
+A use declared `"use": "all"` may also call every provider at once, with
+`pane:extension/operations.call-every`, in the same interface:
+
+```wit
+record provider-answer { provider: string, title: string,
+  answer: result<string, call-error> }
+call-every: async func(capability: string, operation: string, input: string)
+  -> result<list<provider-answer>, call-error>;
+```
+
+- **Each provider's answer.** The call answers a list with one entry per
+  provider that served it: the provider's `source`, as `providers` answers
+  it, its `title`, and what serving the call answered — the result, or the
+  error that reached it. The caller merges them as it likes; the samples
+  label each answer with its provider's title.
+- **Order and skipping.** The providers are called in turn, each as its own
+  call in the chain, in the order Pane calls them: the first one installed,
+  until the user chooses one in Settings. Providers that are disabled,
+  paused, waiting or for another system are skipped, and with none available
+  the answer is an empty list, not an error — a use of every provider never
+  makes a command wait for it.
+- **Refusal.** Fanning out a `"use": "one"` capability is `refused`, with
+  the message saying to declare `"use": "all"`, as is a capability or an
+  operation the caller's `pane.json` does not declare.
+
+### Waiting for a capability
+
+A required use of one provider makes the package's commands wait while no
+provider can serve the capability — while none is installed, enabled, not
+paused and not waiting itself — as a required dependency does
+([dependencies](dependencies.md#waiting-for-a-required-dependency)): the
+command's row says what it needs ("Needs pane-samples:greet@1: DeepL
+Translate is disabled"), nothing of it runs, and it comes back by itself
+once a provider can serve again. A use narrowed with `commands` gates only
+those commands; the package's other commands stay available. A capability a
+waiting package provides does not count as provided, so its own consumers
+wait in turn, and a provider that is also a consumer of the same capability
+never serves itself: it waits until another provider can serve. Pressing
+Enter on a waiting command shows the reason with a row that fixes it:
+"Enable <title>", "Retry <title>", or "Install <default> (named by
+<title>)" — the default its use names — or "Install an extension that
+provides <capability>", either of which opens the install forms. Optional
+uses and uses of every provider never make a command wait.
+
+In Rust, `pane_extension::capabilities::{call, call_every, providers,
+available}`; in JavaScript and TypeScript,
+`@pane-app/extension/capabilities` (or the module
 `"pane:extension/operations@0.1.0"`).
 
 ### Choosing a provider
@@ -256,12 +311,7 @@ waiting).
 - **While the chosen provider cannot serve** — it is disabled, paused,
   missing or waiting — calls fall back to the next available provider in
   the default order, and return to the chosen one when it can serve
-  again. Consumers wait only when no provider can serve, which a later
-  slice of #151 delivers.
-
-Commands waiting for a capability and calling every provider of a
-`use: "all"` capability are later slices of
-[#151](https://github.com/pane-app/pane/issues/151).
+  again. Consumers wait only when no provider can serve.
 
 ## Behavior
 
@@ -335,17 +385,20 @@ Commands waiting for a capability and calling every provider of a
   [Rust](../guests/sample-capabilities/src/lib.rs),
   [JavaScript](../guests/sample-capabilities-js/src/index.js) and
   [TypeScript](../guests/sample-capabilities-ts/src/index.ts) with a
-  required use of it and an optional use of a capability nobody provides,
-  so every pairing of languages is exercised.
+  required use of it — declared `"use": "all"`, so an item also fans a
+  call out to every provider, each answer labelled with its title — and an
+  optional use of a capability nobody provides, so every pairing of
+  languages is exercised.
 - [`guests/fixtures/operations`](../guests/fixtures/operations/src/lib.rs):
   a Rust fixture the tests install as several packages to drive every error
   kind, cycles, the depth limit and settings isolation.
   [`guests/fixtures/capabilities`](../guests/fixtures/capabilities/src/lib.rs):
   its twin for capabilities, driving the refusals, the error kinds, the
   chain rules and a package that provides and uses one capability.
-- [`crates/pane-core/tests/operations.rs`](../crates/pane-core/tests/operations.rs)
-  and
+- [`crates/pane-core/tests/operations.rs`](../crates/pane-core/tests/operations.rs),
   [`crates/pane-core/tests/capabilities.rs`](../crates/pane-core/tests/capabilities.rs)
+  and
+  [`crates/pane-core/tests/capability_waiting.rs`](../crates/pane-core/tests/capability_waiting.rs)
   assert all of it through the launcher's public interface, and the native
   smoke scripts install the Rust and JavaScript samples and show a
   cross-language answer in the real window; the capabilities smoke
@@ -363,13 +416,12 @@ Commands waiting for a capability and calling every provider of a
 - Declared [dependencies](dependencies.md) (#42) are shown, checked and
   installed with the caller, but disabling a target does not consider its
   callers yet (#43).
-- Capabilities: commands wait for what they need, and a `use: "all"`
-  capability fans a call out to every provider — later slices of
-  [#151](https://github.com/pane-app/pane/issues/151). The user picks a
-  provider in Settings (#154), with the default and the fallback; until
-  they pick, the first provider installed serves, and a use's `default`
-  is installed with the caller when no provider is
-  ([dependencies](dependencies.md#installing)).
+- Capabilities: the user picks a provider in Settings (#154), with the
+  default and the fallback; until they pick, the first provider installed
+  serves, and a use's `default` is installed with the caller when no
+  provider is ([dependencies](dependencies.md#installing)). Commands wait
+  for what they need, and a `use: "all"` capability fans a call out to
+  every provider, the chosen one first.
 - No time limit on waiting: a running operation stops only when a
   generation in its chain ends, or when it computes for 5 seconds without
   finishing (#18, [generations](generations.md#what-stopping-cannot-do-yet)).

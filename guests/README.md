@@ -2021,7 +2021,9 @@ Pane passes each operation qualified by its capability
 ```
 
 Call a capability by its name, with the operations your `pane.json` declares
-under `uses`:
+under `uses`. A use may be `optional` (it is called only when some package
+provides the capability), narrowed with `commands` to the commands that
+need it, and may say `"use": "all"` to call every provider at once:
 
 ```rust
 use pane_extension::capabilities::{available, call};
@@ -2043,10 +2045,27 @@ if (available("pane-samples:farewell@1") === undefined) {
 }
 ```
 
+A use declared `"use": "all"` can also call every provider at once, each
+answer labelled with its provider's title:
+
+```rust
+use pane_extension::capabilities::call_every;
+
+let answers = call_every("pane-samples:greet@1", "greet", input)
+    .await
+    .map_err(|error| error.explain())?; // one entry per provider that served
+for answer in answers {
+    // answer.provider, answer.title, answer.answer: Result<String, CallError>
+}
+```
+
 Pane routes each call to the provider that can serve it — the first one
 installed — never your own package, and refuses a call to a capability or
 operation your `pane.json` does not declare, so its view of what you need
-stays complete.
+stays complete. A required use of one provider makes your commands wait
+while no provider can serve it
+([dependencies](../docs/dependencies.md#waiting-for-a-required-dependency));
+optional uses and uses of every provider never do.
 
 ### Dependencies on other extensions
 

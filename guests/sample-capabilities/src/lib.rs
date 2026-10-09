@@ -4,10 +4,12 @@
 //! greet provider samples provide in Rust, JavaScript and TypeScript
 //! (guests/sample-greet*), each answering with its own language's name:
 //! whoever is installed serves the call, and the code names none of them.
-//! It also uses `pane-samples:farewell@1` optionally, which no sample
-//! provides: a call to it answers `not-found`, and nothing is gated on it.
-//! Items, titles, results and errors match the JavaScript and TypeScript
-//! samples.
+//! Its use of it says `"use": "all"`, so beside the call that reaches one
+//! provider, an item fans a call out to every provider, answering each
+//! one's greeting labelled with its title. It also uses
+//! `pane-samples:farewell@1` optionally, which no sample provides: a call
+//! to it answers `not-found`, and nothing is gated on it. Items, titles,
+//! results and errors match the JavaScript and TypeScript samples.
 //!
 //! Each capability's `greet`/`farewell` operation takes `{"name": "<name>"}`
 //! and answers `{"greeting": "..."}`. Before calling, "Who provides it"
@@ -16,7 +18,7 @@
 #![no_std]
 
 use pane_extension::alloc::{format, string::String, string::ToString, vec::Vec};
-use pane_extension::capabilities::{available, call, providers};
+use pane_extension::capabilities::{available, call, call_every, providers};
 use pane_extension::feedback::{Toast, show_toast};
 use pane_extension::operations::CallErrorKind;
 use pane_extension::{Command, CustomView, Item, List, NoCustomView};
@@ -54,7 +56,7 @@ async fn act(item_id: &str) -> Result<(), String> {
 }
 
 /// What the action of the item `item_id` answers: the greeting a capability
-/// serves, or why there is none.
+/// serves, why there is none, or every provider's greeting.
 async fn outcome(item_id: &str) -> Result<String, String> {
     match item_id {
         // A required use that no installed package provides is the user's
@@ -62,6 +64,32 @@ async fn outcome(item_id: &str) -> Result<String, String> {
         "greet" => call_name(GREET, "greet")
             .await
             .map_err(|error| error.explain()),
+        // A use of every provider: each provider's answer, labelled with
+        // its title, and an empty list when none can serve.
+        "every" => {
+            let input = json!({ "name": "Pane" }).to_string();
+            let answers = call_every(GREET, "greet", input)
+                .await
+                .map_err(|error| error.explain())?;
+            let said: Vec<String> = answers
+                .iter()
+                .map(|answer| match &answer.answer {
+                    Ok(result) => {
+                        let result: Value = serde_json::from_str(result).unwrap_or(Value::Null);
+                        let greeting = result
+                            .get("greeting")
+                            .and_then(Value::as_str)
+                            .unwrap_or("the answer has no greeting");
+                        format!("{}: {greeting}", answer.title)
+                    }
+                    Err(error) => format!("{}: {}", answer.title, error.explain()),
+                })
+                .collect();
+            Ok(match said.as_slice() {
+                [] => format!("No installed extension provides {GREET}"),
+                said => said.join("; "),
+            })
+        }
         "farewell" => match call_name(FAREWELL, "farewell").await {
             Ok(farewell) => Ok(farewell),
             // An optional use with no provider degrades gracefully: say so
@@ -105,6 +133,11 @@ impl Command for Capabilities {
                 "greet",
                 "Greet through a capability",
                 "Calls pane-samples:greet@1, whichever extension provides it",
+            ),
+            item(
+                "every",
+                "Greet every provider",
+                "Calls pane-samples:greet@1 on every extension that provides it",
             ),
             item(
                 "farewell",

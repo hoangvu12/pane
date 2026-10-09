@@ -178,7 +178,9 @@ use crate::generation::{End, Fence, Generation, Registration};
 use crate::helpers;
 use crate::helpers::runner::{self, HelperError, HelperErrorKind, Helpers, Running, Spec};
 use crate::launch::{LaunchRecord, LaunchRequest, LaunchSource, LaunchType, Launches};
-use crate::operations::{self, Addressed, Directory, OperationCall, OperationError, Target};
+use crate::operations::{
+    self, Addressed, Directory, OperationAnswer, OperationCall, OperationError, Target,
+};
 use crate::packages::EXTENSION_API;
 
 /// Interface-version prefix every imported WASI interface must carry.
@@ -4064,7 +4066,8 @@ impl Host {
         // A call the guest sent but did not wait for before its call ended
         // has no frame to serve it.
         while let Ok(stranded) = calls.try_recv() {
-            let _ = stranded.reply.send(Err(operations::outside_a_call()));
+            let answer = stranded.unanswered(operations::outside_a_call());
+            let _ = stranded.reply.send(answer);
         }
         instance.calls = Some(calls);
         match result {
@@ -4094,14 +4097,57 @@ impl Host {
         }
     }
 
-    /// Serves one operation call a guest in `chain` made, answering it.
+    /// Serves one operation call a guest in `chain` made, answering it: a
+    /// call to one target, or a fan-out call to every provider of a
+    /// capability, each with its own answer.
     async fn serve_operation(&self, mut call: OperationCall, chain: &Chain) {
         // Its caller gave up on it before it started: it is not started.
         if call.reply.is_closed() {
             return;
         }
-        let result = self.operation(&mut call, chain).await;
-        let _ = call.reply.send(result);
+        let answer = match call.addressed {
+            Addressed::Every { .. } => OperationAnswer::Every(self.every(&mut call, chain).await),
+            _ => OperationAnswer::One(self.operation(&mut call, chain).await),
+        };
+        let _ = call.reply.send(answer);
+    }
+
+    /// Serves a fan-out call to every provider of the capability `call`
+    /// names, as the packages are now: each provider that can serve the
+    /// call is called in turn, as its own call in the chain, and answers
+    /// with its identity, title and result or error. The providers that
+    /// cannot serve — disabled, paused, waiting or for another system — are
+    /// skipped, and with none available the answer is an empty list. Only
+    /// the call as a whole can fail: a use the caller's `pane.json` does
+    /// not declare, or does not declare `"use": "all"`, is refused.
+    async fn every(
+        &self,
+        call: &mut OperationCall,
+        chain: &Chain,
+    ) -> Result<Vec<operations::ProviderAnswer>, OperationError> {
+        self.check_call(call, chain)?;
+        let targets = self.resolve_every(call)?;
+        let mut answers = Vec::new();
+        for target in targets {
+            // Each provider is its own call in the chain: one already
+            // serving a call in it is refused in its own answer, and the
+            // others are still called.
+            let answer = match self.in_chain(chain, &target) {
+                Some(error) => Err(error),
+                None => self.operation_in(call, chain, &target).await,
+            };
+            answers.push(operations::ProviderAnswer {
+                identity: target.identity.clone(),
+                title: target.title.clone(),
+                answer,
+            });
+            // The caller gave up on the fan-out: the providers after this
+            // are not called, and the answer has nowhere to go.
+            if call.reply.is_closed() {
+                break;
+            }
+        }
+        Ok(answers)
     }
 
     /// Serves `call`: checks it, resolves its target, runs the operation
@@ -4113,9 +4159,22 @@ impl Host {
     ) -> Result<String, OperationError> {
         self.check_call(call, chain)?;
         let target = self.resolve_target(call, chain)?;
+        self.operation_in(call, chain, &target).await
+    }
+
+    /// Runs `call`'s operation in `target`'s component, in its turn,
+    /// starting it if it is not running, and returns its answer: the step
+    /// every call to one target ends with, and each provider of a fan-out
+    /// is run as.
+    async fn operation_in(
+        &self,
+        call: &mut OperationCall,
+        chain: &Chain,
+        target: &Target,
+    ) -> Result<String, OperationError> {
         // Disabled or replaced while it was serving the call, it was
         // stopped, and its answer is not passed on.
-        let answer = self.run_operation(&target, call, chain).await?;
+        let answer = self.run_operation(target, call, chain).await?;
         operations::check_json(&answer, &format!("result of {}", target.title))?;
         Ok(answer)
     }
@@ -4154,19 +4213,62 @@ impl Host {
             Addressed::Capability { capability } => {
                 installed.resolve_capability(&call.caller, capability, &call.operation)?
             }
+            Addressed::Every { .. } => unreachable!("a fan-out resolves to several targets"),
         };
+        match self.in_chain_of(&installed, chain, &target) {
+            Some(error) => Err(error),
+            None => Ok(target),
+        }
+    }
+
+    /// The providers serving a fan-out `call` to every provider of a
+    /// capability, as the packages are now, in the order Pane calls them.
+    /// The providers that cannot serve are already skipped: each answer
+    /// the fan-out returns was served, or refused by the chain rules.
+    fn resolve_every(&self, call: &OperationCall) -> Result<Vec<Target>, OperationError> {
+        let directory = lock(&self.directory).clone();
+        let installed = match directory {
+            Some(directory) => directory(),
+            None => operations::Installed::default(),
+        };
+        let Addressed::Every { capability } = &call.addressed else {
+            unreachable!("only a fan-out resolves to several targets");
+        };
+        installed.resolve_every(&call.caller, capability, &call.operation)
+    }
+
+    /// Why `target` cannot serve a call in `chain` now — it already serves
+    /// a call in it, through whichever of its components — or `None` when
+    /// it can. Shared by a call to one target and each provider of a
+    /// fan-out, so the chain rules hold for both.
+    fn in_chain(&self, chain: &Chain, target: &Target) -> Option<OperationError> {
+        let directory = lock(&self.directory).clone();
+        let installed = match directory {
+            Some(directory) => directory(),
+            None => operations::Installed::default(),
+        };
+        self.in_chain_of(&installed, chain, target)
+    }
+
+    /// [`Host::in_chain`] against `installed`, the packages as they now
+    /// are.
+    fn in_chain_of(
+        &self,
+        installed: &operations::Installed,
+        chain: &Chain,
+        target: &Target,
+    ) -> Option<OperationError> {
         let in_chain = chain.components.iter().any(|component| {
             *component == target.component
                 || installed.package_of(component) == Some(&target.identity)
         });
-        if in_chain {
-            return Err(OperationError::refused(format!(
+        in_chain.then(|| {
+            OperationError::refused(format!(
                 "{} is already serving a call in this chain; an extension cannot be \
                  called back while its own call waits",
                 target.title
-            )));
-        }
-        Ok(target)
+            ))
+        })
     }
 
     /// Runs the operation of `call` in `target`'s component, in its turn,

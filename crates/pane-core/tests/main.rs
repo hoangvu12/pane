@@ -23,6 +23,7 @@ mod applications;
 mod arguments;
 mod calculator;
 mod capabilities;
+mod capability_waiting;
 mod clear_cache;
 mod clipboard;
 mod clipboard_view;

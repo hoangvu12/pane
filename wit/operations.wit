@@ -18,9 +18,11 @@ package pane:extension@0.1.0;
 // the same `published-operations` export, with each operation qualified by
 // its capability; another declares under `uses` the capabilities it calls
 // and calls them by name with `call-capability`, without naming the package
-// that serves. `providers` asks which installed packages can serve one now.
-// The header follows `package`: comments above it would document the package,
-// which extension.wit already does.
+// that serves. `call-every` calls every provider of a use that says
+// `"use": "all"`, answering each one's result or error, and `providers`
+// asks which installed packages can serve one now. The header follows
+// `package`: comments above it would document the package, which
+// extension.wit already does.
 
 /// Calls an operation another installed package publishes, through Pane.
 interface operations {
@@ -86,6 +88,27 @@ interface operations {
   /// name. `input` and the result are JSON text, and the call is as a call
   /// by identity is: the same limits, chain rules and generation ownership.
   call-capability: async func(capability: string, operation: string, input: string) -> result<string, call-error>;
+
+  /// One provider's answer to `call-every`: the provider's `source`, as a
+  /// call names it by, its title, and what serving the call answered.
+  record provider-answer {
+    provider: string,
+    title: string,
+    answer: result<string, call-error>,
+  }
+
+  /// Calls `operation` of the capability `capability` on every provider
+  /// that can serve it now — enabled, not paused, not waiting for what it
+  /// needs, and built for this system — and answers each one's result or
+  /// error with its source and title, so the caller can merge them. Each
+  /// provider is its own call in the chain, with the same limits, chain
+  /// rules and generation ownership as any call, and the same input. The
+  /// caller's pane.json must declare the capability under `uses` with
+  /// "use": "all": fanning out a "use": "one" capability is `refused`, as
+  /// is one the caller does not declare. Providers that cannot serve are
+  /// skipped, and with none available the answer is an empty list, not an
+  /// error: a use of every provider never makes a command wait for it.
+  call-every: async func(capability: string, operation: string, input: string) -> result<list<provider-answer>, call-error>;
 
   /// The installed packages that provide the capability `capability` and
   /// can serve a call to it now — enabled, not paused, not waiting for what

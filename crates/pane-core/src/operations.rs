@@ -32,7 +32,12 @@
 //! `disabled` when every provider is disabled, `unavailable` when every
 //! provider is paused, waiting or for another system — each message naming
 //! the capability. `operations.providers` answers which providers can serve
-//! a capability now, for asking before calling.
+//! a capability now, for asking before calling. A use declared
+//! `"use": "all"` may also call every provider at once with
+//! `operations.call-every`, which answers each provider's identity, title
+//! and result or error, skipping the providers that cannot serve and
+//! answering an empty list when none can: a use of every provider never
+//! makes a command wait for it.
 //!
 //! The runtime serves every call on one thread. A guest waiting for an
 //! operation is suspended inside its own call, and the runtime serves the
@@ -60,8 +65,8 @@ use wasmtime::component::{Access, Accessor, HasData};
 use crate::extension_data::{ExtensionData, PackageData};
 use crate::launcher::capability_choices::CapabilityChoices;
 use crate::packages::{
-    InstalledPackage, ManifestOperation, ManifestProvides, PackageIdentity, SourceSpec,
-    installed_as, paused_reason,
+    InstalledPackage, ManifestOperation, ManifestProvides, ManifestUse, PackageIdentity,
+    SourceSpec, installed_as, paused_reason,
 };
 use crate::platform;
 use crate::runtime::{CallError, GuestState, bindings};
@@ -180,7 +185,7 @@ pub(crate) struct OperationCall {
     /// ([`Addressed::operation_name`]).
     pub operation: String,
     pub input: String,
-    pub reply: oneshot::Sender<Result<String, OperationError>>,
+    pub reply: oneshot::Sender<OperationAnswer>,
 }
 
 /// How a call names the package that serves it.
@@ -191,6 +196,9 @@ pub(crate) enum Addressed {
     Package { source: String, version: u32 },
     /// A capability's name, which any installed package may provide.
     Capability { capability: String },
+    /// A capability's name called on every provider that can serve it, as
+    /// `call-every` addresses it: a use declared `"use": "all"`.
+    Every { capability: String },
 }
 
 impl Addressed {
@@ -201,9 +209,48 @@ impl Addressed {
     pub(crate) fn operation_name(&self, operation: &str) -> String {
         match self {
             Addressed::Package { .. } => operation.to_owned(),
-            Addressed::Capability { capability } => format!("{capability}/{operation}"),
+            Addressed::Capability { capability } | Addressed::Every { capability } => {
+                format!("{capability}/{operation}")
+            }
         }
     }
+
+    /// Whether this call is answered by every provider, each with its own
+    /// answer (`call-every`), rather than by one target.
+    pub(crate) fn is_every(&self) -> bool {
+        matches!(self, Addressed::Every { .. })
+    }
+}
+
+/// The answer to a call a guest made: one target's, or every provider's.
+pub(crate) enum OperationAnswer {
+    /// The answer of a call to one target.
+    One(Result<String, OperationError>),
+    /// The answers of a call to every provider of a capability, or why the
+    /// call as a whole could not be made.
+    Every(Result<Vec<ProviderAnswer>, OperationError>),
+}
+
+impl OperationCall {
+    /// The answer saying the call could not be made at all, of this call's
+    /// own shape: a stranded call, one whose runtime stopped, answers with
+    /// it.
+    pub(crate) fn unanswered(&self, error: OperationError) -> OperationAnswer {
+        if self.addressed.is_every() {
+            OperationAnswer::Every(Err(error))
+        } else {
+            OperationAnswer::One(Err(error))
+        }
+    }
+}
+
+/// One provider's answer to a fan-out call, as `call-every` answers it:
+/// the provider's identity, its title, and its result or error.
+#[derive(Clone, Debug)]
+pub(crate) struct ProviderAnswer {
+    pub identity: PackageIdentity,
+    pub title: String,
+    pub answer: Result<String, OperationError>,
 }
 
 /// The installed package serving a call, as resolved by a [`Directory`].
@@ -467,52 +514,9 @@ impl Installed {
         operation: &str,
     ) -> Result<Target, OperationError> {
         use OperationErrorKind::*;
-        // The caller's own package: the use its manifest declares is what
-        // Pane checks, and the provider it must never be routed to.
-        let own = self
-            .packages
-            .iter()
-            .find(|package| caller.starts_with(&package.location))
-            .ok_or_else(|| {
-                OperationError::refused(
-                    "capabilities are called by an installed extension's code, and this \
-                     component belongs to no installed extension",
-                )
-            })?;
-        let title = own.title();
-        let manifest = match &own.manifest {
-            Ok(manifest) => manifest,
-            Err(error) => {
-                return Err(OperationError::new(
-                    Incompatible,
-                    format!("{title} cannot load: {error}"),
-                ));
-            }
-        };
-        let Some(declared) = manifest
-            .uses
-            .iter()
-            .find(|used| used.capability == capability)
-        else {
-            return Err(OperationError::refused(format!(
-                "{title} declares no use of `{capability}` in its pane.json; declare it in \
-                 `uses` to call it"
-            )));
-        };
-        // A use reaches only the operations it declares, as a dependency's
-        // id does, so what installing checked is what the code calls.
-        if !declared.operations.iter().any(|called| called == operation) {
-            let called: Vec<String> = declared
-                .operations
-                .iter()
-                .map(|called| format!("`{called}`"))
-                .collect();
-            return Err(OperationError::refused(format!(
-                "{title} declares that it calls {} through `{capability}`, not `{operation}`; \
-                 declare it in its pane.json to call it",
-                platform::join(&called)
-            )));
-        }
+        // The caller's own manifest declares the use, and the package it
+        // must never be routed to (a package never serves its own use).
+        self.declared_use(caller, capability, operation)?;
         let candidates = self.call_order(Some(caller), capability, Some(operation));
         // The first provider in the order Pane calls them that can serve
         // the call does; the others are remembered for the message when
@@ -572,6 +576,118 @@ impl Installed {
                 platform::join(&all)
             ),
         ))
+    }
+
+    /// Resolves a fan-out call from `caller`'s component to `operation` of
+    /// the capability `capability`, as the packages are now: every provider
+    /// that can serve the call — enabled, not paused, not waiting for what
+    /// it needs, and built for this system — never the caller's own package,
+    /// which never serves its own use, each with the operation it calls.
+    /// Refused when the caller's `pane.json` declares no use of the
+    /// capability, or the use is not `"use": "all"`; with no provider that
+    /// can serve, the answer is an empty list, not an error: a use of every
+    /// provider never makes a command wait for it.
+    ///
+    /// The chosen provider comes first, then the others in install order
+    /// (#154).
+    pub fn resolve_every(
+        &self,
+        caller: &Path,
+        capability: &str,
+        operation: &str,
+    ) -> Result<Vec<Target>, OperationError> {
+        let declared = self.declared_use(caller, capability, operation)?;
+        if !declared.use_all {
+            return Err(OperationError::refused(format!(
+                "{} declares that it calls `{capability}` with \"use\": \"one\", so one provider \
+                 serves each call; declare \"use\": \"all\" in its pane.json to call every \
+                 provider",
+                self.caller_of(caller).title()
+            )));
+        }
+        Ok(self
+            .call_order(Some(caller), capability, Some(operation))
+            .into_iter()
+            .filter(|(package, entry)| {
+                self.cannot_serve(package).is_none()
+                    && platform::unavailable(entry.platforms.as_deref(), "this capability")
+                        .is_none()
+            })
+            .map(|(package, entry)| Target {
+                identity: package.identity.clone(),
+                title: package.title(),
+                component: package.location.join(&entry.component),
+                data: self
+                    .data
+                    .as_ref()
+                    .map(|data| data.owned_by(&package.identity)),
+            })
+            .collect())
+    }
+
+    /// The use of `capability` the manifest of `caller`'s package declares,
+    /// checked for `operation`: the caller's own package, whose use Pane
+    /// checks, and whose own provision never serves it.
+    fn declared_use<'a>(
+        &'a self,
+        caller: &Path,
+        capability: &str,
+        operation: &str,
+    ) -> Result<&'a ManifestUse, OperationError> {
+        use OperationErrorKind::*;
+        let own = self
+            .packages
+            .iter()
+            .find(|package| caller.starts_with(&package.location))
+            .ok_or_else(|| {
+                OperationError::refused(
+                    "capabilities are called by an installed extension's code, and this \
+                     component belongs to no installed extension",
+                )
+            })?;
+        let title = own.title();
+        let manifest = match &own.manifest {
+            Ok(manifest) => manifest,
+            Err(error) => {
+                return Err(OperationError::new(
+                    Incompatible,
+                    format!("{title} cannot load: {error}"),
+                ));
+            }
+        };
+        let Some(declared) = manifest
+            .uses
+            .iter()
+            .find(|used| used.capability == capability)
+        else {
+            return Err(OperationError::refused(format!(
+                "{title} declares no use of `{capability}` in its pane.json; declare it in \
+                 `uses` to call it"
+            )));
+        };
+        // A use reaches only the operations it declares, as a dependency's
+        // id does, so what installing checked is what the code calls.
+        if !declared.operations.iter().any(|called| called == operation) {
+            let called: Vec<String> = declared
+                .operations
+                .iter()
+                .map(|called| format!("`{called}`"))
+                .collect();
+            return Err(OperationError::refused(format!(
+                "{title} declares that it calls {} through `{capability}`, not `{operation}`; \
+                 declare it in its pane.json to call it",
+                platform::join(&called)
+            )));
+        }
+        Ok(declared)
+    }
+
+    /// The installed package whose managed copy holds `caller`'s component.
+    fn caller_of(&self, caller: &Path) -> &InstalledPackage {
+        self.packages
+            .iter()
+            .find(|package| caller.starts_with(&package.location))
+            .expect("the caller was found above")
     }
 
     /// Why no provider serves: what a call to a capability nobody provides
@@ -802,13 +918,20 @@ impl<T> operations::HostWithStore<T> for Calls {
         version: u32,
         input: String,
     ) -> Result<String, operations::CallError> {
-        send(
+        let answer = send(
             accessor,
             Addressed::Package { source, version },
             operation,
             input,
         )
         .await
+        .map_err(operations::CallError::from)?;
+        match answer {
+            OperationAnswer::One(result) => result.map_err(operations::CallError::from),
+            // Only a call addressed to every provider is answered with
+            // every provider's answers.
+            OperationAnswer::Every(_) => unreachable!("a call to one target answered with many"),
+        }
     }
 
     async fn call_capability(
@@ -817,13 +940,48 @@ impl<T> operations::HostWithStore<T> for Calls {
         operation: String,
         input: String,
     ) -> Result<String, operations::CallError> {
-        send(
+        let answer = send(
             accessor,
             Addressed::Capability { capability },
             operation,
             input,
         )
         .await
+        .map_err(operations::CallError::from)?;
+        match answer {
+            OperationAnswer::One(result) => result.map_err(operations::CallError::from),
+            // Only a call addressed to every provider is answered with
+            // every provider's answers.
+            OperationAnswer::Every(_) => unreachable!("a call to one target answered with many"),
+        }
+    }
+
+    async fn call_every(
+        accessor: &Accessor<T, Self>,
+        capability: String,
+        operation: String,
+        input: String,
+    ) -> Result<Vec<operations::ProviderAnswer>, operations::CallError> {
+        let answer = send(accessor, Addressed::Every { capability }, operation, input)
+            .await
+            .map_err(operations::CallError::from)?;
+        match answer {
+            OperationAnswer::Every(result) => result
+                .map(|answers| {
+                    answers
+                        .into_iter()
+                        .map(|answer| operations::ProviderAnswer {
+                            provider: answer.identity.key(),
+                            title: answer.title,
+                            answer: answer.answer.map_err(operations::CallError::from),
+                        })
+                        .collect()
+                })
+                .map_err(operations::CallError::from),
+            // Only a call addressed to one target is answered with one
+            // target's answer.
+            OperationAnswer::One(_) => unreachable!("a fan-out answered with one answer"),
+        }
     }
 
     fn providers(mut host: Access<'_, T, Self>, capability: String) -> Vec<operations::Provider> {
@@ -838,14 +996,16 @@ impl<T> operations::HostWithStore<T> for Calls {
     }
 }
 
-/// Sends `call` — by identity or by capability — to the runtime, which
-/// serves it while the calling guest waits, and awaits its answer.
+/// Sends `call` — by identity, by capability, or to every provider of one —
+/// to the runtime, which serves it while the calling guest waits, and
+/// awaits its answer, in the shape the call was sent with.
 async fn send<T>(
     accessor: &Accessor<T, Calls>,
     addressed: Addressed,
     operation: String,
     input: String,
-) -> Result<String, operations::CallError> {
+) -> Result<OperationAnswer, OperationError> {
+    let every = addressed.is_every();
     let (reply, response) = oneshot::channel();
     let sent = accessor.with(|mut view| {
         let state = view.get();
@@ -869,11 +1029,18 @@ async fn send<T>(
             })
             .map_err(|_| stopped())
     });
-    let result = match sent {
-        Ok(()) => response.await.unwrap_or_else(|_| Err(stopped())),
+    match sent {
+        // The runtime answers in the shape the call was sent with; one
+        // that stopped without answering leaves the reply dropped.
+        Ok(()) => Ok(response.await.unwrap_or_else(|_| {
+            if every {
+                OperationAnswer::Every(Err(stopped()))
+            } else {
+                OperationAnswer::One(Err(stopped()))
+            }
+        })),
         Err(error) => Err(error),
-    };
-    result.map_err(operations::CallError::from)
+    }
 }
 
 /// Why a call made while Pane is not running a call of the guest, such as

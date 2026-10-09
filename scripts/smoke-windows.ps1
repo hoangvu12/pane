@@ -1014,6 +1014,55 @@ $record = Join-Path $data "extensions/installed.json"
 if (-not (Select-String -Quiet -SimpleMatch '"id": "greeter"' $record)) { throw "dependency not recorded" }
 if ((Select-String -SimpleMatch '"dir"' $record).Count -ne 2) { throw "not exactly two packages installed" }
 
+# Capabilities, waiting for one (#153, #156): the JavaScript greet provider
+# provides pane-samples:greet@1, which a copy of the TypeScript consumer
+# uses — its pane.json edited to a use of one provider, as it was before
+# the fan-out item made it "all", so its command waits while no provider
+# can serve. With the provider enabled, its item greets through the
+# capability; disabling the provider (its switch in Settings) leaves the
+# command waiting, Enter explains why and offers to enable it again, and
+# enabling it brings the command back with nothing done to the consumer.
+# A data folder of its own, and a second start for the consumer's install.
+$data = Join-Path $OutDir "capabilities-data"
+if (Test-Path $data) { Remove-Item -Recurse -Force $data }
+$env:PANE_DATA_DIR = $data
+$consumer = Join-Path $OutDir "capabilities-consumer"
+if (Test-Path $consumer) { Remove-Item -Recurse -Force $consumer }
+Copy-Item -Recurse "target/guests/packages/sample-capabilities-ts" $consumer
+$manifest = Join-Path $consumer "pane.json"
+python -c "import json,sys; p=sys.argv[1]; m=json.load(open(p,encoding='utf-8')); del m['uses'][0]['use']; json.dump(m,open(p,'w',encoding='utf-8'),indent=2)" $manifest
+if ($LASTEXITCODE -ne 0) { throw "editing the consumer's pane.json failed" }
+$process = Start-Pane "stderr-capabilities.log" @("--install", "target/guests/packages/sample-greet-js")
+Send "{ENTER}"; Start-Sleep -Seconds 3   # Install; JavaScript greet provider is selected
+Stop-Pane $process
+$process = Start-Pane "stderr-capabilities-2.log" @("--install", $consumer)
+Send "{ENTER}"; Start-Sleep -Seconds 3   # Install; Greet from TypeScript is selected
+Send "{ENTER}"; Start-Sleep -Seconds 2   # open Greet from TypeScript
+Send "{ENTER}"; Start-Sleep -Seconds 1   # Greet through a capability
+Capture-Until "78-capability-answer.png" "success" 20   # the JavaScript guest's answer, in a toast
+$provider = "JavaScript greet provider sample"
+Open-Extension $provider
+Press-Named $provider -Toggle   # disable it: the consumer waits for the capability
+Press-Named "Disabled $provider"
+Capture "79-capability-provider-disabled.png"
+Close-Settings
+Capture "80-capability-waiting.png"
+Check "80-capability-waiting.png" "warning"   # Greet from TypeScript: "Needs pane-samples:greet@1: …"
+Send "{ENTER}"; Start-Sleep -Seconds 1   # Enter: why Greet from TypeScript cannot run
+Capture "81-capability-why.png"
+Check "81-capability-why.png" "details"   # the reason, and the row that fixes it
+Send "{ENTER}"; Start-Sleep -Seconds 2   # Enable JavaScript greet provider sample
+Capture "82-capability-back.png"
+Check "82-capability-back.png" "hint"   # the command is back, listed as any other
+Send "{ENTER}"; Start-Sleep -Seconds 2   # open Greet from TypeScript again
+Send "{ENTER}"; Start-Sleep -Seconds 1   # Greet through a capability
+Capture-Until "83-capability-answer-again.png" "success" 20   # the same answer, back by itself
+python "$PSScriptRoot/check_screenshot.py" --same (Join-Path $OutDir "78-capability-answer.png") (Join-Path $OutDir "83-capability-answer-again.png")
+if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: the capability's answer did not come back the same" }
+python "$PSScriptRoot/check_screenshot.py" --distinct (Join-Path $OutDir "80-capability-waiting.png") (Join-Path $OutDir "82-capability-back.png")
+if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: waiting for the capability changed nothing" }
+Stop-Pane $process
+
 # Native helpers: the helper sample's command runs pane-echo, the file its
 # package ships for this system (built by `cargo xtask guests`). Its first
 # item shows the helper's answer, naming the system; its third races the

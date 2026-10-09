@@ -78,14 +78,20 @@ pub use pane::extension::{cache, content, credentials, operations, settings};
 /// [`call`] routes the call through Pane, which picks the provider: the
 /// first one installed that can serve it, never this package itself, and
 /// serves it as a published operation is served, with the operation
-/// qualified by its capability (`acme:translate@1/translate`). [`providers`]
-/// asks which providers can serve a capability now — their source and title
-/// — and [`available`] is the first of them, for an optional use:
+/// qualified by its capability (`acme:translate@1/translate`).
+/// [`call_every`] calls every provider that can serve a use the package
+/// declared `"use": "all"`, each answering with its source, title and
+/// result or error. [`providers`] asks which providers can serve a
+/// capability now — their source and title — and [`available`] is the
+/// first of them, for an optional use:
 ///
 /// ```ignore
-/// use pane_extension::capabilities::{available, call};
+/// use pane_extension::capabilities::{available, call, call_every};
 ///
 /// let answer = call("acme:translate@1", "translate", input)
+///     .await
+///     .map_err(|error| error.explain())?;
+/// let every = call_every("acme:notes@1", "search", input)
 ///     .await
 ///     .map_err(|error| error.explain())?;
 /// if available("acme:spellcheck@2").is_none() {
@@ -96,12 +102,17 @@ pub use pane::extension::{cache, content, credentials, operations, settings};
 /// The errors and their kinds are those of [`operations::call`], each
 /// message naming the capability: `not-found` when no installed package
 /// provides it, `disabled` when every provider is disabled, `unavailable`
-/// when every provider is paused, waiting or for another system.
+/// when every provider is paused, waiting or for another system. A
+/// fan-out is `refused` unless the package declared the use with
+/// `"use": "all"`; the providers that cannot serve are skipped, and with
+/// none the answer is an empty list.
 pub mod capabilities {
     use alloc::string::String;
     use alloc::vec::Vec;
 
-    pub use crate::pane::extension::operations::{CallError, CallErrorKind, Provider};
+    pub use crate::pane::extension::operations::{
+        CallError, CallErrorKind, Provider, ProviderAnswer,
+    };
 
     /// Calls `operation` of the capability `capability`, such as
     /// "acme:translate@1", through Pane, and returns its result. Any
@@ -134,6 +145,27 @@ pub mod capabilities {
     /// provider the list is empty.
     pub fn providers(capability: &str) -> Vec<Provider> {
         crate::pane::extension::operations::providers(capability.into())
+    }
+
+    /// Calls `operation` of the capability `capability` on every provider
+    /// that can serve it now, through Pane, and returns each one's answer,
+    /// with its source, its title and its result or error, so the caller
+    /// can merge them. Each provider is its own call, with the same input;
+    /// the providers that cannot serve are skipped, and with none the
+    /// answer is an empty list.
+    ///
+    /// The caller's `pane.json` must declare the capability under `uses`
+    /// with `"use": "all"`; fanning out a `"use": "one"` capability is
+    /// `refused`, as is one the package does not declare. On failure the
+    /// future resolves with a [`CallError`] whose message names the
+    /// capability.
+    pub async fn call_every(
+        capability: &str,
+        operation: &str,
+        input: String,
+    ) -> Result<Vec<ProviderAnswer>, CallError> {
+        crate::pane::extension::operations::call_every(capability.into(), operation.into(), input)
+            .await
     }
 
     /// The provider of `capability` that a call reaches, with its source and

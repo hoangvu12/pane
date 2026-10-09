@@ -8,11 +8,12 @@
 // the operations it calls, under `uses`; a call to one it does not declare
 // is refused. Bundled into the command that imports it, like any npm
 // module. The underlying functions are also importable directly from
-// "pane:extension/operations@0.1.0" as `callCapability` and `providers`.
+// "pane:extension/operations@0.1.0" as `callCapability`, `callEvery` and
+// `providers`.
 
 import { providers } from "pane:extension/operations@0.1.0";
 
-export { callCapability as call, providers } from "pane:extension/operations@0.1.0";
+export { callCapability as call, callEvery, providers } from "pane:extension/operations@0.1.0";
 
 /**
  * The provider of `capability` that a call reaches, with its `source` and

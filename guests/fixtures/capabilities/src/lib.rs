@@ -22,11 +22,16 @@
 //! describes — routed back to `a`, in the chain already, and refused; "Call
 //! a chain whose last call is a capability" hops `p1` to `p7` by their
 //! sources (each serving `forward`, which calls what its input describes)
-//! and has `p7` call the capability, one call past Pane's depth limit.
+//! and has `p7` call the capability, one call past Pane's depth limit; the
+//! "Call every provider…" items fan a call out to every provider of
+//! `fixture:every@1`, a capability the test's manifest for `a` uses with
+//! `"use": "all"` — each provider answering with its title — with no name
+//! (each provider's own error), and of `fixture:greet@1`, whose use is
+//! `"use": "one"`, which is refused.
 #![no_std]
 
 use pane_extension::alloc::{format, string::String, string::ToString, vec::Vec};
-use pane_extension::capabilities::{call, providers};
+use pane_extension::capabilities::{call, call_every, providers};
 use pane_extension::feedback::{Toast, show_toast};
 use pane_extension::operations;
 use pane_extension::{
@@ -41,7 +46,7 @@ pane_extension::publish::export!(Fixture);
 /// Each item: (title, capability, operation, input). The input of the
 /// chain and identity items is built in code, from the sources the test
 /// saved.
-const ITEMS: [(&str, &str, &str, &str); 10] = [
+const ITEMS: [(&str, &str, &str, &str); 13] = [
     (
         "Call the greet capability",
         "fixture:greet@1",
@@ -92,6 +97,19 @@ const ITEMS: [(&str, &str, &str, &str); 10] = [
     ),
     ("Call a chain whose last call is a capability", "", "", ""),
     ("Call b's capability operation by identity", "", "", ""),
+    (
+        "Call every provider of the every capability",
+        "fixture:every@1",
+        "greet",
+        r#"{"name":"Ada"}"#,
+    ),
+    (
+        "Call every provider with no name",
+        "fixture:every@1",
+        "greet",
+        "{}",
+    ),
+    ("Call every provider of the greet capability", "", "", ""),
 ];
 
 /// The sources the test saved, by name.
@@ -167,6 +185,40 @@ async fn outcome(item_id: &str) -> Result<String, String> {
         .map_err(|error| error.explain())?;
         return Ok(format!("answered: {answer}"));
     }
+    // The fan-out items: a use of every provider, each one answering with
+    // its title, and a use of one provider, which is refused. The empty
+    // fields name the one-provider item's call.
+    if title.starts_with("Call every provider") {
+        let capability = if capability.is_empty() {
+            "fixture:greet@1"
+        } else {
+            capability
+        };
+        let operation = if operation.is_empty() {
+            "greet"
+        } else {
+            operation
+        };
+        let input = if input.is_empty() {
+            r#"{"name":"Ada"}"#
+        } else {
+            input
+        };
+        let answers = call_every(capability, operation, input.into())
+            .await
+            .map_err(|error| error.explain())?;
+        let said: Vec<String> = answers
+            .iter()
+            .map(|answer| match &answer.answer {
+                Ok(result) => format!("{}: {result}", answer.title),
+                Err(error) => format!("{}: {}", answer.title, error.explain()),
+            })
+            .collect();
+        return Ok(match said.as_slice() {
+            [] => "no provider answered".into(),
+            said => said.join("; "),
+        });
+    }
     // A query item: which providers can serve the capability now.
     if operation.is_empty() {
         let who: Vec<String> = providers(capability)
@@ -214,7 +266,7 @@ impl publish::Guest for Fixture {
         // Pane qualifies each capability operation with the capability, so
         // one component can tell them from calls by identity.
         match operation.as_str() {
-            "fixture:greet@1/greet" => {
+            "fixture:greet@1/greet" | "fixture:every@1/greet" => {
                 let input: Value =
                     serde_json::from_str(&input).map_err(|error| format!("{error}"))?;
                 let name = input.get("name").and_then(Value::as_str).unwrap_or("");
