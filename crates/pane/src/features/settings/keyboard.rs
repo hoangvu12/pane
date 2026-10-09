@@ -56,10 +56,10 @@ use gpui::{
     prelude::*, px,
 };
 use gpui_elements::editable_text::{EditableTextState, StringStorage, TextChanged, text_input};
+use pane_core::hotkeys::HookHealth;
 use pane_core::{
     Binding, EscapeBehavior, GameMode, Keyboard, KeyboardAction, Launcher, NavigationBindings,
 };
-use pane_core::hotkeys::HookHealth;
 
 use super::{Page, SettingsWindow, search};
 use crate::ui::controls::{self, status_note as note};
