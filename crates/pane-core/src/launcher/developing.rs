@@ -827,6 +827,7 @@ impl Launcher {
         self.developing
             .logs
             .pane(&owner, 0, LogLevel::Info, &developing);
+        self.redraw_log_as_it_grows(identity);
         state.view.status = Status::Result(developing);
         self.refresh(&mut state);
         drop(state);
