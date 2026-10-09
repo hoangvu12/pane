@@ -118,7 +118,7 @@ pub(crate) enum Kind {
 
 /// A dynamic root item, as the guest's JSON described it (the item shape
 /// of docs/list-tree.md plus its mode).
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct DynamicItem {
     /// The item itself: id, title, subtitle, actions, look.
     pub(crate) item: Item,

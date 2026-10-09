@@ -97,6 +97,13 @@ export function after(seconds: number, run: () => Promise<void> | void): Handle;
  */
 export function every(seconds: number, run: () => Promise<void> | void): Handle;
 
+/** One event of what the package registered, as the events entry point
+ * receives it: a timer's firing (`tag`) or a watcher's coalesced changes
+ * (`val.tag` with `val.changes`). */
+export type Event =
+  | { tag: "timer"; val: string }
+  | { tag: "watcher"; val: { tag: string; changes: Changes } };
+
 /** One change a folder watcher reports, as `onChanges` receives it. */
 export type Changes =
   | { tag: "paths"; val: string[] }
@@ -135,6 +142,20 @@ export function watchFolder(
 export function provide(capability: string): Handle;
 
 /**
+ * The events entry point's `handleEvent`, as this module keeps it: the
+ * host hands the tag of the timer that fired or the watcher whose changes
+ * arrived, and the closure it was registered with runs. A command that
+ * registers timers or watchers exports it, with `"pane": { "events":
+ * true }` in its package.json:
+ *
+ * ```js
+ * export const events = { handleEvent: registrations.handleEvent };
+ * ```
+ * @param {import("./registrations.d.ts").Event} event
+ */
+export function handleEvent(event: Event): Promise<void>;
+
+/**
  * `pane:extension/events@0.1.0`, as the events entry point receives it:
  * a timer's firing or a watcher's coalesced changes. The command's
  * package.json sets `"pane": { "events": true }` and exports `events =
@@ -151,9 +172,7 @@ declare module "pane:extension/events@0.1.0" {
   }
 
   /** One event of what the package registered. */
-  export type Event =
-    | { tag: "timer"; val: string }
-    | { tag: "watcher"; val: WatcherEvent };
+  export type Event = import("./registrations.d.ts").Event;
 
   /** Handles `event`: the firing of a timer (its tag) or the coalesced
    * changes of a watcher. An error is the extension's own, logged to its

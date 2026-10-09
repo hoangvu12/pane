@@ -928,12 +928,10 @@ impl Manifest {
                 provides.component.as_path(),
             )
         });
-        let activate = self.activate.as_deref().map(|component| {
-            (
-                "the package's activation entry point".to_owned(),
-                component,
-            )
-        });
+        let activate = self
+            .activate
+            .as_deref()
+            .map(|component| ("the package's activation entry point".to_owned(), component));
         commands
             .chain(operations)
             .chain(capabilities)

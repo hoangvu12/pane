@@ -680,6 +680,12 @@ struct WeakLauncher {
     /// Held weakly, so that Pane stops running continuing services as soon
     /// as the launcher is dropped.
     services: Option<std::sync::Weak<Services>>,
+    /// Held weakly, so that Pane stops firing registered timers as soon as
+    /// the launcher is dropped.
+    timers: Option<std::sync::Weak<timers::Timers>>,
+    /// Held weakly, so that Pane stops watching registered folders as soon
+    /// as the launcher is dropped.
+    watchers: Option<std::sync::Weak<watchers::Watchers>>,
     /// Held weakly, so that Pane stops checking for updates as soon as the
     /// launcher is dropped.
     updates: Option<std::sync::Weak<updates::Updates>>,
@@ -710,8 +716,8 @@ impl WeakLauncher {
             clipboard,
             schedules: self.schedules.as_ref().and_then(std::sync::Weak::upgrade),
             services: self.services.as_ref().and_then(std::sync::Weak::upgrade),
-            timers: self.timers.clone(),
-            watchers: self.watchers.clone(),
+            timers: self.timers.as_ref().and_then(std::sync::Weak::upgrade),
+            watchers: self.watchers.as_ref().and_then(std::sync::Weak::upgrade),
             updates: self.updates.as_ref().and_then(std::sync::Weak::upgrade),
             sources: self.sources.clone(),
             developing: self.developing.upgrade()?,
@@ -1972,6 +1978,8 @@ impl Launcher {
             clipboard: self.clipboard.as_ref().map(Arc::downgrade),
             schedules: self.schedules.as_ref().map(Arc::downgrade),
             services: self.services.as_ref().map(Arc::downgrade),
+            timers: self.timers.as_ref().map(Arc::downgrade),
+            watchers: self.watchers.as_ref().map(Arc::downgrade),
             updates: self.updates.as_ref().map(Arc::downgrade),
             sources: self.sources.clone(),
             developing: Arc::downgrade(&self.developing),
@@ -3675,6 +3683,7 @@ impl Launcher {
         for (identity, component, data) in begun {
             let launcher = self.clone();
             let key = identity.key();
+            let in_flight = key.clone();
             let started = std::thread::Builder::new()
                 .name("pane-activate".into())
                 .spawn(move || {
@@ -3688,7 +3697,7 @@ impl Launcher {
                             runtime.activate_with(&component, Some(data)),
                         );
                     }
-                    launcher.lock().activating.remove(&key);
+                    launcher.lock().activating.remove(&in_flight);
                     launcher.changed();
                 });
             if let Err(error) = started {

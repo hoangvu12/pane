@@ -448,10 +448,14 @@ impl Launcher {
         // A hotkey recorded for a dynamic root item that is not
         // registered (#158) says so, rather than launching nothing
         // silently; anything else launches nothing at all.
-        let why = opening.is_none().then(|| gone_dynamic(&state, shortcut)).flatten();
+        let why = opening
+            .is_none()
+            .then(|| gone_dynamic(&state, shortcut))
+            .flatten();
         let data = opening
             .as_ref()
-            .map(|opening| self.data_in(&state, &opening.component));
+            .map(|opening| self.data_in(&state, &opening.component))
+            .flatten();
         match &opening {
             Some(opening) => {
                 if opening.no_view {

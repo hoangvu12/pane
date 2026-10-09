@@ -570,7 +570,15 @@ fn reason(
     let whats: Vec<String> = requirements
         .iter()
         .map(|requirement| {
-            what_of(packages, able, provisions, paused, title_of, &path, requirement)
+            what_of(
+                packages,
+                able,
+                provisions,
+                paused,
+                title_of,
+                &path,
+                requirement,
+            )
         })
         .collect();
     let what = platform::join(&whats);
@@ -581,8 +589,9 @@ fn reason(
         fix: requirements
             .first()
             .map(|first| {
-            root_of_requirement(packages, able, provisions, paused, title_of, &path, first).fix()
-        })
+                root_of_requirement(packages, able, provisions, paused, title_of, &path, first)
+                    .fix()
+            })
             .unwrap_or(Fix::Manage),
     }
 }

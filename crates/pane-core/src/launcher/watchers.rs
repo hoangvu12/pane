@@ -267,39 +267,53 @@ fn look(watchers: &Watchers, launcher: &Launcher) -> Vec<Delivery> {
     let mut deliveries = Vec::new();
     // The windows that closed, as one event each; those of packages whose
     // code may not run are held, merged with what is held already.
-    for (id, held) in watching.watchers.iter_mut() {
-        let Some((since, paths, rescan)) = held.coalescing.take() else {
+    let closed: Vec<(u64, WatcherChanges)> = {
+        let mut closed = Vec::new();
+        for (id, held) in watching.watchers.iter_mut() {
+            let Some((since, paths, rescan)) = held.coalescing.take() else {
+                continue;
+            };
+            if since.elapsed() < COALESCE {
+                held.coalescing = Some((since, paths, rescan));
+                continue;
+            }
+            closed.push((*id, coalesced(&held.registered.path, paths, rescan)));
+        }
+        closed
+    };
+    for (id, changes) in closed {
+        let Some(held) = watching.watchers.get(&id) else {
             continue;
         };
-        if since.elapsed() < COALESCE {
-            held.coalescing = Some((since, paths, rescan));
-            continue;
-        }
-        let changes = coalesced(&held.registered.path, paths, rescan);
-        let registered = held.registered.clone();
-        if runs.get(id).copied().unwrap_or(false) {
+        if runs.get(&id).copied().unwrap_or(false) {
             deliveries.push(Delivery {
-                component: registered.component.clone(),
-                data: data.get(id).cloned().flatten(),
+                component: held.registered.component.clone(),
+                data: data.get(&id).cloned().flatten(),
                 event: GuestEvent::Watcher {
-                    tag: registered.tag.clone(),
+                    tag: held.registered.tag.clone(),
                     changes,
                 },
             });
         } else {
             // None of its code runs: held, merged with what is held
             // already, and delivered as one when it can run again.
-            merge(watching.held.entry(*id).or_insert(changes.clone()), changes);
+            merge(watching.held.entry(id).or_insert(changes.clone()), changes);
         }
     }
     // The held changes of packages whose code may run again are
     // delivered, one merged event each.
-    for (id, changes) in watching.held.clone() {
+    let deliverable: Vec<u64> = watching
+        .held
+        .keys()
+        .copied()
+        .filter(|id| runs.get(id).copied().unwrap_or(false))
+        .collect();
+    for id in deliverable {
+        let changes = watching.held.remove(&id);
         let Some(held) = watching.watchers.get(&id) else {
             continue;
         };
-        if runs.get(&id).copied().unwrap_or(false) {
-            watching.held.remove(&id);
+        if let Some(changes) = changes {
             deliveries.push(Delivery {
                 component: held.registered.component.clone(),
                 data: data.get(&id).cloned().flatten(),

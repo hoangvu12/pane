@@ -4362,8 +4362,8 @@ impl Host {
         // Activate answers nothing; only a trap fails it, as a crash of
         // the package like any call's, dropping the instance it ran in.
         match result {
-            Ok(()) => Ok(()),
-            Err(trap) => {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(trap)) | Err(trap) => {
                 self.drop_instance(path);
                 let error = crashed(&trap, false);
                 self.report(path, data.as_ref(), Health::Crashed(error.clone()));
