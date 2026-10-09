@@ -356,6 +356,10 @@ _Avoid_: Console, debug output
 The command-line tool authors use beside the app to create, develop, check and pack an extension package; it builds with the same code as development mode and hands the result to the running Pane. Distinct from `pane`, the application's executable.
 _Avoid_: Pane CLI, `pane` (the application)
 
+**Local channel**:
+The endpoint the running Pane listens on for `pane-ext`, which only the same user can open: a named pipe on Windows, a Unix-domain socket in a folder of the user's own elsewhere. `pane-ext dev` hands its builds over it and receives the package's development status and extension log back; closing it stops the development.
+_Avoid_: IPC, socket (one of its forms), single-instance channel
+
 **Build failure**:
 A development build that did not succeed: nothing is replaced, and the package keeps running its installed code. Distinct from a startup failure, whose replacement was installed.
 _Avoid_: Crash, startup failure

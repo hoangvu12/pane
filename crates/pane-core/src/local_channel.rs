@@ -1016,7 +1016,7 @@ mod tests {
                 None,
                 None,
                 None,
-                Some(&mut descriptor),
+                Some(&raw mut descriptor),
             )
         };
         assert!(status.is_ok(), "{status:?}");
