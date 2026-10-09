@@ -520,7 +520,7 @@ fn the_log_file_opens_through_pane_and_clearing_the_log_keeps_it() {
         block_on(pane.launcher.open_extension_log_file(&identity)),
         Ok(format!("Opened {}", file.display()))
     );
-    assert_eq!(*pane.opened.0.lock().unwrap(), [file.clone()]);
+    assert_eq!(*pane.opened.0.lock().unwrap(), std::slice::from_ref(&file));
 
     // Clearing forgets the lines Pane keeps; its log file keeps them.
     pane.launcher.clear_extension_log(&identity);
