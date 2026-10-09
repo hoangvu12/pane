@@ -53,6 +53,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::Receiver;
 use std::sync::{Arc, Mutex, MutexGuard};
+use std::time::Duration;
 
 pub use pane_build::{BuildFailure, Development};
 use pane_build::{Claim, Host, MAX_OBSOLETE, Prepared};
@@ -72,6 +73,11 @@ const DETAIL_LINES: usize = 60;
 
 /// The extension log of the development session, beside the build's.
 pub(super) const EXTENSION_LOG: &str = "extension.log";
+
+/// How long the lines a developed package writes close together are
+/// gathered before the window is told its Logs screen has more: one redraw
+/// for them all, however fast it writes.
+const LOG_REDRAW: Duration = Duration::from_millis(50);
 
 /// What [`Launcher::begin_developing`] found: how to build the package, and
 /// where.
@@ -309,6 +315,83 @@ impl Launcher {
         self.developing.logs.file(&identity.key())
     }
 
+    /// Opens the log file of the developed package with `identity` with
+    /// the system's handler for it, as its Logs screen's Open Log File
+    /// does, through the launcher's opener (off the calling thread: a
+    /// handler may take a moment to start). What was done, or why it
+    /// could not be.
+    pub fn open_extension_log_file(
+        &self,
+        identity: &PackageIdentity,
+    ) -> impl Future<Output = Result<String, String>> + Send + 'static {
+        let file = self.extension_log_file(identity);
+        let title = self.title_of(identity);
+        let links = self.links.clone();
+        async move {
+            let Some(file) = file else {
+                return Err(format!(
+                    "{title} has no log file: it is not being developed"
+                ));
+            };
+            let opened = file.clone();
+            off_thread(move || links.open_file(&file))
+                .await
+                .map(|()| format!("Opened {}", opened.display()))
+                .map_err(|why| format!("Could not open {}: {why}", opened.display()))
+        }
+    }
+
+    /// Shows the extension log of the package with `identity`, "Logs for
+    /// <title>", in place of whatever the launcher showed (Settings opens it
+    /// too, over an open command, which is left): the window reads its
+    /// lines ([`Launcher::extension_log`]) and draws them as they come.
+    pub(super) fn show_extension_log(&self, state: &mut State, identity: &PackageIdentity) {
+        let title = state.title_of(identity);
+        self.leave_command(state);
+        state.entries = Vec::new();
+        let screen = Screen::ExtensionLog {
+            identity: identity.clone(),
+        };
+        state.view = LauncherView::new(screen, logs_title(&title));
+    }
+
+    /// Whether the Logs screen of the package with `identity` is on show.
+    fn shows_log_of(&self, identity: &PackageIdentity) -> bool {
+        matches!(
+            &self.lock().view.screen,
+            Screen::ExtensionLog { identity: shown } if shown == identity
+        )
+    }
+
+    /// Tells the window whenever the log of the developed package with
+    /// `identity` grows while its Logs screen is on show, so the screen
+    /// draws the new lines: once for the lines written within
+    /// [`LOG_REDRAW`] of each other. A thread of its own waits for them,
+    /// until the package's development ends and lets the log's followers
+    /// go.
+    fn redraw_log_as_it_grows(&self, identity: &PackageIdentity) {
+        let lines = self.developing.logs.follow(&identity.key());
+        let weak = self.downgrade();
+        let followed = identity.clone();
+        let spawned = std::thread::Builder::new()
+            .name("pane-extension-log".into())
+            .spawn(move || {
+                while lines.recv().is_ok() {
+                    std::thread::sleep(LOG_REDRAW);
+                    while lines.try_recv().is_ok() {}
+                    let Some(launcher) = weak.upgrade() else {
+                        return;
+                    };
+                    if launcher.shows_log_of(&followed) {
+                        launcher.developing.changed();
+                    }
+                }
+            });
+        if let Err(error) = spawned {
+            eprintln!("pane: the Logs screen of {identity} will not follow its lines: {error}");
+        }
+    }
+
     /// Checks that the package can be developed now, explaining why not.
     pub(super) fn begin_developing(
         &self,
@@ -404,6 +487,7 @@ impl Launcher {
                 folder.display(),
             ),
         );
+        self.redraw_log_as_it_grows(&identity);
         worker.start(Reloader {
             launcher: self.downgrade(),
             identity,
@@ -472,6 +556,7 @@ impl Launcher {
                         },
                         Entry::StopDeveloping(identity.clone()),
                     ));
+                    rows.push(logs_row(id("logs"), identity, &title));
                     if development.failure.is_some() {
                         rows.push((
                             Row {
@@ -491,8 +576,8 @@ impl Launcher {
 
     /// Shows why the last build of the package with `identity` failed: the
     /// command, the folder, where the whole output is and the end of it,
-    /// with a row that builds it again. Without a failure (it built
-    /// meanwhile), the extension list.
+    /// with a row that builds it again and one that shows its log. Without
+    /// a failure (it built meanwhile), the extension list.
     pub(super) fn show_build_details(&self, state: &mut State, identity: &PackageIdentity) {
         let report = self.developing.report(identity);
         let Some((development, failure)) =
@@ -531,13 +616,16 @@ impl Launcher {
             subtitle: Some(format!("Run `{}` now", development.command)),
             unavailable: None,
         };
+        let id = format!("build-logs:{}", identity.key());
+        let (logs, show_logs) = logs_row(id, identity, &title);
         state.next_screen();
-        state.entries = vec![Entry::BuildAgain(identity.clone())];
+        state.entries = vec![Entry::BuildAgain(identity.clone()), show_logs];
         let screen = Screen::BuildDetails {
             identity: identity.clone(),
             details,
         };
-        state.view = LauncherView::new(screen, build_details_title(&title)).with_rows(vec![again]);
+        state.view =
+            LauncherView::new(screen, build_details_title(&title)).with_rows(vec![again, logs]);
     }
 
     /// Builds the developed package with `identity` now, as a save would.
@@ -630,6 +718,23 @@ impl Launcher {
 /// "Why <title> did not build".
 pub(super) fn build_details_title(title: &str) -> String {
     format!("Why {title} did not build")
+}
+
+/// "Logs for <title>".
+fn logs_title(title: &str) -> String {
+    format!("Logs for {title}")
+}
+
+/// The row with `id` that shows the Logs screen of the package with
+/// `identity`, titled `title`: in the extension list and a build's details.
+fn logs_row(id: String, identity: &PackageIdentity, title: &str) -> (Row, Entry) {
+    let row = Row {
+        id,
+        title: logs_title(title),
+        subtitle: Some("What it writes, and Pane's messages about it".into()),
+        unavailable: None,
+    };
+    (row, Entry::ExtensionLog(identity.clone()))
 }
 
 /// The name of the development folder of the package with `identity`: a
