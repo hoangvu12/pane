@@ -1144,9 +1144,7 @@ fn requires(
 /// member; a package is in one group at most. Reads only the installed
 /// records; runs nothing. Manage extensions shows the group on every
 /// member's page (#157).
-pub(crate) fn requirement_groups(
-    installed: &[InstalledPackage],
-) -> Vec<Vec<PackageIdentity>> {
+pub(crate) fn requirement_groups(installed: &[InstalledPackage]) -> Vec<Vec<PackageIdentity>> {
     let requires = requirements_among(installed);
     // Tarjan's strongly connected components, over the packages' indices.
     let mut found = Groups {

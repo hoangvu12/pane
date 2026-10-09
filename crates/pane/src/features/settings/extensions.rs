@@ -1424,11 +1424,9 @@ fn requirements_section(
     }
     let rows = requirements
         .iter()
-        .enumerate()
-        .map(|(index, requirement)| {
+        .map(|requirement| {
             let title = requirement.title.clone();
             let label = controls::field_description(title.clone(), theme.warning, theme)
-                .id(("extension-requirement", index))
                 .debug_selector(move || format!("extension-requirement-{title}"));
             // The fix row beside the requirement: a button, which runs the
             // launcher's fix for it.

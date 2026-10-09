@@ -4539,6 +4539,7 @@ fn waiting_package(folder: &Path, title: &str, dependencies: &str) -> PathBuf {
         r#"{{
             "manifestVersion": 1,
             "title": "{title}",
+            "version": "0.1.0",
             "apiVersion": "0.1",
             "commands": [{{ "id": "call", "title": "Call", "component": "fixture.wasm" }}],
             "operations": [{{ "id": "echo", "version": 1, "component": "fixture.wasm" }}],
@@ -4618,11 +4619,13 @@ fn an_extension_s_page_shows_what_it_waits_for_and_the_fix_row_fixes_it(cx: &mut
         settings_cx.debug_bounds("extension-requirements").is_none(),
         "the requirement row disappeared"
     );
-    assert!(cx.read_entity(&launcher, |window, _| window
-        .launcher()
-        .packages()
-        .iter()
-        .any(|package| package.identity == greeter && package.enabled)));
+    assert!(cx.read_entity(&launcher, |window, _| {
+        window
+            .launcher()
+            .packages()
+            .iter()
+            .any(|package| package.identity == greeter && package.enabled)
+    }));
 }
 
 #[gpui::test]
@@ -4660,17 +4663,17 @@ fn the_fix_row_installs_a_not_installed_dependency_again(cx: &mut TestAppContext
         settings_cx.debug_bounds("extension-requirements").is_none(),
         "the requirement row disappeared"
     );
-    assert!(cx.read_entity(&launcher, |window, _| window
-        .launcher()
-        .packages()
-        .iter()
-        .any(|package| package.identity == greeter)));
+    assert!(cx.read_entity(&launcher, |window, _| {
+        window
+            .launcher()
+            .packages()
+            .iter()
+            .any(|package| package.identity == greeter)
+    }));
 }
 
 #[gpui::test]
-fn the_fix_row_retries_a_paused_dependency_and_the_dependent_comes_back(
-    cx: &mut TestAppContext,
-) {
+fn the_fix_row_retries_a_paused_dependency_and_the_dependent_comes_back(cx: &mut TestAppContext) {
     let (sources, data) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
     let (greeter, caller) = greeter_and_caller(sources.path());
     // Install them with a launcher that is dropped before the window
@@ -4694,8 +4697,7 @@ fn the_fix_row_retries_a_paused_dependency_and_the_dependent_comes_back(
     cx.update(pane::bind_keys);
     let launcher =
         Launcher::with_packages(Runtime::start(), vec![], data.path().join("extensions"));
-    let (_window, cx) =
-        cx.add_window_view(|window, cx| LauncherWindow::new(launcher, window, cx));
+    let (_window, cx) = cx.add_window_view(|window, cx| LauncherWindow::new(launcher, window, cx));
     let (_settings, mut settings_cx) = open_extensions(cx);
 
     // The fix row retries the paused dependency, and the dependent comes
@@ -4731,8 +4733,7 @@ fn an_extension_s_page_shows_what_it_provides_and_who_uses_it(cx: &mut TestAppCo
         cx.foreground_executor()
             .block_on(launcher.install_package(folder));
     }
-    let (_window, cx) =
-        cx.add_window_view(|window, cx| LauncherWindow::new(launcher, window, cx));
+    let (_window, cx) = cx.add_window_view(|window, cx| LauncherWindow::new(launcher, window, cx));
     let (_settings, mut settings_cx) = open_extensions(cx);
 
     // The first provider installed is the provider Pane routes the
@@ -4750,7 +4751,10 @@ fn an_extension_s_page_shows_what_it_provides_and_who_uses_it(cx: &mut TestAppCo
 
     // The second provider's page says another provider serves it.
     open_page(&mut settings_cx, "JavaScript greet provider sample");
-    until_drawn(&mut settings_cx, "extension-Not chosen-pane-samples:greet@1");
+    until_drawn(
+        &mut settings_cx,
+        "extension-Not chosen-pane-samples:greet@1",
+    );
 
     // The consumer provides nothing: its page says so by listing nothing.
     open_page(&mut settings_cx, "Rust capabilities sample");

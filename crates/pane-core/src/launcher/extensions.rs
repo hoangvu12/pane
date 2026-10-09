@@ -28,7 +28,7 @@ use super::{
 use crate::dependencies;
 use crate::packages::{InstalledPackage, PackageIdentity, Store};
 use crate::platform;
-use crate::waiting::{Fix, Waiting};
+use crate::waiting::{Fix, Reason, Waiting};
 
 impl Launcher {
     /// The extension list, as Settings reads it: its rows, read without
@@ -1099,37 +1099,54 @@ fn wait_of(state: &State, identity: &PackageIdentity) -> Option<ExtensionWait> {
 /// [`Launcher::extension_details`]), under the launcher's lock.
 fn details_of(state: &State, identity: &PackageIdentity) -> Option<ExtensionDetails> {
     let package = state.package(identity)?;
-    let mut details = ExtensionDetails::default();
     // What is not met, from the waiting model (see `waiting`): required
     // dependencies today; required capabilities with #156.
-    if let Some(reason) = state.waiting.reason(identity) {
-        details.requirements = reason
-            .requirements
-            .iter()
-            .map(|requirement| UnmetRequirement {
-                title: format!("Needs {}", requirement.what),
-                fix: fix_row_of(state, &requirement.fix),
-            })
-            .collect();
-    }
+    let requirements = state
+        .waiting
+        .reason(identity)
+        .map(|reason| requirements_of(state, reason))
+        .unwrap_or_default();
     // What it provides, with the provider Pane routes calls to and the
     // consumers of each.
-    if let Ok(manifest) = &package.manifest {
-        details.provides = manifest
+    let provides = match &package.manifest {
+        Ok(manifest) => manifest
             .provides
             .iter()
-            .filter(|provides| {
-                platform::unavailable(provides.platforms.as_deref(), "it").is_none()
-            })
+            .filter(|provides| platform::unavailable(provides.platforms.as_deref(), "it").is_none())
             .map(|provides| ProvidedCapability {
                 capability: provides.capability.clone(),
                 chosen: chosen_of(state, identity, &provides.capability),
                 consumers: consumers_of(state, &provides.capability),
             })
-            .collect();
-    }
-    // The groups of packages that require one another it is part of, from
-    // the declarations alone.
+            .collect(),
+        Err(_) => Vec::new(),
+    };
+    Some(ExtensionDetails {
+        requirements,
+        provides,
+        cycles: cycles_of(state, identity),
+    })
+}
+
+/// The unmet requirements the waiting model's `reason` names, as the page
+/// lists them: each with the chain down to what is actually missing and
+/// the fix row beside it.
+fn requirements_of(state: &State, reason: &Reason) -> Vec<UnmetRequirement> {
+    reason
+        .requirements
+        .iter()
+        .map(|requirement| UnmetRequirement {
+            title: format!("Needs {}", requirement.what),
+            fix: fix_row_of(state, &requirement.fix),
+        })
+        .collect()
+}
+
+/// The groups of packages that require one another the package with
+/// `identity` is part of, found from the declarations alone: each naming
+/// the other members, in installed order.
+fn cycles_of(state: &State, identity: &PackageIdentity) -> Vec<RequirementCycle> {
+    let mut cycles = Vec::new();
     for group in dependencies::requirement_groups(&state.packages) {
         let Some(at) = group.iter().position(|member| member == identity) else {
             continue;
@@ -1140,11 +1157,11 @@ fn details_of(state: &State, identity: &PackageIdentity) -> Option<ExtensionDeta
             .filter(|(index, _)| *index != at)
             .map(|(_, member)| state.title_of(member))
             .collect();
-        details.cycles.push(RequirementCycle {
+        cycles.push(RequirementCycle {
             title: format!("Requires itself through {}", platform::join(&through)),
         });
     }
-    Some(details)
+    cycles
 }
 
 /// The fix row beside one unmet requirement, as the waiting model's fix
@@ -1165,9 +1182,7 @@ fn fix_row_of(state: &State, fix: &Fix) -> Option<RequirementFix> {
         Fix::Manage => return None,
     };
     let target = match &action {
-        FixAction::Enable(target) | FixAction::Retry(target) | FixAction::Install(target) => {
-            target
-        }
+        FixAction::Enable(target) | FixAction::Retry(target) | FixAction::Install(target) => target,
     };
     let title = state.title_of(target);
     let title = match &action {

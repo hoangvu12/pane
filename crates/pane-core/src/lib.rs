@@ -77,9 +77,9 @@ pub use launcher::{
     ItemActions, Launcher, LauncherView, ListPresentation, MANAGE_EXTENSIONS, OpenSubmenu,
     OperationKind, PackagePreferences, PinTarget, PreferenceField, PreferencesTarget, Presentation,
     ProvidedCapability, Question, QuickSlot, RequirementCycle, RequirementFix, ResultAction,
-    ResultActionItem, ResultActions, Row, RowKind, RowPresentation, Screen, Section, SelectedAction,
-    SettingsTarget, SetupHeader, ShortcutCatalog, ShortcutCommand, ShortcutGroup, SlotChange,
-    Status, SubmenuState, UnmetRequirement, Unavailable, UnboundShortcut, UpdateHold,
+    ResultActionItem, ResultActions, Row, RowKind, RowPresentation, Screen, Section,
+    SelectedAction, SettingsTarget, SetupHeader, ShortcutCatalog, ShortcutCommand, ShortcutGroup,
+    SlotChange, Status, SubmenuState, Unavailable, UnboundShortcut, UnmetRequirement, UpdateHold,
     answer_sections, root_sections,
 };
 pub use links::LinkOpener;
