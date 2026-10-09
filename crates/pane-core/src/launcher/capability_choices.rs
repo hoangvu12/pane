@@ -439,6 +439,11 @@ fn a_choice_that_is_not_a_source_is_refused() {
 /// Forgetting a provider removes exactly its choices.
 #[test]
 fn forgetting_removes_the_choices_of_the_uninstalled_provider() {
+    let (a, b) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    let (a, b) = (
+        PackageIdentity::local(a.path()).unwrap(),
+        PackageIdentity::local(b.path()).unwrap(),
+    );
     let mut record = Kept {
         file: None,
         forgotten: HashSet::new(),
@@ -449,21 +454,33 @@ fn forgetting_removes_the_choices_of_the_uninstalled_provider() {
     record
         .chosen
         .by_capability
-        .insert("acme:translate@1".into(), "local:/a".into());
+        .insert("acme:translate@1".into(), a.key());
     record
         .chosen
         .by_capability
-        .insert("acme:notes@1".into(), "local:/b".into());
-    assert!(record.forget(&PackageIdentity::local("/a").unwrap()));
+        .insert("acme:notes@1".into(), b.key());
+    assert!(record.forget(&a));
     assert_eq!(record.chosen.provider_of("acme:translate@1"), None);
-    assert_eq!(record.chosen.provider_of("acme:notes@1"), Some("local:/b"));
+    assert_eq!(
+        record.chosen.provider_of("acme:notes@1"),
+        Some(b.key().as_str())
+    );
     // Nothing more to forget.
-    assert!(!record.forget(&PackageIdentity::local("/a").unwrap()));
+    assert!(!record.forget(&a));
 }
 
 /// A package whose identity only starts the same is not forgotten.
 #[test]
 fn forgetting_matches_the_whole_identity() {
+    let folders = tempfile::tempdir().unwrap();
+    let a = folders.path().join("a");
+    let ab = folders.path().join("ab");
+    std::fs::create_dir_all(&a).unwrap();
+    std::fs::create_dir_all(&ab).unwrap();
+    let (a, ab) = (
+        PackageIdentity::local(&a).unwrap(),
+        PackageIdentity::local(&ab).unwrap(),
+    );
     let mut record = Kept {
         file: None,
         forgotten: HashSet::new(),
@@ -474,10 +491,10 @@ fn forgetting_matches_the_whole_identity() {
     record
         .chosen
         .by_capability
-        .insert("acme:translate@1".into(), "local:/ab".into());
-    assert!(!record.forget(&PackageIdentity::local("/a").unwrap()));
+        .insert("acme:translate@1".into(), ab.key());
+    assert!(!record.forget(&a));
     assert_eq!(
         record.chosen.provider_of("acme:translate@1"),
-        Some("local:/ab")
+        Some(ab.key().as_str())
     );
 }

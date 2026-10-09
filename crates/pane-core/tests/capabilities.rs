@@ -12,7 +12,6 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::time::Duration;
 
 use futures::executor::block_on;
@@ -1434,7 +1433,7 @@ fn the_choice_is_kept_across_an_update_of_the_chosen_provider() {
             ),
         ]
     };
-    let clock = Arc::new(ManualClock::at(SystemClock.now()));
+    let clock = ManualClock::at(SystemClock.now());
     let launcher = Launcher::with_packages(Ok(dirs.runtime.clone()), vec![], dirs.extensions())
         .with_npm_registry(pane_core::npm::Registry::local(registry.url()).unwrap())
         .with_clock(clock.clone());
