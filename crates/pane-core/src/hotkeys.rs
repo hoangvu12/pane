@@ -24,7 +24,9 @@
 //! asks the launcher to open the bound command. How a shortcut is
 //! dispatched — the system's registration or Pane's keyboard hook — is the
 //! adapter's to say ([`Hotkeys::route`]), and the binding's row shows it
-//! ([`Route::note_on`]).
+//! ([`Route::note_on`]). The hook's own state is the adapter's to say
+//! too ([`Hotkeys::hook_health`]), and the Settings pages and Copy
+//! Diagnostics show it ([`HookHealth::note`]).
 
 use std::fmt;
 use std::sync::Arc;
@@ -468,6 +470,32 @@ pub struct HookHealth {
     pub given_up: Option<String>,
 }
 
+impl HookHealth {
+    /// The note the Settings window's Keyboard page holds under the
+    /// hook's name and Copy Diagnostics after "Keyboard hook: " (#259):
+    /// that the hook is installed and its pages pinned in memory, how
+    /// many times Windows removed it and Pane installed it again, and —
+    /// in place of all of that — why Pane gave up keeping it installed,
+    /// if it did.
+    pub fn note(&self) -> String {
+        if let Some(why) = &self.given_up {
+            return why.clone();
+        }
+        let mut note = format!(
+            "Installed, its pages {} pinned in memory",
+            if self.pinned { "are" } else { "are not" }
+        );
+        match self.reinstalls {
+            0 => {}
+            1 => note.push_str("; Windows removed it once and Pane installed it again"),
+            count => note.push_str(&format!(
+                "; Windows removed it {count} times and Pane installed it again"
+            )),
+        }
+        note
+    }
+}
+
 /// Where an adapter reports presses of registered shortcuts.
 #[derive(Clone)]
 pub struct PressSender(tokio::sync::mpsc::UnboundedSender<Shortcut>);
@@ -679,5 +707,50 @@ mod tests {
         assert_eq!(health.reinstalls, 0);
         assert!(!health.pinned);
         assert_eq!(health.given_up, None);
+    }
+
+    #[test]
+    fn the_hook_s_state_is_said_plainly() {
+        // What the Keyboard page holds under the hook's name and Copy
+        // Diagnostics after "Keyboard hook: " (#259): the same words on
+        // every system, since the hook is Windows' but the words are
+        // Pane's.
+        let quiet = HookHealth {
+            reinstalls: 0,
+            pinned: true,
+            given_up: None,
+        };
+        assert_eq!(quiet.note(), "Installed, its pages are pinned in memory");
+        let busier = HookHealth {
+            reinstalls: 2,
+            pinned: false,
+            given_up: None,
+        };
+        assert_eq!(
+            busier.note(),
+            "Installed, its pages are not pinned in memory; Windows removed it 2 times and \
+             Pane installed it again"
+        );
+        let once = HookHealth {
+            reinstalls: 1,
+            pinned: true,
+            given_up: None,
+        };
+        assert_eq!(
+            once.note(),
+            "Installed, its pages are pinned in memory; Windows removed it once and Pane \
+             installed it again"
+        );
+        // Giving up replaces the state: the reason, which says what
+        // happened and what it leaves behind.
+        let why = "Windows removed Pane's keyboard hook 6 times within 30 seconds; Pane gave \
+                   up reinstalling it, and the hotkeys it dispatches do nothing until Pane \
+                   starts again";
+        let given_up = HookHealth {
+            reinstalls: 6,
+            pinned: true,
+            given_up: Some(why.into()),
+        };
+        assert_eq!(given_up.note(), why);
     }
 }

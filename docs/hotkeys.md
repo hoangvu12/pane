@@ -74,9 +74,12 @@ extension list's, the Shortcuts page's and the General page's — says it is
 "through Pane's keyboard hook, which does nothing while an elevated
 application is in front", and, for a shortcut Windows keeps, what Windows
 does with it, "which Pane takes first while it runs". The hook is installed
-only while a binding needs it. Still refused, as the table above says: what
-no program can intercept, and a binding another of Pane's bindings already
-has.
+only while a binding needs it. Settings' **Keyboard** page says the hook's
+state — installed, how many times Windows removed it and Pane installed it
+again, and whether its pages are pinned in memory — and Copy Diagnostics
+includes it ([#259](https://github.com/pane-app/pane/issues/259)). Still
+refused, as the table above says: what no program can intercept, and a
+binding another of Pane's bindings already has.
 
 A refused shortcut leaves the earlier hotkey working. Keys the recorder uses
 (Enter, Space, Escape, Tab, arrows) are not recorded; a modifier pressed alone
@@ -221,7 +224,9 @@ cannot assign, read or declare one (no WIT or manifest change).
   reserved shortcuts refused; unavailable everywhere (the rows say why, the
   command still opens); taken meanwhile explained after a restart; Escape
   changes nothing; a JavaScript command; an update keeps it and one that
-  drops the command releases it.
+  drops the command releases it. The hook's state is answered through the
+  launcher while a binding is dispatched through it, and not otherwise
+  ([#259](https://github.com/pane-app/pane/issues/259)).
 - Window ([`crates/pane/tests/hotkeys.rs`](../crates/pane/tests/hotkeys.rs)),
   on GPUI's test platform: Enter on the hotkey row, a plain `p` explained,
   `ctrl-alt-p` assigned; a reported press with root search showing a query
@@ -239,6 +244,15 @@ cannot assign, read or declare one (no WIT or manifest change).
   likewise: a hotkey recorded inline and cleared, the collisions with another
   command and with the Open Pane hotkey ("… opens Pane itself: …") explained,
   and the catalog following the package lifecycle and a restart.
+- Settings' dispatch and health surfaces
+  ([`crates/pane/tests/keyboard.rs`](../crates/pane/tests/keyboard.rs),
+  [`crates/pane/tests/settings.rs`](../crates/pane/tests/settings.rs)), on
+  GPUI's test platform with a fake adapter whose hook takes a refused
+  binding: a hook-dispatched binding's row says its route (the General
+  page's Open Pane row), the Keyboard page says the hook's state —
+  installed, how many times it was reinstalled, pages pinned — and says
+  nothing where no hook is in use, and the diagnostics copy holds the
+  hook's state ([#259](https://github.com/pane-app/pane/issues/259)).
 - The recognizer ([`crates/pane-core/tests/hotkey_recognizer.rs`](../crates/pane-core/tests/hotkey_recognizer.rs)),
   on every system: the pure state machine the Windows hook feeds, driven by
   synthetic key-event sequences — chords fired with exactly their modifiers

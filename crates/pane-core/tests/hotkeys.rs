@@ -3,15 +3,17 @@
 //! it with the system and keeps it across restarts, and pressing it opens
 //! the command, a real guest (the settings samples from `cargo xtask
 //! guests`). The system is a fake [`Hotkeys`], so which shortcuts other
-//! applications use is deterministic; each system's real adapter is checked
-//! in `hotkey_adapters.rs`.
+//! applications use is deterministic; it can answer as Windows' adapter
+//! does instead, taking a shortcut the system refuses through a keyboard
+//! hook of its own and reporting that hook's state (#252, #259). Each
+//! system's real adapter is checked in `hotkey_adapters.rs`.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use futures::executor::block_on;
-use pane_core::hotkeys::{HotkeyError, Hotkeys, Route, Shortcut};
+use pane_core::hotkeys::{HookHealth, HotkeyError, Hotkeys, Route, Shortcut};
 use pane_core::{Launcher, PackageIdentity, Runtime, SavedData, Screen, Status, Unavailable};
 use tempfile::TempDir;
 
@@ -43,6 +45,9 @@ struct FakeSystem {
     /// The shortcuts dispatched through the hook rather than the system's
     /// registration.
     hooked: Mutex<Vec<Shortcut>>,
+    /// The state of the hook, as the system reports it while a binding is
+    /// dispatched through it (#259).
+    health: Mutex<HookHealth>,
 }
 
 impl FakeSystem {
@@ -135,6 +140,12 @@ impl Hotkeys for FakeSystem {
         } else {
             Route::System
         }
+    }
+
+    fn hook_health(&self) -> Option<HookHealth> {
+        // As Windows' adapter answers: a hook is in use exactly while one
+        // of its bindings is.
+        (!self.hooked.lock().unwrap().is_empty()).then(|| self.health.lock().unwrap().clone())
     }
 }
 
@@ -810,6 +821,49 @@ fn the_open_pane_hotkey_falls_back_to_the_hook_too() {
     assert_eq!(launcher.open_pane_problem(), None);
     assert!(launcher.opens_pane(&key("ctrl+alt+space")));
     assert_eq!(system.registered(), ["ctrl+alt+space"]);
+}
+
+#[test]
+fn the_hook_s_state_is_answered_through_the_launcher() {
+    let dirs = Dirs::new();
+    let system = FakeSystem::hooking();
+    system.take("ctrl+alt+g");
+    *system.health.lock().unwrap() = HookHealth {
+        reinstalls: 2,
+        pinned: true,
+        given_up: None,
+    };
+    let launcher = dirs.launcher(&system);
+    dirs.install(&launcher, "sample-settings");
+
+    // No binding is dispatched through the hook yet: none is in use, so
+    // nothing is answered for — what the Keyboard page and Copy
+    // Diagnostics read through the launcher's query (#259).
+    assert_eq!(launcher.hook_health(), None);
+
+    // A shortcut another application has is taken through the hook, and
+    // the hook's state is answered with it.
+    assign(&launcher, "Greeting", "ctrl+alt+g");
+    assert_eq!(
+        launcher.hook_health(),
+        Some(HookHealth {
+            reinstalls: 2,
+            pinned: true,
+            given_up: None,
+        })
+    );
+    assert_eq!(
+        launcher.hook_health().unwrap().note(),
+        "Installed, its pages are pinned in memory; Windows removed it 2 times and Pane \
+         installed it again"
+    );
+
+    // Removing the hotkey releases the hook binding, and no hook is in
+    // use again.
+    manage(&launcher);
+    activate(&launcher, "Hotkey for Greeting");
+    activate(&launcher, "Remove hotkey");
+    assert_eq!(launcher.hook_health(), None);
 }
 
 #[test]

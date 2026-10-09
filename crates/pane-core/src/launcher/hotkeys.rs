@@ -57,7 +57,7 @@ use super::{
     Entry, Launcher, LauncherView, Opening, Row, Screen, State, Status, Unavailable, off_thread,
 };
 use crate::generation::EndMark;
-use crate::hotkeys::{Route, Shortcut};
+use crate::hotkeys::{HookHealth, Route, Shortcut};
 use crate::launch::LaunchSource;
 use crate::launcher::CommandRegistration;
 use crate::packages::{CommandId, CommandMode, InstalledPackage, PackageIdentity};
@@ -835,6 +835,15 @@ impl Launcher {
     /// beside the binding, with [`Route::note_on`].
     pub fn open_pane_route(&self) -> Route {
         self.lock().open_pane.route
+    }
+
+    /// The state of Pane's own keyboard hook, where this system's adapter
+    /// uses one and a binding needs it (Windows, #252): `None` where no
+    /// hook is in use — no binding needs one, or the system's adapter has
+    /// none. The Settings window's Keyboard page and Copy Diagnostics
+    /// show it (#259), through [`HookHealth::note`].
+    pub fn hook_health(&self) -> Option<HookHealth> {
+        self.hotkeys.hook_health()
     }
 
     /// Makes `shortcut` the Open Pane hotkey, as the user recorded it on

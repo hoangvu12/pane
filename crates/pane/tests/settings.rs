@@ -8,7 +8,9 @@
 //! General page's launch-at-login toggle is driven the same way, through a fake
 //! login system the tests script — no test ever touches the real login
 //! configuration of the machine running it; and the Extensions page
-//! manages extensions through the launcher's own operations.
+//! manages extensions through the launcher's own operations. The About
+//! page's diagnostics copy holds the state of Pane's keyboard hook (#259),
+//! read through a fake hotkeys system the tests script.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -24,6 +26,7 @@ use pane_core::autostart::{Autostart, Registration};
 use pane_core::changes;
 use pane_core::defaults::ArtifactSource;
 use pane_core::develop::{Build, BuildJob, BuildOutcome, Builder, Toolchains};
+use pane_core::hotkeys::{HookHealth, HotkeyError, Hotkeys, Shortcut};
 use pane_core::{Launcher, PackageIdentity, Runtime, Screen, Status, Target};
 use tempfile::TempDir;
 
@@ -133,6 +136,32 @@ impl Autostart for FakeLogin {
         }
         *self.registration.lock().unwrap() = Registration::Disabled;
         Ok(Registration::Disabled)
+    }
+}
+
+/// A fake hotkeys system, standing where the pane binary puts the
+/// platform's own: its keyboard hook's state as the tests script it
+/// (#259), which the diagnostics copy holds. No shortcut is ever
+/// refused, and none is dispatched through the hook — the health is the
+/// whole of the answer.
+struct FakeHotkeys {
+    /// The hook's state, as the launcher's query reads it.
+    health: std::sync::Mutex<Option<HookHealth>>,
+}
+
+impl Hotkeys for FakeHotkeys {
+    fn unavailable(&self) -> Option<String> {
+        None
+    }
+
+    fn register(&self, _shortcut: &Shortcut) -> Result<(), HotkeyError> {
+        Ok(())
+    }
+
+    fn unregister(&self, _shortcut: &Shortcut) {}
+
+    fn hook_health(&self) -> Option<HookHealth> {
+        self.health.lock().unwrap().clone()
     }
 }
 
@@ -1681,6 +1710,44 @@ fn the_page_copies_the_diagnostics_to_the_clipboard_locally(cx: &mut TestAppCont
     assert!(report.contains("Data folder: "), "{report}");
     assert!(
         report.contains("Update check: Pane 99.0.0 is available"),
+        "{report}"
+    );
+    // No keyboard hook is in use — this launcher has no adapter that
+    // uses one — and the report says so cleanly rather than nothing
+    // (#259).
+    assert!(report.contains("Keyboard hook: not in use"), "{report}");
+}
+
+#[gpui::test]
+fn the_diagnostics_hold_the_keyboard_hook_s_state(cx: &mut TestAppContext) {
+    // The hook's state, as a Windows adapter would answer while a
+    // binding needs it (#259): two reinstallations, its pages pinned.
+    let system = Arc::new(FakeHotkeys {
+        health: std::sync::Mutex::new(Some(HookHealth {
+            reinstalls: 2,
+            pinned: true,
+            given_up: None,
+        })),
+    });
+    let launcher = Launcher::new(Runtime::start(), samples::sample_commands()).with_hotkeys(system);
+    cx.executor().allow_parking();
+    cx.update(pane::bind_keys);
+    let (_window, cx) = cx.add_window_view(|window, cx| LauncherWindow::new(launcher, window, cx));
+
+    // The copy holds the hook's state beside the installation's own
+    // facts, as plain text on this computer's clipboard.
+    let (_settings, mut settings_cx) = open_about(cx);
+    click_row(&mut settings_cx, "about-diagnostics");
+    until_text(&mut settings_cx, "Copied to the clipboard");
+    let report = settings_cx
+        .read_from_clipboard()
+        .and_then(|item| item.text())
+        .expect("the report was copied");
+    assert!(
+        report.contains(
+            "Keyboard hook: Installed, its pages are pinned in memory; Windows removed it \
+             2 times and Pane installed it again"
+        ),
         "{report}"
     );
 }

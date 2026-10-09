@@ -33,6 +33,15 @@
 //! what the back key does in the launcher, whether Escape closes Settings,
 //! and extra Emacs or Vim Motions keys for moving the selection, on Alt as
 //! Raycast for Windows has them (see [`NavigationBindings`]).
+//!
+//! Below the actions, the state of Pane's own keyboard hook (Windows,
+//! #252): while a hotkey of yours is dispatched through it, a row says
+//! whether it is installed, how many times Windows removed it and Pane
+//! installed it again, and whether its pages are pinned in memory — and
+//! why Pane gave up keeping it installed, if it did (#259, read from the
+//! launcher's adapter). Where no hook is in use nothing shows: none is
+//! needed, and the rows of the system's own registrations say nothing
+//! either.
 
 use std::collections::BTreeMap;
 
@@ -40,6 +49,7 @@ use gpui::{
     AnyElement, App, Context, Div, Entity, FocusHandle, KeyBinding, KeyDownEvent, MouseDownEvent,
     Role, ScrollAnchor, SharedString, Stateful, Toggled, Window, actions, div, prelude::*,
 };
+use pane_core::hotkeys::HookHealth;
 use pane_core::{Binding, EscapeBehavior, Keyboard, KeyboardAction, Launcher, NavigationBindings};
 
 use super::{Page, SettingsWindow, search};
@@ -88,6 +98,15 @@ pub(crate) const ABOUT: &str = "Keys for moving around Pane";
 /// The labels of the page's sections.
 pub(crate) const BEHAVIOR: &str = "Behavior";
 pub(crate) const SECTION: &str = "Shortcuts";
+
+/// The name of the row that says the state of Pane's own keyboard hook
+/// (Windows, #252), in a card under the page's actions: shown while a
+/// hotkey of yours is dispatched through the hook, with whether it is
+/// installed, how many times Windows removed it and Pane installed it
+/// again, and whether its pages are pinned in memory (#259). Where no
+/// hook is in use nothing shows, as the rows of the system's own
+/// registrations say nothing of a route.
+pub(crate) const HOOK: &str = "Pane's keyboard hook";
 
 /// The Behavior section's rows.
 pub(crate) const ESCAPE_NAME: &str = "Escape key behavior";
@@ -142,9 +161,10 @@ pub(crate) fn page() -> Page {
 
 /// The settings the page offers the sidebar's search: the Behavior
 /// section's rows, then each navigation action of the bounded set, named
-/// as the page's row names it, in the group it sits in. Read live, so a
-/// change is in the next catalog as it lands.
-fn entries(_launcher: &Launcher, _cx: &App) -> Vec<search::Entry> {
+/// as the page's row names it, in the group it sits in, then the
+/// keyboard hook's state while a hook is in use. Read live, so a change
+/// is in the next catalog as it lands.
+fn entries(launcher: &Launcher, _cx: &App) -> Vec<search::Entry> {
     let behavior = [
         ("keyboard-escape", ESCAPE_NAME),
         ("keyboard-escape-closes", ESCAPE_CLOSES_NAME),
@@ -166,7 +186,15 @@ fn entries(_launcher: &Launcher, _cx: &App) -> Vec<search::Entry> {
         // unavailable here.
         unavailable: None,
     });
-    behavior.chain(actions).collect()
+    // The hook's state row, offered exactly while the page shows it: a
+    // jump reveals the row, which takes no focus of its own.
+    let hook = launcher.hook_health().map(|_| search::Entry {
+        control: Some("keyboard-hook".into()),
+        title: HOOK.into(),
+        group: None,
+        unavailable: None,
+    });
+    behavior.chain(actions).chain(hook).collect()
 }
 
 /// Each action's recorder takes keyboard focus — the recorders are tab
@@ -372,12 +400,21 @@ fn render(
         .flex_none()
         .anchor_scroll(Some(this.search_anchor("keyboard-navigation")))
         .child(this.keyboard.navigation.clone());
+    // The keyboard hook's state, read from the launcher's adapter as of
+    // this frame: the row shows only while a hook is in use, as its
+    // entry in the search does.
+    let hook_health = this.launcher.hook_health();
+    let hook_anchor = this.search_anchor("keyboard-hook");
+    let hook = hook_health
+        .as_ref()
+        .map(|health| hook_section(health, hook_anchor, &theme));
     let focuses = this.keyboard.focuses.clone();
     let recording = this.keyboard.recording;
     let defaults = Keyboard::default_for_this_system();
     compose(
         &view,
         Some(navigation),
+        hook,
         &theme,
         |control, element| match control {
             KeyboardControl::Recorder(action) => {
@@ -464,11 +501,14 @@ fn keyboard_is_default(action: KeyboardAction, cx: &App) -> bool {
 /// Escape-closes-Settings switch and `navigation` (the navigation
 /// bindings' select) — then the Shortcuts section, a card of a settings
 /// row per action with its recorder at its end, with what a save reported
-/// under the card. `attach` adds each control's behavior; the composition
-/// gives each its identity, its accessibility and its look.
+/// under the card, and under them, where a keyboard hook is in use, the
+/// card of its state (`hook`, see [`hook_section`]). `attach` adds each
+/// control's behavior; the composition gives each its identity, its
+/// accessibility and its look.
 pub(crate) fn compose(
     view: &KeyboardView,
     navigation: Option<Stateful<Div>>,
+    hook: Option<Div>,
     theme: &Theme,
     attach: impl Fn(KeyboardControl, Stateful<Div>) -> Stateful<Div>,
 ) -> Stateful<Div> {
@@ -543,11 +583,33 @@ pub(crate) fn compose(
         .child(
             controls::section(Some(SECTION.into()), shortcuts, theme)
                 .debug_selector(|| "keyboard-field".into()),
-        );
+        )
+        .children(hook);
     div()
         .id("keyboard")
         .debug_selector(|| "keyboard".into())
         .child(page)
+}
+
+/// The card that says the state of Pane's own keyboard hook (#259): one
+/// row under the page's actions, named [`HOOK`], saying the adapter's
+/// [`HookHealth::note`] under its name. A hook Pane gave up keeping
+/// installed says its reason in the warning ink; a working one's state
+/// is the muted ink of a row's description. It takes no focus and no
+/// click — a jump from the search reveals it, and the sidebar keeps the
+/// window's keyboard focus.
+fn hook_section(health: &HookHealth, anchor: ScrollAnchor, theme: &Theme) -> Div {
+    let tone = if health.given_up.is_some() {
+        theme.warning
+    } else {
+        theme.text_muted
+    };
+    let state = note("keyboard-hook", health.note(), tone, theme);
+    let row = controls::setting_row(HOOK, vec![state.into_any_element()], theme)
+        .id("keyboard-hook-row")
+        .debug_selector(|| "keyboard-hook-row".into())
+        .anchor_scroll(Some(anchor));
+    controls::section(None, controls::card([row.into_any_element()], theme), theme)
 }
 
 /// An action's settings row: its title at the left, with why its last
