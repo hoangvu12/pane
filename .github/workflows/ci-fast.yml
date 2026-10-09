@@ -67,18 +67,6 @@ jobs:
         run: |
           cargo fmt --all --check
           cargo check --locked --workspace --all-targets
-      - name: TEMPORARY guests fmt diff, wasm check and SDK packages
-        if: runner.os == 'Linux'
-        run: |
-          for dir in guests guests/hello-rust guests/fixtures/mixed-p2 guests/helpers/echo; do
-            (cd "$dir" && cargo fmt --all)
-          done
-          git diff -- '*.rs'
-          (cd guests && cargo check --locked --workspace --target wasm32-wasip2)
-          (cd guests/hello-rust && cargo check --locked --target wasm32-wasip2)
-          cargo xtask sdks
-          tar -tzf target/sdks/*.tgz
-          git diff --exit-code -- '*.rs'
 
   # The verify tier, the full check leg of ci.yml on Linux and Windows:
   # the lints beside the tests, the tests split into shards that run at
