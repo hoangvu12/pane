@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 //
 // Declarations for `pane:extension/operations` in wit/operations.wit:
-// calling an operation another installed package publishes, through Pane.
+// calling an operation another installed package publishes, and calling a
+// capability by its name (ADR 0041), through Pane.
 
 /** `pane:extension/operations@0.1.0`. */
 declare module "pane:extension/operations@0.1.0" {
@@ -52,4 +53,46 @@ declare module "pane:extension/operations@0.1.0" {
     version: number,
     input: string,
   ): Promise<string>;
+
+  /**
+   * An installed package that provides a capability, as `providers`
+   * answers it: the package's `source`, as `call` names it by, and its
+   * title.
+   */
+  export interface Provider {
+    source: string;
+    title: string;
+  }
+
+  /**
+   * Calls `operation` of the capability `capability`, such as
+   * "acme:translate@1", and resolves with its result. Any installed
+   * package may provide the capability: Pane routes the call to the
+   * provider that can serve it — the first one installed, until the user
+   * chooses one in Settings — and starts it if it is not running, never the
+   * calling package itself. The caller's pane.json must declare the
+   * capability and the operation under `uses`; a call to one it does not
+   * declare is `refused`, with the message saying to declare it. The
+   * provider serves the call through the entry point that serves its
+   * published operations, with the operation qualified by its capability
+   * ("acme:translate@1/translate"). `input` and the result are JSON text,
+   * and the call is as a call by identity is.
+   *
+   * On failure the promise rejects with an object whose `payload` is the
+   * {@link CallError}; each message names the capability.
+   */
+  export function callCapability(
+    capability: string,
+    operation: string,
+    input: string,
+  ): Promise<string>;
+
+  /**
+   * The installed packages that provide the capability `capability` and
+   * can serve a call to it now — enabled, not paused, not waiting for what
+   * they need, and built for this system — in the order Pane calls them.
+   * The calling package is never among them. With no such provider the
+   * list is empty.
+   */
+  export function providers(capability: string): Provider[];
 }

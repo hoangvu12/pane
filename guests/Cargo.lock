@@ -29,6 +29,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "capabilities-fixture"
+version = "0.1.0"
+dependencies = [
+ "pane-extension",
+ "serde_json",
+]
+
+[[package]]
 name = "cfg-if"
 version = "1.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -336,6 +344,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "sample-capabilities"
+version = "0.1.0"
+dependencies = [
+ "pane-extension",
+ "serde_json",
+]
+
+[[package]]
 name = "sample-dependencies"
 version = "0.1.0"
 dependencies = [
@@ -348,6 +364,14 @@ name = "sample-files"
 version = "0.1.0"
 dependencies = [
  "pane-extension",
+]
+
+[[package]]
+name = "sample-greet"
+version = "0.1.0"
+dependencies = [
+ "pane-extension",
+ "serde_json",
 ]
 
 [[package]]

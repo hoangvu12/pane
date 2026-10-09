@@ -1595,20 +1595,25 @@ impl Launcher {
         };
         if let (Ok(runtime), Some(installation)) = (&launcher.runtime, &launcher.installation) {
             // Operation calls see the packages as the launcher has them,
-            // and who waits among them.
+            // who waits among them and who is paused.
             let state = Arc::downgrade(&launcher.state);
             let data = installation.data.clone();
             runtime.set_directory(Arc::new(move || {
-                let (packages, waiting) = state.upgrade().map_or_else(
-                    || (Vec::new(), Waiting::default()),
+                let (packages, waiting, paused) = state.upgrade().map_or_else(
+                    || (Vec::new(), Waiting::default(), Vec::new()),
                     |state| {
                         let state = state.lock().unwrap_or_else(|p| p.into_inner());
-                        (state.packages.clone(), state.waiting.clone())
+                        (
+                            state.packages.clone(),
+                            state.waiting.clone(),
+                            state.paused.identities(),
+                        )
                     },
                 );
                 Installed {
                     packages,
                     waiting,
+                    paused,
                     data: Some(data.clone()),
                 }
             }));

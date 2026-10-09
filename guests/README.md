@@ -1996,6 +1996,58 @@ which is how a package names the extensions it is written for. Pane starts the t
 keeps each package's settings apart, and refuses a call back into a package
 already waiting in the same chain instead of deadlocking.
 
+### Capabilities
+
+A capability is a second way to address the same calls: a named, versioned
+set of operations, such as `acme:translate@1`, that any installed package
+may provide and yours calls by that name, without naming the package that
+serves it (ADR 0041). The full contract, routing and errors are in
+[docs/operations.md](../docs/operations.md#capabilities). A provider of
+`pane-samples:greet@1` and a consumer of it, in
+[Rust](sample-greet/src/lib.rs), [JavaScript](sample-greet-js/src/index.js)
+and [TypeScript](sample-greet-ts/src/index.ts) beside their consumers
+([sample-capabilities](sample-capabilities/src/lib.rs)), are the samples.
+
+Provide a capability in `pane.json`; the component named there serves its
+operations through the same export that serves published operations, and
+Pane passes each operation qualified by its capability
+(`pane-samples:greet@1/greet`), so one component can tell the two apart:
+
+```json
+"provides": [
+  { "capability": "pane-samples:greet@1", "component": "sample_greet.wasm",
+    "operations": ["greet"] }
+]
+```
+
+Call a capability by its name, with the operations your `pane.json` declares
+under `uses`:
+
+```rust
+use pane_extension::capabilities::{available, call};
+
+let answer = call("pane-samples:greet@1", "greet", input) // routed by Pane
+    .await
+    .map_err(|error| error.explain())?; // "not-found: …", "failed: …"
+if available("pane-samples:farewell@1").is_none() {
+    // No provider can serve it now; an optional use degrades gracefully.
+}
+```
+
+```ts
+import { available, call } from "@pane-app/extension/capabilities";
+
+const answer = await call("pane-samples:greet@1", "greet", input);
+if (available("pane-samples:farewell@1") === undefined) {
+  // No provider can serve it now.
+}
+```
+
+Pane routes each call to the provider that can serve it — the first one
+installed — never your own package, and refuses a call to a capability or
+operation your `pane.json` does not declare, so its view of what you need
+stays complete.
+
 ### Dependencies on other extensions
 
 A package that calls other packages' operations declares them, so that
@@ -2253,7 +2305,8 @@ and TypeScript: Pane sees only components.
   available on Linux: this package supports only Windows") instead of
   installing it. See
   [platform availability](../docs/platform-availability.md).
-- `commands` (required, at least one): `id` unique in the package (without
+- `commands` (required, at least one, unless the package publishes
+  `operations` or provides `provides`): `id` unique in the package (without
   `#`, which Pane's records use to join it to the package identity), `title`,
   optional `subtitle`, optional `platforms` (the same list, for this command
   alone: elsewhere its root row is listed with the reason and does not
@@ -2270,6 +2323,13 @@ and TypeScript: Pane sees only components.
   enabled.
 - `operations` (optional): the [operations](#operations) the package
   publishes; `commands` may then be empty.
+- `provides` (optional): the [capabilities](#capabilities) the package
+  provides, each a `capability` name, the `component` serving it and its
+  `operations`, with an optional `platforms`; `commands` may then be empty
+  too.
+- `uses` (optional): the [capabilities](#capabilities) the package calls,
+  each a `capability` name and the `operations` it calls, with an optional
+  `optional`, `use`, `default` and `commands`.
 - `dependencies` (optional): the other packages whose operations it calls,
   required or optional ([dependencies](#dependencies-on-other-extensions)).
 - `helpers` (optional): the [native helpers](#native-helpers) the package

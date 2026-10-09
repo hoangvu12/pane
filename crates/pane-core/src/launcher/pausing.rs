@@ -160,6 +160,12 @@ impl Pauses {
         self.pauses.contains_key(identity)
     }
 
+    /// The identities of the packages that are paused, for the snapshot of
+    /// the installed packages the operation router resolves against.
+    pub(super) fn identities(&self) -> Vec<PackageIdentity> {
+        self.pauses.keys().cloned().collect()
+    }
+
     /// Forgets the pause and failures of the package with `identity`,
     /// returning its pause: it runs in a new generation, or not at all.
     pub(super) fn forget(&mut self, identity: &PackageIdentity) -> Option<Pause> {

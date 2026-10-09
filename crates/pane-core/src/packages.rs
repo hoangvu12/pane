@@ -369,6 +369,13 @@ pub struct Manifest {
     /// The preferences the package declares for all its commands
     /// (`"preferences"`; see `preferences`).
     pub preferences: Vec<Preference>,
+    /// The capabilities the package provides (`"provides"`): each a named,
+    /// versioned set of operations that other packages call through Pane by
+    /// the capability's name, without naming this package (ADR 0041).
+    pub provides: Vec<ManifestProvides>,
+    /// The capabilities the package uses (`"uses"`): the operations its
+    /// code calls through Pane by each capability's name.
+    pub uses: Vec<ManifestUse>,
 }
 
 /// A native helper a package ships: a prebuilt program per target (operating
@@ -463,6 +470,54 @@ pub struct ManifestOperation {
     /// The operating systems it works on; `None` for every system the
     /// package supports. Elsewhere a call to it is unavailable.
     pub platforms: Option<Vec<Platform>>,
+}
+
+/// A capability a package provides (`"provides"` in its `pane.json`): a
+/// named, versioned set of operations that other packages call through Pane
+/// by the capability's name, such as `acme:translate@1`, instead of by this
+/// package's identity (ADR 0041). The component named there serves them
+/// through the export that serves published operations, with each operation
+/// qualified by its capability; a capability's operations are reached only
+/// through the capability, unless the package publishes them in
+/// `operations` too.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ManifestProvides {
+    /// The capability's name, `<namespace>:<name>@<major>`.
+    pub capability: String,
+    /// The component serving it, relative to the package folder.
+    pub component: PathBuf,
+    /// The operations the capability is made of.
+    pub operations: Vec<String>,
+    /// The operating systems it works on; `None` for every system the
+    /// package supports. Elsewhere the package does not provide the
+    /// capability.
+    pub platforms: Option<Vec<Platform>>,
+}
+
+/// A capability a package uses (`"uses"` in its `pane.json`): the operations
+/// its code calls through Pane by the capability's name, never naming the
+/// package that serves them.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ManifestUse {
+    pub capability: String,
+    /// The operations the package calls, each reached only through the
+    /// capability.
+    pub operations: Vec<String>,
+    /// Whether the package needs it (the default) or only uses it when some
+    /// installed package provides it (`"optional": true`).
+    pub required: bool,
+    /// Whether the package calls one provider (`"use": "one"`, the default)
+    /// or every provider (`"all"`). Read and checked here; fanning a call
+    /// out to every provider comes later.
+    pub use_all: bool,
+    /// A provider Pane installs when no installed package provides the
+    /// capability, written as a dependency's source is. Read and checked
+    /// here; installing a default comes later.
+    pub default: Option<String>,
+    /// The manifest ids of the commands that need the capability; `None`
+    /// when the whole package needs it. Read and checked here; commands
+    /// waiting for a capability come later.
+    pub commands: Option<Vec<String>>,
 }
 
 /// The scheduled work a command declares: every `every_seconds` seconds
@@ -610,6 +665,10 @@ struct ManifestJson {
     file_index: bool,
     #[serde(default)]
     preferences: Vec<serde_json::Value>,
+    #[serde(default)]
+    provides: Vec<ProvidesJson>,
+    #[serde(default)]
+    uses: Vec<UsesJson>,
 }
 
 #[derive(Deserialize)]
@@ -646,6 +705,32 @@ struct OperationJson {
     component: String,
     #[serde(default)]
     platforms: Option<Vec<String>>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ProvidesJson {
+    capability: String,
+    component: String,
+    operations: Vec<String>,
+    #[serde(default)]
+    platforms: Option<Vec<String>>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct UsesJson {
+    capability: String,
+    operations: Vec<String>,
+    #[serde(default)]
+    optional: bool,
+    /// "one" (the default) or "all".
+    #[serde(default)]
+    r#use: Option<String>,
+    #[serde(default)]
+    default: Option<String>,
+    #[serde(default)]
+    commands: Option<Vec<String>>,
 }
 
 #[derive(Deserialize)]
@@ -804,8 +889,9 @@ impl Manifest {
     }
 
     /// Every component the manifest names, relative to the package folder,
-    /// with what it serves as people know it: a command's title, or
-    /// "operation `<id>`". A component serving several appears once per use.
+    /// with what it serves as people know it: a command's title, "operation
+    /// `<id>`" or "capability `<name>`". A component serving several appears
+    /// once per use.
     pub(crate) fn components(&self) -> impl Iterator<Item = (String, &Path)> {
         let commands = self
             .commands
@@ -817,7 +903,13 @@ impl Manifest {
                 operation.component.as_path(),
             )
         });
-        commands.chain(operations)
+        let capabilities = self.provides.iter().map(|provides| {
+            (
+                format!("capability `{}`", provides.capability),
+                provides.component.as_path(),
+            )
+        });
+        commands.chain(operations).chain(capabilities)
     }
 
     /// What `component` exports besides `command`, as the manifest says.
@@ -835,7 +927,11 @@ impl Manifest {
             operations: self
                 .operations
                 .iter()
-                .any(|operation| operation.component == component),
+                .any(|operation| operation.component == component)
+                || self
+                    .provides
+                    .iter()
+                    .any(|provides| provides.component == component),
         }
     }
 
@@ -871,8 +967,12 @@ impl Manifest {
         let platforms = parse_platforms(json.platforms, "`platforms`")?;
         let package_preferences =
             preferences::parse(json.preferences, "the package", &[]).map_err(invalid)?;
-        if json.commands.is_empty() && json.operations.is_empty() {
-            return Err(invalid("`commands` is empty".into()));
+        if json.commands.is_empty() && json.operations.is_empty() && json.provides.is_empty() {
+            return Err(invalid(
+                "`commands` is empty and the package provides no capability; declare a command, an \
+                 operation or a capability it provides"
+                    .into(),
+            ));
         }
         let mut commands = Vec::new();
         for command in json.commands {
@@ -1027,6 +1127,8 @@ impl Manifest {
             });
         }
         let dependencies = parse_dependencies(json.dependencies)?;
+        let provides = parse_provides(json.provides)?;
+        let uses = parse_uses(json.uses, &commands)?;
         Ok(Manifest {
             title: json.title,
             description: json
@@ -1044,6 +1146,8 @@ impl Manifest {
             folder_access: json.folder_access,
             file_index: json.file_index,
             preferences: package_preferences,
+            provides,
+            uses,
         })
     }
 
@@ -1052,6 +1156,27 @@ impl Manifest {
         self.dependencies
             .iter()
             .find(|dependency| dependency.id == id)
+    }
+
+    /// Checks the `default` of each use for a package read from `from` (npm,
+    /// Git or Pane's own downloads): such a package cannot name a `local:`
+    /// folder, whose path is on its author's computer, not the user's, as a
+    /// dependency's source cannot.
+    fn check_published_uses(&self, from: &str) -> Result<(), PackageError> {
+        for used in &self.uses {
+            let Some(source) = &used.default else {
+                continue;
+            };
+            if matches!(SourceSpec::parse(source), Ok(SourceSpec::Local(_))) {
+                return Err(PackageError::InvalidManifest(format!(
+                    "the default `{source}` of the use of `{}` names a local folder, but a \
+                     package from {from} can name only `npm:` and `git:` sources, whose \
+                     packages are published, not a folder on its author's computer",
+                    used.capability
+                )));
+            }
+        }
+        Ok(())
     }
 }
 
@@ -1200,35 +1325,44 @@ impl SourceSpec {
 /// relative or absolute from `/`, never with `\`, a drive letter or a
 /// `//server` share, which one system would read differently from another.
 fn check_source(source: &str, id: &str) -> Result<(), PackageError> {
-    let invalid = |reason: &str| {
-        Err(PackageError::InvalidManifest(format!(
+    match source_problem(source) {
+        None => Ok(()),
+        Some(reason) => Err(PackageError::InvalidManifest(format!(
             "the source `{source}` of dependency `{id}` {reason}"
-        )))
-    };
+        ))),
+    }
+}
+
+/// Why `source` is not a source as a manifest writes it, as a dependency's
+/// source and a use's `default` are: the reason for the caller to name in
+/// its message; `None` when it is one.
+fn source_problem(source: &str) -> Option<String> {
     let path = match SourceSpec::parse(source) {
-        Ok(SourceSpec::Npm(_) | SourceSpec::Git(_)) => return Ok(()),
+        Ok(SourceSpec::Npm(_) | SourceSpec::Git(_)) => return None,
         Ok(SourceSpec::Local(path)) => path,
-        Err(SourceError::Npm(why)) => return invalid(&format!("is not an npm package: {why}")),
-        Err(SourceError::Git(why)) => return invalid(&format!("is not a Git repository: {why}")),
+        Err(SourceError::Npm(why)) => return Some(format!("is not an npm package: {why}")),
+        Err(SourceError::Git(why)) => return Some(format!("is not a Git repository: {why}")),
         Err(SourceError::UnknownKind) => {
-            return invalid(
+            return Some(
                 "must be `local:` followed by a folder path, `npm:` followed by a package name \
-                 or `git:` followed by a repository; other sources are not supported yet",
+                 or `git:` followed by a repository; other sources are not supported yet"
+                    .into(),
             );
         }
     };
     if path.is_empty() {
-        return invalid("must be `local:` followed by a folder path");
+        return Some("must be `local:` followed by a folder path".into());
     }
     let drive =
         path.len() >= 2 && path.as_bytes()[1] == b':' && path.as_bytes()[0].is_ascii_alphabetic();
     if path.contains('\\') || drive || path.starts_with("//") {
-        return invalid(
+        return Some(
             "must separate folders with `/`, without a drive letter, `\\` or a `//server` \
-             share, so that every system reads it alike (such as `local:../greeter`)",
+             share, so that every system reads it alike (such as `local:../greeter`)"
+                .into(),
         );
     }
-    Ok(())
+    None
 }
 
 fn parse_dependencies(json: Vec<DependencyJson>) -> Result<Vec<ManifestDependency>, PackageError> {
@@ -1285,6 +1419,173 @@ fn parse_dependencies(json: Vec<DependencyJson>) -> Result<Vec<ManifestDependenc
         });
     }
     Ok(dependencies)
+}
+
+/// Why `capability` is not a capability name, if it is not
+/// `<namespace>:<name>@<major>` with lowercase letters, digits and `-` in the
+/// namespace and the name and a positive major version: the one grammar of
+/// capability names (ADR 0041). `None` when it is one.
+pub(crate) fn capability_problem(capability: &str) -> Option<String> {
+    let part = |part: &str| {
+        !part.is_empty()
+            && part
+                .chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+    };
+    let problem = match capability.split_once(':') {
+        None => "it has no `:` separating the namespace from the name".to_owned(),
+        Some((namespace, rest)) => match rest.split_once('@') {
+            None => "it has no `@` and a major version".to_owned(),
+            Some((name, major)) => {
+                if !major.bytes().all(|b| b.is_ascii_digit())
+                    || major.parse::<u64>().is_err()
+                    || major == "0"
+                {
+                    format!("its major version `{major}` is not a number from 1")
+                } else if !part(namespace) {
+                    format!("its namespace `{namespace}` must be lowercase letters, digits and `-`")
+                } else if !part(name) {
+                    format!("its name `{name}` must be lowercase letters, digits and `-`")
+                } else {
+                    return None;
+                }
+            }
+        },
+    };
+    Some(format!(
+        "the capability name `{capability}` is malformed ({problem}); a capability is \
+         `<namespace>:<name>@<major>`, such as `acme:translate@1`, with lowercase letters, \
+         digits and `-` and a major version from 1"
+    ))
+}
+
+/// The operations `entry` lists, as its `operations` are written: unique and
+/// named, or why the manifest is invalid. `what` names the entry in the
+/// message, such as "the capability `acme:translate@1`".
+fn parse_capability_operations(
+    operations: Vec<String>,
+    what: &str,
+) -> Result<Vec<String>, PackageError> {
+    let invalid = |message: String| PackageError::InvalidManifest(message);
+    let mut named: Vec<String> = Vec::new();
+    for operation in operations {
+        if operation.is_empty() {
+            return Err(invalid(format!(
+                "{what} lists an operation with no name; every operation needs a name"
+            )));
+        }
+        if named.contains(&operation) {
+            return Err(invalid(format!(
+                "the operation `{operation}` of {what} is listed twice"
+            )));
+        }
+        named.push(operation);
+    }
+    if named.is_empty() {
+        return Err(invalid(format!(
+            "{what} lists no `operations`; name those it is made of"
+        )));
+    }
+    Ok(named)
+}
+
+fn parse_provides(json: Vec<ProvidesJson>) -> Result<Vec<ManifestProvides>, PackageError> {
+    let invalid = |message: String| PackageError::InvalidManifest(message);
+    let mut provides: Vec<ManifestProvides> = Vec::new();
+    for entry in json {
+        if let Some(problem) = capability_problem(&entry.capability) {
+            return Err(invalid(problem));
+        }
+        let what = format!("the capability `{}`", entry.capability);
+        // A package may provide several majors of one capability, one entry
+        // each; the same major twice would be two providers of one thing.
+        if provides
+            .iter()
+            .any(|seen| seen.capability == entry.capability)
+        {
+            return Err(invalid(format!(
+                "{what} is provided twice; declare each capability, at each major version, \
+                 once"
+            )));
+        }
+        let operations = parse_capability_operations(entry.operations, &what)?;
+        let platforms = parse_platforms(entry.platforms, &format!("`platforms` of {what}"))?;
+        provides.push(ManifestProvides {
+            capability: entry.capability,
+            component: inside_package(&entry.component, "component")?,
+            operations,
+            platforms,
+        });
+    }
+    Ok(provides)
+}
+
+fn parse_uses(
+    json: Vec<UsesJson>,
+    commands: &[ManifestCommand],
+) -> Result<Vec<ManifestUse>, PackageError> {
+    let invalid = |message: String| PackageError::InvalidManifest(message);
+    let mut uses: Vec<ManifestUse> = Vec::new();
+    for entry in json {
+        if let Some(problem) = capability_problem(&entry.capability) {
+            return Err(invalid(problem));
+        }
+        let what = format!("the use of `{}`", entry.capability);
+        if uses.iter().any(|seen| seen.capability == entry.capability) {
+            return Err(invalid(format!(
+                "{what} is declared twice; declare each capability once, with every operation \
+                 it calls"
+            )));
+        }
+        let operations = parse_capability_operations(entry.operations, &what)?;
+        let use_all = match entry.r#use.as_deref() {
+            None | Some("one") => false,
+            Some("all") => true,
+            Some(other) => {
+                return Err(invalid(format!(
+                    "{what} has \"use\": \"{}\"; `use` is \"one\" (the default: call one \
+                     provider) or \"all\" (call every provider)",
+                    other.escape_debug()
+                )));
+            }
+        };
+        if let Some(default) = &entry.default
+            && let Some(reason) = source_problem(default)
+        {
+            return Err(invalid(format!(
+                "the default `{default}` of {what} {reason}"
+            )));
+        }
+        let entry_commands = match entry.commands {
+            None => None,
+            Some(named) if named.is_empty() => {
+                return Err(invalid(format!(
+                    "the `commands` of {what} is empty; remove `commands` to need the \
+                     capability for the whole package, or name the commands that need it"
+                )));
+            }
+            Some(named) => {
+                for command in &named {
+                    if !commands.iter().any(|declared| declared.id == *command) {
+                        return Err(invalid(format!(
+                            "the `commands` of {what} names `{command}`, which the package \
+                             does not declare as a command"
+                        )));
+                    }
+                }
+                Some(named)
+            }
+        };
+        uses.push(ManifestUse {
+            capability: entry.capability,
+            operations,
+            required: !entry.optional,
+            use_all,
+            default: entry.default,
+            commands: entry_commands,
+        });
+    }
+    Ok(uses)
 }
 
 /// `file` (a `what`, such as a component) as a path, if it is a relative
@@ -1533,6 +1834,7 @@ impl SourcePackage {
             }
             Err(error) => return Err(error),
         };
+        manifest.check_published_uses("npm")?;
         Ok(SourcePackage {
             identity: PackageIdentity::npm(&name),
             folder,
@@ -1583,6 +1885,7 @@ impl SourcePackage {
             }
             Err(error) => return Err(error),
         };
+        manifest.check_published_uses("Git")?;
         for (_, component) in manifest.components() {
             let path = component.to_string_lossy().replace('\\', "/");
             if origin.lfs_pointers.contains(&path) {
@@ -1628,6 +1931,7 @@ impl SourcePackage {
             }
             Err(error) => return Err(error),
         };
+        manifest.check_published_uses("Pane's own downloads")?;
         Ok(SourcePackage {
             identity: PackageIdentity::default_extension(&id),
             folder,
