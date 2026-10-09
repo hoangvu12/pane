@@ -15,7 +15,7 @@
 //! else is served.
 #![no_std]
 
-use pane_extension::alloc::{format, string::String};
+use pane_extension::alloc::{format, string::String, string::ToString};
 use pane_extension::feedback::{Toast, show_toast};
 use pane_extension::{Command, CustomView, Item, List, NoCustomView, publish};
 use serde_json::{Value, json};

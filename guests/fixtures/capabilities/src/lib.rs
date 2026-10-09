@@ -23,7 +23,7 @@
 //! and has `p7` call the capability, one call past Pane's depth limit.
 #![no_std]
 
-use pane_extension::alloc::{format, string::String, vec, Vec};
+use pane_extension::alloc::{format, string::String, string::ToString, vec::Vec};
 use pane_extension::capabilities::{call, providers};
 use pane_extension::feedback::{Toast, show_toast};
 use pane_extension::operations;
