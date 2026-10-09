@@ -1196,9 +1196,7 @@ fn provides() -> String {
 /// members, with `extra` (starting with a comma) adding `"default"`,
 /// `"optional"` or `"commands"`.
 fn uses(extra: &str) -> String {
-    format!(
-        r#","uses": [{{ "capability": "fixture:greet@1", "operations": ["greet"]{extra} }}}"#
-    )
+    format!(r#","uses": [{{ "capability": "fixture:greet@1", "operations": ["greet"]{extra} }}]"#)
 }
 
 /// What the fixture's "Call the greet capability" item answers when a
@@ -1210,7 +1208,7 @@ fn answered() -> Status {
 /// Not-found: no installed extension provides the capability, as the
 /// fixture reports the error.
 fn not_found() -> Status {
-    error(format!(
+    error(&format!(
         "The extension reported an error: not-found: no installed extension provides `{GREET}`"
     ))
 }
@@ -1288,7 +1286,7 @@ fn a_disabled_provider_is_used_rather_than_the_default_beside_it() {
     let provider = dirs.capability("b", &provides());
     // Another provider the consumer names as its default, never installed:
     // the disabled one is used rather than it being installed beside.
-    let _default = dirs.capability("c", &provides());
+    dirs.capability("c", &provides());
     let consumer = dirs.capability("a", &uses(r#", "default": "local:../c""#));
     let launcher = dirs.launcher();
     block_on(launcher.install_package(&provider));
@@ -1312,7 +1310,7 @@ fn a_disabled_provider_is_used_rather_than_the_default_beside_it() {
 #[test]
 fn the_default_a_use_names_is_installed_when_no_provider_is() {
     let dirs = Dirs::new();
-    let provider = dirs.capability("b", &provides());
+    dirs.capability("b", &provides());
     let consumer = dirs.capability("a", &uses(r#", "default": "local:../b""#));
     let launcher = dirs.launcher();
 
@@ -1327,8 +1325,10 @@ fn the_default_a_use_names_is_installed_when_no_provider_is() {
     );
     assert_eq!(
         launcher.view().rows[0].subtitle.as_deref(),
-        Some("Copy the package into Pane and add its commands, and install Package b, which it \
-              names")
+        Some(
+            "Copy the package into Pane and add its commands, and install Package b, which it \
+              names"
+        )
     );
     block_on(launcher.activate_selected());
 
@@ -1375,10 +1375,7 @@ fn a_use_with_no_provider_and_no_default_waits() {
 #[test]
 fn a_use_narrowed_to_some_commands_says_which_wait() {
     let dirs = Dirs::new();
-    let consumer = dirs.capability(
-        "a",
-        &uses(r#", "commands": ["fixture"]"#),
-    );
+    let consumer = dirs.capability("a", &uses(r#", "commands": ["fixture"]"#));
     let launcher = dirs.launcher();
 
     block_on(launcher.preview_package(&consumer));
@@ -1395,7 +1392,7 @@ fn a_use_narrowed_to_some_commands_says_which_wait() {
 #[test]
 fn an_optional_use_never_installs_its_default() {
     let dirs = Dirs::new();
-    let _default = dirs.capability("b", &provides());
+    dirs.capability("b", &provides());
     let consumer = dirs.capability("a", &uses(r#", "optional": true, "default": "local:../b""#));
     let launcher = dirs.launcher();
 
@@ -1454,7 +1451,7 @@ fn a_default_that_cannot_be_installed_stops_the_install() {
 fn a_default_that_does_not_provide_the_capability_stops_the_install() {
     let dirs = Dirs::new();
     // The default is a package that provides a different capability.
-    let _default = dirs.capability(
+    dirs.capability(
         "b",
         r#","provides": [{ "capability": "fixture:other@1", "component": "fixture.wasm",
              "operations": ["greet"] }]"#,
@@ -1468,7 +1465,8 @@ fn a_default_that_does_not_provide_the_capability_stops_the_install() {
         launcher.view().status,
         Status::Error(
             "Nothing was installed: Package a names `local:../b` as the default provider of \
-             `fixture:greet@1`, which does not provide it".into()
+             `fixture:greet@1`, which does not provide it"
+                .into()
         )
     );
     assert!(launcher.packages().is_empty());
@@ -1500,7 +1498,7 @@ fn a_package_providing_an_already_provided_capability_says_so() {
 #[test]
 fn an_update_plans_the_new_copy_s_uses() {
     let dirs = Dirs::new();
-    let provider = dirs.capability("b", &provides());
+    dirs.capability("b", &provides());
     let consumer = dirs.capability("a", &uses(""));
     let launcher = dirs.launcher();
     block_on(launcher.install_package(&consumer));

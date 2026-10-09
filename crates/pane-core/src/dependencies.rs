@@ -168,7 +168,10 @@ pub(crate) struct Use {
 #[derive(Clone, Debug)]
 pub(crate) enum UseKind {
     /// A package provides it, in the state the plan found that package in.
-    Provided { provider: Named, state: ProvidedState },
+    Provided {
+        provider: Named,
+        state: ProvidedState,
+    },
     /// No package provides it; the default the consumer names is installed
     /// with this one, as a missing required dependency is.
     InstallsDefault { provider: Named },
@@ -489,7 +492,11 @@ impl fmt::Display for Problem {
                 f,
                 "{dependent} names itself as the default provider of `{id}`"
             ),
-            ProblemKind::DefaultCannotInstall { source, from, error } => write!(
+            ProblemKind::DefaultCannotInstall {
+                source,
+                from,
+                error,
+            } => write!(
                 f,
                 "{dependent} names `{source}` as the default provider of `{id}`, from {from}, \
                  which cannot be installed: {error}"
@@ -585,12 +592,7 @@ impl Assumptions {
 
 /// What one use says about the provider the plan found: its title with the
 /// state the plan found it in, for [`Plan::lines`].
-fn provided_line(
-    provider: &Named,
-    state: ProvidedState,
-    consumer: &str,
-    required: bool,
-) -> String {
+fn provided_line(provider: &Named, state: ProvidedState, consumer: &str, required: bool) -> String {
     let provider = &provider.title;
     match state {
         ProvidedState::Installed => format!("provided by {provider} (installed)"),
@@ -599,11 +601,16 @@ fn provided_line(
              and {consumer} waits until you enable it in Settings)"
         ),
         ProvidedState::Disabled => {
-            format!("provided by {provider} (installed, but you disabled it: it stays \
-                     disabled)")
+            format!(
+                "provided by {provider} (installed, but you disabled it: it stays \
+                     disabled)"
+            )
         }
         ProvidedState::Paused => {
-            format!("provided by {provider} (installed, but {})", paused_reason("it"))
+            format!(
+                "provided by {provider} (installed, but {})",
+                paused_reason("it")
+            )
         }
         ProvidedState::WithThis => format!("provided by {provider} (installed with it)"),
     }
@@ -693,7 +700,11 @@ impl Plan {
                     _ => named.title.clone(),
                 })
                 .collect();
-            let verb = if others.len() == 1 { "provides" } else { "provide" };
+            let verb = if others.len() == 1 {
+                "provides"
+            } else {
+                "provide"
+            };
             lines.push(format!(
                 "Provides {} ({} {verb} it too; choose in Settings)",
                 provided.capability,
@@ -2057,7 +2068,10 @@ mod tests {
         assert_eq!(plan.named_defaults(), ["Package b".to_owned()]);
         assert_eq!(plan.installed_with(), Vec::<String>::new());
         assert_eq!(
-            plan.uses.iter().map(|used| used.capability.clone()).collect::<Vec<_>>(),
+            plan.uses
+                .iter()
+                .map(|used| used.capability.clone())
+                .collect::<Vec<_>>(),
             ["test:greet@1".to_owned()]
         );
         assert!(

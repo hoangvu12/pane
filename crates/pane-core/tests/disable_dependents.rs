@@ -568,7 +568,11 @@ fn pane_pausing_a_required_dependency_disables_nothing_else_and_its_dependent_wa
     );
     assert_eq!(
         titles(&restarted),
-        ["Disable all 2", "Disable only Rust operations sample", "Cancel"]
+        [
+            "Disable all 2",
+            "Disable only Rust operations sample",
+            "Cancel"
+        ]
     );
 }
 
@@ -659,7 +663,11 @@ impl Dirs {
         block_on(launcher.install_package(&self.folder("c")));
         assert_eq!(
             enabled(&launcher),
-            [("Package p".into(), true), ("Package d".into(), true), ("Package c".into(), true)]
+            [
+                ("Package p".into(), true),
+                ("Package d".into(), true),
+                ("Package c".into(), true)
+            ]
         );
         launcher
     }
@@ -693,7 +701,10 @@ fn disabling_the_last_provider_of_a_capability_says_who_waits_for_it() {
     block_on(launcher.install_package(&dirs.folder("q")));
     assert_eq!(toggle(&launcher, "Package p"), Status::Idle);
     let details = launcher.view().details().join("\n");
-    assert!(!details.contains("will wait for fixture:greet@1"), "{details}");
+    assert!(
+        !details.contains("will wait for fixture:greet@1"),
+        "{details}"
+    );
     assert_eq!(
         titles(&launcher),
         ["Disable all 2", "Disable only Package p", "Cancel"]
@@ -725,7 +736,11 @@ fn disable_only_disables_the_dependency_alone_and_its_dependents_wait() {
     // The package alone: d and c stay enabled, and d waits for it.
     assert_eq!(
         enabled(&launcher),
-        [("Package p".into(), false), ("Package d".into(), true), ("Package c".into(), true)]
+        [
+            ("Package p".into(), false),
+            ("Package d".into(), true),
+            ("Package c".into(), true)
+        ]
     );
     assert_eq!(
         launcher.view().rows[launcher.view().selected.unwrap()].title,

@@ -444,7 +444,11 @@ fn packages_requiring_each_other_are_uninstalled_together() {
     ask_to_uninstall(&launcher, "Package x");
     assert_eq!(
         titles(&launcher),
-        ["Uninstall all 2 and keep saved data", "Uninstall all 2 and delete saved data", "Cancel"]
+        [
+            "Uninstall all 2 and keep saved data",
+            "Uninstall all 2 and delete saved data",
+            "Cancel"
+        ]
     );
     assert_eq!(
         press(&launcher, "Uninstall all 2 and delete saved data"),
@@ -772,7 +776,11 @@ fn uninstalling_the_last_provider_of_a_capability_says_who_waits_for_it() {
     assert!(!details.contains("Package d will wait"), "{details}");
     assert_eq!(
         titles(&launcher),
-        ["Uninstall all 2 and keep saved data", "Uninstall all 2 and delete saved data", "Cancel"]
+        [
+            "Uninstall all 2 and keep saved data",
+            "Uninstall all 2 and delete saved data",
+            "Cancel"
+        ]
     );
     assert_eq!(press(&launcher, "Cancel"), Status::Idle);
 
@@ -781,5 +789,8 @@ fn uninstalling_the_last_provider_of_a_capability_says_who_waits_for_it() {
     block_on(launcher.install_package(&dirs.folder("q")));
     ask_to_uninstall(&launcher, "Package p");
     let details = launcher.view().details().join("\n");
-    assert!(!details.contains("will wait for fixture:greet@1"), "{details}");
+    assert!(
+        !details.contains("will wait for fixture:greet@1"),
+        "{details}"
+    );
 }

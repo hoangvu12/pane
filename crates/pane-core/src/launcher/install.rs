@@ -211,10 +211,7 @@ pub(in crate::launcher) fn outcome_message(mode: &Mode, outcome: &Outcome) -> St
             .iter()
             .map(InstalledPackage::title)
             .collect();
-        installed_with.push(format!(
-            "{}, which it requires",
-            platform::join(&titles)
-        ));
+        installed_with.push(format!("{}, which it requires", platform::join(&titles)));
     }
     if !outcome.defaults.is_empty() {
         let titles: Vec<String> = outcome
@@ -222,10 +219,7 @@ pub(in crate::launcher) fn outcome_message(mode: &Mode, outcome: &Outcome) -> St
             .iter()
             .map(InstalledPackage::title)
             .collect();
-        installed_with.push(format!(
-            "{}, which it names",
-            platform::join(&titles)
-        ));
+        installed_with.push(format!("{}, which it names", platform::join(&titles)));
     }
     if !installed_with.is_empty() {
         message.push_str(&format!(" with {}", platform::join(&installed_with)));

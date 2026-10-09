@@ -997,9 +997,7 @@ fn capability_package(folder: &Path, title: &str, command: &str, members: &str) 
     fs::create_dir_all(folder).unwrap();
     fs::copy(guest, folder.join("fixture.wasm")).unwrap();
     let manifest = if command.is_empty() {
-        format!(
-            r#"{{ "manifestVersion": 1, "title": "{title}", "apiVersion": "0.1"{members} }}"#
-        )
+        format!(r#"{{ "manifestVersion": 1, "title": "{title}", "apiVersion": "0.1"{members} }}"#)
     } else {
         format!(
             r#"{{ "manifestVersion": 1, "title": "{title}", "apiVersion": "0.1",
@@ -1038,8 +1036,10 @@ fn the_install_preview_lists_the_capabilities_a_package_uses(cx: &mut TestAppCon
     assert_eq!(titles(&view), ["Install"]);
     assert_eq!(
         view.rows[0].subtitle.as_deref(),
-        Some("Copy the package into Pane and add its commands, and install Greeter, which it \
-              names")
+        Some(
+            "Copy the package into Pane and add its commands, and install Greeter, which it \
+              names"
+        )
     );
 
     // Installing installs the default provider with it, and its command
@@ -1052,7 +1052,14 @@ fn the_install_preview_lists_the_capabilities_a_package_uses(cx: &mut TestAppCon
     );
     assert_eq!(
         titles(&view),
-        ["Call", INSTALL_ROW, NPM_ROW, GIT_ROW, MANAGE_ROW, SETTINGS_ROW]
+        [
+            "Call",
+            INSTALL_ROW,
+            NPM_ROW,
+            GIT_ROW,
+            MANAGE_ROW,
+            SETTINGS_ROW
+        ]
     );
 
     cx.simulate_keystrokes("enter");
@@ -1067,9 +1074,7 @@ fn the_install_preview_lists_the_capabilities_a_package_uses(cx: &mut TestAppCon
 }
 
 #[gpui::test]
-fn disable_only_disables_the_dependency_alone_and_its_dependent_waits(
-    cx: &mut TestAppContext,
-) {
+fn disable_only_disables_the_dependency_alone_and_its_dependent_waits(cx: &mut TestAppContext) {
     let (sources, data) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
     command_package(&sources.path().join("greeter"), "Greeter", "");
     let caller = command_package(
