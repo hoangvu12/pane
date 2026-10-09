@@ -1,5 +1,5 @@
 //! Pane's settings sample: a command whose choice Pane keeps between runs.
-//! The chosen greeting style is saved with [`pane_guest::settings`], so it
+//! The chosen greeting style is saved with [`pane_extension::settings`], so it
 //! survives restarting Pane and disabling and re-enabling the package. It also
 //! keeps one value of each other kind of data: a note ([`content`]), the last
 //! greeting ([`cache`]) and a sign-in token ([`credentials`]), so clearing its
@@ -25,9 +25,9 @@
 //! with.
 #![no_std]
 
-use pane_guest::alloc::{format, string::String, vec::Vec};
-use pane_guest::feedback::{Toast, show_toast};
-use pane_guest::{
+use pane_extension::alloc::{format, string::String, vec::Vec};
+use pane_extension::feedback::{Toast, show_toast};
+use pane_extension::{
     Command, CustomView, FieldValue, FormError, Item, List, NoCustomView, cache, content,
     credentials, settings,
 };
@@ -59,7 +59,7 @@ const FLOOD_LINE: usize = 5_000;
 const FLOOD_LINES: u32 = 1_500;
 
 struct Greeting;
-pane_guest::export!(Greeting);
+pane_extension::export!(Greeting);
 
 /// Runs the action of the item `id` and shows a toast with what [`outcome`]
 /// answers; each item's action is this with its id.
@@ -135,18 +135,18 @@ async fn outcome(id: &str) -> Result<String, String> {
             Ok("Finished computing after a minute".into())
         }
         "log" => {
-            pane_guest::debug!("a debug line");
-            pane_guest::info!("an info line");
-            pane_guest::warn!("a warning line");
-            pane_guest::error!("an error line");
-            pane_guest::println!("a printed line");
-            pane_guest::eprintln!("a printed error");
+            pane_extension::debug!("a debug line");
+            pane_extension::info!("an info line");
+            pane_extension::warn!("a warning line");
+            pane_extension::error!("an error line");
+            pane_extension::println!("a printed line");
+            pane_extension::eprintln!("a printed error");
             Ok("Wrote to the log".into())
         }
         "flood" => {
-            pane_guest::println!("{}", "x".repeat(FLOOD_LINE));
+            pane_extension::println!("{}", "x".repeat(FLOOD_LINE));
             for n in 0..FLOOD_LINES {
-                pane_guest::println!("line {n}");
+                pane_extension::println!("line {n}");
             }
             Ok("Flooded the log".into())
         }

@@ -18,8 +18,8 @@ package would.
 
 1. Build it once, from the repository root:
    `cd guests/hello-rust && cargo build --release --target wasm32-wasip2`.
-   (Outside this repository, copy the folder, point `pane-guest`'s `path`
-   in `Cargo.toml` at `guests/pane-guest` of a Pane checkout and copy
+   (Outside this repository, copy the folder, point `pane-extension`'s `path`
+   in `Cargo.toml` at `guests/pane-extension` of a Pane checkout and copy
    `rust-toolchain.toml` beside it.)
 2. `cargo run -p pane -- --install guests/hello-rust`, and Enter on
    **Install**.

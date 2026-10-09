@@ -14,7 +14,7 @@
 // Pane's `handle-event` hands such an id back, and the adapter runs the
 // function, answering `{}`: Pane shows nothing of an answer, and the
 // command tells the user what happened with a toast or a HUD
-// (`@pane/extension/feedback`, feedback.js). An id of the newest toast's
+// (`@pane-app/extension/feedback`, feedback.js). An id of the newest toast's
 // actions (`toast:<n>:primary`) runs that action, from the table
 // feedback.js keeps on `globalThis`. An id the list does not name (an
 // instance that has not drawn the list yet asks it first) is a search

@@ -20,7 +20,7 @@
 // than Pane keeps; "Fail" throws, which the extension answers with as an
 // error and logs with its stack.
 // @ts-check
-import { showToast } from "@pane/extension/feedback";
+import { showToast } from "@pane-app/extension/feedback";
 import { get, set } from "pane:extension/settings@0.1.0";
 import * as cache from "pane:extension/cache@0.1.0";
 import * as content from "pane:extension/content@0.1.0";
@@ -53,7 +53,7 @@ const FLOOD_LINES = 1_500;
  * @param {string} id
  * @param {string} title
  * @param {string} subtitle
- * @returns {import("@pane/extension").Item}
+ * @returns {import("@pane-app/extension").Item}
  */
 const item = (id, title, subtitle) => ({ id, title, subtitle, onAction: () => act(id) });
 
@@ -159,7 +159,7 @@ async function outcome(itemId) {
   }
 }
 
-/** @type {import("@pane/extension").Command} */
+/** @type {import("@pane-app/extension").Command} */
 export const command = {
   async render() {
     // A settings error (get throws) is shown to the user as the command's error.

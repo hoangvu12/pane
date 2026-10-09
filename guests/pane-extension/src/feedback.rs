@@ -4,7 +4,7 @@
 //! closed.
 //!
 //! ```ignore
-//! use pane_guest::feedback::{Toast, ToastAction, show_toast};
+//! use pane_extension::feedback::{Toast, ToastAction, show_toast};
 //!
 //! let shown = show_toast(Toast::animated("Uploading…"));
 //! // ... the work ...
@@ -243,7 +243,7 @@ impl Confirmation {
 /// confirmation is not available there, and shows nothing.
 ///
 /// ```ignore
-/// use pane_guest::feedback::{Confirmation, confirm};
+/// use pane_extension::feedback::{Confirmation, confirm};
 ///
 /// let asked = Confirmation::new("Delete the note?")
 ///     .primary("Delete")

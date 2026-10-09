@@ -41,10 +41,10 @@ pub extern crate alloc;
 use core::ffi::c_void;
 
 wit_bindgen::generate!({
-    path: "../../wit",
+    path: "wit",
     world: "extension-with-data",
     pub_export_macro: true,
-    default_bindings_module: "pane_guest",
+    default_bindings_module: "pane_extension",
     // No function names the form and custom-view records any more: the tree
     // carries them as JSON. Authors still build them as these types.
     generate_unused_types: true,
@@ -76,7 +76,7 @@ pub use pane::extension::{cache, content, credentials, operations, settings};
 /// false.
 ///
 /// ```ignore
-/// use pane_guest::window::{PopToRootType, close};
+/// use pane_extension::window::{PopToRootType, close};
 ///
 /// close(true, PopToRootType::Immediate);
 /// ```
@@ -103,7 +103,7 @@ pub mod window {
 ///     verbose: bool,
 /// }
 ///
-/// let preferences: Preferences = pane_guest::preferences::values()?;
+/// let preferences: Preferences = pane_extension::preferences::values()?;
 /// ```
 pub mod preferences {
     use alloc::string::String;
@@ -144,7 +144,7 @@ pub mod preferences {
 /// installed package (by its package identity), passing JSON context:
 ///
 /// ```ignore
-/// use pane_guest::commands::{CommandRef, LaunchType, launch};
+/// use pane_extension::commands::{CommandRef, LaunchType, launch};
 ///
 /// let own = CommandRef { source: None, command: "report".into() };
 /// launch(&own, LaunchType::Background, &[], Some(r#"{"from":"launch"}"#))?;
@@ -257,15 +257,15 @@ impl operations::CallError {
 /// [`publish::export!`](crate::publish::export) beside [`export!`]:
 ///
 /// ```ignore
-/// pane_guest::export!(Greeter);
-/// pane_guest::publish::export!(Greeter);
+/// pane_extension::export!(Greeter);
+/// pane_extension::publish::export!(Greeter);
 /// ```
 pub mod publish {
     wit_bindgen::generate!({
-        path: "../../wit",
+        path: "wit",
         world: "operations-provider",
         pub_export_macro: true,
-        default_bindings_module: "pane_guest::publish",
+        default_bindings_module: "pane_extension::publish",
     });
 
     pub use exports::pane::extension::published_operations::Guest;
@@ -278,8 +278,8 @@ pub mod publish {
 /// beside [`export!`]:
 ///
 /// ```ignore
-/// pane_guest::export!(Calculator);
-/// pane_guest::root::export!(Calculator);
+/// pane_extension::export!(Calculator);
+/// pane_extension::root::export!(Calculator);
 /// ```
 ///
 /// A command whose only job is this, as the calculator's, also says
@@ -288,10 +288,10 @@ pub mod publish {
 /// the defaults (`type CustomView = NoCustomView;` and nothing else).
 pub mod root {
     wit_bindgen::generate!({
-        path: "../../wit",
+        path: "wit",
         world: "root-results-provider",
         pub_export_macro: true,
-        default_bindings_module: "pane_guest::root",
+        default_bindings_module: "pane_extension::root",
     });
 
     pub use exports::pane::extension::root_results::{Guest, RootAction, RootResult};
@@ -308,9 +308,9 @@ pub mod root {
 /// as a subtitle.
 pub mod applications {
     wit_bindgen::generate!({
-        path: "../../wit",
+        path: "wit",
         world: "applications-user",
-        default_bindings_module: "pane_guest::applications",
+        default_bindings_module: "pane_extension::applications",
     });
 
     pub use pane::extension::applications::{Application, installed, open};
@@ -324,9 +324,9 @@ pub mod applications {
 /// on, off or pauses it; [`clipboard_history::entries`] lists what is kept.
 pub mod clipboard_history {
     wit_bindgen::generate!({
-        path: "../../wit",
+        path: "wit",
         world: "clipboard-history-user",
-        default_bindings_module: "pane_guest::clipboard_history",
+        default_bindings_module: "pane_extension::clipboard_history",
     });
 
     pub use pane::extension::clipboard_history::{
@@ -342,9 +342,9 @@ pub mod clipboard_history {
 /// race with it) cancels it: Pane ends the helper's process.
 pub mod helpers {
     wit_bindgen::generate!({
-        path: "../../wit",
+        path: "wit",
         world: "helpers-user",
-        default_bindings_module: "pane_guest::helpers",
+        default_bindings_module: "pane_extension::helpers",
     });
 
     pub use pane::extension::helpers::{HelperError, HelperErrorKind, run};
@@ -373,9 +373,9 @@ pub mod helpers {
 /// ([`root::RootAction::OpenFile`]) with the files' ids.
 pub mod files {
     wit_bindgen::generate!({
-        path: "../../wit",
+        path: "wit",
         world: "files-user",
-        default_bindings_module: "pane_guest::files",
+        default_bindings_module: "pane_extension::files",
     });
 
     pub use pane::extension::files::{
@@ -397,9 +397,9 @@ pub mod files {
 /// Enter never runs a program.
 pub mod file_index {
     wit_bindgen::generate!({
-        path: "../../wit",
+        path: "wit",
         world: "file-index-user",
-        default_bindings_module: "pane_guest::file_index",
+        default_bindings_module: "pane_extension::file_index",
     });
 
     pub use pane::extension::file_index::{
@@ -431,8 +431,8 @@ pub mod file_index {
 /// beside [`export!`]:
 ///
 /// ```ignore
-/// pane_guest::export!(Applications);
-/// pane_guest::indexed::export!(Applications);
+/// pane_extension::export!(Applications);
+/// pane_extension::indexed::export!(Applications);
 /// ```
 ///
 /// A command whose only job is this, as Applications', also says `"mode":
@@ -441,10 +441,10 @@ pub mod file_index {
 /// its [`Command`](crate::Command) keeps the defaults.
 pub mod indexed {
     wit_bindgen::generate!({
-        path: "../../wit",
+        path: "wit",
         world: "indexed-results-provider",
         pub_export_macro: true,
-        default_bindings_module: "pane_guest::indexed",
+        default_bindings_module: "pane_extension::indexed",
     });
 
     pub use exports::pane::extension::indexed_results::{
@@ -462,15 +462,15 @@ pub mod indexed {
 /// should say which result it is:
 ///
 /// ```ignore
-/// pane_guest::export!(Packages);
-/// pane_guest::search::export!(Packages);
+/// pane_extension::export!(Packages);
+/// pane_extension::search::export!(Packages);
 /// ```
 pub mod search {
     wit_bindgen::generate!({
-        path: "../../wit",
+        path: "wit",
         world: "command-search-provider",
         pub_export_macro: true,
-        default_bindings_module: "pane_guest::search",
+        default_bindings_module: "pane_extension::search",
     });
 
     pub use exports::pane::extension::command_search::{Guest, SearchResult};
@@ -487,15 +487,15 @@ pub mod search {
 /// [`service::export!`](crate::service::export) beside [`export!`]:
 ///
 /// ```ignore
-/// pane_guest::export!(Watching);
-/// pane_guest::service::export!(Watching);
+/// pane_extension::export!(Watching);
+/// pane_extension::service::export!(Watching);
 /// ```
 pub mod service {
     wit_bindgen::generate!({
-        path: "../../wit",
+        path: "wit",
         world: "service-provider",
         pub_export_macro: true,
-        default_bindings_module: "pane_guest::service",
+        default_bindings_module: "pane_extension::service",
     });
 
     pub use exports::pane::extension::service::{Cycle, Guest};
