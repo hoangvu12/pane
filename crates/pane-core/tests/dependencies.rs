@@ -1534,7 +1534,11 @@ fn an_update_plans_the_new_copy_s_uses() {
     assert_eq!(call_capability(&launcher), not_found());
 
     // The new copy uses the capability and names its default provider.
-    dirs.capability("a", "Capabilities fixture", &uses(r#", "default": "local:../b""#));
+    dirs.capability(
+        "a",
+        "Capabilities fixture",
+        &uses(r#", "default": "local:../b""#),
+    );
     block_on(launcher.preview_package(&consumer));
     assert_eq!(titles(&launcher), ["Update"]);
     assert!(
