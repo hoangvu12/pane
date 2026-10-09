@@ -1372,9 +1372,29 @@ fn a_use_with_no_provider_and_no_default_waits() {
     block_on(launcher.activate_selected());
 
     // A missing capability never stops an install: the package installs
-    // and its call answers not-found until a provider comes.
+    // and its command waits for a provider, listed with the reason and
+    // Enter offering to install one.
     assert_eq!(launcher.view().status, result("Installed Package a"));
-    assert_eq!(call_capability(&launcher), not_found());
+    for _ in 0..3 {
+        launcher.back();
+    }
+    assert_eq!(
+        launcher
+            .view()
+            .rows
+            .into_iter()
+            .find(|row| row.title == "Capabilities fixture")
+            .expect("the waiting command is listed")
+            .unavailable,
+        Some(Unavailable::Waiting(format!(
+            "Needs {GREET}: no extension provides it"
+        )))
+    );
+    block_on(launcher.activate_selected());
+    assert_eq!(
+        titles(&launcher),
+        [format!("Install an extension that provides {GREET}")]
+    );
 
     // A provider installed later serves it, and it comes back by itself.
     let provider = dirs.capability("b", "Greeting provider", &provides());
@@ -1531,7 +1551,23 @@ fn an_update_plans_the_new_copy_s_uses() {
     let consumer = dirs.capability("a", "Capabilities fixture", &uses(""));
     let launcher = dirs.launcher();
     block_on(launcher.install_package(&consumer));
-    assert_eq!(call_capability(&launcher), not_found());
+    // The old copy's use has no provider: its command waits rather than
+    // answering not-found.
+    for _ in 0..3 {
+        launcher.back();
+    }
+    assert_eq!(
+        launcher
+            .view()
+            .rows
+            .into_iter()
+            .find(|row| row.title == "Capabilities fixture")
+            .expect("the waiting command is listed")
+            .unavailable,
+        Some(Unavailable::Waiting(format!(
+            "Needs {GREET}: no extension provides it"
+        )))
+    );
 
     // The new copy uses the capability and names its default provider.
     dirs.capability(
