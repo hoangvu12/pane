@@ -49,12 +49,12 @@ use gpui::{
 use pane_core::feedback::TOAST_DURATION;
 use pane_core::{ShownToast, Status, Toast, ToastSlot, ToastStyle};
 
-use crate::app::{KEY_CONTEXT, LauncherWindow};
+use crate::app::{KEY_CONTEXT, LauncherWindow, Spot};
 use crate::features::announcer::{Listing, Opening, Selected, Target};
 use crate::ui::icon::{Glyph, glyph, glyph_rotated};
 use crate::ui::keycap::{CapStyle, key_sequence};
 use crate::ui::material::Material;
-use crate::ui::theme::Theme;
+use crate::ui::theme::{Theme, faded, pressed};
 
 actions!(
     toast,
@@ -716,6 +716,14 @@ impl LauncherWindow {
     fn toast_details_button(&self, theme: &Theme, cx: &mut Context<Self>) -> Stateful<Div> {
         let keys = crate::keyboard::binding_keys(&pane_core::keyboard::toast_key());
         let shortcut = keys.name();
+        // The affordance's hover wash strength as it is drawn: a
+        // footer-family control, its wash fades out once the pointer
+        // leaves (#245).
+        let now = cx.background_executor().now();
+        let look = self
+            .motion
+            .hover
+            .look(Spot::Button("toast-details-button"), now);
         div()
             .id("toast-details-button")
             .debug_selector(|| "toast-details-button".into())
@@ -731,7 +739,13 @@ impl LauncherWindow {
             .aria_label(DETAILS_NAME)
             .aria_keyshortcuts(shortcut)
             .aria_expanded(self.toast.open.is_some())
-            .hover(|button| button.bg(theme.control_hover))
+            .when(look > 0., |button| button.bg(faded(theme.hover_wash, look)))
+            .active(|button| button.bg(pressed(theme.hover_wash)))
+            .on_hover(cx.listener(|this, over: &bool, _, cx| {
+                this.motion
+                    .hover
+                    .set(Spot::Button("toast-details-button"), *over, cx);
+            }))
             .focus(|button| {
                 button.shadow(vec![
                     BoxShadow::new(px(0.), px(0.), theme.focus_ring)
@@ -766,6 +780,10 @@ impl LauncherWindow {
         theme: &Theme,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
+        // The button's hover wash strength as it is drawn: a footer-family
+        // control, its wash fades out once the pointer leaves (#245).
+        let now = cx.background_executor().now();
+        let look = self.motion.hover.look(Spot::Button("toast-close"), now);
         div()
             .id("toast-close")
             .debug_selector(|| "toast-close".into())
@@ -790,7 +808,13 @@ impl LauncherWindow {
                 button
                     .opacity(1.)
                     .cursor_pointer()
-                    .hover(|button| button.bg(theme.control_hover))
+                    .when(look > 0., |button| button.bg(faded(theme.hover_wash, look)))
+                    .active(|button| button.bg(pressed(theme.hover_wash)))
+                    .on_hover(cx.listener(|this, over: &bool, _, cx| {
+                        this.motion
+                            .hover
+                            .set(Spot::Button("toast-close"), *over, cx);
+                    }))
                     .on_click(cx.listener(|this, event: &ClickEvent, window, cx| {
                         // A double click's second click dismisses nothing
                         // again.
@@ -807,6 +831,13 @@ impl LauncherWindow {
     /// The popover's close button, at its top right: closes the details,
     /// leaving the toast.
     fn details_close_button(&self, theme: &Theme, cx: &mut Context<Self>) -> Stateful<Div> {
+        // The button's hover wash strength as it is drawn: a footer-family
+        // control, its wash fades out once the pointer leaves (#245).
+        let now = cx.background_executor().now();
+        let look = self
+            .motion
+            .hover
+            .look(Spot::Button("toast-details-close"), now);
         div()
             .id("toast-details-close")
             .debug_selector(|| "toast-details-close".into())
@@ -820,7 +851,13 @@ impl LauncherWindow {
             .track_focus(&self.toast.details_close)
             .role(Role::Button)
             .aria_label(DISMISS_NAME)
-            .hover(|button| button.bg(theme.control_hover))
+            .when(look > 0., |button| button.bg(faded(theme.hover_wash, look)))
+            .active(|button| button.bg(pressed(theme.hover_wash)))
+            .on_hover(cx.listener(|this, over: &bool, _, cx| {
+                this.motion
+                    .hover
+                    .set(Spot::Button("toast-details-close"), *over, cx);
+            }))
             .focus(|button| {
                 button.shadow(vec![
                     BoxShadow::new(px(0.), px(0.), theme.focus_ring)
@@ -857,6 +894,12 @@ impl LauncherWindow {
         let focus = details.focus.clone();
         let selected = details.selected;
         let slots = toast_slots(&details.toast.toast);
+        // The rows' hover wash strengths as they are drawn: the popover's
+        // rows select with the keyboard and the click, never under a
+        // moving pointer, so an unselected row under the pointer takes
+        // the fainter wash, fading out once it leaves (#245).
+        let hover = &self.motion.hover;
+        let now = cx.background_executor().now();
         let rows: Vec<_> = slots
             .iter()
             .enumerate()
@@ -872,6 +915,7 @@ impl LauncherWindow {
                 let label = action.title.clone();
                 let shortcut = action.shortcut.as_ref().map(crate::keyboard::binding_keys);
                 let row = slot_name(slot);
+                let look = hover.look(Spot::MenuItem(index), now);
                 div()
                     .id(("toast-action", index))
                     .debug_selector(move || format!("toast-details-action-{row}"))
@@ -884,11 +928,22 @@ impl LauncherWindow {
                     .text_size(theme.typography.action_size)
                     .font_weight(theme.typography.action_weight)
                     .text_color(theme.action_text)
-                    .when(index == selected, |row| {
-                        row.bg(theme.action_selected).aria_selected(true)
+                    .when(index != selected && look > 0., |row| {
+                        row.bg(faded(theme.hover_wash, look))
                     })
-                    .when(index != selected, |row| {
-                        row.hover(|row| row.bg(theme.control_hover))
+                    .on_hover(cx.listener(move |this, over: &bool, _, cx| {
+                        this.motion.hover.set(Spot::MenuItem(index), *over, cx);
+                    }))
+                    .active({
+                        let press = pressed(if index == selected {
+                            theme.selection_wash
+                        } else {
+                            theme.hover_wash
+                        });
+                        move |row| row.bg(press)
+                    })
+                    .when(index == selected, |row| {
+                        row.bg(theme.selection_wash).aria_selected(true)
                     })
                     .role(Role::MenuItem)
                     .aria_label(label.clone())
