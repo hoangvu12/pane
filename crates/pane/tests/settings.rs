@@ -4679,7 +4679,7 @@ fn the_fix_row_installs_a_not_installed_dependency_again(cx: &mut TestAppContext
 #[gpui::test]
 fn the_fix_row_retries_a_paused_dependency_and_the_dependent_comes_back(cx: &mut TestAppContext) {
     let (sources, data) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
-    let (greeter, caller) = greeter_and_caller(sources.path());
+    let (_greeter, caller) = greeter_and_caller(sources.path());
     // Install them with a launcher that is dropped before the window
     // opens: Pane paused the greeter after it crashed, as recorded before
     // a restart.

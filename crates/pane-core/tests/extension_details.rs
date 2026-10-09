@@ -337,7 +337,7 @@ fn a_package_s_page_lists_each_unmet_requirement_with_the_chain_and_fixes_it() {
 fn the_fix_row_retries_a_paused_dependency_and_the_dependent_comes_back() {
     let dirs = Dirs::new();
     let launcher = greeter_and_caller(&dirs);
-    let (caller, greeter) = (dirs.identity("caller"), dirs.identity(GREETER));
+    let caller = dirs.identity("caller");
     drop(launcher);
     // Pane paused the greeter after it crashed, as recorded before a
     // restart.
