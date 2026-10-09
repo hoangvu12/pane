@@ -88,7 +88,12 @@ const ITEMS: [(&str, &str, &str, &str); 10] = [
         "forward",
         r#"{"via":"capability","to":"fixture:greet@1","operation":"greet","input":{"name":"Ada"}}"#,
     ),
-    ("Call a chain whose last call is a capability", "", "", ""),
+    (
+        "Call a chain whose last call is a capability",
+        "",
+        "",
+        "",
+    ),
     ("Call b's capability operation by identity", "", "", ""),
 ];
 

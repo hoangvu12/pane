@@ -747,8 +747,14 @@ fn a_malformed_capability_name_is_refused() {
             "it has no `:` separating the namespace from the name",
         ),
         ("acme:translate", "it has no `@` and a major version"),
-        ("acme:translate@0", "its major version `0` is not a number from 1"),
-        ("acme:translate@x", "its major version `x` is not a number from 1"),
+        (
+            "acme:translate@0",
+            "its major version `0` is not a number from 1",
+        ),
+        (
+            "acme:translate@x",
+            "its major version `x` is not a number from 1",
+        ),
         (
             "Acme:translate@1",
             "its namespace `Acme` must be lowercase letters, digits and `-`",
@@ -757,7 +763,10 @@ fn a_malformed_capability_name_is_refused() {
             "acme:TransLate@1",
             "its name `TransLate` must be lowercase letters, digits and `-`",
         ),
-        ("acme:@1", "its name `` must be lowercase letters, digits and `-`"),
+        (
+            "acme:@1",
+            "its name `` must be lowercase letters, digits and `-`",
+        ),
     ] {
         let dirs = Dirs::new();
         // Both `provides` and `uses` read the name.

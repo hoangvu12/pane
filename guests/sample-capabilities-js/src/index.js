@@ -64,7 +64,7 @@ async function outcome(itemId) {
       } catch (error) {
         // An optional use with no provider degrades gracefully: say so
         // rather than fail.
-        if (error.message.startsWith("not-found:")) {
+        if (error instanceof Error && error.message.startsWith("not-found:")) {
           return `No installed extension provides ${FAREWELL}; install one to use it`;
         }
         throw error;
