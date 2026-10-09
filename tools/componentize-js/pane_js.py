@@ -456,7 +456,7 @@ def build(package: Path, out: Path, toolchain: Toolchain) -> dict:
     entry = manifest.get("main")
     if not entry:
         raise SystemExit(f"pane-js: {package / 'package.json'} needs a `main` entry naming the command module")
-    # Stage the package beside Pane's types (`@pane/extension` is `file:../js`),
+    # Stage the package beside Pane's types (`@pane-app/extension` is `file:../js`),
     # so dependencies install into the cache rather than the source tree.
     work = CACHE / "work" / f"{package.name}-{hashlib.sha256(str(package).encode()).hexdigest()[:8]}"
     staged, types = work / package.name, work / "js"
@@ -536,7 +536,7 @@ def adapted_entry(entry: Path, adapter: Path, options: dict) -> str:
 
 
 # `wasi:http`'s client, which a command imports only if its bundle uses it
-# (itself, or through `@pane/extension/http`), as a Rust command's component
+# (itself, or through `@pane-app/extension/http`), as a Rust command's component
 # imports only what its code calls: Pane lists a package whose component
 # imports it as one that uses the network.
 HTTP_IMPORT = "wasi:http/client@0.3.0"
@@ -548,7 +548,7 @@ def uses_http(bundle: str) -> bool:
 
 
 # Pane's system programs (wit/programs.wit), which a command imports only if
-# its bundle uses them (itself, or through `@pane/extension/programs`), as a
+# its bundle uses them (itself, or through `@pane-app/extension/programs`), as a
 # Rust command's component imports only what its code calls: Pane lists a
 # package whose component imports them as one that runs system programs.
 PROGRAMS_IMPORT = "pane:extension/programs@0.1.0"

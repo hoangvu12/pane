@@ -12,7 +12,7 @@
 //! shells.
 //!
 //! ```ignore
-//! use pane_guest::programs::{Options, run};
+//! use pane_extension::programs::{Options, run};
 //!
 //! let output = run("git", &["status", "--short"], b"", Options::default()).await?;
 //! let changes = output.stdout_text();
@@ -30,9 +30,9 @@ use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
 wit_bindgen::generate!({
-    path: "../../wit",
+    path: "wit",
     world: "programs-user",
-    default_bindings_module: "pane_guest::programs",
+    default_bindings_module: "pane_extension::programs",
 });
 
 use pane::extension::programs as wit;

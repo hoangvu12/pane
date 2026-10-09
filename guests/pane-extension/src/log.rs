@@ -13,8 +13,8 @@
 //! traps.
 //!
 //! ```ignore
-//! pane_guest::info!("found {} items", items.len());
-//! pane_guest::warn!("the service answered {status}; showing the cache");
+//! pane_extension::info!("found {} items", items.len());
+//! pane_extension::warn!("the service answered {status}; showing the cache");
 //! ```
 //!
 //! Each call writes whole lines: [`print!`](crate::print) without a newline
@@ -29,9 +29,9 @@ use alloc::vec::Vec;
 use core::fmt::{self, Write};
 
 wit_bindgen::generate!({
-    path: "../../wit",
+    path: "wit",
     world: "output-user",
-    default_bindings_module: "pane_guest::log",
+    default_bindings_module: "pane_extension::log",
     generate_all,
 });
 

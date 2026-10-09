@@ -501,14 +501,14 @@ impl Item {
 ///
 /// ```ignore
 /// struct Hello;
-/// pane_guest::export!(Hello);
+/// pane_extension::export!(Hello);
 ///
-/// impl pane_guest::Command for Hello {
-///     type CustomView = pane_guest::NoCustomView;
+/// impl pane_extension::Command for Hello {
+///     type CustomView = pane_extension::NoCustomView;
 ///
 ///     async fn render() -> Result<List, String> {
 ///         Ok(List::new("Hello").item(Item::new("greet", "Say hello").on_action(|| async {
-///             pane_guest::feedback::show_toast(Toast::success("Hello"));
+///             pane_extension::feedback::show_toast(Toast::success("Hello"));
 ///             Ok(())
 ///         })))
 ///     }
@@ -523,11 +523,11 @@ impl Item {
 /// A no-view command implements [`Command::run`] instead of `render`:
 ///
 /// ```ignore
-/// impl pane_guest::Command for Toggle {
-///     type CustomView = pane_guest::NoCustomView;
+/// impl pane_extension::Command for Toggle {
+///     type CustomView = pane_extension::NoCustomView;
 ///
 ///     async fn run(command: String, launch: LaunchRecord) -> Result<(), String> {
-///         pane_guest::feedback::show_hud("Toggled", ToastStyle::Success);
+///         pane_extension::feedback::show_hud("Toggled", ToastStyle::Success);
 ///         Ok(())
 ///     }
 /// }
@@ -567,7 +567,7 @@ pub trait Command: 'static {
     }
 
     /// Runs the search result with `id` the user chose, for a command that
-    /// searches as the user types (`pane_guest::search`): its id is the
+    /// searches as the user types (`pane_extension::search`): its id is the
     /// callback Pane hands back. An error is shown as a failure toast.
     /// Without it, choosing an id no item names is an error.
     fn run_search_result(id: String) -> impl Future<Output = Result<(), String>> {

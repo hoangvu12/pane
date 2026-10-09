@@ -4,7 +4,7 @@
 //! before Pane, that application, and the text selected in it.
 //!
 //! ```ignore
-//! use pane_guest::system::{self, Clip};
+//! use pane_extension::system::{self, Clip};
 //!
 //! system::copy(&Clip::Text("hunter2".into()), true)?; // concealed
 //! system::open("mailto:someone@example.com", None)?;
@@ -23,7 +23,7 @@
 //! which is not a failure:
 //!
 //! ```ignore
-//! use pane_guest::system::{self, SystemError};
+//! use pane_extension::system::{self, SystemError};
 //!
 //! let title = match system::front_application() {
 //!     Ok(Some(front)) => format!("Paste to {}", front.name),

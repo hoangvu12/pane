@@ -8,8 +8,8 @@
 //! ("Copied — paste is not available here yet").
 //!
 //! ```ignore
-//! use pane_guest::actions;
-//! use pane_guest::system::Clip;
+//! use pane_extension::actions;
+//! use pane_extension::system::Clip;
 //!
 //! Item::new("note", "Note").actions([
 //!     actions::copy(Clip::Text("hunter2".into())).concealed().into(),

@@ -13,7 +13,7 @@
 //! nothing after the `await` runs.
 //!
 //! ```ignore
-//! let response = pane_guest::http::get("https://example.com/search?q=pane", &[]).await?;
+//! let response = pane_extension::http::get("https://example.com/search?q=pane", &[]).await?;
 //! if response.status != 200 {
 //!     return Err(format!("the service answered {}", response.status));
 //! }
@@ -25,9 +25,9 @@ use alloc::string::String;
 use alloc::vec::Vec;
 
 wit_bindgen::generate!({
-    path: "../../wit",
+    path: "wit",
     world: "http-user",
-    default_bindings_module: "pane_guest::http",
+    default_bindings_module: "pane_extension::http",
     generate_all,
 });
 

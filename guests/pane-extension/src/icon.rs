@@ -3,7 +3,7 @@
 //! "Icons" and "Accessories").
 //!
 //! ```ignore
-//! use pane_guest::{Accessory, Icon, Item, Mask, Tone};
+//! use pane_extension::{Accessory, Icon, Item, Mask, Tone};
 //!
 //! Item::new("ada", "Ada Lovelace")
 //!     .icon(Icon::builtin("user").tint(Tone::Blue))
