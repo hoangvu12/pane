@@ -103,7 +103,12 @@ const ITEMS: [(&str, &str, &str, &str); 13] = [
         "greet",
         r#"{"name":"Ada"}"#,
     ),
-    ("Call every provider with no name", "fixture:every@1", "greet", "{}"),
+    (
+        "Call every provider with no name",
+        "fixture:every@1",
+        "greet",
+        "{}",
+    ),
     ("Call every provider of the greet capability", "", "", ""),
 ];
 
@@ -184,9 +189,21 @@ async fn outcome(item_id: &str) -> Result<String, String> {
     // its title, and a use of one provider, which is refused. The empty
     // fields name the one-provider item's call.
     if title.starts_with("Call every provider") {
-        let capability = if capability.is_empty() { "fixture:greet@1" } else { capability };
-        let operation = if operation.is_empty() { "greet" } else { operation };
-        let input = if input.is_empty() { r#"{"name":"Ada"}"# } else { input };
+        let capability = if capability.is_empty() {
+            "fixture:greet@1"
+        } else {
+            capability
+        };
+        let operation = if operation.is_empty() {
+            "greet"
+        } else {
+            operation
+        };
+        let input = if input.is_empty() {
+            r#"{"name":"Ada"}"#
+        } else {
+            input
+        };
         let answers = call_every(capability, operation, input.into())
             .await
             .map_err(|error| error.explain())?;

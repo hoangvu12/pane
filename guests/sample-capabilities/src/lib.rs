@@ -75,8 +75,7 @@ async fn outcome(item_id: &str) -> Result<String, String> {
                 .iter()
                 .map(|answer| match &answer.answer {
                     Ok(result) => {
-                        let result: Value =
-                            serde_json::from_str(result).unwrap_or(Value::Null);
+                        let result: Value = serde_json::from_str(result).unwrap_or(Value::Null);
                         let greeting = result
                             .get("greeting")
                             .and_then(Value::as_str)

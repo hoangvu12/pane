@@ -164,12 +164,8 @@ pub mod capabilities {
         operation: &str,
         input: String,
     ) -> Result<Vec<ProviderAnswer>, CallError> {
-        crate::pane::extension::operations::call_every(
-            capability.into(),
-            operation.into(),
-            input,
-        )
-        .await
+        crate::pane::extension::operations::call_every(capability.into(), operation.into(), input)
+            .await
     }
 
     /// The provider of `capability` that a call reaches, with its source and
