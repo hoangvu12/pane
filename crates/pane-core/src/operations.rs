@@ -452,10 +452,10 @@ impl Installed {
             .iter()
             .find(|package| caller.starts_with(&package.location))
             .ok_or_else(|| {
-                OperationError::refused(format!(
+                OperationError::refused(
                     "capabilities are called by an installed extension's code, and this \
-                     component belongs to no installed extension"
-                ))
+                     component belongs to no installed extension",
+                )
             })?;
         let title = own.title();
         let manifest = match &own.manifest {
@@ -620,7 +620,7 @@ impl Installed {
                     Some(operation) => entry.operations.iter().any(|served| served == operation),
                     None => true,
                 };
-                serves.then(|| (package, entry))
+                serves.then_some((package, entry))
             })
             .collect()
     }
