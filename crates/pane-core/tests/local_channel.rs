@@ -252,10 +252,7 @@ fn a_folder_not_installed_is_previewed_then_developed_until_the_connection_close
     client.wait_for_log("pane: Dev did not build: error: expected `;`");
     let development = pane.launcher.development(&pane.identity).unwrap();
     assert_eq!(development.command, "cargo build");
-    assert_eq!(
-        development.failure.unwrap().summary,
-        "error: expected `;`"
-    );
+    assert_eq!(development.failure.unwrap().summary, "error: expected `;`");
     assert_eq!(
         pane.run("Write to the log"),
         Status::Result("Wrote to the log".into())

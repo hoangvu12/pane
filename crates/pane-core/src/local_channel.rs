@@ -546,7 +546,9 @@ impl Handler {
                     return Err(format!("{title} cannot be installed: {why}"));
                 }
                 InstallPreview::Elsewhere if shown => {
-                    return Err(format!("{title} was not installed, so Pane does not develop it"));
+                    return Err(format!(
+                        "{title} was not installed, so Pane does not develop it"
+                    ));
                 }
                 InstallPreview::Elsewhere if asked.elapsed() > PREVIEW_LIMIT => {
                     return Err(format!("Pane did not show the install preview of {title}"));
