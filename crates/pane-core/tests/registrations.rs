@@ -31,18 +31,26 @@ mod feedback;
 mod rows;
 
 use feedback::shown;
+
+/// The text the status or toast shows, for asserting on.
+fn said(status: Status) -> String {
+    match status {
+        Status::Result(text) | Status::Error(text) | Status::Progress(text) => text,
+        Status::Idle | Status::Running => String::new(),
+    }
+}
 use rows::{manage, select_title, to_root};
 
 /// One language's registrations sample.
 struct Sample {
-    /// Its assembled package under `target/guests/packages`.
+    // Its assembled package under `target/guests/packages`.
     package: &'static str,
-    /// Its package's title, as the install reports it.
+    // Its package's title, as the install reports it.
     title: &'static str,
-    /// Its command's title in root search.
+    // Its command's title in root search.
     command: &'static str,
-    /// The word its dynamic root item's subtitle ends with, saying which
-    /// language answered.
+    // The word its dynamic root item's subtitle ends with, saying which
+    // language answered.
     language: &'static str,
 }
 
@@ -84,8 +92,8 @@ struct Pane {
     sources: TempDir,
     data: TempDir,
     cache: TempDir,
-    /// Pane's clock for timers, scheduled work and services, which moves
-    /// only when a test advances it.
+    // Pane's clock for timers, scheduled work and services, which moves
+    // only when a test advances it.
     clock: Arc<ManualClock>,
 }
 
@@ -99,7 +107,7 @@ impl Pane {
         }
     }
 
-    /// Starts Pane on this data folder, as after a restart.
+    // Starts Pane on this data folder, as after a restart.
     fn start(&self) -> Launcher {
         let runtime = Runtime::start_with_cache(self.cache.path().to_path_buf()).unwrap();
         Launcher::with_packages(
@@ -110,7 +118,7 @@ impl Pane {
         .with_clock(self.clock.clone())
     }
 
-    /// Starts Pane with `sample`'s package installed and activated.
+    // Starts Pane with `sample`'s package installed and activated.
     fn installed(&self, sample: &Sample) -> (Launcher, PackageIdentity, PathBuf) {
         let started = self.start();
         let folder = self.package(sample);
@@ -123,8 +131,8 @@ impl Pane {
         (started, identity, folder)
     }
 
-    /// The assembled sample of `sample` copied into a source folder of
-    /// this test.
+    // The assembled sample of `sample` copied into a source folder of
+    // this test.
     fn package(&self, sample: &Sample) -> PathBuf {
         let folder = self.sources.path().join(sample.package);
         let assembled = assembled(sample.package);
@@ -135,8 +143,8 @@ impl Pane {
         folder
     }
 
-    /// How many firings or changes the package of `folder` has counted in
-    /// its content, or `None` before the first.
+    // How many firings or changes the package of `folder` has counted in
+    // its content, or `None` before the first.
     fn counted(&self, folder: &Path, key: &str) -> Option<u64> {
         let text = fs::read_to_string(self.data.path().join("extensions/content.json")).ok()?;
         let file: serde_json::Value = serde_json::from_str(&text).unwrap();
@@ -145,8 +153,8 @@ impl Pane {
             .and_then(|count| count.parse().ok())
     }
 
-    /// Waits until the timers thread looked at every change of the clock
-    /// and the registry so far, and every firing it started has reported.
+    // Waits until the timers thread looked at every change of the clock
+    // and the registry so far, and every firing it started has reported.
     fn timers_settled(&self, launcher: &Launcher) {
         assert!(
             launcher.wait_for_timers(PROMPTLY),
@@ -154,7 +162,7 @@ impl Pane {
         );
     }
 
-    /// Waits until `read` returns `expected`, saying `what` it was.
+    // Waits until `read` returns `expected`, saying `what` it was.
     fn until<T: PartialEq + std::fmt::Debug>(
         &self,
         what: &str,
@@ -175,8 +183,8 @@ impl Pane {
         }
     }
 
-    /// The capabilities sample, as the consumer of the run-time
-    /// capability.
+    // The capabilities sample, as the consumer of the run-time
+    // capability.
     fn capabilities_package(&self) -> PathBuf {
         let folder = self.sources.path().join("sample-capabilities");
         let assembled = assembled("sample-capabilities");
@@ -187,9 +195,9 @@ impl Pane {
         folder
     }
 
-    /// The registrations fixture as a package of this test, with
-    /// `commands` and the manifest members `members` beside the fixture's
-    /// component, with the settings `settings` saved for it.
+    // The registrations fixture as a package of this test, with
+    // `commands` and the manifest members `members` beside the fixture's
+    // component, with the settings `settings` saved for it.
     fn fixture_package(
         &self,
         name: &str,
@@ -513,7 +521,7 @@ fn a_waiting_package_runs_no_timer_code_until_the_provision_comes() {
     // saying what it needs, and its activation has not run.
     pane.until(
         "the waiting row",
-        "Needs pane-samples:greet@1: no extension provides it",
+        "Needs pane-samples:greet@1: no extension provides it".to_owned(),
         || match fixture_row(&launcher).unavailable {
             Some(Unavailable::Waiting(reason)) => reason,
             _ => String::new(),
@@ -537,7 +545,7 @@ fn a_waiting_package_runs_no_timer_code_until_the_provision_comes() {
     open_and_run(&launcher, SAMPLES[0].command, "Sign out of the provision");
     pane.until(
         "the waiting row again",
-        "Needs pane-samples:greet@1: no extension provides it",
+        "Needs pane-samples:greet@1: no extension provides it".to_owned(),
         || match fixture_row(&launcher).unavailable {
             Some(Unavailable::Waiting(reason)) => reason,
             _ => String::new(),
@@ -588,8 +596,7 @@ fn beyond_the_limits_bounds_and_declarations_is_refused() {
     open_fixture(&launcher);
     run_fixture_item(&launcher, "Register many items");
     assert!(
-        shown(&launcher)
-            .to_string()
+        said(shown(&launcher))
             .contains("1000 of Pane's limit of 1000 dynamic root items"),
         "the items limit is not named: {:?}",
         shown(&launcher)
@@ -598,36 +605,33 @@ fn beyond_the_limits_bounds_and_declarations_is_refused() {
     open_fixture(&launcher);
     run_fixture_item(&launcher, "Register many timers");
     assert!(
-        shown(&launcher)
-            .to_string()
+        said(shown(&launcher))
             .contains("64 of Pane's limit of 64 timers"),
         "the timers limit is not named: {:?}",
         shown(&launcher)
     );
     run_fixture_item(&launcher, "Register a 0-second timer");
     assert!(
-        shown(&launcher).to_string().contains("1 second to 30 days"),
+        said(shown(&launcher)).contains("1 second to 30 days"),
         "the bounds are not named: {:?}",
         shown(&launcher)
     );
     run_fixture_item(&launcher, "Register a 31-day timer");
     assert!(
-        shown(&launcher).to_string().contains("1 second to 30 days"),
+        said(shown(&launcher)).contains("1 second to 30 days"),
         "the bounds are not named: {:?}",
         shown(&launcher)
     );
     run_fixture_item(&launcher, "Provide the capability");
     assert!(
-        shown(&launcher)
-            .to_string()
+        said(shown(&launcher))
             .contains("provides `fixture:held@1` whenever it can run"),
         "the unmarked provision is not refused: {:?}",
         shown(&launcher)
     );
     run_fixture_item(&launcher, "Provide the undeclared capability");
     assert!(
-        shown(&launcher)
-            .to_string()
+        said(shown(&launcher))
             .contains("declares no `provides` entry"),
         "the undeclared provision is not refused: {:?}",
         shown(&launcher)
@@ -636,8 +640,7 @@ fn beyond_the_limits_bounds_and_declarations_is_refused() {
     pane.save_setting(&identity, "folder", "/not/there");
     run_fixture_item(&launcher, "Watch the folder");
     assert!(
-        shown(&launcher)
-            .to_string()
+        said(shown(&launcher))
             .contains("there is nothing there"),
         "the unwatchable path is not refused: {:?}",
         shown(&launcher)
@@ -653,8 +656,8 @@ fn beyond_the_limits_bounds_and_declarations_is_refused() {
 }
 
 impl Pane {
-    /// Saves `value` under `key` in `identity`'s settings, where its code
-    /// reads it.
+    // Saves `value` under `key` in `identity`'s settings, where its code
+    // reads it.
     fn save_setting(&self, identity: &PackageIdentity, key: &str, value: &str) {
         let file = self.data.path().join("extensions/settings.json");
         let mut saved: serde_json::Value = match fs::read_to_string(&file) {
@@ -792,11 +795,11 @@ fn an_alias_of_a_dynamic_item_says_why_while_it_is_not_registered() {
         "the alias finds the dynamic item's row"
     );
     // The generation ends: the item is not registered, and the alias
-    /// shows as not active in the extension list, saying why.
+    // shows as not active in the extension list, saying why.
     block_on(launcher.set_enabled(&identity, false));
     manage(&launcher);
-    let unlisted = launcher
-        .view()
+    let view = launcher.view();
+    let unlisted = view
         .rows
         .iter()
         .find(|row| row.id.starts_with("unlisted-setting:"))
@@ -865,7 +868,7 @@ fn every_provider(launcher: &Launcher) -> String {
     block_on(launcher.activate_selected());
     select_title(launcher, "Greet every provider");
     block_on(launcher.activate_selected());
-    shown(launcher).to_string()
+    said(shown(launcher))
 }
 
 /// Opens `command`'s screen in `launcher` and runs the action of its item
