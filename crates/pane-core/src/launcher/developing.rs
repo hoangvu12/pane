@@ -556,15 +556,7 @@ impl Launcher {
                         },
                         Entry::StopDeveloping(identity.clone()),
                     ));
-                    rows.push((
-                        Row {
-                            id: id("logs"),
-                            title: logs_title(&title),
-                            subtitle: Some("What it writes, and Pane's messages about it".into()),
-                            unavailable: None,
-                        },
-                        Entry::ExtensionLog(identity.clone()),
-                    ));
+                    rows.push(logs_row(id("logs"), identity, &title));
                     if development.failure.is_some() {
                         rows.push((
                             Row {
@@ -624,17 +616,10 @@ impl Launcher {
             subtitle: Some(format!("Run `{}` now", development.command)),
             unavailable: None,
         };
-        let logs = Row {
-            id: format!("build-logs:{}", identity.key()),
-            title: logs_title(&title),
-            subtitle: Some("What it writes, and Pane's messages about it".into()),
-            unavailable: None,
-        };
+        let id = format!("build-logs:{}", identity.key());
+        let (logs, show_logs) = logs_row(id, identity, &title);
         state.next_screen();
-        state.entries = vec![
-            Entry::BuildAgain(identity.clone()),
-            Entry::ExtensionLog(identity.clone()),
-        ];
+        state.entries = vec![Entry::BuildAgain(identity.clone()), show_logs];
         let screen = Screen::BuildDetails {
             identity: identity.clone(),
             details,
@@ -738,6 +723,18 @@ pub(super) fn build_details_title(title: &str) -> String {
 /// "Logs for <title>".
 fn logs_title(title: &str) -> String {
     format!("Logs for {title}")
+}
+
+/// The row with `id` that shows the Logs screen of the package with
+/// `identity`, titled `title`: in the extension list and a build's details.
+fn logs_row(id: String, identity: &PackageIdentity, title: &str) -> (Row, Entry) {
+    let row = Row {
+        id,
+        title: logs_title(title),
+        subtitle: Some("What it writes, and Pane's messages about it".into()),
+        unavailable: None,
+    };
+    (row, Entry::ExtensionLog(identity.clone()))
 }
 
 /// The name of the development folder of the package with `identity`: a

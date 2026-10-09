@@ -105,6 +105,9 @@ pub(crate) struct ExtensionLogView {
     reveal: bool,
     /// The local time's offset from UTC, as the screen opened.
     offset_ms: i64,
+    /// Whether the status line says what one of the screen's actions came
+    /// to, which goes once the user moves on.
+    outcome: bool,
 }
 
 impl ExtensionLogView {
@@ -122,6 +125,7 @@ impl ExtensionLogView {
             list,
             reveal: false,
             offset_ms: local_offset_ms(now),
+            outcome: false,
         }
     }
 
@@ -146,16 +150,7 @@ impl ExtensionLogView {
             .cloned();
         self.lines = lines;
         if added {
-            self.list
-                .state()
-                .splice(kept..kept, self.lines.len() - kept);
-            // Each line is a line high: the list knows where the new ones
-            // end before it draws them.
-            let _ = self
-                .list
-                .state()
-                .clone()
-                .with_uniform_item_height(px(LINE_HEIGHT));
+            self.list.append(self.lines.len() - kept);
         } else {
             self.list.reset(self.lines.len());
             self.reveal = true;
@@ -289,10 +284,22 @@ impl LauncherWindow {
     }
 
     /// Puts the status line at rest once the user moves on from what an
-    /// action of the screen came to, and redraws.
+    /// action of the screen came to (and only that), and redraws.
     fn moved_on_in_log(&mut self, cx: &mut Context<Self>) {
-        if matches!(self.launcher.status(), Status::Result(_) | Status::Error(_)) {
+        if let Some(log) = self.log.as_mut()
+            && std::mem::take(&mut log.outcome)
+        {
             self.launcher.show_status(Status::Idle);
+        }
+        cx.notify();
+    }
+
+    /// Says in the status line what an action of the screen came to, until
+    /// the user moves on.
+    fn show_log_outcome(&mut self, status: Status, cx: &mut Context<Self>) {
+        self.launcher.show_status(status);
+        if let Some(log) = self.log.as_mut() {
+            log.outcome = true;
         }
         cx.notify();
     }
@@ -357,9 +364,7 @@ impl LauncherWindow {
             return;
         };
         cx.write_to_clipboard(ClipboardItem::new_string(text));
-        self.launcher
-            .show_status(Status::Result("Copied the line".into()));
-        cx.notify();
+        self.show_log_outcome(Status::Result("Copied the line".into()), cx);
     }
 
     /// Copies every line, as the log file writes them.
@@ -368,16 +373,14 @@ impl LauncherWindow {
             return;
         };
         let count = log.lines.len();
-        if count == 0 {
-            self.launcher
-                .show_status(Status::Error("The log has no lines to copy".into()));
+        let status = if count == 0 {
+            Status::Error("The log has no lines to copy".into())
         } else {
             cx.write_to_clipboard(ClipboardItem::new_string(log.all_text()));
             let lines = if count == 1 { "line" } else { "lines" };
-            self.launcher
-                .show_status(Status::Result(format!("Copied {count} {lines}")));
-        }
-        cx.notify();
+            Status::Result(format!("Copied {count} {lines}"))
+        };
+        self.show_log_outcome(status, cx);
     }
 
     /// Clears the lines Pane keeps of the log, which its log file keeps,
@@ -389,27 +392,27 @@ impl LauncherWindow {
         self.launcher.clear_extension_log(&log.identity);
         log.follow();
         log.read(&self.launcher);
-        self.launcher.show_status(Status::Result(
-            "Cleared the log; its log file keeps every line".into(),
-        ));
-        cx.notify();
+        let cleared = "Cleared the log; its log file keeps every line";
+        self.show_log_outcome(Status::Result(cleared.into()), cx);
     }
 
     /// Opens the log file with the system's handler for it, saying what
-    /// that came to.
+    /// that came to while the screen still shows.
     fn open_log_file(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(identity) = self.log.as_ref().map(|log| log.identity.clone()) else {
             return;
         };
         let pending = self.launcher.open_extension_log_file(&identity);
         cx.spawn_in(window, async move |this, cx| {
-            let outcome = pending.await;
+            let status = match pending.await {
+                Ok(done) => Status::Result(done),
+                Err(why) => Status::Error(why),
+            };
             this.update(cx, |this, cx| {
-                this.launcher.show_status(match outcome {
-                    Ok(done) => Status::Result(done),
-                    Err(why) => Status::Error(why),
-                });
-                cx.notify();
+                let shown = this.log.as_ref().map(|log| &log.identity) == Some(&identity);
+                if shown {
+                    this.show_log_outcome(status, cx);
+                }
             })
             .ok();
         })
@@ -585,6 +588,7 @@ impl LauncherWindow {
             .when(!selected, |row| row.hover(|row| row.bg(theme.row_hover)))
             .child(
                 div()
+                    .debug_selector(move || format!("log-time-{index}"))
                     .flex_none()
                     .font_family(theme.typography.mono_family.clone())
                     .text_color(theme.text_muted)
@@ -592,6 +596,7 @@ impl LauncherWindow {
             )
             .child(
                 div()
+                    .debug_selector(move || format!("log-{level}-{index}"))
                     .flex_none()
                     .w(px(44.))
                     .font_weight(theme.typography.medium)

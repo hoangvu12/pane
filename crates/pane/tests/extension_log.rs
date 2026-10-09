@@ -289,6 +289,14 @@ fn the_logs_screen_shows_follows_copies_and_clears_a_developed_package_s_log(
     assert!(!drawn(cx, format!("log-extension-{developing}")));
     assert!(drawn(cx, format!("log-extension-{info}")));
     assert!(!drawn(cx, format!("log-pane-{info}")));
+    // Each line shows its time and its level.
+    let warning = lines
+        .iter()
+        .position(|line| line.text == "a warning line")
+        .unwrap();
+    assert!(drawn(cx, format!("log-time-{info}")));
+    assert!(drawn(cx, format!("log-Info-{info}")));
+    assert!(drawn(cx, format!("log-Warn-{warning}")));
 
     // Moving up stops following; Enter copies the selected line, as the
     // log file writes it.
@@ -397,6 +405,8 @@ fn scrolling_up_stops_following_and_scrolling_back_down_follows_again(cx: &mut T
     develop(&window, cx);
     // More lines than the screen has room for.
     run_item(&window, cx, "Flood the log");
+    // Pane notes the lines it dropped once their second is over.
+    std::thread::sleep(Duration::from_millis(1_100));
     open_logs(&window, cx);
     let (lines, shown) = until_log(&window, cx, |lines| lines.len() > 100);
     assert_eq!(shown, (lines.len(), Some(lines.len() - 1), true));
@@ -417,11 +427,21 @@ fn scrolling_up_stops_following_and_scrolling_back_down_follows_again(cx: &mut T
         log_state(&window, cx),
         (lines.len(), Some(lines.len() - 1), false)
     );
+    // A line in view, a little above the end it was scrolled up from.
+    let watched: &'static str = Box::leak(format!("log-line-{}", lines.len() - 24).into());
+    let scrolled = cx.debug_bounds(watched).expect("in view").top();
+    fs::write(folder.join("source.txt"), "sample_settings\n").unwrap();
+    let reloaded = format!("Reloaded {TITLE}");
+    let once = |lines: &[LogLine]| lines.iter().any(|line| line.text == reloaded);
+    let (grown, shown) = until_log(&window, cx, once);
+    assert_eq!(shown, (grown.len(), Some(lines.len() - 1), false));
+    let still = cx.debug_bounds(watched).expect("still in view").top();
+    assert_eq!(still, scrolled, "the list stays where it was scrolled to");
 
-    // Back down to the end: followed again.
+    // Back down to the end: followed again, the newest line selected.
     wheel(cx, -1_000_000.);
     assert_eq!(
         log_state(&window, cx),
-        (lines.len(), Some(lines.len() - 1), true)
+        (grown.len(), Some(grown.len() - 1), true)
     );
 }
