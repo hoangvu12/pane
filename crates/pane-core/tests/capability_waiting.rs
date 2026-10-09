@@ -138,7 +138,7 @@ impl Dirs {
     /// Copies the assembled sample package `package` into source folder
     /// `package` and rewrites its `pane.json` with `change`: the samples
     /// whose manifests these tests change.
-    fn edited(&self, package: &str, change: fn(&mut serde_json::Value)) -> PathBuf {
+    fn edited(&self, package: &str, change: impl Fn(&mut serde_json::Value)) -> PathBuf {
         let folder = self.sample(package);
         let manifest = fs::read_to_string(folder.join("pane.json")).unwrap();
         let mut manifest: serde_json::Value = serde_json::from_str(&manifest).unwrap();
@@ -152,7 +152,7 @@ impl Dirs {
     /// needs a capability, required and of one provider, so its commands
     /// wait while no provider can serve it.
     fn using(&self, package: &str, uses: &str) -> PathBuf {
-        self.edited(package, &|manifest| {
+        self.edited(package, |manifest| {
             manifest["uses"] = serde_json::from_str(&format!("[{uses}]")).unwrap();
         })
     }
@@ -161,7 +161,7 @@ impl Dirs {
     /// one provider again (its pane.json ships `"use": "all"` for the
     /// fan-out item): its command waits while no provider can serve it.
     fn waiting_consumer(&self, package: &str) -> PathBuf {
-        self.edited(package, &|manifest| {
+        self.edited(package, |manifest| {
             manifest["uses"][0].as_object_mut().unwrap().remove("use");
         })
     }
@@ -425,7 +425,7 @@ fn a_consumer_waits_while_its_provider_waits_for_a_dependency() {
     let consumer = dirs.waiting_consumer(CONSUMERS[0].0);
     // The provider requires the operations sample, which its install
     // installs with it.
-    let provider = dirs.edited(PROVIDERS[0].0, &|manifest| {
+    let provider = dirs.edited(PROVIDERS[0].0, |manifest| {
         manifest["dependencies"] =
             serde_json::from_str(&format!("[{}]", needs("sample-operations"))).unwrap();
     });
