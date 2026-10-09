@@ -1351,7 +1351,7 @@ fn the_choice_falls_back_while_the_chosen_provider_waits() {
         "",
         r#","operations": [{ "id": "echo", "version": 1, "component": "fixture.wasm" }]"#,
     );
-    let launcher = dirs.install_fixtures(&["a", "b", "c", "d"]);
+    let launcher = dirs.install_fixtures(&["a", "b", "c"]);
     let chosen = launcher
         .choose_provider("fixture:greet@1", &dirs.identity("c").key())
         .unwrap();
@@ -1468,7 +1468,7 @@ fn the_choice_is_kept_across_an_update_of_the_chosen_provider() {
     );
     assert_eq!(
         launcher.view().status,
-        Status::Result("Updated npm greet provider from npm to 0.2.0".into())
+        Status::Result("Updated npm greet provider to 0.2.0".into())
     );
     // The choice still routes to it, not to the TypeScript provider.
     assert_eq!(
