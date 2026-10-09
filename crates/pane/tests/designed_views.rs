@@ -20,14 +20,18 @@ use pane_core::{Launcher, LauncherView, Runtime, Screen};
 
 use tempfile::TempDir;
 
+#[path = "support/a11y.rs"]
+mod a11y;
+
 #[path = "support/paint.rs"]
 mod paint;
 
-use paint::{paints_background_at, paints_fill_at};
-use settle::{settle, until};
-
 #[path = "support/settle.rs"]
 mod settle;
+
+use a11y::accessibility;
+use paint::{paints_background_at, paints_fill_at};
+use settle::{settle, until};
 
 /// The dark pill a button's default tone fills with (the theme's
 /// `results.pill_fill`), and its light counterpart: what the tone token
@@ -117,14 +121,18 @@ fn drawn(cx: &mut VisualTestContext, selector: &'static str) -> bool {
     cx.debug_bounds(selector).is_some()
 }
 
-/// The a11y tree's nodes, as GPUI reports them to assistive technology.
-fn accessible_nodes(cx: &mut VisualTestContext) -> Vec<serde_json::Value> {
+/// The a11y tree's JSON, forced on so the tree is built regardless of
+/// platform accessibility.
+fn a11y(cx: &mut VisualTestContext) -> String {
     cx.update(|window, _| window.set_a11y_forced(true));
     cx.run_until_parked();
-    let json = cx
-        .update(|window, _| window.debug_a11y_tree_json())
-        .expect("an accessibility tree");
-    let tree: serde_json::Value = serde_json::from_str(&json).unwrap();
+    cx.update(|window, _| window.debug_a11y_tree_json())
+        .expect("an accessibility tree")
+}
+
+/// The a11y tree's nodes, as GPUI reports them to assistive technology.
+fn accessible_nodes(json: &str) -> Vec<serde_json::Value> {
+    let tree: serde_json::Value = serde_json::from_str(json).unwrap();
     tree["nodes"]
         .as_object()
         .unwrap()
@@ -176,68 +184,83 @@ fn view(window: &Entity<LauncherWindow>, cx: &mut VisualTestContext) -> Launcher
 }
 
 #[gpui::test]
-fn the_components_resolve_their_tokens_to_the_theme_in_both_appearances(cx: &mut TestAppContext) {
-    for (theme, pill, danger) in [
-        ("dark", DARK_PILL, DARK_DANGER),
-        ("light", LIGHT_PILL, LIGHT_DANGER),
-    ] {
-        let (opened, cx) = open(cx, theme);
+fn the_components_resolve_their_tokens_to_the_theme_in_the_dark(cx: &mut TestAppContext) {
+    let (opened, cx) = open(cx, "dark");
+    let _ = &opened;
+    tokens_resolve_to_the_theme(cx, "dark", DARK_PILL, DARK_DANGER);
+}
 
-        // The column: the text above the row of buttons; the row: the
-        // buttons beside each other.
-        let text = bounds(cx, "designed-text-Count: 0");
-        let up = bounds(cx, "designed-button-Increment");
-        let down = bounds(cx, "designed-button-Decrement");
-        let reset = bounds(cx, "designed-button-Reset");
-        assert!(text.origin.y < up.origin.y, "{theme}: the text is above");
-        assert!(
-            up.origin.y == down.origin.y && down.origin.y == reset.origin.y,
-            "{theme}: the buttons sit on one line"
-        );
-        assert!(
-            up.origin.x < down.origin.x && down.origin.x < reset.origin.x,
-            "{theme}: the buttons sit beside each other"
-        );
+#[gpui::test]
+fn the_components_resolve_their_tokens_to_the_theme_in_the_light(cx: &mut TestAppContext) {
+    let (opened, cx) = open(cx, "light");
+    let _ = &opened;
+    tokens_resolve_to_the_theme(cx, "light", LIGHT_PILL, LIGHT_DANGER);
+}
 
-        // The default tone: the theme's pill fill, which the appearance
-        // decides (white 8% in the dark, black 8% in the light).
-        assert!(
-            paints_fill_at(cx, up, pill),
-            "{theme}: the default button fills with the pill"
-        );
-        // The destructive tone: the theme's danger colour, at the fill an
-        // icon's danger disc uses.
-        let mut destructive = gpui::rgb_to_hsla(gpui::rgba(danger));
-        destructive.alpha *= DESTRUCTIVE_ALPHA;
-        assert!(
-            paints_background_at(cx, reset, gpui::solid_background(destructive)),
-            "{theme}: the destructive button fills with the danger tone"
-        );
-        let _ = &opened;
-    }
+/// The four components' tokens, resolved onto the theme of `theme`: the
+/// column lays its children out, the row beside each other, the default
+/// button fills with the theme's pill and the destructive one with its
+/// danger tone, which the appearance decides (white 8% in the dark, black
+/// 8% in the light).
+fn tokens_resolve_to_the_theme(
+    cx: &mut VisualTestContext,
+    theme: &str,
+    pill: u32,
+    danger: u32,
+) {
+    // The column: the text above the row of buttons; the row: the buttons
+    // beside each other.
+    let text = bounds(cx, "designed-text-Count: 0");
+    let up = bounds(cx, "designed-button-Increment");
+    let down = bounds(cx, "designed-button-Decrement");
+    let reset = bounds(cx, "designed-button-Reset");
+    assert!(text.origin.y < up.origin.y, "{theme}: the text is above");
+    assert!(
+        up.origin.y == down.origin.y && down.origin.y == reset.origin.y,
+        "{theme}: the buttons sit on one line"
+    );
+    assert!(
+        up.origin.x < down.origin.x && down.origin.x < reset.origin.x,
+        "{theme}: the buttons sit beside each other"
+    );
+
+    // The default tone: the theme's pill fill.
+    assert!(
+        paints_fill_at(cx, up, pill),
+        "{theme}: the default button fills with the pill"
+    );
+    // The destructive tone: the theme's danger colour, at the fill an
+    // icon's danger disc uses.
+    let mut destructive = gpui::rgb_to_hsla(gpui::rgba(danger));
+    destructive.alpha *= DESTRUCTIVE_ALPHA;
+    assert!(
+        paints_background_at(cx, reset, gpui::solid_background(destructive)),
+        "{theme}: the destructive button fills with the danger tone"
+    );
 }
 
 #[gpui::test]
 fn the_components_announce_their_roles_and_names(cx: &mut TestAppContext) {
     let (_opened, cx) = open(cx, "dark");
-    let nodes = accessible_nodes(cx);
+    let json = a11y(cx);
+    let nodes = accessible_nodes(&json);
 
     // The text: a label read by its content; the buttons: buttons read by
     // their labels; the containers: groups, which the tree names when it
     // gives a name (the sample's does not).
     assert!(
         find(&nodes, "Label", "Count: 0").is_some(),
-        "the text is a label named by its content"
+        "the text is a label named by its content: {json}"
     );
     for label in ["Increment", "Decrement", "Reset"] {
         assert!(
             find(&nodes, "Button", label).is_some(),
-            "the {label} button is a button named by its label"
+            "the {label} button is a button named by its label: {json}"
         );
     }
     assert!(
         nodes.iter().any(|node| node["role"] == "Group"),
-        "the containers are groups"
+        "the containers are groups: {json}"
     );
 }
 
@@ -251,6 +274,11 @@ fn real_key_events_press_the_buttons_and_the_window_shows_the_new_tree(cx: &mut 
     assert!(
         drawn(cx, "designed-text-Count: 0"),
         "the first tree is drawn"
+    );
+    let (focused, json) = accessibility(cx);
+    assert!(
+        focused.as_deref() == Some("Increment"),
+        "the first button has the keyboard: {focused:?} in {json}"
     );
     cx.simulate_keystrokes("enter");
     wait_for(&window, cx, "Count: 1");

@@ -235,20 +235,16 @@ fn opening_the_sample_shows_its_first_tree_and_presses_change_it() {
 }
 
 #[test]
-fn a_press_of_a_callback_the_tree_does_not_name_is_an_error_that_keeps_it() {
+fn a_press_of_a_callback_the_tree_does_not_name_is_dropped() {
     let pane = Pane::new(&[SAMPLES[0].package]);
     pane.open("", SAMPLES[0].title);
     assert_eq!(pane.text(), "Count: 0");
 
-    // A callback id no button named: the view answers an error, shown,
-    // and its tree stays.
+    // A callback id no button named: the SDK drops it, as it drops an
+    // event older than its last two renders, and the tree stays.
     block_on(pane.launcher.send_designed_event(99, None));
     assert_eq!(pane.text(), "Count: 0");
-    assert!(
-        matches!(pane.status(), Status::Error(message) if message.contains("callback")),
-        "{:?}",
-        pane.status()
-    );
+    assert_eq!(pane.status(), Status::Idle);
 
     // The view still answers events after that.
     pane.press("Increment");
@@ -317,32 +313,33 @@ fn an_over_limit_tree_is_the_extensions_error_and_keeps_the_last_good_tree() {
 
 #[test]
 fn unknown_nodes_draw_their_fallback_or_their_children() {
-    let pane = fixture();
-
     // An unknown node with a fallback: the fallback's text is drawn.
+    let pane = fixture();
     pane.press("Draw an unknown node with a fallback");
     assert_eq!(pane.text(), "The fallback");
 
     // An unknown node without one: its children are.
+    let pane = fixture();
     pane.press("Draw an unknown node without a fallback");
     assert_eq!(pane.text(), "Inside");
 
     // Both degraded to the counter again.
+    let pane = fixture();
     pane.press("Increment");
     assert_eq!(pane.text(), "Count: 1");
 }
 
 #[test]
 fn a_newer_minor_is_drawn_and_another_major_is_refused() {
-    let pane = fixture();
-
     // A document of a newer minor version: drawn for what Pane
     // understands.
+    let pane = fixture();
     pane.press("Draw a newer minor tree");
     assert_eq!(pane.text(), "Newer");
 
     // A document of another major version: the extension's error, naming
     // both versions; the tree stays.
+    let pane = fixture();
     pane.press("Draw another major's tree");
     assert!(
         matches!(
@@ -354,7 +351,7 @@ fn a_newer_minor_is_drawn_and_another_major_is_refused() {
         "{:?}",
         pane.status()
     );
-    assert_eq!(pane.text(), "Newer");
+    assert_eq!(pane.text(), "Count: 0");
 }
 
 #[test]

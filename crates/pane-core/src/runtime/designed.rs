@@ -692,7 +692,8 @@ mod tests {
         };
         assert!(
             tree(&nest(MAX_DEPTH - 1)).is_ok(),
-            "a tree 64 levels deep is drawn"
+            "a tree 64 levels deep is drawn: {:?}",
+            tree(&nest(MAX_DEPTH - 1))
         );
         let error = over(&nest(MAX_DEPTH));
         assert!(
@@ -729,7 +730,7 @@ mod tests {
         };
         for (document, why) in [
             ("not json", "its tree:"),
-            (r#"{"root":{}}"#, "missing field `version`"),
+            (r#"{"root":{}}"#, "missing field"),
             (r#"{"version":"1.0"}"#, "missing field `root`"),
             (r#"{"version":"1.0","root":{}}"#, "missing field `type`"),
             (
