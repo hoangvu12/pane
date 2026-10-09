@@ -877,9 +877,7 @@ pub(crate) fn source_name(identity: &PackageIdentity) -> String {
 /// consumer's default being installed beside it.
 fn provides_here(package: &InstalledPackage, capability: &str) -> Option<Named> {
     let manifest = package.manifest.as_ref().ok()?;
-    if entry_of(manifest, capability).is_none() {
-        return None;
-    }
+    entry_of(manifest, capability)?;
     Some(Named {
         identity: package.identity.clone(),
         title: package.title(),
