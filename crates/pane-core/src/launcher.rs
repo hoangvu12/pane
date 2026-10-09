@@ -1236,6 +1236,9 @@ enum Entry {
     /// Disable this installed package and the packages that require it,
     /// which the confirmation showed (confirmation).
     DisableAll(PackageIdentity, Vec<PackageIdentity>),
+    /// Disable this installed package alone, leaving the packages that
+    /// require it waiting for it (confirmation).
+    DisableOnly(PackageIdentity),
     /// Reload this installed package from its source folder.
     Reload(PackageIdentity),
     /// Start again this package, which Pane paused after it failed.
@@ -2898,6 +2901,9 @@ impl Launcher {
                 .map_or(Pending::Nothing, Pending::UpdateToggle),
             Entry::DisableAll(identity, shown) => self
                 .begin_disable_all(state, identity, &shown)
+                .map_or(Pending::Nothing, Pending::Change),
+            Entry::DisableOnly(identity) => self
+                .begin_disable_only(state, identity)
                 .map_or(Pending::Nothing, Pending::Change),
             Entry::Reload(identity) => self
                 .begin_reload(state, identity, reload::Attempt::Reload)
