@@ -195,22 +195,22 @@ impl DesignedTree {
                 document.len()
             )));
         }
-        // The document parses to a JSON value first: serde's own recursion
-        // bound (128) is a document nesting more than Pane draws can never
-        // pass, and reading the wire type from the value has no bound of
-        // its own to trip over on a tree as deep as the limit allows.
-        // A document that trips it is over the depth limit, the
-        // extension's error: the view keeps its last good tree.
-        let value: Value = serde_json::from_str(document).map_err(|error| {
-            if error.to_string().contains("recursion limit exceeded") {
-                ReadError::Guest(format!(
-                    "the view's tree is deeper than the {MAX_DEPTH} levels that are drawn"
-                ))
-            } else {
-                ReadError::Unreadable(format!("its tree: {error}"))
-            }
-        })?;
-        let wire: WireDocument = serde_json::from_value(value)
+        // Serde's own recursion bound (128) sits below a tree as deep as
+        // the limit allows: each level is an object and an array. The
+        // document's bracket nesting is counted over its text first — no
+        // recursion, whatever the document holds — and a document nesting
+        // deeper than a tree at the limit can is over the depth limit, the
+        // extension's error, never parsed. What is left is bounded, so the
+        // parse runs with serde's recursion bound lifted: it cannot
+        // overflow, and the tree's own depth is checked as it is read.
+        if nesting_of(document) > 2 * MAX_DEPTH + 8 {
+            return Err(ReadError::Guest(format!(
+                "the view's tree is deeper than the {MAX_DEPTH} levels that are drawn"
+            )));
+        }
+        let mut parser = serde_json::Deserializer::from_str(document);
+        parser.disable_recursion_limit();
+        let wire: WireDocument = WireDocument::deserialize(&mut parser)
             .map_err(|error| ReadError::Unreadable(format!("its tree: {error}")))?;
         let (major, minor) = version(&wire.version).ok_or_else(|| {
             ReadError::Unreadable(format!(
@@ -247,6 +247,38 @@ impl ReadError {
             ReadError::Guest(message) | ReadError::Unreadable(message) => message,
         }
     }
+}
+
+/// The deepest nesting of brackets in `document`, counted over its text:
+/// a bound on the depth its parse reaches, without parsing it. Text in
+/// strings does not count.
+fn nesting_of(document: &str) -> usize {
+    let mut nesting = 0;
+    let mut deepest = 0;
+    let mut in_string = false;
+    let mut escaped = false;
+    for character in document.chars() {
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if character == '\\' {
+                escaped = true;
+            } else if character == '"' {
+                in_string = false;
+            }
+            continue;
+        }
+        match character {
+            '"' => in_string = true,
+            '{' | '[' => {
+                nesting += 1;
+                deepest = deepest.max(nesting);
+            }
+            '}' | ']' => nesting = nesting.saturating_sub(1),
+            _ => {}
+        }
+    }
+    deepest
 }
 
 /// `text`, a version like `"1.0"`, as (major, minor).
