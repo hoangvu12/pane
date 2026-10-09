@@ -75,11 +75,8 @@ impl Pane {
     /// `target/guests/packages`.
     fn new(packages: &[&str]) -> Pane {
         let data = tempfile::tempdir().unwrap();
-        let launcher = Launcher::with_packages(
-            Runtime::start(),
-            Vec::new(),
-            data.path().join("extensions"),
-        );
+        let launcher =
+            Launcher::with_packages(Runtime::start(), Vec::new(), data.path().join("extensions"));
         let pane = Pane { data, launcher };
         for package in packages {
             pane.install_assembled(package);
@@ -371,7 +368,10 @@ fn the_press_carries_the_node_it_was_raised_on() {
     block_on(pane.launcher.send_designed_event(callback, None));
     assert_eq!(pane.text(), "Count: 0");
     // With the node's key, it counts.
-    block_on(pane.launcher.send_designed_event(callback, Some("increment")));
+    block_on(
+        pane.launcher
+            .send_designed_event(callback, Some("increment")),
+    );
     assert_eq!(pane.text(), "Count: 1");
 }
 

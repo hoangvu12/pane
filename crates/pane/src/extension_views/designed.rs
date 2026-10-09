@@ -33,7 +33,7 @@ use gpui::ColorExt as _;
 use gpui::prelude::*;
 use gpui::{
     AnyElement, App, Context, Div, FocusHandle, Hsla, KeyBinding, Pixels, Role, SharedString,
-    actions, div, px,
+    Stateful, actions, div, px,
 };
 use pane_core::{
     Align, Button as ButtonNode, ButtonTone, DesignedTree, DesignedViewSnapshot, Justify, Layout,
@@ -101,6 +101,7 @@ impl LauncherWindow {
             }
             return;
         }
+        let closed = shown.is_none();
         self.designed = shown.map(|(view, shape)| {
             // A newly opened view takes the keyboard on its first button.
             let mut focus = HashMap::new();
@@ -114,7 +115,7 @@ impl LauncherWindow {
             }
             DesignedControls { view, focus }
         });
-        if shown.is_none() {
+        if closed {
             window.focus(&self.focus_handle, cx);
         }
     }
@@ -150,12 +151,13 @@ impl LauncherWindow {
         let tree = {
             let mut path = String::new();
             push(&mut path, view.tree.root.key.as_deref(), 0);
-            node(&view.tree.root, &mut path, focus, &theme, cx)
+            draw(&view.tree.root, &mut path, focus, &theme, cx)
         };
         // Fills the body as the list and the form do, so the status line
         // stays at the bottom, and scrolls what the tree grows past it.
         let geometry = &theme.geometry;
         div()
+            .id("designed-view")
             .key_context("DesignedView")
             .flex_1()
             .min_h(px(0.))
@@ -174,7 +176,7 @@ impl LauncherWindow {
 /// One node of the tree, drawn: `path` is the node's place in the tree
 /// (its key, else its index among its siblings), already ending with its
 /// own segment, which keeps the focus of the buttons Pane drew before.
-fn node(
+fn draw(
     node: &Node,
     path: &mut String,
     focus: &HashMap<String, FocusHandle>,
@@ -187,10 +189,11 @@ fn node(
     // place, else its children, drawn as they are.
     let drawn = match &node.kind {
         NodeKind::Unknown(_) => match &node.fallback {
-            Some(fallback) => node(fallback, path, focus, theme, cx),
+            Some(fallback) => draw(fallback, path, focus, theme, cx),
             None => {
                 let children = children(node, path, focus, theme, cx);
                 div()
+                    .id(path.clone())
                     .flex()
                     .flex_col()
                     .map(|group| named(group, name.as_deref()))
@@ -199,15 +202,26 @@ fn node(
             }
         },
         NodeKind::Column(layout) => {
+            let own = path.clone();
             let children = children(node, path, focus, theme, cx);
-            named(container(true, layout, children), name.as_deref()).into_any_element()
+            named(
+                container(true, layout, children).id(own),
+                name.as_deref(),
+            )
+            .into_any_element()
         }
         NodeKind::Row(layout) => {
+            let own = path.clone();
             let children = children(node, path, focus, theme, cx);
-            named(container(false, layout, children), name.as_deref()).into_any_element()
+            named(
+                container(false, layout, children).id(own),
+                name.as_deref(),
+            )
+            .into_any_element()
         }
         NodeKind::Text(text) => {
-            named(text_element(text, theme), name.as_deref()).into_any_element()
+            let element = text_element(text, theme).id(path.clone());
+            named(element, name.as_deref()).into_any_element()
         }
         NodeKind::Button(button) => {
             let handle = focus.get(path).cloned();
@@ -221,7 +235,7 @@ fn node(
 
 /// Gives `node` the group role and name assistive technology reads it by:
 /// every node is reported, with its own name when the tree gave one.
-fn named(node: Div, name: Option<&str>) -> Div {
+fn named<E: Stateful<Div> + FluentBuilder>(node: E, name: Option<&str>) -> E {
     node.role(Role::Group)
         .when_some(name, |node, name| node.aria_label(name))
 }
@@ -241,7 +255,7 @@ fn children(
         .map(|(index, child)| {
             let start = path.len();
             push(path, child.key.as_deref(), index);
-            let drawn = node(child, path, focus, theme, cx);
+            let drawn = draw(child, path, focus, theme, cx);
             path.truncate(start);
             drawn
         })
@@ -369,14 +383,14 @@ fn button_element(
     // A press of the button: the callback id its tree named, raised on the
     // node with `key` (or none when the tree gave it none).
     let key = key.unwrap_or_default();
-    let (for_keys, for_click, key_for_keys, key_for_click) =
-        (callback, callback, key.clone(), key.clone());
+    let (for_keys, key_for_keys) = (callback, key.clone());
+    let (for_click, key_for_click) = (callback, key);
     let (press, click) = (
         cx.listener(move |this, _: &Press, window, cx| {
             this.send_designed_press(for_keys, key_for_keys.clone(), window, cx);
         }),
         cx.listener(move |this, _, window, cx| {
-            this.send_designed_press(click, key.clone(), window, cx);
+            this.send_designed_press(for_click, key_for_click.clone(), window, cx);
         }),
     );
     let element = div()
