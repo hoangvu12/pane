@@ -1034,7 +1034,8 @@ fn a_provider_that_is_not_one_is_refused() {
     install(&launcher, &dirs.sample(PROVIDERS[1].0));
     let refused = launcher
         .choose_provider(GREET, &dirs.sample_identity(PROVIDERS[0].0).key())
-        .expect_err("not a provider of the capability");
+        .err()
+        .expect("not a provider of the capability");
     assert_eq!(
         refused,
         format!(
@@ -1048,7 +1049,8 @@ fn a_provider_that_is_not_one_is_refused() {
             "pane-samples:farewell@1",
             &dirs.sample_identity(PROVIDERS[1].0).key(),
         )
-        .expect_err("no one provides the capability");
+        .err()
+        .expect("no one provides the capability");
     assert_eq!(
         refused,
         format!(
