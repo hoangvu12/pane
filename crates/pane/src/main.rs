@@ -379,7 +379,7 @@ fn main() {
                 })
                 .detach();
             }
-            Err(error) => eprintln!("pane-ext cannot reach this Pane: {error}"),
+            Err(error) => pane_core::diagnostic!("pane-ext cannot reach this Pane: {error}"),
         }
         // Acquiring the default extensions goes on in the background: the
         // window, root search and the extension list stay usable, and the
