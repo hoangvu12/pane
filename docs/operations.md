@@ -175,9 +175,15 @@ A package declares the capabilities it uses under `uses` in its
   the package calls. Read and checked; calling every provider comes with a
   later slice.
 - `default` (optional): a provider source, written as a dependency's source
-  is, for Pane to install when no provider is installed. Read and checked —
-  a package from npm or Git cannot name a `local:` folder — and installed
-  with a later slice.
+  is, for Pane to install when no provider is installed, so that the
+  package works at once. Read and checked — a package from npm or Git
+  cannot name a `local:` folder. Installing it is part of the package's
+  install plan
+  ([dependencies](dependencies.md#installing)): it is planned, claimed,
+  installed before the package that names it and rolled back with the rest,
+  and it stops the install when it cannot be installed or does not provide
+  the capability. An installed provider, even a disabled one, is used
+  instead; an optional use's default is never installed.
 - `commands` (optional): the command ids that need the capability; without
   it, the use belongs to the whole package. Read and checked; commands
   waiting for a capability come with a later slice.
@@ -221,9 +227,9 @@ In Rust, `pane_extension::capabilities::{call, providers, available}`; in
 JavaScript and TypeScript, `@pane-app/extension/capabilities` (or the module
 `"pane:extension/operations@0.1.0"`).
 
-The user's choice of provider in Settings, installing a use's `default`,
-commands waiting for a capability, and calling every provider of a
-`use: "all"` capability are later slices of
+The user's choice of provider in Settings, commands waiting for a
+capability, and calling every provider of a `use: "all"` capability are
+later slices of
 [#151](https://github.com/pane-app/pane/issues/151).
 
 ## Behavior
@@ -322,11 +328,13 @@ commands waiting for a capability, and calling every provider of a
 - Declared [dependencies](dependencies.md) (#42) are shown, checked and
   installed with the caller, but disabling a target does not consider its
   callers yet (#43).
-- Capabilities: the user picks a provider in Settings, Pane installs a
-  use's `default`, commands wait for what they need, and a `use: "all"`
-  capability fans a call out to every provider — later slices of
+- Capabilities: the user picks a provider in Settings, commands wait for
+  what they need, and a `use: "all"` capability fans a call out to every
+  provider — later slices of
   [#151](https://github.com/pane-app/pane/issues/151). Until the user picks,
-  the first provider installed serves.
+  the first provider installed serves; a use's `default` is installed with
+  the caller when no provider is
+  ([dependencies](dependencies.md#installing)).
 - No time limit on waiting: a running operation stops only when a
   generation in its chain ends, or when it computes for 5 seconds without
   finishing (#18, [generations](generations.md#what-stopping-cannot-do-yet)).

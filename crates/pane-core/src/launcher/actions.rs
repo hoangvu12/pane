@@ -446,6 +446,7 @@ pub(in crate::launcher) fn selected_action(state: &State) -> SelectedAction {
             acting("Clear history")
         }
         (_, Some(Entry::DisableAll(..))) => acting("Disable all"),
+        (_, Some(Entry::DisableOnly(..))) => acting("Disable only"),
         (_, Some(Entry::Cancel)) => acting("Cancel"),
         // Nothing is selected: the screen's own action, which cannot run
         // without a row to run it on.

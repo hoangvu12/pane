@@ -9,7 +9,10 @@
 //! back by itself once it returns (#152). The operations samples
 //! (`guests/sample-operations*`) and the operations fixture
 //! (`guests/fixtures/operations`) from `cargo xtask guests` serve as
-//! packages.
+//! packages. The capabilities a package uses are planned the same way: the
+//! preview's capability lines, the default provider a use names, and what
+//! stops an install (#155), with the capabilities fixture
+//! (`guests/fixtures/capabilities`) as provider and consumer.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -1171,4 +1174,356 @@ fn a_package_installed_through_a_link_resolves_sources_from_the_folder_it_points
         ]
     );
     assert_eq!(greet(&launcher, "greeter"), result("Hello, Ada, from Rust"));
+}
+
+// The capabilities a package uses, planned as its dependencies are
+// (ADR 0041): who provides each, the default provider Pane installs when
+// none does, and who waits for a provider. The capabilities fixture
+// serves as both a provider and a consumer.
+
+/// The capability the fixture's packages provide and use.
+const GREET: &str = "fixture:greet@1";
+
+/// The `provides` of a package providing the fixture's capability, as
+/// manifest members.
+fn provides() -> String {
+    r#","provides": [{ "capability": "fixture:greet@1", "component": "fixture.wasm",
+         "operations": ["greet"] }]"#
+        .into()
+}
+
+/// The `uses` of a package using the fixture's capability, as manifest
+/// members, with `extra` (starting with a comma) adding `"default"`,
+/// `"optional"` or `"commands"`.
+fn uses(extra: &str) -> String {
+    format!(
+        r#","uses": [{{ "capability": "fixture:greet@1", "operations": ["greet"]{extra} }}}"#
+    )
+}
+
+/// What the fixture's "Call the greet capability" item answers when a
+/// provider serves it.
+fn answered() -> Status {
+    result(r#"answered: {"greeting":"Hello, Ada","operation":"fixture:greet@1/greet"}"#)
+}
+
+/// Not-found: no installed extension provides the capability, as the
+/// fixture reports the error.
+fn not_found() -> Status {
+    error(format!(
+        "The extension reported an error: not-found: no installed extension provides `{GREET}`"
+    ))
+}
+
+impl Dirs {
+    /// Writes a capabilities fixture package in source folder `name`,
+    /// titled "Package <name>", whose command calls the fixture's
+    /// capability, with `members` (manifest members, each starting with a
+    /// comma): its `uses`, `provides` or `dependencies`.
+    fn capability(&self, name: &str, members: &str) -> PathBuf {
+        let folder = self.folder(name);
+        fs::create_dir_all(&folder).unwrap();
+        fs::copy(
+            guest("capabilities_fixture.wasm"),
+            folder.join("fixture.wasm"),
+        )
+        .unwrap();
+        let manifest = format!(
+            r#"{{
+                "manifestVersion": 1,
+                "title": "Package {name}",
+                "apiVersion": "0.1",
+                "commands": [
+                    {{ "id": "fixture", "title": "Capabilities fixture",
+                       "component": "fixture.wasm" }}
+                ]{members}
+            }}"#
+        );
+        fs::write(folder.join("pane.json"), manifest).unwrap();
+        folder
+    }
+}
+
+/// From root search, opens the fixture command and runs its item that
+/// calls the greet capability, returning what it showed.
+fn call_capability(launcher: &Launcher) -> Status {
+    for _ in 0..3 {
+        launcher.back();
+    }
+    select_title(launcher, "Capabilities fixture");
+    block_on(launcher.activate_selected());
+    select_title(launcher, "Call the greet capability");
+    block_on(launcher.activate_selected());
+    shown(launcher)
+}
+
+#[test]
+fn an_installed_provider_is_named_and_nothing_is_installed_beside_it() {
+    let dirs = Dirs::new();
+    let provider = dirs.capability("b", &provides());
+    let consumer = dirs.capability("a", &uses(""));
+    let launcher = dirs.launcher();
+    block_on(launcher.install_package(&provider));
+
+    block_on(launcher.preview_package(&consumer));
+    assert!(
+        details(&launcher).contains(&format!("Uses {GREET}: provided by Package b (installed)")),
+        "{:#?}",
+        details(&launcher)
+    );
+    assert_eq!(
+        launcher.view().rows[0].subtitle.as_deref(),
+        Some("Copy the package into Pane and add its commands")
+    );
+    block_on(launcher.activate_selected());
+
+    assert_eq!(launcher.view().status, result("Installed Package a"));
+    assert_eq!(installed(&launcher), ["Package b", "Package a"]);
+    assert_eq!(call_capability(&launcher), answered());
+}
+
+#[test]
+fn a_disabled_provider_is_used_rather_than_the_default_beside_it() {
+    let dirs = Dirs::new();
+    let provider = dirs.capability("b", &provides());
+    // Another provider the consumer names as its default, never installed:
+    // the disabled one is used rather than it being installed beside.
+    let _default = dirs.capability("c", &provides());
+    let consumer = dirs.capability("a", &uses(r#", "default": "local:../c""#));
+    let launcher = dirs.launcher();
+    block_on(launcher.install_package(&provider));
+    block_on(launcher.set_enabled(&dirs.identity("b"), false));
+
+    block_on(launcher.preview_package(&consumer));
+    assert!(
+        details(&launcher).contains(&format!(
+            "Uses {GREET}: provided by Package b (installed, but you disabled it: it stays \
+             disabled, and Package a waits until you enable it in Settings)"
+        )),
+        "{:#?}",
+        details(&launcher)
+    );
+    block_on(launcher.activate_selected());
+
+    assert_eq!(launcher.view().status, result("Installed Package a"));
+    assert_eq!(installed(&launcher), ["Package b", "Package a"]);
+}
+
+#[test]
+fn the_default_a_use_names_is_installed_when_no_provider_is() {
+    let dirs = Dirs::new();
+    let provider = dirs.capability("b", &provides());
+    let consumer = dirs.capability("a", &uses(r#", "default": "local:../b""#));
+    let launcher = dirs.launcher();
+
+    block_on(launcher.preview_package(&consumer));
+    assert!(
+        details(&launcher).contains(&format!(
+            "Uses {GREET}: no installed extension provides it; Pane installs Package b, which \
+             Package a names"
+        )),
+        "{:#?}",
+        details(&launcher)
+    );
+    assert_eq!(
+        launcher.view().rows[0].subtitle.as_deref(),
+        Some("Copy the package into Pane and add its commands, and install Package b, which it \
+              names")
+    );
+    block_on(launcher.activate_selected());
+
+    // The default is installed with it, before it, as a required
+    // dependency is.
+    assert_eq!(
+        launcher.view().status,
+        result("Installed Package a with Package b, which it names")
+    );
+    assert_eq!(installed(&launcher), ["Package b", "Package a"]);
+    // It is the first provider, and it is used.
+    assert_eq!(call_capability(&launcher), answered());
+    let running = block_on(dirs.runtime.running());
+    assert_eq!(running.len(), 2, "{running:?}");
+}
+
+#[test]
+fn a_use_with_no_provider_and_no_default_waits() {
+    let dirs = Dirs::new();
+    let consumer = dirs.capability("a", &uses(""));
+    let launcher = dirs.launcher();
+
+    block_on(launcher.preview_package(&consumer));
+    assert!(
+        details(&launcher).contains(&format!(
+            "Uses {GREET}: no installed extension provides it; Package a waits until one does"
+        )),
+        "{:#?}",
+        details(&launcher)
+    );
+    block_on(launcher.activate_selected());
+
+    // A missing capability never stops an install: the package installs
+    // and its call answers not-found until a provider comes.
+    assert_eq!(launcher.view().status, result("Installed Package a"));
+    assert_eq!(call_capability(&launcher), not_found());
+
+    // A provider installed later serves it, and it comes back by itself.
+    let provider = dirs.capability("b", &provides());
+    block_on(launcher.install_package(&provider));
+    assert_eq!(call_capability(&launcher), answered());
+}
+
+#[test]
+fn a_use_narrowed_to_some_commands_says_which_wait() {
+    let dirs = Dirs::new();
+    let consumer = dirs.capability(
+        "a",
+        &uses(r#", "commands": ["fixture"]"#),
+    );
+    let launcher = dirs.launcher();
+
+    block_on(launcher.preview_package(&consumer));
+    assert!(
+        details(&launcher).contains(&format!(
+            "Uses {GREET}: no installed extension provides it; the commands of Package a that \
+             need it wait until one does"
+        )),
+        "{:#?}",
+        details(&launcher)
+    );
+}
+
+#[test]
+fn an_optional_use_never_installs_its_default() {
+    let dirs = Dirs::new();
+    let _default = dirs.capability("b", &provides());
+    let consumer = dirs.capability("a", &uses(r#", "optional": true, "default": "local:../b""#));
+    let launcher = dirs.launcher();
+
+    block_on(launcher.preview_package(&consumer));
+    assert!(
+        details(&launcher).contains(&format!(
+            "Optional: {GREET}, no installed extension provides it; Pane does not install \
+             `local:../b`, which Package a names; install it yourself to use it"
+        )),
+        "{:#?}",
+        details(&launcher)
+    );
+    assert_eq!(
+        launcher.view().rows[0].subtitle.as_deref(),
+        Some("Copy the package into Pane and add its commands")
+    );
+    block_on(launcher.activate_selected());
+
+    assert_eq!(launcher.view().status, result("Installed Package a"));
+    assert_eq!(installed(&launcher), ["Package a"]);
+    assert_eq!(call_capability(&launcher), not_found());
+}
+
+#[test]
+fn a_default_that_cannot_be_installed_stops_the_install() {
+    let dirs = Dirs::new();
+    let consumer = dirs.capability("a", &uses(r#", "default": "local:../missing""#));
+    let launcher = dirs.launcher();
+
+    block_on(launcher.preview_package(&consumer));
+    assert_eq!(launcher.view().title, "Cannot install Package a");
+    assert!(launcher.view().rows.is_empty(), "nothing to choose");
+    let expected = format!(
+        "Nothing was installed: Package a names `local:../missing` as the default provider of \
+         `{GREET}`, from {}, which cannot be installed: Cannot open",
+        dirs.resolved("missing").display()
+    );
+    let status = launcher.view().status;
+    assert!(
+        matches!(&status, Status::Error(text) if text.starts_with(&expected)),
+        "{status:?}"
+    );
+    assert!(launcher.packages().is_empty());
+
+    // Installing without the preview is refused the same way.
+    block_on(launcher.install_package(&consumer));
+    let status = launcher.view().status;
+    assert!(
+        matches!(&status, Status::Error(text) if text.starts_with(&expected)),
+        "{status:?}"
+    );
+    assert!(launcher.packages().is_empty());
+}
+
+#[test]
+fn a_default_that_does_not_provide_the_capability_stops_the_install() {
+    let dirs = Dirs::new();
+    // The default is a package that provides a different capability.
+    let _default = dirs.capability(
+        "b",
+        r#","provides": [{ "capability": "fixture:other@1", "component": "fixture.wasm",
+             "operations": ["greet"] }]"#,
+    );
+    let consumer = dirs.capability("a", &uses(r#", "default": "local:../b""#));
+    let launcher = dirs.launcher();
+
+    block_on(launcher.install_package(&consumer));
+
+    assert_eq!(
+        launcher.view().status,
+        Status::Error(
+            "Nothing was installed: Package a names `local:../b` as the default provider of \
+             `fixture:greet@1`, which does not provide it".into()
+        )
+    );
+    assert!(launcher.packages().is_empty());
+}
+
+#[test]
+fn a_package_providing_an_already_provided_capability_says_so() {
+    let dirs = Dirs::new();
+    let installed = dirs.capability("b", &provides());
+    let provider = dirs.capability("c", &provides());
+    let launcher = dirs.launcher();
+    block_on(launcher.install_package(&installed));
+
+    block_on(launcher.preview_package(&provider));
+    assert!(
+        details(&launcher).contains(&format!(
+            "Provides {GREET} (Package b provides it too; choose in Settings)"
+        )),
+        "{:#?}",
+        details(&launcher)
+    );
+    block_on(launcher.activate_selected());
+
+    assert_eq!(launcher.view().status, result("Installed Package c"));
+    // The first provider installed still serves.
+    assert_eq!(call_capability(&launcher), answered());
+}
+
+#[test]
+fn an_update_plans_the_new_copy_s_uses() {
+    let dirs = Dirs::new();
+    let provider = dirs.capability("b", &provides());
+    let consumer = dirs.capability("a", &uses(""));
+    let launcher = dirs.launcher();
+    block_on(launcher.install_package(&consumer));
+    assert_eq!(call_capability(&launcher), not_found());
+
+    // The new copy uses the capability and names its default provider.
+    dirs.capability("a", &uses(r#", "default": "local:../b""#));
+    block_on(launcher.preview_package(&consumer));
+    assert_eq!(titles(&launcher), ["Update"]);
+    assert!(
+        details(&launcher).contains(&format!(
+            "Uses {GREET}: no installed extension provides it; Pane installs Package b, which \
+             Package a names"
+        )),
+        "{:#?}",
+        details(&launcher)
+    );
+    block_on(launcher.activate_selected());
+
+    assert_eq!(
+        launcher.view().status,
+        result("Updated Package a with Package b, which it names")
+    );
+    assert_eq!(installed(&launcher), ["Package a", "Package b"]);
+    assert_eq!(call_capability(&launcher), answered());
 }

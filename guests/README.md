@@ -2395,6 +2395,14 @@ What installing does:
 - **Required dependencies.** Installing or updating also installs the
   missing [required dependencies](#dependencies-on-other-extensions) the
   manifest declares, first, or explains why it cannot and installs nothing.
+- **Capability providers.** The [capabilities](#capabilities) the package
+  uses are listed in the preview, each with who provides it, and the
+  `default` provider a use names is installed with the package when no
+  installed package provides the capability — planned, installed and
+  rolled back as a required dependency is, and stopped with the reason when
+  it cannot be installed or does not provide the capability. A capability
+  nobody provides stops nothing: the package waits for a provider
+  ([details](../docs/dependencies.md#installing)).
 - **Listing.** Installed commands are listed from the manifests alone; no
   guest runs until you open a command or another extension calls one of the
   package's [operations](#operations). A damaged installed copy stays listed

@@ -156,6 +156,9 @@ impl Begun {
 pub(in crate::launcher) struct Outcome {
     /// The required dependencies installed with it, first installed first.
     pub(in crate::launcher) dependencies: Vec<InstalledPackage>,
+    /// The default providers of its uses installed with it, first
+    /// installed first.
+    pub(in crate::launcher) defaults: Vec<InstalledPackage>,
     pub(in crate::launcher) package: InstalledPackage,
     /// Titles of required dependencies the user disabled, which stay so.
     pub(in crate::launcher) disabled: Vec<String>,
@@ -191,8 +194,9 @@ fn failed(error: impl ToString) -> Stopped {
 }
 
 /// The message for an install or update that installed `outcome` as `mode`
-/// asked: what was installed or updated, with which required dependencies,
-/// and which of them the user left disabled or Pane left paused.
+/// asked: what was installed or updated, with which required dependencies
+/// and default providers, and which of them the user left disabled or Pane
+/// left paused.
 pub(in crate::launcher) fn outcome_message(mode: &Mode, outcome: &Outcome) -> String {
     let title = outcome.package.title();
     let mut message = match (mode, outcome.package.version()) {
@@ -200,16 +204,31 @@ pub(in crate::launcher) fn outcome_message(mode: &Mode, outcome: &Outcome) -> St
         (Mode::Update(_), Some(version)) => format!("Updated {title} to {version}"),
         (Mode::Update(_), None) => format!("Updated {title}"),
     };
+    let mut installed_with: Vec<String> = Vec::new();
     if !outcome.dependencies.is_empty() {
         let titles: Vec<String> = outcome
             .dependencies
             .iter()
             .map(InstalledPackage::title)
             .collect();
-        message.push_str(&format!(
-            " with {}, which it requires",
+        installed_with.push(format!(
+            "{}, which it requires",
             platform::join(&titles)
         ));
+    }
+    if !outcome.defaults.is_empty() {
+        let titles: Vec<String> = outcome
+            .defaults
+            .iter()
+            .map(InstalledPackage::title)
+            .collect();
+        installed_with.push(format!(
+            "{}, which it names",
+            platform::join(&titles)
+        ));
+    }
+    if !installed_with.is_empty() {
+        message.push_str(&format!(" with {}", platform::join(&installed_with)));
     }
     if !outcome.disabled.is_empty() {
         message.push_str(&format!(
@@ -563,8 +582,8 @@ impl Launcher {
         match result {
             Ok(outcome) => {
                 let message = outcome_message(&mode, &outcome);
-                for dependency in outcome.dependencies {
-                    self.put_installed(&mut state, dependency);
+                for dependency in outcome.dependencies.iter().chain(&outcome.defaults) {
+                    self.put_installed(&mut state, dependency.clone());
                 }
                 let package = outcome.package;
                 let first = package.commands().first().map(|c| c.component.clone());
@@ -645,19 +664,39 @@ impl Launcher {
         }
         let disabled = plan.titles_in(RequiredState::Disabled);
         let paused = plan.titles_in(RequiredState::Paused);
+        // The default providers of uses are installed with the rest; the
+        // message says which is which.
+        let defaults: Vec<PackageIdentity> = plan
+            .defaults
+            .iter()
+            .map(|default| default.target.identity.clone())
+            .collect();
+        let install = plan.install;
         let mode = mode.clone();
         let retire = self.retire(&package.identity);
-        let (dependencies, package) = off_thread(move || {
+        let (installed, package) = off_thread(move || {
             let mut store = store.lock().unwrap_or_else(|p| p.into_inner());
-            dependencies::install_all(&mut store, &plan.install, |store| match mode {
+            dependencies::install_all(&mut store, &install, |store| match mode {
                 Mode::Install => store.install(&package),
                 Mode::Update(_) => store.update(&package, retire),
             })
         })
         .await
         .map_err(Stopped::Failed)?;
+        // The default providers of uses are installed with the rest; the
+        // message says which is which.
+        let mut dependencies = Vec::new();
+        let mut default_providers = Vec::new();
+        for added in installed {
+            if defaults.contains(&added.identity) {
+                default_providers.push(added);
+            } else {
+                dependencies.push(added);
+            }
+        }
         Ok(Outcome {
             dependencies,
+            defaults: default_providers,
             package,
             disabled,
             paused,
@@ -710,19 +749,39 @@ impl Launcher {
                 // requests and run system programs.
                 Ok(checked) => dependency.note_imports(checked),
                 Err(error) => {
-                    let required = plan
+                    // A package to install is a required dependency, or the
+                    // default provider a use names; the problem names the
+                    // package that relies on it either way.
+                    let problem = if let Some(required) = plan
                         .required
                         .iter()
                         .find(|required| required.target.identity == dependency.identity)
-                        .expect("a package to install is a required dependency");
-                    problems.push(dependencies::Problem {
-                        dependent: required.dependent.clone(),
-                        id: required.id.clone(),
-                        kind: dependencies::ProblemKind::CannotInstall {
-                            from: dependencies::source_name(&dependency.identity),
-                            error,
-                        },
-                    });
+                    {
+                        dependencies::Problem {
+                            dependent: required.dependent.clone(),
+                            id: required.id.clone(),
+                            kind: dependencies::ProblemKind::CannotInstall {
+                                from: dependencies::source_name(&dependency.identity),
+                                error,
+                            },
+                        }
+                    } else {
+                        let default = plan
+                            .defaults
+                            .iter()
+                            .find(|default| default.target.identity == dependency.identity)
+                            .expect("a package to install is a required dependency or a default");
+                        dependencies::Problem {
+                            dependent: default.consumer.clone(),
+                            id: default.capability.clone(),
+                            kind: dependencies::ProblemKind::DefaultCannotInstall {
+                                source: default.source.clone(),
+                                from: dependencies::source_name(&dependency.identity),
+                                error,
+                            },
+                        }
+                    };
+                    problems.push(problem);
                 }
             }
         }
@@ -852,11 +911,26 @@ fn preview_view(
         };
         return (view, Vec::new());
     }
-    let with = match plan.installed_with().as_slice() {
-        [] => String::new(),
-        [one] => format!(", and install {one}, which it requires"),
-        titles => format!(", and install the {} extensions it requires", titles.len()),
-    };
+    // What the Install row says is installed with the package: the
+    // required dependencies it is missing, and the default providers its
+    // uses name.
+    let mut with = String::new();
+    match plan.installed_with().as_slice() {
+        [] => {}
+        [one] => with.push_str(&format!(", and install {one}, which it requires")),
+        required => with.push_str(&format!(
+            ", and install the {} extensions it requires",
+            required.len()
+        )),
+    }
+    match plan.named_defaults().as_slice() {
+        [] => {}
+        [one] => with.push_str(&format!(", and install {one}, which it names")),
+        defaults => with.push_str(&format!(
+            ", and install the {} providers it names",
+            defaults.len()
+        )),
+    }
     let (row, entry) = match installed {
         Some(installed) => {
             details.push(
