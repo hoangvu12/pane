@@ -136,6 +136,7 @@ impl Waiting {
     /// under, or its identity).
     pub(crate) fn of(
         packages: &[InstalledPackage],
+        provisions: &[(String, String)],
         paused: &dyn Fn(&PackageIdentity) -> bool,
         title_of: &dyn Fn(&PackageIdentity) -> String,
     ) -> Waiting {
@@ -152,7 +153,9 @@ impl Waiting {
         loop {
             let mut removed = false;
             for (index, package) in packages.iter().enumerate() {
-                if !able[index] || unmet_of(packages, &able, paused, title_of, package).is_empty() {
+                if !able[index]
+                    || unmet_of(packages, &able, provisions, paused, title_of, package).is_empty()
+                {
                     continue;
                 }
                 able[index] = false;
@@ -173,7 +176,7 @@ impl Waiting {
             .map(|(_, package)| {
                 (
                     package.identity.clone(),
-                    reason(packages, &able, paused, title_of, package),
+                    reason(packages, &able, provisions, paused, title_of, package),
                 )
             })
             .collect();
@@ -192,10 +195,12 @@ impl Waiting {
                     .uses
                     .iter()
                     .filter(|used| used.required && !used.use_all && used.commands.is_some())
-                    .filter_map(|used| unmet_capability(packages, &able, paused, package, used))
+                    .filter_map(|used| {
+                        unmet_capability(packages, &able, provisions, paused, package, used)
+                    })
                     .flat_map(|unmet| {
                         let why =
-                            capability_reason(packages, &able, paused, title_of, package, &unmet);
+                            capability_reason(packages, &able, provisions, paused, title_of, package, &unmet);
                         unmet
                             .commands
                             .iter()
@@ -285,6 +290,7 @@ enum Cannot {
 fn unmet_of(
     packages: &[InstalledPackage],
     able: &[bool],
+    provisions: &[(String, String)],
     paused: &dyn Fn(&PackageIdentity) -> bool,
     title_of: &dyn Fn(&PackageIdentity) -> String,
     package: &InstalledPackage,
@@ -349,7 +355,8 @@ fn unmet_of(
             .iter()
             .filter(|used| used.required && !used.use_all && used.commands.is_none())
             .filter_map(|used| {
-                unmet_capability(packages, able, paused, package, used).map(Requirement::Capability)
+                unmet_capability(packages, able, provisions, paused, package, used)
+                    .map(Requirement::Capability)
             }),
     );
     requirements
@@ -364,6 +371,7 @@ fn unmet_of(
 fn unmet_capability(
     packages: &[InstalledPackage],
     able: &[bool],
+    provisions: &[(String, String)],
     paused: &dyn Fn(&PackageIdentity) -> bool,
     package: &InstalledPackage,
     used: &ManifestUse,
@@ -386,6 +394,16 @@ fn unmet_capability(
         else {
             continue;
         };
+        // A package provides a capability its manifest marks `atRunTime`
+        // only while its code holds a provision for it (#158): while it
+        // does not, it is no provider at all, not one that cannot serve.
+        if entry.at_run_time
+            && !provisions
+                .iter()
+                .any(|(owner, provided)| *provided == used.capability && *owner == other.identity.key())
+        {
+            continue;
+        }
         let cannot = if !other.enabled {
             Cannot::Disabled
         } else if paused(&other.identity) {
@@ -424,13 +442,14 @@ fn unmet_capability(
 fn root_of(
     packages: &[InstalledPackage],
     able: &[bool],
+    provisions: &[(String, String)],
     paused: &dyn Fn(&PackageIdentity) -> bool,
     title_of: &dyn Fn(&PackageIdentity) -> String,
     path: &[PackageIdentity],
 ) -> Option<Root> {
     let last = path.last()?;
     let package = packages.iter().find(|package| &package.identity == last)?;
-    let first = unmet_of(packages, able, paused, title_of, package)
+    let first = unmet_of(packages, able, provisions, paused, title_of, package)
         .into_iter()
         .next()?;
     match first {
@@ -444,14 +463,20 @@ fn root_of(
                     return None;
                 }
                 path.push(unmet.identity);
-                root_of(packages, able, paused, title_of, &path)
+                root_of(packages, able, provisions, paused, title_of, &path)
             }
         },
         // The capability is what is actually missing: a provider the user
         // can enable or retry, or the capability itself, whose fix row
         // installs a provider.
         Requirement::Capability(unmet) => Some(root_of_capability(
-            packages, able, paused, title_of, path, &unmet,
+            packages,
+            able,
+            provisions,
+            paused,
+            title_of,
+            path,
+            &unmet,
         )),
     }
 }
@@ -463,6 +488,7 @@ fn root_of(
 fn root_of_capability(
     packages: &[InstalledPackage],
     able: &[bool],
+    provisions: &[(String, String)],
     paused: &dyn Fn(&PackageIdentity) -> bool,
     title_of: &dyn Fn(&PackageIdentity) -> String,
     path: &[PackageIdentity],
@@ -478,7 +504,7 @@ fn root_of_capability(
                 let mut path = path.to_vec();
                 if !path.contains(&provider.identity) {
                     path.push(provider.identity.clone());
-                    if let Some(root) = root_of(packages, able, paused, title_of, &path) {
+                    if let Some(root) = root_of(packages, able, provisions, paused, title_of, &path) {
                         return root;
                     }
                 }
@@ -487,7 +513,7 @@ fn root_of_capability(
     }
     Root::Capability(
         unmet.capability.clone(),
-        providers_say(packages, able, paused, title_of, path, unmet),
+        providers_say(packages, able, provisions, paused, title_of, path, unmet),
         unmet.default.clone(),
     )
 }
@@ -538,11 +564,12 @@ impl Root {
 fn reason(
     packages: &[InstalledPackage],
     able: &[bool],
+    provisions: &[(String, String)],
     paused: &dyn Fn(&PackageIdentity) -> bool,
     title_of: &dyn Fn(&PackageIdentity) -> String,
     package: &InstalledPackage,
 ) -> Reason {
-    let requirements = unmet_of(packages, able, paused, title_of, package);
+    let requirements = unmet_of(packages, able, provisions, paused, title_of, package);
     let path = [package.identity.clone()];
     let whats: Vec<String> = requirements
         .iter()
@@ -567,17 +594,18 @@ fn reason(
 fn capability_reason(
     packages: &[InstalledPackage],
     able: &[bool],
+    provisions: &[(String, String)],
     paused: &dyn Fn(&PackageIdentity) -> bool,
     title_of: &dyn Fn(&PackageIdentity) -> String,
     package: &InstalledPackage,
     unmet: &UnmetCapability,
 ) -> Reason {
     let path = [package.identity.clone()];
-    let what = capability_what(packages, able, paused, title_of, &path, unmet);
+    let what = capability_what(packages, able, provisions, paused, title_of, &path, unmet);
     Reason {
         row: format!("Needs {what}"),
         calling: format!("{} is waiting for {what}", package.title()),
-        fix: root_of_capability(packages, able, paused, title_of, &path, unmet).fix(),
+        fix: root_of_capability(packages, able, provisions, paused, title_of, &path, unmet).fix(),
     }
 }
 
@@ -602,7 +630,7 @@ fn what_of(
                 // cycle.
                 let mut path = path.to_vec();
                 path.push(unmet.identity.clone());
-                return match root_of(packages, able, paused, title_of, &path) {
+                return match root_of(packages, able, provisions, paused, title_of, &path) {
                     Some(root) => {
                         format!("{}, which waits for {}", unmet.title, root.what(title_of))
                     }
@@ -612,7 +640,7 @@ fn what_of(
             format!("{}, which is {}", unmet.title, state.state())
         }
         Requirement::Capability(unmet) => {
-            capability_what(packages, able, paused, title_of, path, unmet)
+            capability_what(packages, able, provisions, paused, title_of, path, unmet)
         }
     }
 }
@@ -622,12 +650,13 @@ fn what_of(
 fn capability_what(
     packages: &[InstalledPackage],
     able: &[bool],
+    provisions: &[(String, String)],
     paused: &dyn Fn(&PackageIdentity) -> bool,
     title_of: &dyn Fn(&PackageIdentity) -> String,
     path: &[PackageIdentity],
     unmet: &UnmetCapability,
 ) -> String {
-    let says = providers_say(packages, able, paused, title_of, path, unmet);
+    let says = providers_say(packages, able, provisions, paused, title_of, path, unmet);
     format!("{}: {says}", unmet.capability)
 }
 
@@ -637,6 +666,7 @@ fn capability_what(
 fn providers_say(
     packages: &[InstalledPackage],
     able: &[bool],
+    provisions: &[(String, String)],
     paused: &dyn Fn(&PackageIdentity) -> bool,
     title_of: &dyn Fn(&PackageIdentity) -> String,
     path: &[PackageIdentity],
@@ -658,7 +688,7 @@ fn providers_say(
                 // It waits for another: what is actually missing is at the
                 // end of its chain, or beyond naming if the chain is a
                 // cycle.
-                Cannot::Waiting => match root_of(packages, able, paused, title_of, &path) {
+                Cannot::Waiting => match root_of(packages, able, provisions, paused, title_of, &path) {
                     Some(root) => {
                         format!(
                             "{}, which waits for {}",
@@ -690,12 +720,12 @@ fn root_of_requirement(
             None => {
                 let mut path = path.to_vec();
                 path.push(unmet.identity.clone());
-                root_of(packages, able, paused, title_of, &path)
+                root_of(packages, able, provisions, paused, title_of, &path)
                     .unwrap_or(Root::Package(unmet.identity.clone(), Unmet::NotInstalled))
             }
         },
         Requirement::Capability(unmet) => {
-            root_of_capability(packages, able, paused, title_of, path, unmet)
+            root_of_capability(packages, able, provisions, paused, title_of, path, unmet)
         }
     }
 }

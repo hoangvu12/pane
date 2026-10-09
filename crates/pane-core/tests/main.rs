@@ -57,6 +57,7 @@ mod pausing;
 mod preferences;
 mod programs;
 mod quick_slots;
+mod registrations;
 mod quicklinks;
 mod reload;
 mod repositories;

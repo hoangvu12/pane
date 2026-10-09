@@ -132,6 +132,18 @@ The architecture is recorded in [ADR 0024](adr/0024-the-host-runs-scheduled-exte
   may run. Calendars, one-shot delays and minimum-battery policies are
   future work, as is a per-command way to turn a schedule off without
   disabling the package.
+- A guest can set its own timers, though: `after` (one firing) and `every`
+  (one every interval), registered at run time as [owned
+  registrations](generations.md#owned-registrations) (#158), not declared
+  in the manifest, with the same bounds (1 second to 30 days). Each firing
+  is a call into the component's `events` export, belonging to the
+  generation like a scheduled run: stopped when it ends, its trap counted
+  towards pausing, and none of a waiting package's code run — firings that
+  fall due while one is pending or the package waits are coalesced into
+  one, delivered when they can be. ADR 0024 rejected timers the host's
+  guest runs on its own clock as unbounded; ADR 0041 adds these back as
+  owned registrations, bounded and undone with the code that made them
+  (64 per package; one beyond is refused with the limit named).
 - Like every Pane record on the data folder, schedules are not coordinated
   between two Pane processes on it: both would run a scheduled command.
 - Nothing here is platform-specific (it lives in `pane-core`); it has run

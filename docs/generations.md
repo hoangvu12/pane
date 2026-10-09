@@ -57,9 +57,11 @@ waits on something outside its guest, the others run, and each instance's
 own calls run one after another (#136). When a generation ends, it runs its
 undo list, newest first (what it set up: its instances, its helpers' and
 system programs' runs, its web requests and web images, a command search
-in progress, and its schedules, services and command hotkeys, which the
+in progress, its schedules, services and command hotkeys, which the
 end marks for the scheduler, the services thread and the next hotkey sync
-to drop or carry over to the next generation), and:
+to drop or carry over to the next generation, and what the package's code
+registered at run time — its [owned
+registrations](#owned-registrations), dropped with their handles), and:
 
 1. **Queued calls** of it (asked for but not started) are not started; they
    answer "The extension is disabled" or "The extension was reloaded or
@@ -136,6 +138,39 @@ resume in the store. So:
   guest answers, or when a generation in its chain ends; only computing
   (5 seconds of the guest's own) is limited. A native helper's run has had
   no limit of Pane's own since #136.
+## Owned registrations
+
+An extension can register things at run time, each an **owned
+registration** ([glossary](../CONTEXT.md)) the guest holds as a Wasm
+resource: a dynamic root item (a row of root search under one of its
+commands), a timer, a folder watcher, or a run-time provision of a
+capability its `pane.json` marks `atRunTime`. Each lasts until the first
+of three: the guest dropping the handle, the instance holding it going
+away, or the generation ending — every one of the ways above — so
+nothing an extension registered outlives its code, and an author writes
+no cleanup code. Each records its undo on the generation's list; ending
+it another way takes the entry off. A handle whose generation ended is
+refused, as host imports already refuse stopped code.
+
+Timer firings and watcher changes are delivered as guest calls, so they
+belong to the generation and follow every rule on this page: a call in
+flight is stopped by an ended generation, a trap counts towards
+[pausing](pausing.md), and a package that
+[waits](dependencies.md#waiting-for-a-required-dependency) runs none of
+its code, its timers' and watchers' events held as one, delivered when it
+can run again.
+
+A package whose `pane.json` declares `"activate": "<component>"` has that
+entry point called when its code may run and it is not waiting — at
+install, enable, start, reload, update, Retry and on coming back from
+waiting — and again when the instance that ran it is dropped while the
+generation continues unpaused, so its registrations are made without
+waiting for the user (an opt-in exception to lazy activation, ADR 0005
+as amended by ADR 0041). A trap in it is a crash; during a reload's
+start, a startup failure. Without `activate`, a package's code first runs
+when the user asks for one of its commands, and its registrations live
+only as long as the instance that made them.
+
 - **External side effects are not undone**: what the guest did before the
   stop (a file written through WASI, a request sent) stays done; only what
   it would have done afterwards is prevented. Data it saved before the stop

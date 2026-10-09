@@ -321,26 +321,30 @@ impl Launcher {
     }
 
     /// Starts each command of the package that is available on this system
-    /// and asks it for its view. If one fails to initialize (it traps, or
-    /// cannot load or be instantiated), the package's instances are stopped
-    /// again, so a retry starts afresh; a view the guest refuses with an
-    /// error of its own is not a failure. A package disabled meanwhile
-    /// is not started, and that is not a failure; nor is one paused
-    /// meanwhile, which says so itself.
+    /// and asks it for its view, and runs its activation entry point if
+    /// its `pane.json` declares one (ADR 0041). If one fails to initialize
+    /// (it traps, or cannot load or be instantiated), the package's
+    /// instances are stopped again, so a retry starts afresh; a view the
+    /// guest refuses with an error of its own is not a failure, and a trap
+    /// in the activation entry point is a startup failure here, counted
+    /// as one. A package disabled meanwhile is not started, and that is
+    /// not a failure; nor is one paused meanwhile, which says so itself.
     async fn start(&self, identity: &PackageIdentity) -> Result<(), CallError> {
-        let components: Vec<PathBuf> = {
+        let (components, activate): (Vec<PathBuf>, Option<PathBuf>) = {
             let state = self.lock();
             state
                 .package(identity)
                 .map(|package| {
-                    package
+                    let commands: Vec<PathBuf> = package
                         .available_commands()
                         .into_iter()
                         .filter(|(_, unavailable)| unavailable.is_none())
                         .map(|(command, _)| command.component)
-                        .collect()
+                        .collect();
+                    (commands, package.manifest.as_ref().ok().and_then(|m| m.activate.clone())
+                        .map(|component| package.location.join(component)))
                 })
-                .unwrap_or_default()
+                .unwrap_or((Vec::new(), None))
         };
         let runtime = self.runtime()?;
         for component in &components {
@@ -353,6 +357,18 @@ impl Launcher {
                 Ok(_)
                 | Err(CallError::Disabled | CallError::Guest(_) | CallError::Unreadable(_)) => {}
                 Err(error) => {
+                    runtime.forget(components.iter().cloned());
+                    return Err(error);
+                }
+            }
+        }
+        // The activation entry point runs as the code starts: a trap in it
+        // is a startup failure here, rather than the crash it counts as
+        // elsewhere.
+        if let Some(activate) = activate {
+            let data = self.data_of(&activate);
+            if let Err(error) = runtime.activate_with(&activate, data).await {
+                if !matches!(error, CallError::Disabled | CallError::Guest(_)) {
                     runtime.forget(components.iter().cloned());
                     return Err(error);
                 }

@@ -288,6 +288,12 @@ pub(crate) struct Installed {
     /// them, with why (see `waiting`): a package waiting as a whole answers
     /// its operations `unavailable`.
     pub waiting: Waiting,
+    /// Which capabilities each package provides at run time, as its code
+    /// holds provisions for them (`(owner key, capability)`, #158): a
+    /// `provides` entry marked `atRunTime` makes the package a provider
+    /// only while it holds one. From the runtime's registry of what the
+    /// packages' guests registered.
+    pub provisions: Vec<(String, String)>,
     /// Which of them Pane paused after they failed, by identity: a paused
     /// provider cannot serve a call now.
     pub paused: Vec<PackageIdentity>,
@@ -761,7 +767,15 @@ impl Installed {
                     Some(operation) => entry.operations.iter().any(|served| served == operation),
                     None => true,
                 };
-                serves.then_some((package, entry))
+                // An entry marked `atRunTime` makes the package a provider
+                // only while its code holds a provision for it.
+                let provisioned =
+                    !entry.at_run_time
+                        || self
+                            .provisions
+                            .iter()
+                            .any(|(owner, provided)| *provided == capability && *owner == package.identity.key());
+                (serves && provisioned).then_some((package, entry))
             })
             .collect()
     }

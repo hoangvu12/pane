@@ -2067,6 +2067,137 @@ while no provider can serve it
 ([dependencies](../docs/dependencies.md#waiting-for-a-required-dependency));
 optional uses and uses of every provider never do.
 
+#### Providing a capability at run time
+
+Mark a `provides` entry `"atRunTime": true` and your package provides the
+capability only while its code holds a run-time provision for it — an
+[owned registration](#owned-registrations) the component makes, typically
+once the user has signed in. The manifest still names the capability, so
+install plans and Settings work from it alone; a provision the manifest
+does not declare and mark is refused. Dropping it, its instance going or
+the package's code being replaced withdraws the provider at once, and the
+capability's consumers fall back to another provider or wait for one. The
+registrations sample provides `pane-samples:greet@1` this way after its
+"Sign in" action.
+
+```rust
+use pane_extension::registrations;
+
+let provision = registrations::provide("acme:translate@1")?; // held until dropped
+```
+
+```ts
+import { provide } from "@pane-app/extension/registrations";
+
+const provision = provide("acme:translate@1"); // `dispose()` withdraws it
+```
+
+### Owned registrations
+
+Anything a command registers at run time, it owns: a **dynamic root
+item** (a row of root search under one of the package's commands), a
+**timer**, a **folder watcher**, or a **run-time provision** of a
+capability marked `atRunTime` above. Each is a handle the guest holds
+(`pane_extension::registrations` in Rust, `@pane-app/extension/
+registrations` in JavaScript and TypeScript); dropping it undoes the
+registration, and so does the instance that made it going away or the
+package's code being replaced — a disable, a reload, an update, an
+uninstall or a pause. Nothing an extension registers outlives its code:
+an author never writes cleanup code, and using a handle of ended code is
+refused. The full contract is in
+[docs/generations.md](../docs/generations.md#owned-registrations). The
+registrations sample, in [Rust](sample-registrations/src/lib.rs),
+[JavaScript](sample-registrations-js/src/index.js) and
+[TypeScript](sample-registrations-ts/src/index.ts), registers one of
+each.
+
+```rust
+use pane_extension::registrations::{self, Item};
+
+let item = registrations::root_item("focus", Item::new("focus", "Focus: counting")
+    .subtitle("registered at run time")
+    .action(registrations::Action::new("Add one", || async {
+        // repeatable: as often as the user chooses the row
+        Ok(())
+    })))?;
+// A timer updates it; a `watcher` does the same for a folder's changes.
+registrations::every(1, || async { item.update(...).ok(); Ok(()) })?;
+```
+
+```ts
+import * as registrations from "@pane-app/extension/registrations";
+
+const item = registrations.rootItem("focus", {
+  id: "focus",
+  title: "Focus: counting",
+  actions: [{ title: "Add one", onAction: async () => {} }], // repeatable
+});
+registrations.every(1, async () => item.update({ ... }));
+```
+
+A dynamic item is in the [item shape](list-tree.md) a list's items are
+(id, title, subtitle, icon, accessories, actions), matched and ranked
+like an indexed result. One that declares a `mode` (`"view"` or
+`"no-view"`) is a **dynamic command**: invoking it launches its command
+with a launch record naming the item's id, so one component can offer a
+row per workspace, or whatever it registered; without a mode, invoking
+the row runs its first action. A quick slot, an alias or a global hotkey
+holds a dynamic command by its command and item id, and while it is not
+registered says so.
+
+Timers are `after` (one firing) or `every` (one every interval), from 1
+second to 30 days, each firing a call into the component's `events`
+export with the timer's tag — a guest call like any other, stopped with
+the generation and its traps counted towards pausing. Firings that fall
+due while one is pending, or while the package
+[waits](../docs/dependencies.md#waiting-for-a-required-dependency) for
+what it needs, are coalesced into one. A component that registers timers
+or watchers exports the events entry point (`pane_extension::
+registrations::export_events!` in Rust, `"pane": { "events": true }` and
+`export const events = { handleEvent: registrations.handleEvent }` in
+JavaScript and TypeScript) — the SDK keeps the callback table, as for
+actions.
+
+A watcher reports a folder's changes, coalesced for half a second, as the
+paths that changed relative to the watched folder; an overflow is one
+"rescan" event. For each package Pane allows 1000 dynamic root items, 64
+timers, 16 watchers and 16 provisions; one beyond is refused with the
+limit named.
+
+### The activation entry point
+
+A package whose `pane.json` declares `"activate"` has that component's
+`activate` export called when its code may run and it is not waiting —
+at install, enable, start, reload, update, Retry and on coming back from
+waiting — and again when the instance that ran it is dropped while the
+generation continues, so its registrations exist without waiting for the
+user. A trap in it is a crash, counted towards pausing. Without it, a
+package's code first runs when the user asks for one of its commands.
+
+```json
+"activate": "sample_registrations.wasm"
+```
+
+```rust
+pane_extension::export!(Registrations);
+pane_extension::lifecycle::export!(Registrations);
+
+impl pane_extension::lifecycle::Guest for Registrations {
+    async fn activate() {
+        // register what the package registers
+    }
+}
+```
+
+```ts
+// package.json: "pane": { "activate": true }
+export const lifecycle = {
+  async activate() {
+    // register what the package registers
+  },
+};
+```
+
 ### Dependencies on other extensions
 
 A package that calls other packages' operations declares them, so that

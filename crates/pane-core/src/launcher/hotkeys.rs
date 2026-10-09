@@ -52,7 +52,7 @@ use std::path::Path;
 
 use serde_json::{Map, Value};
 
-use super::choices::{Choices, Record};
+use super::choices::{Choices, Record, split};
 use super::{
     Entry, Launcher, LauncherView, Opening, Row, Screen, State, Status, Unavailable, off_thread,
 };
@@ -214,6 +214,56 @@ fn offered(packages: &[InstalledPackage]) -> Vec<(CommandRegistration, Option<St
         .collect()
 }
 
+/// The dynamic root items offered as commands (#158), by their rows' ids
+/// (`<command id>:<item id>`): those that declare a mode, listed by a
+/// package whose code may run. A hotkey is registered with the system
+/// exactly while the item is registered, as while a command is offered;
+/// a pause, a reload or an unregistration releases it with the next sync,
+/// which the registry's hooks call.
+fn offered_dynamic(state: &State) -> Vec<String> {
+    super::dynamic::rows(state)
+        .0
+        .into_iter()
+        .filter(|result| matches!(result.entry, Entry::Open(_)))
+        .map(|result| result.row.id)
+        .collect()
+}
+
+/// Why the hotkey `shortcut` names a dynamic root item that is not
+/// registered now, if it does: its package is disabled or paused, or its
+/// title and that the item is gone. `None` when the hotkey names nothing
+/// of the kind. The surfaces that hold a dynamic item say so while it is
+/// not registered (#158), as one of a missing target does.
+fn gone_dynamic(state: &State, shortcut: &Shortcut) -> Option<String> {
+    let command = state
+        .bindings
+        .registered
+        .iter()
+        .find(|(_, registered)| registered.shortcut == *shortcut)
+        .map(|(command, _)| command.as_str())?;
+    // A dynamic item's hotkey is recorded by its row id, `<command
+    // id>:<item id>`; a manifest command's has no `:`.
+    if !command.contains(':') {
+        return None;
+    }
+    let (key, manifest) = split(command);
+    let package = state
+        .packages
+        .iter()
+        .find(|package| package.identity.key() == key)?;
+    if !package.enabled {
+        return Some(format!("{} is disabled", package.title()));
+    }
+    if state.paused.is_paused(&package.identity) {
+        return Some(paused_reason(&package.title()));
+    }
+    let offered = package
+        .commands()
+        .into_iter()
+        .find(|offered| offered.manifest_id() == manifest)?;
+    Some(format!("{} no longer lists it", offered.title))
+}
+
 impl Launcher {
     /// Registers with the system exactly the chosen hotkeys whose commands
     /// are offered and available here, releasing the others; each that the
@@ -229,6 +279,12 @@ impl Launcher {
                     let shortcut = state.bindings.chosen().get(&command.id)?.clone();
                     Some((command.id, shortcut))
                 })
+                // A dynamic command's hotkey is offered while its item is
+                // registered (#158).
+                .chain(offered_dynamic(state).into_iter().filter_map(|id| {
+                    let shortcut = state.bindings.chosen().get(&id)?.clone();
+                    Some((id, shortcut))
+                }))
                 .collect()
         };
         // Each wanted command's mark on its package's current generation.
@@ -345,7 +401,8 @@ impl Launcher {
     }
 
     /// What the hotkey `shortcut` launches now, if anything: the offered,
-    /// available command it is registered for.
+    /// available command it is registered for — a manifest command, or a
+    /// dynamic command a package registered (#158).
     pub(super) fn hotkey_opening(&self, state: &State, shortcut: &Shortcut) -> Option<Opening> {
         let command = state
             .bindings
@@ -353,7 +410,7 @@ impl Launcher {
             .iter()
             .find(|(_, registered)| registered.shortcut == *shortcut)
             .map(|(command, _)| command.as_str())?;
-        state
+        if let Some(opening) = state
             .packages
             .iter()
             .filter(|package| package.enabled)
@@ -368,6 +425,12 @@ impl Launcher {
                 let no_view = package.mode_of(offered.manifest_id()) == CommandMode::NoView;
                 Some(Opening::of(&offered, no_view, LaunchSource::Hotkey))
             })
+        {
+            return Some(opening);
+        }
+        // A dynamic command's row, held by its command and item id: its
+        // launch record names the item.
+        super::dynamic::opening_of(state, command, LaunchSource::Hotkey)
     }
 
     /// Launches the command whose hotkey `shortcut` is, as the system
@@ -383,7 +446,21 @@ impl Launcher {
         shortcut: &Shortcut,
     ) -> Option<impl Future<Output = ()> + Send + 'static> {
         let mut state = self.lock();
-        let opening = self.hotkey_opening(&state, shortcut)?;
+        let opening = match self.hotkey_opening(&state, shortcut) {
+            Some(opening) => opening,
+            // A hotkey recorded for a dynamic root item that is not
+            // registered (#158) says so, rather than launching nothing
+            // silently; anything else launches nothing at all.
+            None => {
+                let why = gone_dynamic(&state, shortcut);
+                self.show_root(&mut state, None);
+                state.view.status = match why {
+                    Some(reason) => Status::Error(reason),
+                    None => Status::Idle,
+                };
+                return Some(async {});
+            }
+        };
         if opening.no_view {
             Launcher::begin_run(&mut state);
         } else {
@@ -447,13 +524,17 @@ impl Launcher {
     /// keys, and offers to remove its hotkey if it has one.
     pub(super) fn show_hotkey(&self, state: &mut State, command: &str) {
         state.actions_return = None;
-        let Some((registration, _)) = offered(&state.packages)
+        // A manifest command, or a dynamic command a package registered
+        // (#158), which the hotkey opens as its own row does.
+        let dynamic = super::dynamic::pinned_by_id(state, command);
+        let Some(title) = offered(&state.packages)
             .into_iter()
             .find(|(offered, _)| offered.id == command)
+            .map(|(registration, _)| registration.title)
+            .or_else(|| dynamic.as_ref().map(|found| found.row.title.clone()))
         else {
             return;
         };
-        let title = registration.title;
         let example = Shortcut::parse("ctrl+alt+g").expect("a valid shortcut");
         let mut details = vec![format!(
             "Press the keys that should open {title} from any application, such as {example}."

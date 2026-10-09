@@ -158,6 +158,19 @@ A package declares the capabilities it provides under `provides` in its
   refuses a malformed name, an operation listed twice, a missing component
   or one without the export, or the same capability provided twice at one
   major.
+- `atRunTime` (optional, default `false`): the package provides the
+  capability only at run time, while its code holds a **run-time
+  provision** for it — an [owned registration](generations.md#owned-registrations)
+  the component makes (`pane_extension::registrations::provide` in Rust,
+  `provide` from `@pane-app/extension/registrations` in JavaScript and
+  TypeScript), typically once the user has signed in. The manifest still
+  names the capability, so install plans, cycles and Settings work from
+  the manifests alone; a provision the manifest does not declare, or does
+  not mark `atRunTime`, is refused. Dropping the provision, its instance
+  going or its generation ending withdraws the provider at once, and the
+  capability's consumers fall back to another provider or wait for one.
+  For each package Pane allows 16 provisions at a time; one beyond is
+  refused with the limit named.
 
 ### Using
 

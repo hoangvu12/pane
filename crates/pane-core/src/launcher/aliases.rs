@@ -42,7 +42,7 @@ use super::{
     Opening, Row, Screen, State, Status, Unavailable, off_thread,
 };
 use crate::launch::{LaunchRecord, LaunchSource};
-use crate::packages::{PackageIdentity, paused_reason};
+use crate::packages::{InstalledPackage, PackageIdentity, paused_reason};
 use crate::runtime::FieldKind;
 use crate::search::same_text;
 
@@ -432,6 +432,41 @@ impl Launcher {
             };
             let (key, command) = split(id);
             let owner = state.packages.iter().find(|p| p.identity.key() == key);
+            // A dynamic root item's alias is held by its row id, `<command
+            // id>:<item id>` (#158), and is active while the item is
+            // registered: while it is, the choice is not one of a missing
+            // command; while it is not, it says so, as a gone command's
+            // does.
+            if id.contains(':') {
+                let owner = state.packages.iter().find(|p| p.identity.key() == key);
+                // The row the alias names, as the registry holds it now.
+                if super::dynamic::pinned_by_id(state, id).is_some() {
+                    continue;
+                }
+                let title = owner
+                    .map(|owner| {
+                        if !owner.enabled {
+                            format!("{} is disabled", owner.title())
+                        } else if state.paused.is_paused(&owner.identity) {
+                            paused_reason(&owner.title())
+                        } else {
+                            format!("{} no longer lists it", owner.title())
+                        }
+                    })
+                    .unwrap_or_else(|| "its extension is not installed".to_owned());
+                rows.push((
+                    Row {
+                        id: format!("unlisted-setting:{id}"),
+                        title: format!("{what} of a dynamic root item"),
+                        subtitle: Some(format!(
+                            "Not active: {title}; Enter forgets it · {id}"
+                        )),
+                        unavailable: None,
+                    },
+                    Entry::ForgetChoices(id.clone()),
+                ));
+                continue;
+            }
             let (title, why) = match owner {
                 Some(owner) => match &owner.manifest {
                     Err(error) => (

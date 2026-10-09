@@ -216,6 +216,9 @@ pub(super) struct Shared {
     /// Guests' web requests: their limits, and what each package did this
     /// session, which a restarted thread carries on.
     pub(super) network: Arc<crate::http::Network>,
+    /// What the packages' guests register at run time, shared with every
+    /// runtime thread and read by the launcher (see `registrations`).
+    pub(super) registrations: Arc<crate::registrations::Registrations>,
     /// What a search waits on before it starts, if a test replaced the
     /// clock's [`super::SEARCH_DEBOUNCE`]; a restarted thread keeps it.
     /// A release build has none.
@@ -345,6 +348,7 @@ impl Shared {
             logs: Default::default(),
             next_view: Arc::default(),
             network: Arc::default(),
+            registrations: Arc::default(),
             #[cfg(any(test, debug_assertions))]
             search_timer: Arc::default(),
             crashes: Mutex::new(None),

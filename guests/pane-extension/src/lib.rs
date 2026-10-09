@@ -25,7 +25,15 @@
 //! files of a folder with [`files`], search as the
 //! user types into its own search field with [`search`], make web
 //! requests with [`http`] and keep clipboard history with
-//! [`clipboard_history`]. It prints and logs to its package's extension log
+//! [`clipboard_history`]. It registers at run time what it owns and no
+//! declaration can name ([`registrations`], ADR 0041): dynamic root
+//! items, timers, folder watchers and run-time capabilities its package
+//! provides while it holds a provision for them — each a handle whose
+//! drop undoes it, undone too when the instance that made it goes or the
+//! package's code is replaced. A package whose `pane.json` declares
+//! `"activate"` has that entry point called when its code may run
+//! ([`lifecycle`]), so its registrations exist without waiting for the
+//! user. It prints and logs to its package's extension log
 //! with [`info!`], [`warn!`], [`println!`] and the like ([`log`]). The crate
 //! is `no_std` so the component imports only WASI 0.3 interfaces; it supplies
 //! the allocator and a panic handler that logs the panic and traps, which the
@@ -64,6 +72,7 @@ pub mod actions;
 pub mod feedback;
 pub mod icon;
 mod list;
+pub mod registrations;
 pub mod system;
 pub use icon::{Accessory, Color, Icon, Mask, Tint, Tone};
 pub use pane::extension::{cache, content, credentials, operations, settings};
@@ -432,6 +441,17 @@ pub mod applications {
 /// what the copying application marked as not to be kept or what came from
 /// a program the user excluded. [`clipboard_history::set_capture`] turns it
 /// on, off or pauses it; [`clipboard_history::entries`] lists what is kept.
+pub mod lifecycle {
+    wit_bindgen::generate!({
+        path: "wit",
+        world: "lifecycle-provider",
+        pub_export_macro: true,
+        default_bindings_module: "pane_extension::lifecycle",
+    });
+
+    pub use exports::pane::extension::lifecycle::Guest;
+}
+
 pub mod clipboard_history {
     wit_bindgen::generate!({
         path: "wit",
