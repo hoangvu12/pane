@@ -98,6 +98,9 @@ pub use pane::extension::{cache, content, credentials, operations, settings};
 /// provides it, `disabled` when every provider is disabled, `unavailable`
 /// when every provider is paused, waiting or for another system.
 pub mod capabilities {
+    use alloc::string::String;
+    use alloc::vec::Vec;
+
     pub use crate::pane::extension::operations::{CallError, CallErrorKind, Provider};
 
     /// Calls `operation` of the capability `capability`, such as
