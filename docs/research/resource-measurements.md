@@ -6,10 +6,11 @@ Recorded 2026-09-30 for
 US81; T02, T24, T25). This is the record the platform pages link to for
 resource and latency evidence and targets. Its status is honest and narrow:
 the workload, the sampler, the targets file and the CI wiring exist, and
-**no number has been measured yet** — the machine that wrote them has no
-display, so the workload cannot run there, and CI's Linux leg has not run
-it at the time of writing. Every target below is proposed in shape only,
-pending the first collected record and the user's confirmation. No target
+the first record was collected on 2026-10-09 — the Linux workload in CI's
+smoke job, the hidden phases on Windows on the user's machine (see
+[Evidence](#evidence)); the machine that wrote them has no display, so it
+measures nothing itself. Every target below is proposed in shape only,
+pending the user's confirmation of the ceilings. No target
 is inferred from the older CLI peaks ([the QuickJS spike's
 measurements](qjs-p3-port-spike/README.md) stay what they are: same-workload
 CLI comparisons, not launcher budgets); Q3's numerical budgets remain open
@@ -18,8 +19,8 @@ until the numbers exist and are accepted.
 [#189](https://github.com/hoangvu12/pane/issues/189) (the measurement of
 [#188](https://github.com/hoangvu12/pane/issues/188), idle cost) added the
 `hidden-idle` phase, the wake-ups of every thread by its name, and a Windows
-script for the hidden phase. Its baseline is not recorded yet either (see
-[Evidence](#evidence)).
+script for the hidden phase. Its baseline is recorded under
+[Evidence](#evidence), with #190's before/after pair on Windows.
 
 ## The workload
 
@@ -202,7 +203,8 @@ set. `counted` in `wakeups` says which count a summary holds.
 
 ## The targets
 
-Proposed, **every number pending**; the machine-readable file is
+Proposed, every ceiling pending (the measured rows await only the user's
+confirmation, per [Evidence](#evidence)); the machine-readable file is
 [`scripts/resource-targets.json`](../../scripts/resource-targets.json),
 where a null ceiling means pending. The summary is checked against it at
 the end of every workload run (`proc_tree.py check`): a confirmed ceiling
@@ -215,10 +217,10 @@ passes.
 | Warm-start latency (median of three) | `warm-start.window_ms.median` | ceiling | pending a measurement |
 | Idle whole-tree RSS | `idle-core.rss_kb.max` | ceiling | pending a measurement |
 | Idle whole-tree CPU share | `idle-core.cpu_share` | ceiling | pending a measurement |
-| Idle wake-ups a second (every thread of the tree) | `idle-core.wakeups.per_second` | ceiling | pending a measurement |
-| Hidden whole-tree RSS (default extensions) | `hidden-idle.rss_kb.max` | ceiling | pending a measurement |
-| Hidden whole-tree CPU share | `hidden-idle.cpu_share` | ceiling | pending a measurement |
-| Hidden wake-ups a second (every thread of the tree) | `hidden-idle.wakeups.per_second` | ceiling | pending a measurement |
+| Idle wake-ups a second (every thread of the tree) | `idle-core.wakeups.per_second` | ceiling | measured (Linux CI), ceiling pending the user's confirmation |
+| Hidden whole-tree RSS (default extensions) | `hidden-idle.rss_kb.max` | ceiling | measured (Linux CI, Windows user's machine), ceiling pending the user's confirmation |
+| Hidden whole-tree CPU share | `hidden-idle.cpu_share` | ceiling | measured (Linux CI, Windows user's machine), ceiling pending the user's confirmation |
+| Hidden wake-ups a second (every thread of the tree) | `hidden-idle.wakeups.per_second` | ceiling | measured (Linux CI, Windows user's machine), ceiling pending the user's confirmation |
 | Additive cost per installed-but-unused extension | `installed-unused.per_extension_kb` | ceiling | pending a measurement |
 | Installed-but-unused RSS | `installed-unused.rss_kb.max` | ceiling | pending a measurement |
 | Active-command RSS (calculator, repeated) | `calculator.rss_kb.max` | ceiling | pending a measurement |
@@ -244,14 +246,38 @@ the workload itself, not by the targets.
 
 ### Linux, CI (x86_64, Xvfb)
 
-Pending the next run of the branch: the numbers land in the
-`resource-measurements` artifact (`measure/summary.json`) and are recorded
-here once a run collects them. The runner is the `ubuntu-24.04` leg the
-[Linux baseline](../platforms/linux.md) documents.
+Recorded from the release matrix's smoke job after the workload it appends
+([run 37907199550](https://github.com/pane-app/pane/actions/runs/37907199550),
+`main` at `26c8e224`, 2026-10-09, kernel 6.17.0-1022-azure; the
+`resource-measurements` artifact holds the whole record). The phases it
+measured, per phase: whole-tree CPU share, working-set maximum and
+wake-ups a second. Ceilings stay pending the user's confirmation.
 
-The `hidden-idle` baseline on `main` (#189), with the wake-ups of
-`pane-runtime-ep` and `pane-runtime-wa`, is pending the same: a run of the
-release matrix's smoke job on Linux, or the workload on demand.
+| Phase | CPU share | RSS max (KiB) | Wake-ups/s |
+| --- | --- | --- | --- |
+| cold-start | 0.2195 | 248,160 | 268.37 |
+| warm-start | 0.1297 | 248,892 | 210.58 |
+| idle-core | 0.0014 | 276,820 | 64.51 |
+| hidden-setup | 0.0140 | 287,604 | 18.02 |
+| hidden-idle | 0.0002 | 296,972 | 3.99 |
+| installed-unused | 0.0135 | 260,952 | 74.80 |
+| calculator | 0.1487 | 295,596 | 169.35 |
+| continuing-work | 0.0298 | 355,264 | 98.10 |
+| reload | 0.1344 | 361,444 | 398.72 |
+| disable | 0.1830 | 355,960 | 519.42 |
+| install-unused-packages | 0.1685 | 289,372 | 340.38 |
+| install-continuing-work | 0.1497 | 306,644 | 314.63 |
+| install-lifecycle-package | 0.0499 | 266,532 | 103.79 |
+
+The `hidden-idle` baseline (#189): 3.99 wake-ups a second across the whole
+tree (236 over the phase), and only two threads woke at all — `blocking-1`
+and `pane-file-watch` at 2.0 a second each. `pane-runtime-ep` (the epoch
+ticker) and `pane-runtime-wa` (the watchdog) sat at **0.0 wake-ups a
+second**, in `hidden-idle` and in `idle-core` alike: the condvar sleep of
+#190 holding while nothing runs. The runtime's other named threads, the
+extension threads, the file index and every swapchain thread also sat at
+zero; `idle-core`'s 64.51 a second is mostly the renderer's unnamed
+threads.
 
 ### Linux, this machine (aarch64, no display)
 
@@ -269,11 +295,35 @@ machine; only the x86_64 CI leg is claimed.
 
 ### Windows, the user's machine
 
-[The Windows script](#the-windows-script) exists for the hidden phases;
-nothing is measured yet. Its baseline on `main` is taken on the user's
-machine only when the user says the machine is free, and recorded here
-with `record.json`'s machine details. The other phases have no Windows
-sampler or workload yet.
+[The Windows script](#the-windows-script) ran for the first time on
+2026-10-09, with the user's explicit consent (the machine is also used for
+games), twice: the baseline of `main` at `26c8e224`, and the state before
+PR #274 landed (`d5534f45`, the parent of its merge) built in a separate
+worktree, for #190's before/after pair. Windows 11 build 26200 (26200.8737),
+i5-14400F, 16 logical processors, 32 GB, the development build, hidden by
+the posted Escape; no other `pane` process ran, and the launch-at-login
+registration was untouched. Discord, a browser and a few background apps
+ran (load about 40–50%). Each run: 60 s sampled hidden after 30 s of
+settling, samples a second; the whole records are in
+[`docs/evidence/resource-189`](../evidence/resource-189).
+
+| `hidden-idle` | before `d5534f45` | after `26c8e224` (main) |
+| --- | --- | --- |
+| Whole-tree wake-ups a second | 495.19 | 388.39 |
+| `pane-runtime-ep` (the epoch ticker) | **99.68** (6,042, 0.125 CPU s) | **0.0** |
+| `pane-runtime-wa` (the watchdog) | **10.38** (629, 0.016 CPU s) | **0.0** |
+| Whole-tree CPU share | 0.0062 | 0.0149 |
+| Working set max (KiB) | 103,344 | 109,828 |
+
+The before numbers are exactly the threads' periods: the 10 ms tick at
+99.68 a second and the 100 ms look at 10.38 a second; after PR #274 both
+sleep while no guest call runs, and the tree's whole wake-up rate drops by
+about the same 110 a second. What still wakes on Windows, before and after
+alike, is `VSyncProvider` at about 306 a second — the renderer's own
+thread, not one of #188's — the 58 unnamed `pane` threads at about 69 a
+second together, and the file watcher at about 10. The Windows baseline of
+`main` (#189) is therefore the after column above. The other phases have
+no Windows sampler or workload yet.
 
 ### macOS, and the rest of Windows
 
