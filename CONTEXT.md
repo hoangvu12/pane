@@ -345,7 +345,7 @@ Pane replacing the managed copy of an eligible installed package with a newer co
 _Avoid_: App update (the application's own, #54–56), forced update
 
 **Development mode**:
-An installed local package whose source folder Pane watches while its author works on it: each save runs the package's documented build command in that folder, staging the components under Pane's data folder, and a build that succeeds reloads the package from there, while one that fails keeps its working code and shows the build's diagnostics. It lasts until the author stops it, the package is disabled or uninstalled, or Pane quits, each of which kills a running build with the processes it started; another installed copy of the package is never affected.
+An installed local package whose source folder Pane watches while its author works on it: each save runs the package's documented build command in that folder, staging the components under Pane's data folder, and a build that succeeds reloads the package from there, while one that fails keeps its working code and shows the build's diagnostics. Under `pane-ext dev` the watching and the builds are `pane-ext`'s, in the author's terminal, and Pane reloads each build it hands over the local channel. It lasts until the author stops it, the package is disabled or uninstalled, or Pane quits, each of which kills a running build with the processes it started; another installed copy of the package is never affected.
 _Avoid_: Watch mode, hot reload, dev copy (a copy is an installation)
 
 **Extension log**:

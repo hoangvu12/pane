@@ -1,15 +1,16 @@
 //! `pane-ext dev [folder]`: developing a package in the running Pane from
 //! the terminal (ADR 0047, #217).
 //!
-//! It reaches the running Pane over the local channel
-//! (`pane_core::local_channel`), starting Pane if none answers (see
-//! `start`), and runs development mode's session, the `pane-build` crate's
-//! as Pane's own development mode does: the builds run here and print here,
-//! the compiler's errors included. The first build that succeeds is handed
-//! to Pane; if Pane has not installed the folder, it shows its install
-//! preview first, which the author confirms in Pane. After that each save
-//! builds the package here again, and Pane reloads each build that
-//! succeeds, while a build that fails leaves it running the working code.
+//! It runs development mode's session, the `pane-build` crate's as Pane's
+//! own development mode does, so the builds run here and print here, the
+//! compiler's errors included. Meanwhile it reaches the running Pane over
+//! the local channel (`pane_core::local_channel`), starting Pane if none
+//! answers (see `start`), and stops if there is none to start. The first
+//! build that succeeds is handed to Pane; if Pane has not installed the
+//! folder, it shows its install preview first, which the author confirms in
+//! Pane. After that each save builds the package here again, and Pane
+//! reloads each build that succeeds, while a build that fails leaves it
+//! running the working code.
 //!
 //! Pane's messages about the package (its builds, reloads, crashes) and
 //! what the package prints, its extension log, are printed as they come.
@@ -72,10 +73,6 @@ fn develop(folder: Option<PathBuf>) -> Result<String, String> {
     .echo(Arc::new(|line: &str| println!("{line}")));
     let endpoint = Endpoint::from_env()
         .map_err(|error| format!("Pane's endpoint for this user is not known: {error}"))?;
-    let (sender, events) = crate::start::reach(&endpoint)?;
-    // Asked before the first build is handed over, so that none of Pane's
-    // messages about it are missed.
-    sender.send(&Request::Subscribe);
     let command = prepared.command();
     println!(
         "pane-ext: developing {}: each save builds it here with `{command}`, and Pane reloads it",
@@ -89,20 +86,21 @@ fn develop(folder: Option<PathBuf>) -> Result<String, String> {
         done: Mutex::new(Some(done)),
         installed: Mutex::new(None),
     });
-    let (answers, answered) = mpsc::channel();
+    // Pane is reached, or started, while the first build runs.
+    let (found, reached) = mpsc::channel();
     {
         let shared = shared.clone();
         let session = session.clone();
         std::thread::Builder::new()
             .name("pane-ext-events".into())
-            .spawn(move || read_events(events, answers, &shared, &session))
+            .spawn(move || follow_pane(&endpoint, found, &shared, &session))
             .map_err(|error| format!("a thread could not start: {error}"))?;
     }
     worker.start(Handing {
         folder,
         command,
-        sender,
-        answers: answered,
+        pane: None,
+        reached,
         developing: false,
         shared,
     });
@@ -171,14 +169,21 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(|p| p.into_inner())
 }
 
-/// The session's host: hands each build that succeeds to the running Pane.
-struct Handing {
-    folder: PathBuf,
-    command: String,
+/// The running Pane, once reached.
+struct Reached {
     sender: Sender,
     /// Pane's answers to `develop`; its other events are printed as they
     /// come.
     answers: Receiver<Event>,
+}
+
+/// The session's host: hands each build that succeeds to the running Pane.
+struct Handing {
+    folder: PathBuf,
+    command: String,
+    /// Pane, once reached; it comes on `reached`.
+    pane: Option<Reached>,
+    reached: Receiver<Reached>,
     /// Whether Pane develops the package yet: from then on, Pane tells of
     /// the builds in the package's log.
     developing: bool,
@@ -193,17 +198,20 @@ impl Host for Handing {
     }
 
     fn building(&self, command: &str) {
-        if self.developing {
-            self.sender.send(&Request::Building);
-        } else {
-            println!("pane-ext: building with `{command}`");
+        match &self.pane {
+            Some(pane) if self.developing => {
+                pane.sender.send(&Request::Building);
+            }
+            _ => println!("pane-ext: building with `{command}`"),
         }
     }
 
     fn failed(&self, failure: &BuildFailure, _command: &str) {
-        if self.developing {
+        if let Some(pane) = &self.pane
+            && self.developing
+        {
             // Pane keeps running the working code.
-            self.sender.send(&Request::Failed {
+            pane.sender.send(&Request::Failed {
                 summary: failure.summary.clone(),
                 output: failure.output.clone(),
                 earlier: failure.earlier,
@@ -227,16 +235,26 @@ impl Host for Handing {
     }
 
     fn deliver(&mut self, _claim: &mut (), staging: &Path) -> bool {
+        if self.pane.is_none() {
+            // Never sent when no Pane was found, which ends the development.
+            let Ok(pane) = self.reached.recv() else {
+                return false;
+            };
+            self.pane = Some(pane);
+        }
+        let Some(pane) = &self.pane else {
+            return false;
+        };
         let develop = Request::Develop {
             folder: self.folder.clone(),
             staging: staging.to_path_buf(),
             command: self.command.clone(),
         };
-        if !self.sender.send(&develop) {
+        if !pane.sender.send(&develop) {
             return false;
         }
         loop {
-            match self.answers.recv() {
+            match pane.answers.recv() {
                 Ok(Event::Previewing { title }) => println!(
                     "pane-ext: Pane shows the install preview of {title}: choose Install there to \
                      develop it"
@@ -282,6 +300,32 @@ impl Host for Handing {
     }
 
     fn changed(&self) {}
+}
+
+/// Reaches the Pane listening on `endpoint`, starting one if none does, and
+/// hands it to the session's thread through `found`; then reads its events
+/// (see [`read_events`]). Ends the development if no Pane can be reached.
+fn follow_pane(
+    endpoint: &Endpoint,
+    found: mpsc::Sender<Reached>,
+    shared: &Shared,
+    session: &Session,
+) {
+    let (sender, events) = match crate::start::reach(endpoint) {
+        Ok(reached) => reached,
+        Err(message) => return shared.end(Ending::Failed(message)),
+    };
+    // Asked before the first build is handed over, so that none of Pane's
+    // messages about it are missed.
+    sender.send(&Request::Subscribe);
+    let (answers, answered) = mpsc::channel();
+    let reached = Reached {
+        sender,
+        answers: answered,
+    };
+    if found.send(reached).is_ok() {
+        read_events(events, answers, shared, session);
+    }
 }
 
 /// Prints Pane's messages and the package's log as they come, has the

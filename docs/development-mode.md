@@ -233,14 +233,16 @@ is where the builds run and print:
    socket `channel` in `$XDG_RUNTIME_DIR/pane`, else in `pane-<uid>` in the
    temporary folder, on macOS and Linux, in a folder of mode 0700 (Pane
    does not listen in one open to others), itself mode 0600, closing
-   connections from other users unanswered. `PANE_CHANNEL` names another
-   endpoint (to `pane-ext` always; to Pane only in a development build).
-2. If no Pane answers, it starts one: the program `PANE_APP` names, else
+   connections from other users unanswered; `pane-ext` does not connect
+   through such a folder that is not the user's own. `PANE_CHANNEL` names
+   another endpoint, to both.
+2. While its first build runs (step 3), if no Pane answers, it starts one:
+   the program `PANE_APP` names, else
    `pane` beside `pane-ext`, else where Pane's packages install it
    (`%LOCALAPPDATA%\Pane\pane.exe`, `Pane.app` in `/Applications` or
    `~/Applications`, `~/.local/bin/pane`), else `pane` on the search path,
    and waits up to a minute for it to listen. Found nowhere, it says where
-   it looked and exits, before building anything.
+   it looked and exits, stopping the build.
 3. It builds the package in the terminal, printing what the build prints,
    cargo's errors included, and stages it in a folder of its own in the
    user's cache folder (`pane-ext/<hash of the folder>`).
@@ -322,8 +324,9 @@ These are implementation choices of #12/#13, not user decisions:
   the first `pane-ext dev` of a folder not installed copies the build's
   components into the folder, so that the preview and the install are of
   that build; that a second `pane-ext dev` of the same package takes the
-  development over; and that `pane-ext` reaches Pane before its first
-  build, so that a missing Pane is reported at once.
+  development over, and the first is then refused rather than taking it
+  back; and that `pane-ext` reaches or starts Pane while its first build
+  runs, so that a missing Pane is reported at once.
 
 ## Checks
 
@@ -400,7 +403,7 @@ These are implementation choices of #12/#13, not user decisions:
   Pane's messages and the package's log line in the terminal; a compile
   error printed there while Pane keeps the working code; a fix reloaded;
   the development stopped when `pane-ext` is killed. With no Pane listening
-  and none to start, it says where it looked, before building. Its unit
+  and none to start, it says where it looked. Its unit
   tests: waiting for a Pane that starts listening, and giving up on one
   that does not.
 - The native smokes' development phase (screenshots 110 to 136; see the
@@ -421,7 +424,10 @@ These are implementation choices of #12/#13, not user decisions:
   console's Ctrl+C reaches the build too.
 - That another user cannot open the endpoint is checked in CI through its
   permissions (the socket's and its folder's modes, the pipe's DACL), not
-  by connecting as another user.
+  by connecting as another user. On Windows, `pane-ext` does not check who
+  created the pipe it connects to: another user's pipe of that name,
+  created while Pane is not running, would receive its requests (the
+  folder and the staged build's path).
 - Native evidence is from Linux (X11) only; the macOS and Windows smokes run
   the same phase, not yet run there. The platform code (process groups, the
   Job Object, the watcher) was compile- and lint-checked for Windows and

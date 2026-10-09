@@ -113,7 +113,7 @@ pub use application_update::ApplicationUpdate;
 use application_update::{Application, Updates};
 use choices::Record;
 use developing::Developing;
-pub(crate) use developing::Remote;
+pub(crate) use developing::{BuildNow, Remote};
 pub use developing::{BuildFailure, Development};
 pub use extensions::{ExtensionMark, ExtensionOperation, OperationKind};
 pub use hotkeys::HotkeyOutcome;

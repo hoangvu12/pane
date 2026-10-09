@@ -6,12 +6,12 @@
 //! the compiler's errors there while Pane keeps running the working code; a
 //! fix is reloaded; and closing `pane-ext`, as Ctrl+C does, stops the
 //! development. With no Pane listening and none to start, `pane-ext dev`
-//! says where it looked for one, before it builds anything.
+//! says where it looked for one, without waiting for its build.
 //!
 //! The builds run `cargo build --release --target wasm32-wasip2` (the pinned
 //! toolchain and its `wasm32-wasip2` target, as `cargo xtask guests`
-//! needs). `PANE_APP` names no program, so that `pane-ext` never starts a
-//! Pane of its own here.
+//! needs). `PANE_APP` names a file that does not exist, so that `pane-ext`
+//! never starts a Pane of its own here.
 
 use std::fs;
 use std::io::{BufRead, BufReader, Read};
@@ -302,7 +302,7 @@ fn pane_ext_dev_builds_in_the_terminal_and_develops_in_pane_until_it_closes() {
 
 #[test]
 fn with_no_pane_listening_pane_ext_dev_says_where_it_looked_for_one() {
-    // It looks before it builds anything.
+    // It looks while the first build runs, and stops it.
     let folder = sample("pane-ext-dev-no-pane", GREETING);
     let data = tempfile::tempdir().unwrap();
     let endpoint = endpoint(data.path());

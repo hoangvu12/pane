@@ -54,7 +54,7 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 
 use crate::develop::PaneManifest;
 use crate::extension_log::{LogLine, LogSource, LogStream};
-use crate::launcher::{InstallPreview, Launcher, Remote};
+use crate::launcher::{BuildNow, InstallPreview, Launcher, Remote};
 use crate::packages::{Manifest, PackageIdentity};
 
 /// The version of the requests this Pane answers. A request names it;
@@ -444,17 +444,13 @@ impl Handler {
             Ok(identity) => identity,
             Err(error) => return self.refuse(error.to_string()),
         };
-        // Ended in Pane meanwhile (stopped there, or taken over by another
-        // pane-ext): it is developed again.
-        if self
-            .developed
-            .as_ref()
-            .is_some_and(|remote| !remote.is_current())
-        {
-            self.developed = None;
-            self.following = false;
-        }
         if let Some(remote) = &self.developed {
+            // Ended in Pane meanwhile (stopped there, or taken over by
+            // another pane-ext): it is not taken back.
+            if !remote.is_current() {
+                let message = format!("Pane no longer develops {}", remote.title());
+                return self.refuse(message);
+            }
             if *remote.identity() != identity {
                 let message = format!("This connection develops {} already", remote.title());
                 return self.refuse(message);
@@ -469,7 +465,7 @@ impl Handler {
         if !installed && let Err(message) = self.preview(&identity, staging) {
             return self.refuse(message);
         }
-        let build: Arc<dyn Fn() + Send + Sync> = {
+        let build: BuildNow = {
             let events = self.events.clone();
             Arc::new(move || {
                 let _ = events.send(event_line(&Event::Build));
@@ -663,18 +659,13 @@ mod platform {
     use std::path::{Path, PathBuf};
     use std::time::{Duration, Instant};
 
-    use ::windows::Win32::Foundation::{ERROR_PIPE_BUSY, HLOCAL, LocalFree};
-    use ::windows::Win32::Security::Authorization::{
-        ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1,
-    };
-    use ::windows::Win32::Security::{PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES};
-    use ::windows::core::PCWSTR;
+    use ::windows::Win32::Foundation::ERROR_PIPE_BUSY;
 
     use tokio::net::windows::named_pipe::{
         ClientOptions, NamedPipeClient, NamedPipeServer, ServerOptions,
     };
 
-    use crate::atomic::owner_only::user_sid;
+    use crate::atomic::owner_only::{user_sid, with_attributes};
 
     /// How long a client waits for a pipe instance while every one is busy.
     const BUSY_LIMIT: Duration = Duration::from_secs(5);
@@ -718,35 +709,16 @@ mod platform {
     /// A new instance of the pipe at `path`, which only this computer's
     /// clients that `sddl` lets in can open.
     fn create(path: &Path, sddl: &str, first: bool) -> io::Result<NamedPipeServer> {
-        let wide = crate::util::wide(sddl);
-        let mut descriptor = PSECURITY_DESCRIPTOR::default();
-        // SAFETY: `wide` is NUL-terminated; the descriptor is freed below.
-        unsafe {
-            ConvertStringSecurityDescriptorToSecurityDescriptorW(
-                PCWSTR(wide.as_ptr()),
-                SDDL_REVISION_1,
-                &mut descriptor,
-                None,
-            )
-        }
-        .map_err(|error| io::Error::from_raw_os_error(error.code().0 & 0xFFFF))?;
-        let mut attributes = SECURITY_ATTRIBUTES {
-            nLength: size_of::<SECURITY_ATTRIBUTES>() as u32,
-            lpSecurityDescriptor: descriptor.0,
-            bInheritHandle: false.into(),
-        };
         let mut options = ServerOptions::new();
         options
             .first_pipe_instance(first)
             .reject_remote_clients(true);
-        // SAFETY: `attributes` is a valid SECURITY_ATTRIBUTES, and its
-        // descriptor lives until after the call.
-        let created = unsafe {
-            options.create_with_security_attributes_raw(path, (&raw mut attributes).cast())
-        };
-        // SAFETY: allocated by the conversion above with LocalAlloc.
-        unsafe { LocalFree(Some(HLOCAL(descriptor.0))) };
-        created
+        with_attributes(sddl, |attributes| {
+            let attributes = std::ptr::from_ref(attributes).cast_mut().cast();
+            // SAFETY: valid SECURITY_ATTRIBUTES for the call, which only
+            // reads them.
+            unsafe { options.create_with_security_attributes_raw(path, attributes) }
+        })?
     }
 
     pub(super) async fn connect(path: &Path) -> io::Result<NamedPipeClient> {
@@ -797,7 +769,7 @@ mod platform {
 
     impl Listener {
         pub(super) fn bind(path: &Path) -> io::Result<Listener> {
-            if let Some(folder) = path.parent() {
+            if let Some(folder) = folder_of(path) {
                 own_folder(folder)?;
             }
             let listener = match UnixListener::bind(path) {
@@ -849,19 +821,43 @@ mod platform {
             Err(error) => return Err(error),
         }
         let metadata = std::fs::symlink_metadata(folder)?;
-        if !metadata.is_dir() || metadata.uid() != uid() || metadata.mode() & 0o077 != 0 {
-            return Err(io::Error::new(
-                io::ErrorKind::PermissionDenied,
-                format!(
-                    "{} is not a folder only this user can open",
-                    folder.display()
-                ),
-            ));
+        if !is_own(&metadata) {
+            return Err(not_own(folder));
         }
         Ok(())
     }
 
+    /// The folder the socket at `path` is in, if it names one.
+    fn folder_of(path: &Path) -> Option<&Path> {
+        let folder = path.parent()?;
+        (!folder.as_os_str().is_empty()).then_some(folder)
+    }
+
+    /// Whether `metadata` is of a folder only this user can open.
+    fn is_own(metadata: &std::fs::Metadata) -> bool {
+        metadata.is_dir() && metadata.uid() == uid() && metadata.mode() & 0o077 == 0
+    }
+
+    fn not_own(folder: &Path) -> io::Error {
+        io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            format!(
+                "{} is not a folder only this user can open",
+                folder.display()
+            ),
+        )
+    }
+
+    /// A connection to the socket at `path`, if its folder is this user's
+    /// alone: a folder another user made in the temporary folder first is
+    /// not trusted with the builds.
     pub(super) async fn connect(path: &Path) -> io::Result<UnixStream> {
+        if let Some(folder) = folder_of(path)
+            && let Ok(metadata) = std::fs::symlink_metadata(folder)
+            && !is_own(&metadata)
+        {
+            return Err(not_own(folder));
+        }
         UnixStream::connect(path).await
     }
 }

@@ -174,7 +174,10 @@ pub type Echo = Arc<dyn Fn(&str) + Send + Sync>;
 /// What a build printed: the last lines in memory, and every line in a log
 /// file, each also shown by its [`Echo`] if it has one. Cloning shares it.
 #[derive(Clone)]
-pub(crate) struct BuildOutput(Arc<Mutex<Printed>>, Option<Echo>);
+pub(crate) struct BuildOutput {
+    printed: Arc<Mutex<Printed>>,
+    echo: Option<Echo>,
+}
 
 struct Printed {
     tail: VecDeque<String>,
@@ -196,27 +199,27 @@ impl BuildOutput {
             }
             File::create(path).ok()
         });
-        BuildOutput(
-            Arc::new(Mutex::new(Printed {
+        BuildOutput {
+            printed: Arc::new(Mutex::new(Printed {
                 tail: VecDeque::new(),
                 bytes: 0,
                 dropped: 0,
                 log,
             })),
-            None,
-        )
+            echo: None,
+        }
     }
 
     /// This output, each line of which `echo` also shows.
     pub(crate) fn echoing(self, echo: Option<Echo>) -> BuildOutput {
-        BuildOutput(self.0, echo)
+        BuildOutput { echo, ..self }
     }
 
     pub(crate) fn line(&self, line: &str) {
-        if let Some(echo) = &self.1 {
+        if let Some(echo) = &self.echo {
             echo(line);
         }
-        let mut printed = self.0.lock().unwrap_or_else(|p| p.into_inner());
+        let mut printed = self.printed.lock().unwrap_or_else(|p| p.into_inner());
         if let Some(log) = &mut printed.log {
             let _ = writeln!(log, "{line}");
         }
@@ -234,7 +237,7 @@ impl BuildOutput {
     /// The lines kept in memory, and how many earlier ones are only in the
     /// log.
     pub(crate) fn tail(&self) -> (Vec<String>, usize) {
-        let printed = self.0.lock().unwrap_or_else(|p| p.into_inner());
+        let printed = self.printed.lock().unwrap_or_else(|p| p.into_inner());
         (printed.tail.iter().cloned().collect(), printed.dropped)
     }
 }

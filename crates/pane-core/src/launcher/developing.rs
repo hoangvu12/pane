@@ -132,6 +132,9 @@ struct Session {
     driver: Driver,
 }
 
+/// Asks `pane-ext` to build a package it develops now, as a save would.
+pub(crate) type BuildNow = Arc<dyn Fn() + Send + Sync>;
+
 /// Who builds a developed package.
 enum Driver {
     /// Pane, after each save.
@@ -140,8 +143,7 @@ enum Driver {
     Remote {
         /// What Pane was told of its builds.
         report: Arc<Mutex<Development>>,
-        /// Asks `pane-ext` to build the package now, as a save would.
-        build: Arc<dyn Fn() + Send + Sync>,
+        build: BuildNow,
     },
 }
 
@@ -773,7 +775,7 @@ impl Launcher {
         &self,
         identity: &PackageIdentity,
         command: &str,
-        build: Arc<dyn Fn() + Send + Sync>,
+        build: BuildNow,
     ) -> Result<(Remote, Receiver<LogLine>), String> {
         let mut state = self.lock();
         self.changeable(&state, identity, "develop")?;

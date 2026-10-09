@@ -345,14 +345,10 @@ fn main() {
         .detach();
         // `pane-ext dev` hands its builds to this Pane over the local
         // channel (#217), which asks the window to show the install preview
-        // of a folder Pane has not installed. A development build listens
-        // where PANE_CHANNEL says, if it says, as the tests and a second Pane
-        // beside an installed one need; a release build only on the user's
-        // own endpoint.
-        #[cfg(debug_assertions)]
+        // of a folder Pane has not installed. It listens where PANE_CHANNEL
+        // says, if it says, as pane-ext looks there: a second Pane beside an
+        // installed one, and the tests.
         let endpoint = local_channel::Endpoint::from_env();
-        #[cfg(not(debug_assertions))]
-        let endpoint = local_channel::Endpoint::for_this_user();
         match endpoint.and_then(|endpoint| local_channel::serve(developing, &endpoint)) {
             Ok((server, mut previews)) => {
                 cx.spawn(async move |cx| {
