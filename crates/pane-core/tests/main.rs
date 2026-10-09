@@ -45,6 +45,7 @@ mod installer;
 mod item_actions;
 mod launcher;
 mod list_tree;
+mod local_channel;
 mod memory;
 mod no_view;
 mod npm;

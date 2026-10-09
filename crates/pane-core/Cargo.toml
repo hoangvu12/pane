@@ -15,7 +15,9 @@ pane-build = { path = "../pane-build" }
 pane-target = { path = "../pane-target" }
 serde.workspace = true
 serde_json.workspace = true
-tokio = { workspace = true, features = ["net", "rt", "sync", "time"] }
+# The local channel (#217) reads and writes its named pipe or socket by
+# lines (`io-util`, whose `bytes` is already in the tree).
+tokio = { workspace = true, features = ["io-util", "net", "rt", "sync", "time"] }
 unicase = "2.9"
 unicode-normalization = "0.1"
 wasmtime = { version = "=49.0.1", default-features = false, features = ["cache", "cranelift", "parallel-compilation", "runtime", "std", "async", "component-model", "component-model-async"] }

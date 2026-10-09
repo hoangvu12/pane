@@ -167,10 +167,14 @@ impl BuildStop {
     }
 }
 
+/// Shows each line a build prints as it prints it, such as in the terminal
+/// running `pane-ext dev`.
+pub type Echo = Arc<dyn Fn(&str) + Send + Sync>;
+
 /// What a build printed: the last lines in memory, and every line in a log
-/// file. Cloning shares it.
+/// file, each also shown by its [`Echo`] if it has one. Cloning shares it.
 #[derive(Clone)]
-pub(crate) struct BuildOutput(Arc<Mutex<Printed>>);
+pub(crate) struct BuildOutput(Arc<Mutex<Printed>>, Option<Echo>);
 
 struct Printed {
     tail: VecDeque<String>,
@@ -192,15 +196,26 @@ impl BuildOutput {
             }
             File::create(path).ok()
         });
-        BuildOutput(Arc::new(Mutex::new(Printed {
-            tail: VecDeque::new(),
-            bytes: 0,
-            dropped: 0,
-            log,
-        })))
+        BuildOutput(
+            Arc::new(Mutex::new(Printed {
+                tail: VecDeque::new(),
+                bytes: 0,
+                dropped: 0,
+                log,
+            })),
+            None,
+        )
+    }
+
+    /// This output, each line of which `echo` also shows.
+    pub(crate) fn echoing(self, echo: Option<Echo>) -> BuildOutput {
+        BuildOutput(self.0, echo)
     }
 
     pub(crate) fn line(&self, line: &str) {
+        if let Some(echo) = &self.1 {
+            echo(line);
+        }
         let mut printed = self.0.lock().unwrap_or_else(|p| p.into_inner());
         if let Some(log) = &mut printed.log {
             let _ = writeln!(log, "{line}");
@@ -1047,6 +1062,23 @@ mod tests {
         assert_eq!(tail[0], "line 5");
         let logged = std::fs::read_to_string(&log).unwrap();
         assert_eq!(logged.lines().count(), TAIL_LINES + 5);
+    }
+
+    #[test]
+    fn an_echoed_output_shows_each_line_as_it_is_printed() {
+        let shown = Arc::new(Mutex::new(Vec::new()));
+        let echo: Echo = {
+            let shown = shown.clone();
+            Arc::new(move |line: &str| shown.lock().unwrap().push(line.to_owned()))
+        };
+        let output = BuildOutput::new(None).echoing(Some(echo));
+        output.line("Compiling hello");
+        output.clone().line("error: expected `;`");
+        assert_eq!(
+            *shown.lock().unwrap(),
+            ["Compiling hello", "error: expected `;`"]
+        );
+        assert_eq!(output.tail().0.len(), 2);
     }
 
     fn job(dir: &Path) -> (BuildJob, BuildOutput) {

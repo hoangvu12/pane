@@ -31,6 +31,7 @@ pub mod keyboard;
 mod launch;
 mod launcher;
 mod links;
+pub mod local_channel;
 pub mod npm;
 mod operations;
 mod packages;

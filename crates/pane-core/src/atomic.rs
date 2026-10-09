@@ -104,7 +104,7 @@ pub(crate) fn create_owner_only_dir(dir: &Path) -> io::Result<()> {
 
 /// Files only the user Pane runs as (and SYSTEM) can open, on Windows.
 #[cfg(windows)]
-mod owner_only {
+pub(crate) mod owner_only {
     use std::fs::File;
     use std::io;
     use std::os::windows::io::FromRawHandle;
@@ -130,7 +130,7 @@ mod owner_only {
     }
 
     /// The SID of the user this process runs as, in its string form.
-    pub(super) fn user_sid() -> io::Result<String> {
+    pub(crate) fn user_sid() -> io::Result<String> {
         let mut token = HANDLE::default();
         // SAFETY: the current process's pseudo handle; `token` is writable
         // and closed below.
