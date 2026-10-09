@@ -93,7 +93,7 @@ const CONTROL: f32 = 24.;
 /// A control's glyph, in px.
 const GLYPH: f32 = 12.;
 /// The dot that says a toast's style, in px.
-const DOT: f32 = 8.;
+pub(crate) const DOT: f32 = 8.;
 /// The popover's least and most width, in px: wide enough to read the
 /// full text in, never wider than the Actions panel is.
 const POPOVER_MIN: f32 = 280.;
