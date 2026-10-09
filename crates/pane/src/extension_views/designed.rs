@@ -120,6 +120,16 @@ impl LauncherWindow {
         }
     }
 
+    /// Test support: how many focusable buttons the open designed view's
+    /// controls hold.
+    #[doc(hidden)]
+    pub fn designed_button_count(&self) -> usize {
+        self.designed
+            .as_ref()
+            .map(|controls| controls.focus.len())
+            .unwrap_or(0)
+    }
+
     /// Sends the press of the button with callback id `callback` to the
     /// open designed view, raised on the node with `key`, and redraws when
     /// its answer arrives.
@@ -213,7 +223,11 @@ fn draw(
         }
         NodeKind::Text(text) => {
             let element = text_element(text, theme, path);
-            named(element, name.as_deref()).into_any_element()
+            let element = match name.as_deref() {
+                Some(name) => element.aria_label(name),
+                None => element,
+            };
+            element.into_any_element()
         }
         NodeKind::Button(button) => {
             let handle = focus.get(path).cloned();
