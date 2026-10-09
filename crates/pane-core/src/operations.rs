@@ -467,7 +467,10 @@ impl Installed {
                 ));
             }
         };
-        let Some(declared) = manifest.uses.iter().find(|used| used.capability == capability)
+        let Some(declared) = manifest
+            .uses
+            .iter()
+            .find(|used| used.capability == capability)
         else {
             return Err(OperationError::refused(format!(
                 "{title} declares no use of `{capability}` in its pane.json; declare it in \
@@ -496,20 +499,22 @@ impl Installed {
         for (package, entry) in &candidates {
             let title = package.title();
             match self.cannot_serve(package) {
-                None => match platform::unavailable(entry.platforms.as_deref(), "this capability") {
-                    None => {
-                        return Ok(Target {
-                            component: package.location.join(&entry.component),
-                            data: self
-                                .data
-                                .as_ref()
-                                .map(|data| data.owned_by(&package.identity)),
-                            identity: package.identity.clone(),
-                            title,
-                        });
+                None => {
+                    match platform::unavailable(entry.platforms.as_deref(), "this capability") {
+                        None => {
+                            return Ok(Target {
+                                component: package.location.join(&entry.component),
+                                data: self
+                                    .data
+                                    .as_ref()
+                                    .map(|data| data.owned_by(&package.identity)),
+                                identity: package.identity.clone(),
+                                title,
+                            });
+                        }
+                        Some(reason) => unserving.push(format!("{title}: {reason}")),
                     }
-                    Some(reason) => unserving.push(format!("{title}: {reason}")),
-                },
+                }
                 // Disabled is a class of its own: every provider disabled
                 // is a `disabled` error, naming what to enable.
                 Some(Cannot::Disabled) => disabled.push(title),
@@ -551,12 +556,12 @@ impl Installed {
     /// its own, since a package never serves its own use.
     fn missing_provider(&self, caller: &Path, capability: &str, operation: &str) -> String {
         let provides = |package: &InstalledPackage| {
-            package
-                .manifest
-                .as_ref()
-                .is_ok_and(|manifest| {
-                    manifest.provides.iter().any(|provides| provides.capability == capability)
-                })
+            package.manifest.as_ref().is_ok_and(|manifest| {
+                manifest
+                    .provides
+                    .iter()
+                    .any(|provides| provides.capability == capability)
+            })
         };
         let others: Vec<String> = self
             .packages
@@ -750,10 +755,7 @@ impl<T> operations::HostWithStore<T> for Calls {
         .await
     }
 
-    fn providers(
-        mut host: Access<'_, T, Self>,
-        capability: String,
-    ) -> Vec<operations::Provider> {
+    fn providers(mut host: Access<'_, T, Self>, capability: String) -> Vec<operations::Provider> {
         let state = host.get();
         let installed = state.installed();
         let caller = state.component.clone();

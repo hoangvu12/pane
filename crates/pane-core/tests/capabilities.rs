@@ -195,7 +195,9 @@ fn an_optional_capability_nobody_provides_is_not_found_and_gates_nothing() {
 
     assert_eq!(
         greet(&launcher, "Greet from Rust"),
-        error(&format!("not-found: no installed extension provides `{GREET}`"))
+        error(&format!(
+            "not-found: no installed extension provides `{GREET}`"
+        ))
     );
     open_item(&launcher, "Greet from Rust", "Say farewell");
     assert_eq!(
@@ -207,7 +209,11 @@ fn an_optional_capability_nobody_provides_is_not_found_and_gates_nothing() {
         shown(&launcher),
         result(&format!("No installed extension provides {GREET}"))
     );
-    open_item(&launcher, "Greet from Rust", "Is the farewell capability available");
+    open_item(
+        &launcher,
+        "Greet from Rust",
+        "Is the farewell capability available",
+    );
     assert_eq!(
         shown(&launcher),
         result("pane-samples:farewell@1 has no provider now")
@@ -243,7 +249,9 @@ fn the_providers_query_answers_the_available_providers() {
     open_item(&launcher, "Greet from Rust", "Who provides the greeting");
     assert_eq!(
         shown(&launcher),
-        result(&format!("{GREET} is provided by Rust greet provider sample"))
+        result(&format!(
+            "{GREET} is provided by Rust greet provider sample"
+        ))
     );
 }
 
@@ -296,7 +304,9 @@ fn an_uninstalled_provider_is_not_found() {
     block_on(launcher.uninstall(&dirs.sample_identity(PROVIDERS[0].0), SavedData::Delete));
     assert_eq!(
         greet(&launcher, "Greet from Rust"),
-        error(&format!("not-found: no installed extension provides `{GREET}`"))
+        error(&format!(
+            "not-found: no installed extension provides `{GREET}`"
+        ))
     );
 }
 
@@ -315,9 +325,7 @@ fn provides(operations: &str, platforms: &str) -> String {
 /// The `uses` of a fixture package using the fixture's capability, as
 /// manifest members.
 fn uses(operations: &str) -> String {
-    format!(
-        r#","uses": [{{ "capability": "fixture:greet@1", "operations": [{operations}] }}]"#
-    )
+    format!(r#","uses": [{{ "capability": "fixture:greet@1", "operations": [{operations}] }}]"#)
 }
 
 /// The operations the fixture's capability is made of.
@@ -338,7 +346,11 @@ impl Dirs {
     fn fixture(&self, name: &str, commands: &str, members: &str) -> PathBuf {
         let folder = self.folder(name);
         fs::create_dir_all(&folder).unwrap();
-        fs::copy(guest("capabilities_fixture.wasm"), folder.join("fixture.wasm")).unwrap();
+        fs::copy(
+            guest("capabilities_fixture.wasm"),
+            folder.join("fixture.wasm"),
+        )
+        .unwrap();
         let manifest = format!(
             r#"{{
                 "manifestVersion": 1,
@@ -408,15 +420,17 @@ fn a_package_is_never_routed_to_its_own_capability() {
     // Both `a` and `b` provide the capability `a` uses; only `b` can serve
     // `a`'s call, and the answer carries the qualified operation the
     // provider was called with.
-    dirs.fixture("a", COMMAND, &format!("{}{}", provides(PROVIDED, ""), uses(USED)));
+    dirs.fixture(
+        "a",
+        COMMAND,
+        &format!("{}{}", provides(PROVIDED, ""), uses(USED)),
+    );
     dirs.fixture("b", "", &provides(PROVIDED, ""));
     let launcher = dirs.install_fixtures(&["a", "b"]);
 
     assert_eq!(
         fixture_run(&launcher, "Call the greet capability"),
-        result(
-            r#"answered: {"greeting":"Hello,Ada","operation":"fixture:greet@1/greet"}"#
-        )
+        result(r#"answered: {"greeting":"Hello, Ada","operation":"fixture:greet@1/greet"}"#)
     );
     // `a`'s own package would be refused as already serving the call, so
     // the answer can only have come from `b`.
@@ -425,7 +439,11 @@ fn a_package_is_never_routed_to_its_own_capability() {
 
     // Alone, `a` provides what it uses and is told it never serves itself.
     let alone = Dirs::new();
-    alone.fixture("a", COMMAND, &format!("{}{}", provides(PROVIDED, ""), uses(USED)));
+    alone.fixture(
+        "a",
+        COMMAND,
+        &format!("{}{}", provides(PROVIDED, ""), uses(USED)),
+    );
     let launcher = alone.install_fixtures(&["a"]);
     assert_eq!(
         fixture_run(&launcher, "Call the greet capability"),
@@ -451,7 +469,10 @@ fn undeclared_capabilities_and_operations_are_refused() {
         )
     );
     assert_eq!(
-        fixture_run(&launcher, "Call an undeclared operation of the greet capability"),
+        fixture_run(
+            &launcher,
+            "Call an undeclared operation of the greet capability"
+        ),
         error(
             "refused: Package a declares that it calls `greet` through `fixture:greet@1`, not \
              `unknown`; declare it in its pane.json to call it"
@@ -495,9 +516,7 @@ fn the_operation_s_own_error_and_a_crash_reach_the_caller() {
     // The caller keeps working, and the provider starts afresh.
     assert_eq!(
         fixture_run(&launcher, "Call the greet capability"),
-        result(
-            r#"answered: {"greeting":"Hello,Ada","operation":"fixture:greet@1/greet"}"#
-        )
+        result(r#"answered: {"greeting":"Hello, Ada","operation":"fixture:greet@1/greet"}"#)
     );
 }
 
@@ -525,9 +544,7 @@ fn a_paused_provider_answers_unavailable() {
     block_on(launcher.retry_start(&dirs.identity("b")));
     assert_eq!(
         fixture_run(&launcher, "Call the greet capability"),
-        result(
-            r#"answered: {"greeting":"Hello,Ada","operation":"fixture:greet@1/greet"}"#
-        )
+        result(r#"answered: {"greeting":"Hello, Ada","operation":"fixture:greet@1/greet"}"#)
     );
 }
 
@@ -543,7 +560,11 @@ fn a_waiting_provider_answers_unavailable() {
         { "id": "dep", "source": "local:../c",
           "operations": [{ "id": "echo", "version": 1 }] }
     ]"#;
-    dirs.fixture("b", "", &format!("{}{}", provides(PROVIDED, ""), dependency));
+    dirs.fixture(
+        "b",
+        "",
+        &format!("{}{}", provides(PROVIDED, ""), dependency),
+    );
     dirs.fixture(
         "c",
         "",
@@ -553,9 +574,7 @@ fn a_waiting_provider_answers_unavailable() {
 
     assert_eq!(
         fixture_run(&launcher, "Call the greet capability"),
-        result(
-            r#"answered: {"greeting":"Hello,Ada","operation":"fixture:greet@1/greet"}"#
-        )
+        result(r#"answered: {"greeting":"Hello, Ada","operation":"fixture:greet@1/greet"}"#)
     );
 
     // `c` disabled, `b` waits for it: its capability is served by no one.
@@ -571,9 +590,7 @@ fn a_waiting_provider_answers_unavailable() {
     block_on(launcher.set_enabled(&dirs.identity("c"), true));
     assert_eq!(
         fixture_run(&launcher, "Call the greet capability"),
-        result(
-            r#"answered: {"greeting":"Hello,Ada","operation":"fixture:greet@1/greet"}"#
-        )
+        result(r#"answered: {"greeting":"Hello, Ada","operation":"fixture:greet@1/greet"}"#)
     );
 }
 
@@ -587,10 +604,7 @@ fn a_provider_for_other_systems_answers_unavailable() {
     dirs.fixture(
         "b",
         "",
-        &provides(
-            PROVIDED,
-            &format!(r#", "platforms": ["{}"]"#, other.id()),
-        ),
+        &provides(PROVIDED, &format!(r#", "platforms": ["{}"]"#, other.id())),
     );
     let launcher = dirs.install_fixtures(&["a", "b"]);
 
@@ -633,12 +647,23 @@ fn a_provider_already_in_the_chain_is_refused() {
     let dirs = Dirs::new();
     // `a` provides the capability too, so `b`'s call back through the
     // capability is routed to it: already serving the chain.
-    dirs.fixture("a", COMMAND, &format!("{}{}", provides(PROVIDED, ""), uses(USED)));
-    dirs.fixture("b", "", &format!("{}{}", provides(PROVIDED, ""), uses(USED)));
+    dirs.fixture(
+        "a",
+        COMMAND,
+        &format!("{}{}", provides(PROVIDED, ""), uses(USED)),
+    );
+    dirs.fixture(
+        "b",
+        "",
+        &format!("{}{}", provides(PROVIDED, ""), uses(USED)),
+    );
     let launcher = dirs.install_fixtures(&["a", "b"]);
 
     assert_eq!(
-        fixture_run(&launcher, "Call the greet capability, whose provider calls back"),
+        fixture_run(
+            &launcher,
+            "Call the greet capability, whose provider calls back"
+        ),
         error(
             "failed: refused: Package a is already serving a call in this chain; an extension \
              cannot be called back while its own call waits"
@@ -647,9 +672,7 @@ fn a_provider_already_in_the_chain_is_refused() {
     // Both keep working.
     assert_eq!(
         fixture_run(&launcher, "Call the greet capability"),
-        result(
-            r#"answered: {"greeting":"Hello,Ada","operation":"fixture:greet@1/greet"}"#
-        )
+        result(r#"answered: {"greeting":"Hello, Ada","operation":"fixture:greet@1/greet"}"#)
     );
 }
 
@@ -715,13 +738,25 @@ impl Dirs {
 #[test]
 fn a_malformed_capability_name_is_refused() {
     for (name, reason) in [
-        ("translate", "it has no `:` separating the namespace from the name"),
-        ("acme/translate@1", "it has no `:` separating the namespace from the name"),
+        (
+            "translate",
+            "it has no `:` separating the namespace from the name",
+        ),
+        (
+            "acme/translate@1",
+            "it has no `:` separating the namespace from the name",
+        ),
         ("acme:translate", "it has no `@` and a major version"),
         ("acme:translate@0", "its major version `0` is not a number from 1"),
         ("acme:translate@x", "its major version `x` is not a number from 1"),
-        ("Acme:translate@1", "its namespace `Acme` must be lowercase letters, digits and `-`"),
-        ("acme:TransLate@1", "its name `TransLate` must be lowercase letters, digits and `-`"),
+        (
+            "Acme:translate@1",
+            "its namespace `Acme` must be lowercase letters, digits and `-`",
+        ),
+        (
+            "acme:TransLate@1",
+            "its name `TransLate` must be lowercase letters, digits and `-`",
+        ),
         ("acme:@1", "its name `` must be lowercase letters, digits and `-`"),
     ] {
         let dirs = Dirs::new();
@@ -924,12 +959,8 @@ fn a_default_a_published_package_cannot_name_is_refused() {
         ),
     ];
     registry.publish(name, "0.1.0", npm_registry::pack(&files));
-    let launcher = Launcher::with_packages(
-        Ok(dirs.runtime.clone()),
-        vec![],
-        dirs.extensions(),
-    )
-    .with_npm_registry(pane_core::npm::Registry::local(registry.url()).unwrap());
+    let launcher = Launcher::with_packages(Ok(dirs.runtime.clone()), vec![], dirs.extensions())
+        .with_npm_registry(pane_core::npm::Registry::local(registry.url()).unwrap());
 
     block_on(launcher.preview_npm(name));
 

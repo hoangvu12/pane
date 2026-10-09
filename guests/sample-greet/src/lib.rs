@@ -37,16 +37,18 @@ async fn about() -> Result<(), String> {
     Ok(())
 }
 
+/// The one item: what this package provides.
+fn about_item() -> Item {
+    Item::new("about", "What this provides")
+        .subtitle("The pane-samples:greet@1 capability, for other extensions")
+        .on_action(about)
+}
+
 impl Command for Greeter {
     type CustomView = NoCustomView;
 
     async fn render() -> Result<List, String> {
-        Ok(List::new("Rust greet provider").items([Item::new(
-            "about",
-            "What this provides",
-        )
-        .subtitle("The pane-samples:greet@1 capability, for other extensions")
-        .on_action(about)]))
+        Ok(List::new("Rust greet provider").items([about_item()]))
     }
 
     async fn open_view(item_id: String) -> Result<CustomView, String> {

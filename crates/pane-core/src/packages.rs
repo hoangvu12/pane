@@ -967,10 +967,7 @@ impl Manifest {
         let platforms = parse_platforms(json.platforms, "`platforms`")?;
         let package_preferences =
             preferences::parse(json.preferences, "the package", &[]).map_err(invalid)?;
-        if json.commands.is_empty()
-            && json.operations.is_empty()
-            && json.provides.is_empty()
-        {
+        if json.commands.is_empty() && json.operations.is_empty() && json.provides.is_empty() {
             return Err(invalid(
                 "`commands` is empty and the package provides no capability; declare a command, an \
                  operation or a capability it provides"
@@ -1446,9 +1443,7 @@ pub(crate) fn capability_problem(capability: &str) -> Option<String> {
                 {
                     format!("its major version `{major}` is not a number from 1")
                 } else if !part(namespace) {
-                    format!(
-                        "its namespace `{namespace}` must be lowercase letters, digits and `-`"
-                    )
+                    format!("its namespace `{namespace}` must be lowercase letters, digits and `-`")
                 } else if !part(name) {
                     format!("its name `{name}` must be lowercase letters, digits and `-`")
                 } else {
@@ -1556,7 +1551,9 @@ fn parse_uses(
         };
         if let Some(default) = &entry.default {
             if let Some(reason) = source_problem(default) {
-                return Err(invalid(format!("the default `{default}` of {what} {reason}")));
+                return Err(invalid(format!(
+                    "the default `{default}` of {what} {reason}"
+                )));
             }
         }
         let entry_commands = match entry.commands {
