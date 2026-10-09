@@ -95,7 +95,7 @@ struct Entry {
 }
 
 /// What a registration registers.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Kind {
     /// A dynamic root item under the command with this manifest id.
     RootItem { command: String, item: DynamicItem },
@@ -151,18 +151,19 @@ struct Activation {
 
 /// The handle a guest's resource holds: the registration's id. Each kind
 /// has its own type, as the runtime's bindings map each WIT resource to
-/// one.
+/// one. Public because the runtime's bindings re-export them; the module
+/// stays private, so they reach no public API.
 #[derive(Debug)]
-pub(crate) struct RootItemHandle(pub(crate) u64);
+pub struct RootItemHandle(pub(crate) u64);
 
 #[derive(Debug)]
-pub(crate) struct TimerHandle(pub(crate) u64);
+pub struct TimerHandle(pub(crate) u64);
 
 #[derive(Debug)]
-pub(crate) struct WatcherHandle(pub(crate) u64);
+pub struct WatcherHandle(pub(crate) u64);
 
 #[derive(Debug)]
-pub(crate) struct ProvisionHandle(pub(crate) u64);
+pub struct ProvisionHandle(pub(crate) u64);
 
 /// One event of what a package registered, as the timers and watchers
 /// threads hand it to the runtime, which calls the component's `events`
@@ -244,8 +245,9 @@ impl Registrations {
     /// Undoes the registration `id` and takes its entry off its
     /// generation's undo list: the guest dropped its handle, or the
     /// instance holding it went. Nothing changes, and no hook is told,
-    /// when it is already undone.
-    pub(crate) fn drop(&self, id: u64) {
+    /// when it is already undone. (Not `drop`, which the destructor's
+    /// name reserves.)
+    pub(crate) fn release(&self, id: u64) {
         if self.remove(id).is_some() {
             self.changed();
         }
@@ -538,6 +540,9 @@ pub(crate) fn replaced(end: End) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
+
+    use crate::runtime::ItemLook;
 
     /// An item for the tests: id, title and nothing more.
     fn item(id: &str) -> DynamicItem {
@@ -564,7 +569,7 @@ mod tests {
     /// registry the host functions share.)
     #[test]
     fn a_handle_of_an_ended_generation_is_refused() {
-        let registrations = Registrations::default();
+        let registrations = Arc::new(Registrations::default());
         let generation = Generation::new();
         let id = registrations.add(
             "local:/somewhere",
@@ -590,7 +595,7 @@ mod tests {
         );
         // The undo list is empty after the end, whatever the handle does.
         assert!(registrations.lock().entries.is_empty());
-        registrations.drop(id);
+        registrations.release(id);
         assert!(registrations.lock().entries.is_empty());
     }
 
@@ -599,7 +604,7 @@ mod tests {
     /// launcher's hooks see.
     #[test]
     fn the_instance_going_ends_the_registration_and_the_activation() {
-        let registrations = Registrations::default();
+        let registrations = Arc::new(Registrations::default());
         let generation = Generation::new();
         let id = registrations.add(
             "local:/somewhere",

@@ -60,6 +60,7 @@ use crate::generation::EndMark;
 use crate::hotkeys::Shortcut;
 use crate::launch::LaunchSource;
 use crate::launcher::CommandRegistration;
+use crate::packages::paused_reason;
 use crate::packages::{CommandId, CommandMode, InstalledPackage, PackageIdentity};
 
 /// Each command's hotkey by command id, recorded in `hotkeys.json` as
@@ -443,34 +444,42 @@ impl Launcher {
         shortcut: &Shortcut,
     ) -> Option<impl Future<Output = ()> + Send + 'static> {
         let mut state = self.lock();
-        let opening = match self.hotkey_opening(&state, shortcut) {
-            Some(opening) => opening,
-            // A hotkey recorded for a dynamic root item that is not
-            // registered (#158) says so, rather than launching nothing
-            // silently; anything else launches nothing at all.
+        let opening = self.hotkey_opening(&state, shortcut);
+        // A hotkey recorded for a dynamic root item that is not
+        // registered (#158) says so, rather than launching nothing
+        // silently; anything else launches nothing at all.
+        let why = opening.is_none().then(|| gone_dynamic(&state, shortcut)).flatten();
+        let data = opening
+            .as_ref()
+            .map(|opening| self.data_in(&state, &opening.component));
+        match &opening {
+            Some(opening) => {
+                if opening.no_view {
+                    // Root search stays while a no-view command runs.
+                    Launcher::begin_run(&mut state);
+                } else {
+                    self.show_root(&mut state, Some(opening.component.clone()));
+                    state.view.status = Status::Running;
+                }
+            }
             None => {
-                let why = gone_dynamic(&state, shortcut);
                 self.show_root(&mut state, None);
                 state.view.status = match why {
                     Some(reason) => Status::Error(reason),
                     None => Status::Idle,
                 };
-                return Some(async {});
             }
-        };
-        if opening.no_view {
-            Launcher::begin_run(&mut state);
-        } else {
-            self.show_root(&mut state, Some(opening.component.clone()));
-            state.view.status = Status::Running;
         }
-        // Its data as the package is now, so a disable or reload meanwhile
-        // stops the opening.
-        let data = self.data_in(&state, &opening.component);
         let epoch = state.screen_epoch;
         drop(state);
         let launcher = self.clone();
-        Some(async move { launcher.launch_opening(epoch, opening, data).await })
+        Some(async move {
+            if let Some(opening) = opening {
+                // Its data as the package is now, so a disable or reload
+                // meanwhile stops the opening.
+                launcher.launch_opening(epoch, opening, data).await;
+            }
+        })
     }
 
     /// The hotkey rows of the extension list: one per command of each

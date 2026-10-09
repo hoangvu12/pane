@@ -928,10 +928,10 @@ impl Manifest {
                 provides.component.as_path(),
             )
         });
-        let activate = self.activate.map(|component| {
+        let activate = self.activate.as_deref().map(|component| {
             (
                 "the package's activation entry point".to_owned(),
-                component.as_path(),
+                component,
             )
         });
         commands
@@ -960,7 +960,7 @@ impl Manifest {
                     .provides
                     .iter()
                     .any(|provides| provides.component == component),
-            activate: self.activate.as_ref() == Some(component),
+            activate: self.activate.as_deref() == Some(component),
         }
     }
 

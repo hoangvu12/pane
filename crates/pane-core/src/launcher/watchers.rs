@@ -31,7 +31,7 @@ use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use super::schedules::Wake;
 use super::{Launcher, WeakLauncher};
 use crate::extension_data::PackageData;
-use crate::registrations::{GuestEvent, Registrations, WatcherChanges, WatcherOf};
+use crate::registrations::{GuestEvent, WatcherChanges, WatcherOf};
 
 /// How long changes arriving after the first are coalesced into one
 /// event.
@@ -173,7 +173,7 @@ fn look(watchers: &Watchers, launcher: &Launcher) -> Vec<Delivery> {
         let wanted: Vec<WatcherOf> = state
             .registrations
             .as_ref()
-            .map(Registrations::watchers)
+            .map(|registrations| registrations.watchers())
             .unwrap_or_default();
         let runs = |registered: &WatcherOf| {
             state
@@ -207,8 +207,8 @@ fn look(watchers: &Watchers, launcher: &Launcher) -> Vec<Delivery> {
                 .collect::<Vec<_>>(),
         )
     };
-    let runs = std::collections::HashMap::from(runs);
-    let data = std::collections::HashMap::from(data);
+    let runs: HashMap<u64, bool> = runs.into_iter().collect();
+    let data: HashMap<u64, Option<PackageData>> = data.into_iter().collect();
     // The reports that arrived, and the watchers as they now stand.
     let reports = {
         let receiver = watchers

@@ -196,7 +196,7 @@ pub(super) fn rows(state: &State) -> (Vec<RootResult>, HashMap<String, ItemLook>
 /// quick slot, an alias or a hotkey), launched from `source`: its launch
 /// record names the item. `None` when no such item is registered.
 pub(super) fn opening_of(state: &State, id: &str, source: LaunchSource) -> Option<Opening> {
-    let RootResult { entry, .. } = pinned(state, id)?;
+    let RootResult { entry, .. } = pinned_by_id(state, id)?;
     let Entry::Open(mut opening) = entry else {
         return None;
     };

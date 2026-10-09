@@ -595,7 +595,7 @@ fn forget_provider_pins(state: &mut State) -> bool {
             }
             None => true,
         },
-        PinTarget::Indexed { .. } => true,
+        PinTarget::Indexed { .. } | PinTarget::Dynamic { .. } => true,
     });
     for title in &gone {
         Launcher::note_provider_pin(state, title);
@@ -833,6 +833,9 @@ impl Launcher {
             .iter()
             .filter_map(|target| match target {
                 PinTarget::Indexed { command, .. } => Some(command.clone()),
+                // A dynamic root item's command is one of the package's
+                // (#158).
+                PinTarget::Dynamic { command, .. } => Some(command.clone()),
                 PinTarget::Command(_) => None,
             })
             .collect();

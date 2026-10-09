@@ -710,6 +710,8 @@ impl WeakLauncher {
             clipboard,
             schedules: self.schedules.as_ref().and_then(std::sync::Weak::upgrade),
             services: self.services.as_ref().and_then(std::sync::Weak::upgrade),
+            timers: self.timers.clone(),
+            watchers: self.watchers.clone(),
             updates: self.updates.as_ref().and_then(std::sync::Weak::upgrade),
             sources: self.sources.clone(),
             developing: self.developing.upgrade()?,
@@ -3672,6 +3674,7 @@ impl Launcher {
         }
         for (identity, component, data) in begun {
             let launcher = self.clone();
+            let key = identity.key();
             let started = std::thread::Builder::new()
                 .name("pane-activate".into())
                 .spawn(move || {
@@ -3685,12 +3688,12 @@ impl Launcher {
                             runtime.activate_with(&component, Some(data)),
                         );
                     }
-                    launcher.lock().activating.remove(&identity.key());
+                    launcher.lock().activating.remove(&key);
                     launcher.changed();
                 });
             if let Err(error) = started {
                 eprintln!("Pane could not activate an extension: {error}");
-                state.activating.remove(&identity.key());
+                state.activating.remove(&key);
             }
         }
     }
@@ -3845,15 +3848,6 @@ impl Launcher {
                 add(row, entry, Some(&title), Some(target));
             }
         }
-        // What the packages registered at run time: their items' rows,
-        // ranked with everything else root search lists, matched by their
-        // titles and subtitles as an indexed result is, and by their
-        // aliases as any row is (see `dynamic`).
-        for result in dynamic::rows(state).0 {
-            let alias = state.aliases.chosen.active_alias(&result.row.id);
-            let keys = result.keys.with_alias(alias);
-            results.push(RootResult { keys, ..result });
-        }
         for package in enabled() {
             if let Err(error) = &package.manifest {
                 let row = Row {
@@ -3937,6 +3931,15 @@ impl Launcher {
                 unavailable: None,
             };
             add(row, Entry::Settings, None, None);
+        }
+        // What the packages registered at run time: their items' rows,
+        // ranked with everything else root search lists, matched by their
+        // titles and subtitles as an indexed result is, and by their
+        // aliases as any row is (see `dynamic`).
+        for result in dynamic::rows(state).0 {
+            let alias = state.aliases.chosen.active_alias(&result.row.id);
+            let keys = result.keys.with_alias(alias);
+            results.push(RootResult { keys, ..result });
         }
         results
     }

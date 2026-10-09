@@ -569,7 +569,9 @@ fn reason(
     let path = [package.identity.clone()];
     let whats: Vec<String> = requirements
         .iter()
-        .map(|requirement| what_of(packages, able, paused, title_of, &path, requirement))
+        .map(|requirement| {
+            what_of(packages, able, provisions, paused, title_of, &path, requirement)
+        })
         .collect();
     let what = platform::join(&whats);
     Reason {
@@ -578,7 +580,9 @@ fn reason(
         // The first requirement's root cause is what the fix row fixes.
         fix: requirements
             .first()
-            .map(|first| root_of_requirement(packages, able, paused, title_of, &path, first).fix())
+            .map(|first| {
+            root_of_requirement(packages, able, provisions, paused, title_of, &path, first).fix()
+        })
             .unwrap_or(Fix::Manage),
     }
 }
@@ -613,6 +617,7 @@ fn capability_reason(
 fn what_of(
     packages: &[InstalledPackage],
     able: &[bool],
+    provisions: &[(String, String)],
     paused: &dyn Fn(&PackageIdentity) -> bool,
     title_of: &dyn Fn(&PackageIdentity) -> String,
     path: &[PackageIdentity],
@@ -707,6 +712,7 @@ fn providers_say(
 fn root_of_requirement(
     packages: &[InstalledPackage],
     able: &[bool],
+    provisions: &[(String, String)],
     paused: &dyn Fn(&PackageIdentity) -> bool,
     title_of: &dyn Fn(&PackageIdentity) -> String,
     path: &[PackageIdentity],

@@ -2464,7 +2464,11 @@ impl registering::Host for GuestState {
                     })
                 },
             )
-            .map(|id| self.table.push(crate::registrations::RootItemHandle(id))))
+            .and_then(|id| {
+                self.table
+                    .push(crate::registrations::RootItemHandle(id))
+                    .map_err(|error| error.to_string())
+            }))
     }
 
     /// Registers a timer that fires once, `seconds` from now.
@@ -2515,7 +2519,11 @@ impl registering::Host for GuestState {
                     })
                 },
             )
-            .map(|id| self.table.push(crate::registrations::WatcherHandle(id))))
+            .and_then(|id| {
+                self.table
+                    .push(crate::registrations::WatcherHandle(id))
+                    .map_err(|error| error.to_string())
+            }))
     }
 
     /// Registers a provision of `capability`: the package provides it
@@ -2553,7 +2561,11 @@ impl registering::Host for GuestState {
                     }
                 },
             )
-            .map(|id| self.table.push(crate::registrations::ProvisionHandle(id))))
+            .and_then(|id| {
+                self.table
+                    .push(crate::registrations::ProvisionHandle(id))
+                    .map_err(|error| error.to_string())
+            }))
     }
 }
 
@@ -2585,7 +2597,7 @@ impl registering::HostRootItem for GuestState {
         own: Resource<crate::registrations::RootItemHandle>,
     ) -> wasmtime::Result<()> {
         if let Ok(handle) = self.table.delete(own) {
-            self.registrations.drop(handle.0);
+            self.registrations.release(handle.0);
         }
         Ok(())
     }
@@ -2595,7 +2607,7 @@ impl registering::HostTimer for GuestState {
     /// The handle is gone: so is the timer.
     fn drop(&mut self, own: Resource<crate::registrations::TimerHandle>) -> wasmtime::Result<()> {
         if let Ok(handle) = self.table.delete(own) {
-            self.registrations.drop(handle.0);
+            self.registrations.release(handle.0);
         }
         Ok(())
     }
@@ -2605,7 +2617,7 @@ impl registering::HostWatcher for GuestState {
     /// The handle is gone: so is the watcher.
     fn drop(&mut self, own: Resource<crate::registrations::WatcherHandle>) -> wasmtime::Result<()> {
         if let Ok(handle) = self.table.delete(own) {
-            self.registrations.drop(handle.0);
+            self.registrations.release(handle.0);
         }
         Ok(())
     }
@@ -2618,7 +2630,7 @@ impl registering::HostProvision for GuestState {
         own: Resource<crate::registrations::ProvisionHandle>,
     ) -> wasmtime::Result<()> {
         if let Ok(handle) = self.table.delete(own) {
-            self.registrations.drop(handle.0);
+            self.registrations.release(handle.0);
         }
         Ok(())
     }
@@ -2700,7 +2712,11 @@ impl GuestState {
                 })
             },
         )
-        .map(|id| self.table.push(crate::registrations::TimerHandle(id)))
+        .and_then(|id| {
+            self.table
+                .push(crate::registrations::TimerHandle(id))
+                .map_err(|error| error.to_string())
+        })
     }
 
     /// The manifest of the guest's own package, as `installed` holds it.
@@ -4311,7 +4327,7 @@ impl Host {
     async fn activate(&self, path: &Path, data: Option<PackageData>) -> Result<(), CallError> {
         let chain = self.chain();
         let _turn = self.turn_for(path, &chain).await?;
-        self.instance(path, data).await?;
+        self.instance(path, data.clone()).await?;
         let lifecycle = self
             .instances
             .borrow()
@@ -4325,17 +4341,15 @@ impl Host {
         // activation (the launcher looking again while this runs) starts
         // none, and the instance that runs it is the one the registry
         // notes.
-        if let Some(data) = data.as_ref()
-            && let Some(owner) = data.owner()
-            && let Some(generation) = data.generation().clone()
-        {
-            let (identity, _) = self
+        if let Some(data) = data.as_ref() {
+            let identity = self
                 .instances
                 .borrow()
                 .get(path)
                 .map(|instance| instance.store.data().identity)
                 .unwrap_or_default();
-            self.registrations.activated(&owner, &generation, identity);
+            self.registrations
+                .activated(data.owner(), data.generation(), identity);
         }
         let result = self
             .run_guest(path, &chain, async |instance| {
@@ -4348,14 +4362,13 @@ impl Host {
         // Activate answers nothing; only a trap fails it, as a crash of
         // the package like any call's, dropping the instance it ran in.
         match result {
-            Ok(Ok(())) => Ok(()),
-            Ok(Err(trap)) => {
+            Ok(()) => Ok(()),
+            Err(trap) => {
                 self.drop_instance(path);
                 let error = crashed(&trap, false);
                 self.report(path, data.as_ref(), Health::Crashed(error.clone()));
                 Err(error)
             }
-            Err(error) => Err(error),
         }
     }
 
@@ -4374,7 +4387,7 @@ impl Host {
     ) -> Result<(), CallError> {
         let chain = self.chain();
         let _turn = self.turn_for(path, &chain).await?;
-        self.instance(path, data).await?;
+        self.instance(path, data.clone()).await?;
         let events = self
             .instances
             .borrow()

@@ -32,7 +32,7 @@ use super::schedules::Wake;
 use super::{Launcher, WeakLauncher};
 use crate::clipboard::Clock;
 use crate::extension_data::PackageData;
-use crate::registrations::{GuestEvent, Registrations, TimerOf};
+use crate::registrations::{GuestEvent, TimerOf};
 
 /// The longest the timers thread waits before it looks again, so that a
 /// change of the system's time, or a computer waking from sleep, delays a
@@ -178,7 +178,7 @@ impl Timers {
         let timers: Vec<TimerOf> = state
             .registrations
             .as_ref()
-            .map(Registrations::timers)
+            .map(|registrations| registrations.timers())
             .unwrap_or_default();
         let mut timing = self.lock();
         let now = timing.clock.now();

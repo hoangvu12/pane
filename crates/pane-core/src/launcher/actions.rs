@@ -289,11 +289,11 @@ fn result_actions(launcher: &Launcher, state: &State) -> Option<ResultActions> {
         // is configured as a command is.
         items.push(configuration(
             ResultAction::Hotkey,
-            state.bindings.chosen().get(&row.id).is_some(),
+            state.bindings.hotkey_of(&row.id).is_some(),
         ));
         items.push(configuration(
             ResultAction::Alias,
-            state.aliases.chosen.aliases.get(&row.id).is_some(),
+            state.aliases.chosen.active_alias(&row.id).is_some(),
         ));
     }
     Some(ResultActions {

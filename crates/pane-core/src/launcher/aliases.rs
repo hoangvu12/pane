@@ -42,7 +42,7 @@ use super::{
     Opening, Row, Screen, State, Status, Unavailable, off_thread,
 };
 use crate::launch::{LaunchRecord, LaunchSource};
-use crate::packages::{InstalledPackage, PackageIdentity, paused_reason};
+use crate::packages::{PackageIdentity, paused_reason};
 use crate::runtime::FieldKind;
 use crate::search::same_text;
 
