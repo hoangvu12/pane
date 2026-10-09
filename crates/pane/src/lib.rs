@@ -118,10 +118,14 @@ pub const APP_VERSION: &str = match option_env!("PANE_PACKAGE_VERSION") {
 /// the user can uninstall; Pane does not remove it.
 ///
 /// The committed pins name the five repositories under
-/// `https://github.com/pane-app/<id>`, whose commits are placeholders
-/// until those repositories release (#279); #282 pins the real ones.
-/// A development build can replace them with a file of its own through
-/// `PANE_DEFAULTS` (see [`pane_core::defaults::pins_from_dev_env`]).
+/// `https://github.com/pane-app/<id>`, each at the commit of its
+/// repository's initial release revision — v0.5.0 for the calculator,
+/// applications and quicklinks, v0.8.0 for files, v0.6.0 for the
+/// clipboard history (#279, #282). A release's pins are what a fresh
+/// install acquires, so they are moved with the release that tested
+/// them, not between releases. A development build can replace them
+/// with a file of its own through `PANE_DEFAULTS` (see
+/// [`pane_core::defaults::pins_from_dev_env`]).
 pub fn default_extensions() -> Vec<pane_core::DefaultExtension> {
     pane_core::defaults::parse_pins(DEFAULT_EXTENSIONS_PINS)
         .expect("the committed pins are valid; a test checks them")
@@ -390,8 +394,10 @@ mod tests {
 
     /// The committed pins are well-formed: every default extension named
     /// exactly once, with a title, its own repository in Pane's
-    /// organization, a `v…` release tag and a full commit id. The commits
-    /// are placeholders until the repositories release (#279, #282).
+    /// organization, a `v…` release tag and a full commit id that is not
+    /// the placeholder all-zero one: the pins name the repositories'
+    /// initial release revisions (#282), which the placeholders stood in
+    /// for until the repositories released (#279).
     #[test]
     fn the_committed_pins_are_well_formed() {
         let pins = default_extensions();
@@ -411,6 +417,13 @@ mod tests {
             );
             assert_eq!(pin.commit.len(), 40, "{pin:?}");
             assert!(pin.commit.chars().all(|c| c.is_ascii_hexdigit()), "{pin:?}");
+            // A full id that is not the placeholder: the file's commits
+            // were all zeros until the repositories released (#279);
+            // this build pins their release revisions (#282).
+            assert_ne!(
+                pin.commit, "0000000000000000000000000000000000000000",
+                "the pin still names the placeholder commit"
+            );
         }
         // The five ids, each once: `the_default_set_is…` holds the order;
         // this holds that no id is named twice, which the parse refuses
