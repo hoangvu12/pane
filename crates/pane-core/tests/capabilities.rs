@@ -474,8 +474,8 @@ fn undeclared_capabilities_and_operations_are_refused() {
             "Call an undeclared operation of the greet capability"
         ),
         error(
-            "refused: Package a declares that it calls `greet` through `fixture:greet@1`, not \
-             `unknown`; declare it in its pane.json to call it"
+            "refused: Package a declares that it calls `greet`, `forward` and `crash` through \
+             `fixture:greet@1`, not `unknown`; declare it in its pane.json to call it"
         )
     );
 }
@@ -777,7 +777,9 @@ fn a_malformed_capability_name_is_refused() {
         );
         let message = dirs.refused(&members);
         assert!(
-            message.starts_with("Invalid pane.json: the capability name `{name}` is malformed"),
+            message.starts_with(&format!(
+                "Invalid pane.json: the capability name `{name}` is malformed"
+            )),
             "{name}: {message}"
         );
         assert!(message.contains(reason), "{name}: {message}");

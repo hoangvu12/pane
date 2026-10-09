@@ -7,7 +7,9 @@
 //! to package sources, for the chain item's identity hops. A capability's
 //! operations arrive at `run-operation` qualified by the capability, so the
 //! fixture answers `greet` with the operation name it received among other
-//! things: the proof the qualification passes through.
+//! things: the proof the qualification passes through; `forward` is reached
+//! both qualified, through the capability, and as the plain name an identity
+//! call uses, so the chain item can hop through it.
 //!
 //! Items: "Call the greet capability" calls `greet` of `fixture:greet@1`
 //! with a name; "…with no name" shows its own error; "…crash" traps; "Call
@@ -227,7 +229,7 @@ impl publish::Guest for Fixture {
                 })
                 .to_string())
             }
-            "fixture:greet@1/forward" => {
+            "fixture:greet@1/forward" | "forward" => {
                 let request: Value =
                     serde_json::from_str(&input).map_err(|error| format!("{error}"))?;
                 let field = |name: &str| request.get(name).and_then(Value::as_str).unwrap_or("");
