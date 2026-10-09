@@ -1549,12 +1549,12 @@ fn parse_uses(
                 )));
             }
         };
-        if let Some(default) = &entry.default {
-            if let Some(reason) = source_problem(default) {
-                return Err(invalid(format!(
-                    "the default `{default}` of {what} {reason}"
-                )));
-            }
+        if let Some(default) = &entry.default
+            && let Some(reason) = source_problem(default)
+        {
+            return Err(invalid(format!(
+                "the default `{default}` of {what} {reason}"
+            )));
         }
         let entry_commands = match entry.commands {
             None => None,
