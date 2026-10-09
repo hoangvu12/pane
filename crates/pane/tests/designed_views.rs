@@ -14,7 +14,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use gpui::{Entity, TestAppContext, VisualTestContext, prelude::*, px};
+use gpui::{Entity, TestAppContext, VisualTestContext, prelude::*};
 use pane::LauncherWindow;
 use pane_core::{Launcher, LauncherView, Runtime, Screen};
 
@@ -52,7 +52,7 @@ struct Opened {
 
 /// The launcher window in the `theme` (`light` or `dark`), with the Rust
 /// designed view sample's command open.
-fn open(cx: &mut TestAppContext, theme: &str) -> (Opened, &mut VisualTestContext) {
+fn open<'a>(cx: &'a mut TestAppContext, theme: &str) -> (Opened, &'a mut VisualTestContext) {
     let (sources, data) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
     cx.update(|cx| {
         pane::settings::init_with_overrides(
@@ -107,13 +107,13 @@ fn copy_folder(from: &Path, to: &Path) {
 }
 
 /// The bounds of the element with debug selector `selector`.
-fn bounds(cx: &mut VisualTestContext, selector: &str) -> gpui::Bounds<gpui::Pixels> {
+fn bounds(cx: &mut VisualTestContext, selector: &'static str) -> gpui::Bounds<gpui::Pixels> {
     cx.debug_bounds(selector)
         .unwrap_or_else(|| panic!("{selector} is not drawn"))
 }
 
 /// Whether the element with debug selector `selector` is drawn.
-fn drawn(cx: &mut VisualTestContext, selector: &str) -> bool {
+fn drawn(cx: &mut VisualTestContext, selector: &'static str) -> bool {
     cx.debug_bounds(selector).is_some()
 }
 
