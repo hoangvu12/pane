@@ -420,6 +420,10 @@ impl Launcher {
         }
         let status = outcome(&titles, saved, &problems);
         let mut state = self.lock();
+        // The data kept for them is recorded now: who waits for them names
+        // them by the title it was kept under, as the fix row beside the
+        // requirement does (see `waiting`).
+        state.recheck_waiting();
         self.end_uninstall(&mut state, epoch, &identities, status);
     }
 

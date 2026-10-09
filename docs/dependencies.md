@@ -508,6 +508,40 @@ from a full interval, its service's first cycle runs at once in the
 instance it still has, and root search asks for its results on the next
 query.
 
+### What Manage extensions shows
+
+Added for [#157](https://github.com/hoangvu12/pane/issues/157). The
+extension list and an extension's page in Settings say what waits and
+what it needs; the rows are data read from the waiting model and the
+manifests, never running anything.
+
+- The **status line** of an extension in the list gains "Enabled ·
+  Waiting for <what>" while the package waits, or "Enabled · Some
+  commands wait for <what>" when the requirement is narrowed to some
+  commands, so the broken extensions are found without opening each. A
+  disabled or paused extension says its own state, as before.
+- An **extension's page** lists each unmet requirement, with the chain
+  down to what is actually missing ("Needs Notes Sync, which waits for
+  Auth: Auth is disabled"), with a fix row beside it: "Enable <title>",
+  "Retry <title>", or "Install <title> again", which installs the
+  not-installed dependency from where it came (its identity names its
+  folder, npm package or Git repository). A fix applies at once, and the
+  requirement row disappears when the package comes back.
+- The page also lists each **cycle** the extension is part of, found from
+  the declarations alone — required dependencies, and the capabilities
+  one uses and another provides — healthy cycles included: they run, as
+  [ADR 0041](adr/0041-extensions-compose-through-capabilities-that-pane-brokers.md)
+  decides. "Requires itself through B and C: they wait together if one
+  cannot run, and Disable all or Uninstall all affects them together."
+
+Required capabilities join the requirement rows and their fix rows with
+[#156](https://github.com/hoangvu12/pane/issues/156) — "Install
+<default> (named by <title>)", "Choose a provider in Settings"
+([#154](https://github.com/hoangvu12/pane/issues/154)) or "Install an
+extension that provides <capability>", which opens the install forms —
+and the status line's narrowing. An optional requirement never shows as
+unmet.
+
 ## For later slices
 
 A plan (`crates/pane-core/src/dependencies.rs`) is data: its required edges
@@ -556,6 +590,16 @@ packages that require it — data, the wording living in
 - The native smokes install the [dependencies sample](../guests/sample-dependencies/src/lib.rs)
   and show "Hello, Pane, from JavaScript" in the real window (frames 75 to
   77; [Linux](platforms/linux.md#dependencies-42)).
+- [`crates/pane-core/tests/extension_details.rs`](../crates/pane-core/tests/extension_details.rs)
+  drives what Manage extensions shows of them (#157): the status line of
+  a waiting package, each unmet requirement with the chain down to what
+  is actually missing and its fix row (Enable, Retry, installing a
+  not-installed dependency again), what a package provides with which
+  provider serves it and who uses it, and the cycles of dependencies and
+  of capabilities, on every member; an optional requirement never shows.
+- `crates/pane/tests/settings.rs` drives the pages with real key events
+  and clicks: the waiting status line, the requirement, provider and
+  cycle rows of an extension's page, and each fix action.
 - [`crates/pane-core/tests/waiting.rs`](../crates/pane-core/tests/waiting.rs)
   drives the waiting commands themselves (#152): a dependent waiting while
   its required dependency is disabled, paused, uninstalled or waiting
@@ -648,8 +692,7 @@ packages that require it — data, the wording living in
 - Waiting covers only what the packages' `pane.json` files already declare:
   the requirement is a whole package, a capability of it, or (for a
   capability) a use narrowed to some of its commands — never one operation
-  of it. The Manage extensions rows that would list and fix each one are
-  #157's.
+  of it.
 - Only the extension list asks about dependents; `Launcher::set_enabled`
   and `Launcher::uninstall` (used by tests and internal callers) change one
   package. The extension list offers no way to uninstall a required

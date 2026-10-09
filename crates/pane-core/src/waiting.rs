@@ -75,28 +75,72 @@ pub(crate) struct Reason {
     /// "<title> is waiting for <what>", what a call to its operations is
     /// answered with.
     pub(crate) calling: String,
-    /// What the fix row beside the reason offers.
+    /// Each requirement that is not met, in the order the manifest
+    /// declares them, each with the chain down to what is actually
+    /// missing and the fix for it: what a package's page in Settings
+    /// lists, one requirement row beside one fix row (#157). The row above
+    /// joins the chains; the fix below is the first's.
+    pub(crate) requirements: Vec<Requirement>,
+    /// What the fix row beside the reason offers: the first requirement's
+    /// fix.
+    pub(crate) fix: Fix,
+}
+
+impl Reason {
+    /// What the package waits for, as the extension list's status line
+    /// says it (#157): its requirements' chains joined, "Greeter, which
+    /// is disabled".
+    pub(crate) fn what(&self) -> String {
+        let whats: Vec<String> = self
+            .requirements
+            .iter()
+            .map(|requirement| requirement.what.clone())
+            .collect();
+        platform::join(&whats)
+    }
+}
+
+/// One requirement of a waiting package that is not met (see `Reason`):
+/// the chain down to what is actually missing, and what fixes it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Requirement {
+    /// "Greeter, which is disabled", or, down a chain, "Notes Sync, which
+    /// waits for Auth: Auth is disabled": the chain down to what is
+    /// actually missing, not the package that waits for it.
+    pub(crate) what: String,
+    /// What fixes it: the chain's root cause, as the fix row beside the
+    /// requirement shows it (see `Fix`).
     pub(crate) fix: Fix,
 }
 
 /// What fixes a wait, as the fix row beside the reason shows it: "Enable
-/// <title>", "Retry <title>", an install row, or "Open Manage extensions".
+/// <title>", "Retry <title>", "Install <title> again", an install row
+/// for a capability's provider, a choice of provider in Settings, or
+/// "Open Manage extensions".
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Fix {
     /// Enable the disabled package the chain of waits ends at.
     Enable(PackageIdentity),
     /// Retry the paused package the chain of waits ends at.
     Retry(PackageIdentity),
+    /// Install again the package the chain of waits ends at, which is not
+    /// installed. From root search the row beside the reason offers
+    /// Manage extensions, whose pages install it; the page of the
+    /// package that waits installs it directly.
+    Install(PackageIdentity),
     /// Install a provider of the capability the chain of waits ends at,
     /// from the install forms: the default its use names, or any extension
     /// that provides the capability.
-    Install {
+    InstallProvider {
         capability: String,
         /// The default the use names, written as a dependency's source is,
         /// for the row to name.
         default: Option<String>,
     },
-    /// Nothing Pane can do directly: what it waits for is not installed.
+    /// Choose a provider in Settings' Capabilities section: the capability
+    /// has two or more installed providers, and none can serve it now.
+    Choose,
+    /// Nothing Pane can do directly: the chain of waits cannot be named.
     Manage,
 }
 
@@ -223,10 +267,22 @@ impl Waiting {
         self.reason(identity)
             .or_else(|| self.commands.get(identity).and_then(|why| why.get(command)))
     }
+
+    /// The reasons of the commands of the package with `identity` that
+    /// wait alone, for a use narrowed with `commands` while the package
+    /// itself runs: what its row and the extension list's status line say
+    /// of it. Empty when the whole package waits or none does.
+    pub(crate) fn command_reasons(&self, identity: &PackageIdentity) -> Vec<&Reason> {
+        self.commands
+            .get(identity)
+            .map(|why| why.values().collect())
+            .unwrap_or_default()
+    }
 }
 
-/// One requirement of a waiting package that is not met.
-enum Requirement {
+/// One requirement of a waiting package that is not met, of either kind:
+/// the chain and fix for it are a [`Requirement`].
+enum Missing {
     /// A required dependency: missing, disabled, paused or waiting itself.
     Dependency(UnmetDependency),
     /// A required capability with no provider that can serve it.
@@ -288,7 +344,7 @@ fn unmet_of(
     paused: &dyn Fn(&PackageIdentity) -> bool,
     title_of: &dyn Fn(&PackageIdentity) -> String,
     package: &InstalledPackage,
-) -> Vec<Requirement> {
+) -> Vec<Missing> {
     let Ok(manifest) = &package.manifest else {
         // A package whose manifest cannot be read is broken its own way;
         // it declares nothing Pane can check here.
@@ -307,7 +363,7 @@ fn unmet_of(
             {
                 Some((index, dependency)) => (index, dependency),
                 None => {
-                    return Some(Requirement::Dependency(UnmetDependency {
+                    return Some(Missing::Dependency(UnmetDependency {
                         title: title_of(&identity),
                         state: Some(Unmet::NotInstalled),
                         identity,
@@ -315,14 +371,14 @@ fn unmet_of(
                 }
             };
             if !dependency.enabled {
-                return Some(Requirement::Dependency(UnmetDependency {
+                return Some(Missing::Dependency(UnmetDependency {
                     title: dependency.title(),
                     state: Some(Unmet::Disabled),
                     identity,
                 }));
             }
             if paused(&dependency.identity) {
-                return Some(Requirement::Dependency(UnmetDependency {
+                return Some(Missing::Dependency(UnmetDependency {
                     title: dependency.title(),
                     state: Some(Unmet::Paused),
                     identity,
@@ -331,14 +387,14 @@ fn unmet_of(
             // It is installed, enabled and unpaused: it either waits for
             // another, or serves and the requirement is met.
             (!able[index]).then(|| {
-                Requirement::Dependency(UnmetDependency {
+                Missing::Dependency(UnmetDependency {
                     title: dependency.title(),
                     state: None,
                     identity,
                 })
             })
         })
-        .collect::<Vec<Requirement>>();
+        .collect::<Vec<Missing>>();
     // A use of every provider never makes a command wait: a call to it
     // degrades to an empty list. A use narrowed with `commands` waits in
     // `Waiting`'s commands, not here: the package still runs, and only
@@ -349,7 +405,7 @@ fn unmet_of(
             .iter()
             .filter(|used| used.required && !used.use_all && used.commands.is_none())
             .filter_map(|used| {
-                unmet_capability(packages, able, paused, package, used).map(Requirement::Capability)
+                unmet_capability(packages, able, paused, package, used).map(Missing::Capability)
             }),
     );
     requirements
@@ -435,7 +491,7 @@ fn root_of(
         .next()?;
     match first {
         // The dependency is what is actually missing.
-        Requirement::Dependency(unmet) => match unmet.state {
+        Missing::Dependency(unmet) => match unmet.state {
             Some(state) => Some(Root::Package(unmet.identity, state)),
             // It waits for another: follow the chain on, guarding a cycle.
             None => {
@@ -450,7 +506,7 @@ fn root_of(
         // The capability is what is actually missing: a provider the user
         // can enable or retry, or the capability itself, whose fix row
         // installs a provider.
-        Requirement::Capability(unmet) => Some(root_of_capability(
+        Missing::Capability(unmet) => Some(root_of_capability(
             packages, able, paused, title_of, path, &unmet,
         )),
     }
@@ -510,8 +566,8 @@ impl Root {
         match self {
             Root::Package(identity, Unmet::Disabled) => Fix::Enable(identity.clone()),
             Root::Package(identity, Unmet::Paused) => Fix::Retry(identity.clone()),
-            Root::Package(_, Unmet::NotInstalled) => Fix::Manage,
-            Root::Capability(capability, _, default) => Fix::Install {
+            Root::Package(identity, Unmet::NotInstalled) => Fix::Install(identity.clone()),
+            Root::Capability(capability, _, default) => Fix::InstallProvider {
                 capability: capability.clone(),
                 default: default.clone(),
             },
@@ -534,7 +590,8 @@ impl Root {
 
 /// Why `package` waits, from its unmet required dependencies and
 /// capabilities: what its commands' rows say, what a call to its
-/// operations is answered with, and what fixes it.
+/// operations is answered with, each requirement that is not met, and
+/// what fixes the first of them.
 fn reason(
     packages: &[InstalledPackage],
     able: &[bool],
@@ -542,21 +599,83 @@ fn reason(
     title_of: &dyn Fn(&PackageIdentity) -> String,
     package: &InstalledPackage,
 ) -> Reason {
-    let requirements = unmet_of(packages, able, paused, title_of, package);
+    let unmets = unmet_of(packages, able, paused, title_of, package);
     let path = [package.identity.clone()];
+    let requirements: Vec<Requirement> = unmets
+        .iter()
+        .map(|unmet| {
+            let what = what_of(packages, able, paused, title_of, &path, unmet);
+            Requirement {
+                what,
+                fix: fix_of(packages, able, paused, title_of, package, unmet),
+            }
+        })
+        .collect();
     let whats: Vec<String> = requirements
         .iter()
-        .map(|requirement| what_of(packages, able, paused, title_of, &path, requirement))
+        .map(|requirement| requirement.what.clone())
         .collect();
     let what = platform::join(&whats);
     Reason {
         row: format!("Needs {what}"),
         calling: format!("{} is waiting for {what}", package.title()),
-        // The first requirement's root cause is what the fix row fixes.
         fix: requirements
             .first()
-            .map(|first| root_of_requirement(packages, able, paused, title_of, &path, first).fix())
+            .map(|requirement| requirement.fix.clone())
             .unwrap_or(Fix::Manage),
+        requirements,
+    }
+}
+
+/// What fixes one unmet requirement of `package`: the chain's root cause,
+/// as the fix row beside the requirement shows it. The requirement itself
+/// being what is actually missing, the fix is for it; waiting for another,
+/// it is for what that one waits for.
+fn fix_of(
+    packages: &[InstalledPackage],
+    able: &[bool],
+    paused: &dyn Fn(&PackageIdentity) -> bool,
+    title_of: &dyn Fn(&PackageIdentity) -> String,
+    package: &InstalledPackage,
+    missing: &Missing,
+) -> Fix {
+    match missing {
+        Missing::Dependency(unmet) => match unmet.state {
+            // The dependency is what is actually missing.
+            Some(Unmet::Disabled) => Fix::Enable(unmet.identity.clone()),
+            Some(Unmet::Paused) => Fix::Retry(unmet.identity.clone()),
+            Some(Unmet::NotInstalled) => Fix::Install(unmet.identity.clone()),
+            // It waits for another: the chain's root is what to fix.
+            None => {
+                let path = [package.identity.clone(), unmet.identity.clone()];
+                match root_of(packages, able, paused, title_of, &path) {
+                    Some((identity, _, Unmet::Disabled)) => Fix::Enable(identity),
+                    Some((identity, _, Unmet::Paused)) => Fix::Retry(identity),
+                    Some((identity, _, Unmet::NotInstalled)) => Fix::Install(identity),
+                    None => Fix::Manage,
+                }
+            }
+        },
+        // The capability is what is actually missing: a provider of it.
+        Missing::Capability(unmet) => {
+            let path = [package.identity.clone()];
+            capability_fix(
+                root_of_capability(packages, able, paused, title_of, &path, unmet),
+                unmet,
+            )
+        }
+    }
+}
+
+/// What fixes an unmet capability requirement from its chain's root: the
+/// root's fix, with the choice among two or more installed providers,
+/// which the Settings Capabilities section offers, before installing one
+/// nobody has.
+fn capability_fix(root: Root, unmet: &UnmetCapability) -> Fix {
+    match &root {
+        Root::Capability(_, _, Some(_)) => root.fix(),
+        Root::Capability(..) if unmet.providers.len() >= 2 => Fix::Choose,
+        _ => root.fix(),
     }
 }
 
@@ -574,10 +693,18 @@ fn capability_reason(
 ) -> Reason {
     let path = [package.identity.clone()];
     let what = capability_what(packages, able, paused, title_of, &path, unmet);
+    let fix = capability_fix(
+        root_of_capability(packages, able, paused, title_of, &path, unmet),
+        unmet,
+    );
     Reason {
         row: format!("Needs {what}"),
         calling: format!("{} is waiting for {what}", package.title()),
-        fix: root_of_capability(packages, able, paused, title_of, &path, unmet).fix(),
+        requirements: vec![Requirement {
+            what,
+            fix: fix.clone(),
+        }],
+        fix,
     }
 }
 
@@ -592,10 +719,10 @@ fn what_of(
     paused: &dyn Fn(&PackageIdentity) -> bool,
     title_of: &dyn Fn(&PackageIdentity) -> String,
     path: &[PackageIdentity],
-    requirement: &Requirement,
+    requirement: &Missing,
 ) -> String {
     match requirement {
-        Requirement::Dependency(unmet) => {
+        Missing::Dependency(unmet) => {
             let Some(state) = unmet.state else {
                 // It waits for another: what is actually missing is at the
                 // end of its chain, or beyond naming if the chain is a
@@ -611,7 +738,7 @@ fn what_of(
             };
             format!("{}, which is {}", unmet.title, state.state())
         }
-        Requirement::Capability(unmet) => {
+        Missing::Capability(unmet) => {
             capability_what(packages, able, paused, title_of, path, unmet)
         }
     }
@@ -672,30 +799,4 @@ fn providers_say(
         })
         .collect();
     platform::join(&says)
-}
-
-/// The root of the chain of waits behind one unmet requirement, as
-/// [`root_of`] follows it.
-fn root_of_requirement(
-    packages: &[InstalledPackage],
-    able: &[bool],
-    paused: &dyn Fn(&PackageIdentity) -> bool,
-    title_of: &dyn Fn(&PackageIdentity) -> String,
-    path: &[PackageIdentity],
-    requirement: &Requirement,
-) -> Root {
-    match requirement {
-        Requirement::Dependency(unmet) => match unmet.state {
-            Some(state) => Root::Package(unmet.identity.clone(), state),
-            None => {
-                let mut path = path.to_vec();
-                path.push(unmet.identity.clone());
-                root_of(packages, able, paused, title_of, &path)
-                    .unwrap_or(Root::Package(unmet.identity.clone(), Unmet::NotInstalled))
-            }
-        },
-        Requirement::Capability(unmet) => {
-            root_of_capability(packages, able, paused, title_of, path, unmet)
-        }
-    }
 }

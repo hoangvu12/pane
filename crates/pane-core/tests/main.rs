@@ -34,6 +34,7 @@ mod develop;
 mod develop_builds;
 mod disable;
 mod disable_dependents;
+mod extension_details;
 mod extension_log;
 mod extension_pages;
 mod feedback;

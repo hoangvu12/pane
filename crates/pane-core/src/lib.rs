@@ -73,12 +73,14 @@ pub use launcher::search_files;
 pub use launcher::{
     AliasOutcome, ApplicationUpdate, BuildFailure, Capability, CapabilityProvider,
     CommandPreferences, CommandRegistration, ComputedAnswer, CustomViewSnapshot, Development,
-    ExtensionMark, ExtensionOperation, FormField, FormView, HotkeyOutcome, ItemAction, ItemActions,
-    Launcher, LauncherView, ListPresentation, MANAGE_EXTENSIONS, OpenSubmenu, OperationKind,
-    PackagePreferences, PinTarget, PreferenceField, PreferencesTarget, Presentation, Question,
-    QuickSlot, ResultAction, ResultActionItem, ResultActions, Row, RowKind, RowPresentation,
+    ExtensionDetails, ExtensionMark, ExtensionOperation, ExtensionWait, FixAction, FormField,
+    FormView, HotkeyOutcome, ItemAction, ItemActions, Launcher, LauncherView, ListPresentation,
+    MANAGE_EXTENSIONS, OpenSubmenu, OperationKind, PackagePreferences, PinTarget, PreferenceField,
+    PreferencesTarget, Presentation, ProvidedCapability, Question, QuickSlot, RequirementCycle,
+    RequirementFix, ResultAction, ResultActionItem, ResultActions, Row, RowKind, RowPresentation,
     Screen, Section, SelectedAction, SettingsTarget, SetupHeader, ShortcutCatalog, ShortcutCommand,
-    ShortcutGroup, SlotChange, Status, SubmenuState, Unavailable, UnboundShortcut, UpdateHold,
+    ShortcutGroup, SlotChange, Status, SubmenuState, Unavailable, UnboundShortcut, UnmetRequirement,
+    UpdateHold,
     answer_sections, root_sections,
 };
 pub use links::LinkOpener;

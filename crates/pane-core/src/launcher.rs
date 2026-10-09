@@ -117,7 +117,10 @@ pub use capability_choices::{Capability, CapabilityProvider};
 use choices::Record;
 use developing::Developing;
 pub use developing::{BuildFailure, Development};
-pub use extensions::{ExtensionMark, ExtensionOperation, OperationKind};
+pub use extensions::{
+    ExtensionDetails, ExtensionMark, ExtensionOperation, ExtensionWait, FixAction, OperationKind,
+    ProvidedCapability, RequirementCycle, RequirementFix, UnmetRequirement,
+};
 pub use hotkeys::HotkeyOutcome;
 use hotkeys::{Bindings, OpenPane};
 pub use item_actions::{ItemAction, ItemActions, UnboundShortcut};
@@ -4023,7 +4026,7 @@ impl Launcher {
             // its use names, or any extension that provides it. Either way
             // the row opens one of Settings' install forms, where a
             // provider is chosen and installed.
-            Fix::Install {
+            Fix::InstallProvider {
                 capability,
                 default,
             } => {
@@ -4058,7 +4061,12 @@ impl Launcher {
                     entry,
                 )
             }
-            Fix::Manage => (
+            // What it waits for is not installed, or the choice among
+            // providers is the user's: from root search, the way to it is
+            // Manage extensions, whose pages offer the install (the fix
+            // row on the waiting package's page installs it directly) and
+            // the Capabilities section to choose in.
+            Fix::Choose | Fix::Install(_) | Fix::Manage => (
                 Row {
                     id: MANAGE_EXTENSIONS.into(),
                     title: "Open Manage extensions".into(),
