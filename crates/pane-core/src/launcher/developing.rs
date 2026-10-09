@@ -388,7 +388,9 @@ impl Launcher {
                 }
             });
         if let Err(error) = spawned {
-            eprintln!("pane: the Logs screen of {identity} will not follow its lines: {error}");
+            crate::diagnostic!(
+                "pane: the Logs screen of {identity} will not follow its lines: {error}"
+            );
         }
     }
 
