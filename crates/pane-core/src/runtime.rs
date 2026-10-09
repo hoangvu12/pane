@@ -179,7 +179,7 @@ use crate::helpers;
 use crate::helpers::runner::{self, HelperError, HelperErrorKind, Helpers, Running, Spec};
 use crate::launch::{LaunchRecord, LaunchRequest, LaunchSource, LaunchType, Launches};
 use crate::operations::{
-    self, Addressed, Answer, Directory, OperationCall, OperationError, Target,
+    self, Addressed, Directory, OperationAnswer, OperationCall, OperationError, Target,
 };
 use crate::packages::EXTENSION_API;
 
@@ -4066,9 +4066,8 @@ impl Host {
         // A call the guest sent but did not wait for before its call ended
         // has no frame to serve it.
         while let Ok(stranded) = calls.try_recv() {
-            let _ = stranded
-                .reply
-                .send(stranded.unanswered(operations::outside_a_call()));
+            let answer = stranded.unanswered(operations::outside_a_call());
+            let _ = stranded.reply.send(answer);
         }
         instance.calls = Some(calls);
         match result {
@@ -4107,8 +4106,8 @@ impl Host {
             return;
         }
         let answer = match call.addressed {
-            Addressed::Every { .. } => self.every(&mut call, chain).await.map(Answer::Every),
-            _ => self.operation(&mut call, chain).await.map(Answer::One),
+            Addressed::Every { .. } => OperationAnswer::Every(self.every(&mut call, chain).await),
+            _ => OperationAnswer::One(self.operation(&mut call, chain).await),
         };
         let _ = call.reply.send(answer);
     }

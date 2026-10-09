@@ -170,7 +170,7 @@ pub(crate) struct OperationCall {
     /// ([`Addressed::operation_name`]).
     pub operation: String,
     pub input: String,
-    pub reply: oneshot::Sender<Answer>,
+    pub reply: oneshot::Sender<OperationAnswer>,
 }
 
 /// How a call names the package that serves it.
@@ -208,7 +208,7 @@ impl Addressed {
 }
 
 /// The answer to a call a guest made: one target's, or every provider's.
-pub(crate) enum Answer {
+pub(crate) enum OperationAnswer {
     /// The answer of a call to one target.
     One(Result<String, OperationError>),
     /// The answers of a call to every provider of a capability, or why the
@@ -220,11 +220,11 @@ impl OperationCall {
     /// The answer saying the call could not be made at all, of this call's
     /// own shape: a stranded call, one whose runtime stopped, answers with
     /// it.
-    pub(crate) fn unanswered(&self, error: OperationError) -> Answer {
+    pub(crate) fn unanswered(&self, error: OperationError) -> OperationAnswer {
         if self.addressed.is_every() {
-            Answer::Every(Err(error))
+            OperationAnswer::Every(Err(error))
         } else {
-            Answer::One(Err(error))
+            OperationAnswer::One(Err(error))
         }
     }
 }
@@ -860,10 +860,10 @@ impl<T> operations::HostWithStore<T> for Calls {
         .await
         .map_err(operations::CallError::from)?;
         match answer {
-            Answer::One(result) => result.map_err(operations::CallError::from),
+            OperationAnswer::One(result) => result.map_err(operations::CallError::from),
             // Only a call addressed to every provider is answered with
             // every provider's answers.
-            Answer::Every(_) => unreachable!("a call to one target answered with many"),
+            OperationAnswer::Every(_) => unreachable!("a call to one target answered with many"),
         }
     }
 
@@ -882,10 +882,10 @@ impl<T> operations::HostWithStore<T> for Calls {
         .await
         .map_err(operations::CallError::from)?;
         match answer {
-            Answer::One(result) => result.map_err(operations::CallError::from),
+            OperationAnswer::One(result) => result.map_err(operations::CallError::from),
             // Only a call addressed to every provider is answered with
             // every provider's answers.
-            Answer::Every(_) => unreachable!("a call to one target answered with many"),
+            OperationAnswer::Every(_) => unreachable!("a call to one target answered with many"),
         }
     }
 
@@ -899,7 +899,7 @@ impl<T> operations::HostWithStore<T> for Calls {
             .await
             .map_err(operations::CallError::from)?;
         match answer {
-            Answer::Every(result) => result
+            OperationAnswer::Every(result) => result
                 .map(|answers| {
                     answers
                         .into_iter()
@@ -913,7 +913,7 @@ impl<T> operations::HostWithStore<T> for Calls {
                 .map_err(operations::CallError::from),
             // Only a call addressed to one target is answered with one
             // target's answer.
-            Answer::One(_) => unreachable!("a fan-out call answered with one target's answer"),
+            OperationAnswer::One(_) => unreachable!("a fan-out answered with one answer"),
         }
     }
 
@@ -937,7 +937,7 @@ async fn send<T>(
     addressed: Addressed,
     operation: String,
     input: String,
-) -> Result<Answer, OperationError> {
+) -> Result<OperationAnswer, OperationError> {
     let every = addressed.is_every();
     let (reply, response) = oneshot::channel();
     let sent = accessor.with(|mut view| {
@@ -965,11 +965,11 @@ async fn send<T>(
     match sent {
         // The runtime answers in the shape the call was sent with; one
         // that stopped without answering leaves the reply dropped.
-        Ok(()) => Ok(response.await.unwrap_or_else(|| {
+        Ok(()) => Ok(response.await.unwrap_or_else(|_| {
             if every {
-                Answer::Every(Err(stopped()))
+                OperationAnswer::Every(Err(stopped()))
             } else {
-                Answer::One(Err(stopped()))
+                OperationAnswer::One(Err(stopped()))
             }
         })),
         Err(error) => Err(error),
