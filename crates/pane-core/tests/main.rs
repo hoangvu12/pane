@@ -50,6 +50,7 @@ mod local_channel;
 mod memory;
 mod no_view;
 mod npm;
+mod official_extensions;
 mod operations;
 mod packages;
 mod paste;
