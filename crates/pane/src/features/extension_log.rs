@@ -146,7 +146,9 @@ impl ExtensionLogView {
             .cloned();
         self.lines = lines;
         if added {
-            self.list.state().splice(kept..kept, self.lines.len() - kept);
+            self.list
+                .state()
+                .splice(kept..kept, self.lines.len() - kept);
             // Each line is a line high: the list knows where the new ones
             // end before it draws them.
             let _ = self
@@ -387,8 +389,9 @@ impl LauncherWindow {
         self.launcher.clear_extension_log(&log.identity);
         log.follow();
         log.read(&self.launcher);
-        self.launcher
-            .show_status(Status::Result("Cleared the log; its log file keeps every line".into()));
+        self.launcher.show_status(Status::Result(
+            "Cleared the log; its log file keeps every line".into(),
+        ));
         cx.notify();
     }
 
@@ -417,10 +420,7 @@ impl LauncherWindow {
     /// lines, drawn virtually, or what it says while there are none. It
     /// holds the keyboard's focus. `None` until the screen is read
     /// ([`LauncherWindow::sync_extension_log`]).
-    pub(crate) fn render_extension_log(
-        &mut self,
-        cx: &mut Context<Self>,
-    ) -> Option<Stateful<Div>> {
+    pub(crate) fn render_extension_log(&mut self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
         let theme = crate::settings::launcher_visuals(cx).theme;
         let log = self.log.as_mut()?;
         log.sync_following();
@@ -460,9 +460,21 @@ impl LauncherWindow {
             .gap(px(4.))
             .px(theme.geometry.search_padding_x)
             .pb(px(6.))
-            .child(log_button("log-copy-all", "Copy All", "shift-c", copy_all, &theme))
+            .child(log_button(
+                "log-copy-all",
+                "Copy All",
+                "shift-c",
+                copy_all,
+                &theme,
+            ))
             .child(log_button("log-clear", "Clear", "l", clear, &theme))
-            .child(log_button("log-open-file", "Open Log File", "o", open, &theme));
+            .child(log_button(
+                "log-open-file",
+                "Open Log File",
+                "o",
+                open,
+                &theme,
+            ));
         let lines = if empty {
             div()
                 .debug_selector(|| "log-empty".into())
@@ -630,12 +642,19 @@ fn log_button(
     theme: &Theme,
 ) -> Stateful<Div> {
     let keys = chord_keys(key);
-    footer::footer_button(id, label, &keys, CapStyle::Regular, ButtonWash::Hover, theme)
-        .role(Role::Button)
-        .aria_label(label)
-        .aria_keyshortcuts(keys.name())
-        .cursor_pointer()
-        .on_click(clicked)
+    footer::footer_button(
+        id,
+        label,
+        &keys,
+        CapStyle::Regular,
+        ButtonWash::Hover,
+        theme,
+    )
+    .role(Role::Button)
+    .aria_label(label)
+    .aria_keyshortcuts(keys.name())
+    .cursor_pointer()
+    .on_click(clicked)
 }
 
 /// The tone a line of `level` is drawn in.

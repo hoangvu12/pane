@@ -329,7 +329,9 @@ impl Launcher {
         let links = self.links.clone();
         async move {
             let Some(file) = file else {
-                return Err(format!("{title} has no log file: it is not being developed"));
+                return Err(format!(
+                    "{title} has no log file: it is not being developed"
+                ));
             };
             let opened = file.clone();
             off_thread(move || links.open_file(&file))
@@ -340,11 +342,12 @@ impl Launcher {
     }
 
     /// Shows the extension log of the package with `identity`, "Logs for
-    /// <title>": the window reads its lines ([`Launcher::extension_log`])
-    /// and draws them as they come.
+    /// <title>", in place of whatever the launcher showed (Settings opens it
+    /// too, over an open command, which is left): the window reads its
+    /// lines ([`Launcher::extension_log`]) and draws them as they come.
     pub(super) fn show_extension_log(&self, state: &mut State, identity: &PackageIdentity) {
         let title = state.title_of(identity);
-        state.next_screen();
+        self.leave_command(state);
         state.entries = Vec::new();
         let screen = Screen::ExtensionLog {
             identity: identity.clone(),

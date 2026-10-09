@@ -526,7 +526,10 @@ fn the_log_file_opens_through_pane_and_clearing_the_log_keeps_it() {
     pane.launcher.clear_extension_log(&identity);
     assert!(pane.log(&identity).is_empty());
     let kept = fs::read_to_string(&file).unwrap();
-    assert!(kept.contains(" info  stdout [open] an info line\n"), "{kept}");
+    assert!(
+        kept.contains(" info  stdout [open] an info line\n"),
+        "{kept}"
+    );
 
     // Once it is not developed, there is no log file to open.
     pane.launcher.stop_developing(&identity);
