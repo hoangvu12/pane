@@ -9,9 +9,12 @@
 //! under it each installed extension has an entry of its own — its icon,
 //! its title, and a mark in a word while it is paused, broken or updating
 //! ([`sidebar_entries`]). The entry itself opens the group's page: the
-//! installed extensions as a list, what governs them all (automatic
-//! updates), what belongs to none of them (the runtime's rows, data kept
-//! for an uninstalled extension), and the install sources.
+//! installed extensions as a list, the capabilities two or more of them
+//! provide (each with the provider the user chooses for it, #154; the
+//! choice applies to the next call, with nothing reloaded), what governs
+//! them all (automatic updates), what belongs to none of them (the
+//! runtime's rows, data kept for an uninstalled extension), and the
+//! install sources.
 //!
 //! **An extension's page.** Its large icon, title, description and source
 //! at the top, with the mark that needs saying; its enable switch; its
@@ -180,6 +183,9 @@ pub(crate) struct State {
     fields: HashMap<String, (Entity<EditableTextState>, Subscription)>,
     /// Each dropdown preference's select by [`field_key`].
     selects: HashMap<String, PreferenceSelect>,
+    /// Each capability's select by its name, for the group page's
+    /// Capabilities section (#154).
+    capability_selects: HashMap<String, CapabilitySelect>,
     /// Why the last change of a preference could not be saved, if it
     /// could not; shown as the page's status.
     problem: Option<String>,
@@ -224,6 +230,17 @@ struct PreferenceSelect {
     /// changing them makes it again.
     labels: SelectLabels,
     /// The options and the value in force as the page last drew them,
+    /// which the select's model reads live.
+    live: Rc<RefCell<SelectLive>>,
+}
+
+/// A capability's select, the group page's Capabilities section's (#154):
+/// the shared searchable select over the capability's providers, told the
+/// providers and the provider in force each time the section draws. The
+/// capability's name is stable, so the select is made once.
+struct CapabilitySelect {
+    select: Entity<Select>,
+    /// The providers and the provider in force as the page last drew them,
     /// which the select's model reads live.
     live: Rc<RefCell<SelectLive>>,
 }
@@ -1063,6 +1080,11 @@ fn group_page(
             .into_any_element(),
         );
     }
+    // The capabilities two or more of them provide, each with the provider
+    // the user chooses for it (#154).
+    if let Some(capabilities) = capabilities_section(this, theme, window, cx) {
+        content.push(capabilities);
+    }
     // The operations that belong to no installed extension: the
     // runtime's, data kept for an uninstalled one; then every extension's
     // automatic updates.
@@ -1219,6 +1241,152 @@ fn install_section(
     controls::section(Some("Install".into()), controls::card(rows, theme), theme)
         .debug_selector(|| "extension-section-Install".into())
         .into_any_element()
+}
+
+/// The group page's Capabilities section (#154): each capability two or
+/// more installed extensions provide, with a dropdown of its providers
+/// ([`crate::ui::select`], committing through
+/// [`pane_core::Launcher::choose_provider`]), the consumers that use it,
+/// and "<chosen> is disabled; using <other>" (or paused, waiting) while
+/// the choice falls back. `None` when no capability has two or more
+/// providers: a capability with one needs no choice. Its rows' debug
+/// selectors are the select's own under `capability-select-<name>`; the
+/// row is `capability-<name>`, its consumers line
+/// `capability-used-<name>` and the note `capability-note-<name>`.
+fn capabilities_section(
+    this: &mut SettingsWindow,
+    theme: &Theme,
+    window: &mut Window,
+    cx: &mut Context<SettingsWindow>,
+) -> Option<AnyElement> {
+    let capabilities = this.launcher.capabilities();
+    if capabilities.is_empty() {
+        return None;
+    }
+    let mut rows = Vec::new();
+    for capability in &capabilities {
+        let name = capability.name.clone();
+        let select = capability_select(this, capability, window, cx);
+        let mut lines = Vec::new();
+        if !capability.consumers.is_empty() {
+            let selector = format!("capability-used-{name}");
+            lines.push(
+                controls::field_description(
+                    format!("Used by {}", joined(&capability.consumers)),
+                    theme.text_muted,
+                    theme,
+                )
+                .truncate()
+                .debug_selector(move || selector)
+                .into_any_element(),
+            );
+        }
+        if let Some(fallback) = &capability.fallback {
+            let selector = format!("capability-note-{name}");
+            lines.push(
+                controls::field_description(fallback.clone(), theme.warning, theme)
+                    .debug_selector(move || selector)
+                    .into_any_element(),
+            );
+        }
+        let selector = format!("capability-{name}");
+        rows.push(
+            controls::setting_row(name, lines, theme)
+                .child(div().flex_none().child(select))
+                .id(SharedString::from(selector.clone()))
+                .debug_selector(move || selector)
+                .into_any_element(),
+        );
+    }
+    Some(
+        controls::section(
+            Some("Capabilities".into()),
+            controls::card(rows, theme),
+            theme,
+        )
+        .debug_selector(|| "extension-section-Capabilities".into())
+        .into_any_element(),
+    )
+}
+
+/// The select of the capability `capability`, as the Capabilities section
+/// offers it: made the first time the section draws it and kept, told the
+/// providers and the provider in force each time it draws. A choice is
+/// recorded as it is made ([`choose_provider`]), and applies to the next
+/// call, without reloading or restarting any consumer.
+fn capability_select(
+    this: &mut SettingsWindow,
+    capability: &pane_core::Capability,
+    window: &mut Window,
+    cx: &mut Context<SettingsWindow>,
+) -> Entity<Select> {
+    let name = capability.name.clone();
+    if !this.extensions.capability_selects.contains_key(&name) {
+        let live = Rc::new(RefCell::new(SelectLive::default()));
+        let read = live.clone();
+        let settings = cx.entity().downgrade();
+        let what = name.clone();
+        // The trigger is named for what it chooses, not the capability's
+        // name again: the row's label already says that, and a name of its
+        // own is what the smoke and a screen reader reach it by.
+        let combo = format!("Provider for {what}");
+        let debug = format!("capability-select-{what}");
+        let select = cx.new(|cx| {
+            Select::new(
+                combo,
+                "Which extension provides it",
+                debug,
+                Rc::new(move |cx: &App| {
+                    let visuals = crate::settings::visuals(cx);
+                    let live = read.borrow();
+                    Model {
+                        theme: visuals.theme,
+                        material: visuals.material,
+                        choices: live.choices.clone(),
+                        committed: live.committed.clone(),
+                    }
+                }),
+                Rc::new(move |provider: &str, _: &mut Window, cx: &mut App| {
+                    settings
+                        .update(cx, |this, cx| {
+                            choose_provider(this, &what, provider, cx);
+                        })
+                        .ok();
+                }),
+                window,
+                cx,
+            )
+        });
+        this.extensions
+            .capability_selects
+            .insert(name.clone(), CapabilitySelect { select, live });
+    }
+    let kept = &this.extensions.capability_selects[&name];
+    *kept.live.borrow_mut() = SelectLive {
+        choices: capability
+            .providers
+            .iter()
+            .map(|provider| Choice {
+                id: provider.source.clone().into(),
+                label: provider.title.clone().into(),
+                subtitle: None,
+                keywords: vec![provider.title.clone().into()],
+                unavailable_reason: None,
+            })
+            .collect(),
+        committed: Some(capability.selected.clone().into()),
+    };
+    kept.select.clone()
+}
+
+/// `names` as one list: "Notes", "Notes and Translate", "Notes, Translate
+/// and Farewell".
+fn joined(names: &[String]) -> String {
+    match names.split_last() {
+        None => String::new(),
+        Some((last, [])) => last.clone(),
+        Some((last, rest)) => format!("{} and {last}", rest.join(", ")),
+    }
 }
 
 /// A switch row of these pages: `title` with its switch at its right end,
@@ -2189,6 +2357,39 @@ fn preference_selects(
 }
 
 // ------------------------------------------------------------ the behavior
+
+/// Records `provider` as the user's chosen provider of `capability`, as the
+/// Capabilities section's dropdown was changed: the choice applies to the
+/// next call, without reloading or restarting any consumer, and is
+/// recorded off the calling thread; a value that cannot be chosen, or a
+/// choice that cannot be recorded, says why on the page.
+fn choose_provider(
+    this: &mut SettingsWindow,
+    capability: &str,
+    provider: &str,
+    cx: &mut Context<SettingsWindow>,
+) {
+    match this.launcher.choose_provider(capability, provider) {
+        Err(problem) => {
+            this.extensions.problem = Some(problem);
+            cx.notify();
+        }
+        Ok(pending) => {
+            launcher_changed_outside(cx);
+            cx.notify();
+            cx.spawn(async move |this, cx| {
+                let problem = pending.await.err();
+                this.update(cx, |this, cx| {
+                    this.extensions.problem = problem;
+                    cx.notify();
+                })
+                .ok();
+                cx.update(launcher_changed_outside);
+            })
+            .detach();
+        }
+    }
+}
 
 /// Saves `value` as the preference kept as `key` of the extension whose
 /// identity key is `package`, as the user changed it on its page; the

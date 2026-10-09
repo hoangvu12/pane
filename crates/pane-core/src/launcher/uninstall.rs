@@ -336,6 +336,8 @@ impl Launcher {
             let forget_subtitles = self.forget_subtitles_of(&mut self.lock(), identity);
             let forget_confirmations = self.forget_confirmations_of(&mut self.lock(), identity);
             let forget_arguments = self.forget_arguments_of(&mut self.lock(), identity);
+            let forget_capability_choices =
+                self.forget_capability_choices_of(&mut self.lock(), identity);
             let files = self.lock().files.clone();
             let data = installation.data.clone();
             let store = installation.store.clone();
@@ -360,6 +362,14 @@ impl Launcher {
                 if let Some(Err(error)) = forget_arguments.map(|forget| forget()) {
                     problems.push(format!(
                         "could not forget its remembered arguments: {error}"
+                    ));
+                }
+                // Uninstalling the chosen provider of a capability forgets
+                // the choice, so a stale one never lingers (see
+                // `capability_choices`).
+                if let Some(Err(error)) = forget_capability_choices.map(|forget| forget()) {
+                    problems.push(format!(
+                        "could not forget the capabilities it was chosen for: {error}"
                     ));
                 }
                 // The folder it was granted is Pane's record, not its data:

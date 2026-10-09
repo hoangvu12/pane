@@ -42,6 +42,7 @@ mod application_changes;
 mod application_icons;
 mod application_update;
 mod argument_form;
+pub(crate) mod capability_choices;
 mod choices;
 mod clipboard_settings;
 pub mod clipboard_view;
@@ -112,6 +113,7 @@ use aliases::AliasChoices;
 pub use aliases::AliasOutcome;
 pub use application_update::ApplicationUpdate;
 use application_update::{Application, Updates};
+pub use capability_choices::{Capability, CapabilityProvider};
 use choices::Record;
 use developing::Developing;
 pub use developing::{BuildFailure, Development};
@@ -870,6 +872,10 @@ struct State {
     /// them, each with why (see `waiting`): recomputed whenever the
     /// packages or their pauses change, under this lock.
     waiting: Waiting,
+    /// The providers the user chose for capabilities (see
+    /// `capability_choices`), Pane's own record, which every capability
+    /// call's routing reads.
+    capability_choices: capability_choices::Kept,
 }
 
 /// What is happening to a package, which stops another change to it
@@ -1464,6 +1470,11 @@ impl Launcher {
             .map_or_else(Record::default, |installation| {
                 Record::open(&installation.dir)
             });
+        let provider_choices = installation
+            .as_ref()
+            .map_or_else(capability_choices::Kept::default, |installation| {
+                capability_choices::Kept::open(&installation.dir)
+            });
         let update_controls = installation
             .as_ref()
             .and_then(|installation| updates::UpdateControls::open(&installation.dir))
@@ -1549,6 +1560,7 @@ impl Launcher {
             setup_needed: HashSet::new(),
             provider_forgotten: providers::Forgotten::default(),
             waiting: Waiting::default(),
+            capability_choices: provider_choices,
         };
         if let (Some(installation), Some(files)) = (&installation, &state.files) {
             files.open_record(&installation.dir);
@@ -1595,27 +1607,21 @@ impl Launcher {
         };
         if let (Ok(runtime), Some(installation)) = (&launcher.runtime, &launcher.installation) {
             // Operation calls see the packages as the launcher has them,
-            // who waits among them and who is paused.
+            // who waits among them, who is paused and which provider the
+            // user chose for each capability.
             let state = Arc::downgrade(&launcher.state);
             let data = installation.data.clone();
             runtime.set_directory(Arc::new(move || {
-                let (packages, waiting, paused) = state.upgrade().map_or_else(
-                    || (Vec::new(), Waiting::default(), Vec::new()),
+                state.upgrade().map_or_else(
+                    || Installed {
+                        data: Some(data.clone()),
+                        ..Installed::default()
+                    },
                     |state| {
                         let state = state.lock().unwrap_or_else(|p| p.into_inner());
-                        (
-                            state.packages.clone(),
-                            state.waiting.clone(),
-                            state.paused.identities(),
-                        )
+                        installed_of(&state, Some(data.clone()))
                     },
-                );
-                Installed {
-                    packages,
-                    waiting,
-                    paused,
-                    data: Some(data.clone()),
-                }
+                )
             }));
         }
         // Scheduled work and continuing services follow the system's clock
@@ -4972,6 +4978,19 @@ async fn off_thread<T: Send + 'static>(work: impl FnOnce() -> T + Send + 'static
         let _ = reply.send(work());
     });
     response.await.expect("package file work panicked")
+}
+
+/// The installed packages as the operation router resolves calls against
+/// them now, from the launcher's state: the snapshot every capability
+/// call's routing and the Settings Capabilities section read.
+fn installed_of(state: &State, data: Option<ExtensionData>) -> Installed {
+    Installed {
+        packages: state.packages.clone(),
+        waiting: state.waiting.clone(),
+        paused: state.paused.identities(),
+        chosen: state.capability_choices.chosen.clone(),
+        data,
+    }
 }
 
 fn first_index(rows: &[Row]) -> Option<usize> {

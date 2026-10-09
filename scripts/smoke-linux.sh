@@ -1331,6 +1331,53 @@ python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{140-disable-dep
 stop_pane
 [ "$(grep -c '"disabled": true' "$PANE_DATA_DIR/extensions/installed.json")" = 1 ] || { echo "not exactly the dependent left disabled"; exit 1; }
 
+# Choosing which extension provides a capability (#154): the JavaScript
+# and TypeScript greet providers of pane-samples:greet@1 are installed,
+# in that order, with the TypeScript capabilities sample, whose command
+# calls the capability by its name: the first provider installed serves
+# until the user chooses, so its answer names JavaScript. Settings'
+# Extensions page lists the capability with a dropdown of its providers;
+# choosing the TypeScript one there applies to the next call, with nothing
+# reloaded, and the answer names TypeScript. The dropdown is opened by
+# its trigger (named "Provider for <capability>"); its options are found
+# through the search field the popup holds, whose typing narrows them,
+# since the option's name is the provider's title, the same as its entry
+# in the installed list. The choice is Pane's own record, in the data
+# folder. A data folder of its own.
+export PANE_DATA_DIR=$out/capabilities-data
+rm -rf "$PANE_DATA_DIR"
+start_pane --install target/guests/packages/sample-greet-js
+focus_launcher
+"$xdotool" key Return; sleep 3   # Install
+stop_pane
+start_pane --install target/guests/packages/sample-greet-ts
+focus_launcher
+"$xdotool" key Return; sleep 3   # Install
+stop_pane
+start_pane --install target/guests/packages/sample-capabilities-ts
+focus_launcher
+"$xdotool" key Return; sleep 3   # Install; Greet from TypeScript is selected
+"$xdotool" key Return; sleep 2   # open Greet from TypeScript
+"$xdotool" key Return; sleep 0.5   # Greet through a capability
+capture_until 150-capabilities-default.png success 15   # the JavaScript provider's answer
+stop_pane
+start_pane
+manage_extensions
+a11y press "Provider for pane-samples:greet@1"   # the dropdown; its search field takes the keyboard
+focus_settings
+"$xdotool" type --delay 50 "TypeScript"; sleep 0.5   # narrows the options to the TypeScript provider
+"$xdotool" key Return; sleep 1   # commit it; the trigger shows it
+capture 151-capabilities-chosen.png
+close_settings
+"$xdotool" type --delay 50 "greet"; sleep 1
+"$xdotool" key Return; sleep 2   # open Greet from TypeScript
+"$xdotool" key Return; sleep 0.5
+capture_until 152-capabilities-chosen-answer.png success 15   # the TypeScript provider's answer
+python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{150-capabilities-default,152-capabilities-chosen-answer}.png
+stop_pane
+grep -q "sample-greet-ts" "$PANE_DATA_DIR/extensions/capability-choices.json" \
+  || { echo "the chosen provider is not recorded"; exit 1; }
+
 # Recovering from a crash of Pane's extension runtime (#17): the runtime is
 # a thread of Pane, so the smoke has it panic on purpose through a fault
 # file (PANE_TEST_RUNTIME_FAULTS; nothing else sets it). With the settings

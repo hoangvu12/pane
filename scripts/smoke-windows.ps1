@@ -1278,6 +1278,52 @@ Stop-Pane $process
 $record = Join-Path $data "extensions/installed.json"
 if ((Select-String -SimpleMatch '"disabled": true' $record).Count -ne 1) { throw "not exactly the dependent left disabled" }
 
+# Choosing which extension provides a capability (#154): the JavaScript
+# and TypeScript greet providers of pane-samples:greet@1 are installed,
+# in that order, with the TypeScript capabilities sample, whose command
+# calls the capability by its name: the first provider installed serves
+# until the user chooses, so its answer names JavaScript. Settings'
+# Extensions page lists the capability with a dropdown of its providers;
+# choosing the TypeScript one there applies to the next call, with nothing
+# reloaded, and the answer names TypeScript. The dropdown is opened by
+# its trigger (named "Provider for <capability>"); its options are found
+# through the search field the popup holds, whose typing narrows them,
+# since the option's name is the provider's title, the same as its entry
+# in the installed list. The choice is Pane's own record, in the data
+# folder. A data folder of its own.
+$data = Join-Path $OutDir "capabilities-data"
+if (Test-Path $data) { Remove-Item -Recurse -Force $data }
+$env:PANE_DATA_DIR = $data
+$process = Start-Pane "stderr-capabilities-js.log" @("--install", "target/guests/packages/sample-greet-js")
+Send "{ENTER}"; Start-Sleep -Seconds 3   # Install
+Stop-Pane $process
+$process = Start-Pane "stderr-capabilities-ts.log" @("--install", "target/guests/packages/sample-greet-ts")
+Send "{ENTER}"; Start-Sleep -Seconds 3   # Install
+Stop-Pane $process
+$process = Start-Pane "stderr-capabilities.log" @("--install", "target/guests/packages/sample-capabilities-ts")
+Send "{ENTER}"; Start-Sleep -Seconds 3   # Install; Greet from TypeScript is selected
+Send "{ENTER}"; Start-Sleep -Seconds 2   # open Greet from TypeScript
+Send "{ENTER}"; Start-Sleep -Milliseconds 500   # Greet through a capability
+Capture-Until "150-capabilities-default.png" "success" 15   # the JavaScript provider's answer
+Stop-Pane $process
+$process = Start-Pane "stderr-capabilities-choice.log"
+Manage-Extensions
+Press-Named "Provider for pane-samples:greet@1"   # the dropdown; its search field takes the keyboard
+Send "TypeScript"; Start-Sleep -Milliseconds 500   # narrows the options to the TypeScript provider
+Send "{ENTER}"; Start-Sleep -Seconds 1   # commit it; the trigger shows it
+Capture "151-capabilities-chosen.png"
+Close-Settings
+Send "greet"; Start-Sleep -Seconds 1
+Send "{ENTER}"; Start-Sleep -Seconds 2   # open Greet from TypeScript
+Send "{ENTER}"; Start-Sleep -Milliseconds 500
+Capture-Until "152-capabilities-chosen-answer.png" "success" 15   # the TypeScript provider's answer
+$shots = "150-capabilities-default", "152-capabilities-chosen-answer" | ForEach-Object { Join-Path $OutDir "$_.png" }
+python "$PSScriptRoot/check_screenshot.py" --distinct @shots
+if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: the provider choice changed nothing" }
+Stop-Pane $process
+$choices = Join-Path $data "extensions/capability-choices.json"
+if (-not (Select-String -Quiet -SimpleMatch 'sample-greet-ts' $choices)) { throw "the chosen provider is not recorded" }
+
 # Recovering from a crash of Pane's extension runtime (#17): the runtime is
 # a thread of Pane, so the smoke has it panic on purpose through a fault
 # file (PANE_TEST_RUNTIME_FAULTS; nothing else sets it). With the settings

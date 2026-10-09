@@ -18,9 +18,14 @@
 //! `provides` in its `pane.json` and another calls by that name with
 //! `operations.call-capability`, declaring it under `uses`. Pane resolves
 //! the call when it is made, against the packages as they are then: the
-//! first provider in install order that can serve it — enabled, not paused,
-//! not waiting for what it needs, built for this system — never the caller's
-//! own package, which never serves its own use. The provider serves the
+//! providers in the order Pane calls them — the user's chosen provider
+//! first, as the launcher's record holds the choice (see
+//! `capability_choices`), then the rest in install order — and the first
+//! that can serve the call serves it: enabled, not paused, not waiting for
+//! what it needs, built for this system, never the caller's own package,
+//! which never serves its own use. While the chosen provider cannot serve,
+//! the call falls back to the next provider that can, and returns to the
+//! chosen one when it can serve again. The provider serves the
 //! call as a published operation is served, with the operation qualified by
 //! its capability, and the call obeys the same rules a call by identity
 //! does. Until no provider can serve it: `not-found` when none is installed,
@@ -53,6 +58,7 @@ use tokio::sync::{mpsc, oneshot};
 use wasmtime::component::{Access, Accessor, HasData};
 
 use crate::extension_data::{ExtensionData, PackageData};
+use crate::launcher::capability_choices::CapabilityChoices;
 use crate::packages::{
     InstalledPackage, ManifestOperation, ManifestProvides, PackageIdentity, SourceSpec,
     installed_as, paused_reason,
@@ -154,6 +160,15 @@ fn disabled(title: &str) -> String {
     format!("{title} is disabled; Pane does not enable it for a call, enable it in Settings")
 }
 
+/// `reason` up to its first ";": a fallback note keeps the state ("is
+/// paused after an error") and leaves the advice that follows ("retry it
+/// in Settings") to the page that fixes the provider.
+fn cut_advice(reason: &str) -> String {
+    reason
+        .split_once(';')
+        .map_or_else(|| reason.to_owned(), |(kept, _)| kept.to_owned())
+}
+
 /// A call a guest made, waiting for the runtime to serve it.
 pub(crate) struct OperationCall {
     /// The component of the calling guest.
@@ -216,7 +231,9 @@ enum Cannot {
     Unavailable(String),
 }
 
-/// A snapshot of the installed packages and their extension data.
+/// A snapshot of the installed packages and their extension data, with
+/// which of their capability providers the user chose (see
+/// `capability_choices`).
 #[derive(Default)]
 pub(crate) struct Installed {
     pub packages: Vec<InstalledPackage>,
@@ -227,6 +244,8 @@ pub(crate) struct Installed {
     /// Which of them Pane paused after they failed, by identity: a paused
     /// provider cannot serve a call now.
     pub paused: Vec<PackageIdentity>,
+    /// Which provider the user chose for each capability, by identity key.
+    pub chosen: CapabilityChoices,
     pub data: Option<ExtensionData>,
 }
 
@@ -431,13 +450,16 @@ impl Installed {
 
     /// Resolves a call from `caller`'s component to `operation` of the
     /// capability `capability`, as the packages are now: the first provider
-    /// in install order that can serve the call — enabled, not paused, not
-    /// waiting for what it needs, and built for this system — never the
-    /// caller's own package, which never serves its own use. Refused when the
-    /// caller's `pane.json` declares no use of the capability, or not this
-    /// operation; `not-found` when no other installed package provides it;
-    /// `disabled` when every provider is disabled; `unavailable`, naming the
-    /// capability and each provider's reason, when none can serve it.
+    /// in the order Pane calls them that can serve the call — the user's
+    /// chosen provider first, then install order — enabled, not paused, not
+    /// waiting for what it needs, and built for this system, never the
+    /// caller's own package, which never serves its own use: while the
+    /// chosen provider cannot serve, the call falls back to the next
+    /// provider that can. Refused when the caller's `pane.json` declares
+    /// no use of the capability, or not this operation; `not-found` when no
+    /// other installed package provides it; `disabled` when every provider
+    /// is disabled; `unavailable`, naming the capability and each
+    /// provider's reason, when none can serve it.
     pub fn resolve_capability(
         &self,
         caller: &Path,
@@ -491,9 +513,10 @@ impl Installed {
                 platform::join(&called)
             )));
         }
-        let candidates = self.providers_of(caller, capability, Some(operation));
-        // The first provider in install order that can serve the call does;
-        // the others are remembered for the message when none can.
+        let candidates = self.call_order(Some(caller), capability, Some(operation));
+        // The first provider in the order Pane calls them that can serve
+        // the call does; the others are remembered for the message when
+        // none can.
         let mut unserving: Vec<String> = Vec::new();
         let mut disabled: Vec<String> = Vec::new();
         for (package, entry) in &candidates {
@@ -592,21 +615,23 @@ impl Installed {
         )
     }
 
-    /// The installed packages providing `capability`, in install order, with
-    /// the manifest entry that serves it, excluding the package of
+    /// The installed packages providing `capability`, in install order,
+    /// with the manifest entry that serves it, excluding the package of
     /// `caller`'s component: a package never serves its own use. With
-    /// `operation`, only entries naming that operation answer; `None` lists
-    /// every provider of the capability.
+    /// `operation`, only entries naming that operation answer. A `None`
+    /// `caller` lists every provider, as Settings' Capabilities section
+    /// does; a `None` `operation` lists every provider of the capability.
     fn providers_of<'a>(
         &'a self,
-        caller: &Path,
+        caller: Option<&Path>,
         capability: &str,
         operation: Option<&str>,
     ) -> Vec<(&'a InstalledPackage, &'a ManifestProvides)> {
-        let own = self
-            .packages
-            .iter()
-            .find(|package| caller.starts_with(&package.location));
+        let own = caller.and_then(|caller| {
+            self.packages
+                .iter()
+                .find(|package| caller.starts_with(&package.location))
+        });
         self.packages
             .iter()
             .filter(|package| own.is_none_or(|own| package.identity != own.identity))
@@ -625,13 +650,38 @@ impl Installed {
             .collect()
     }
 
+    /// The providers of `capability` in the order Pane calls them: the
+    /// user's chosen provider first, as this snapshot holds the choice,
+    /// then the rest in install order. [`providers_of`]'s caller, exclusion
+    /// and operation apply; a chosen provider that is not among them (its
+    /// package uninstalled, or the caller's own) changes nothing.
+    pub(crate) fn call_order<'a>(
+        &'a self,
+        caller: Option<&Path>,
+        capability: &str,
+        operation: Option<&str>,
+    ) -> Vec<(&'a InstalledPackage, &'a ManifestProvides)> {
+        let mut providers = self.providers_of(caller, capability, operation);
+        if let Some(chosen) = self.chosen.provider_of(capability)
+            && let Some(at) = providers
+                .iter()
+                .position(|(package, _)| package.identity.key() == chosen)
+            && at > 0
+        {
+            let chosen = providers.remove(at);
+            providers.insert(0, chosen);
+        }
+        providers
+    }
+
     /// The providers of `capability` that can serve a call now — enabled,
     /// not paused, not waiting for what they need, and built for this system
-    /// — in install order, with their source and title, as
+    /// — in the order Pane calls them (the chosen provider first, then
+    /// install order), with their source and title, as
     /// `operations.providers` answers. The package of `caller`'s component
     /// is never among them.
     pub fn capable_providers(&self, caller: &Path, capability: &str) -> Vec<(String, String)> {
-        self.providers_of(caller, capability, None)
+        self.call_order(Some(caller), capability, None)
             .into_iter()
             .filter(|(package, entry)| {
                 self.cannot_serve(package).is_none()
@@ -672,6 +722,27 @@ impl Installed {
             return Some(Cannot::Unavailable(format!("{title}: {reason}")));
         }
         None
+    }
+
+    /// Why `package`, providing a capability through `entry`, cannot serve
+    /// a call now, in the Settings Capabilities section's fallback note's
+    /// words ("<title> is disabled", "<title> is paused", "<title> is
+    /// waiting for <what>"); `None` when it can. The advice the full
+    /// reasons carry ("retry it in Settings") stays with the page that
+    /// fixes the provider.
+    pub(crate) fn cannot_serve_note(
+        &self,
+        package: &InstalledPackage,
+        entry: &ManifestProvides,
+    ) -> Option<String> {
+        let title = package.title();
+        match self.cannot_serve(package) {
+            // The note's wording: "<chosen> is disabled; using <other>".
+            Some(Cannot::Disabled) => Some(format!("{title} is disabled")),
+            Some(Cannot::Unavailable(reason)) => Some(cut_advice(&reason)),
+            None => platform::unavailable(entry.platforms.as_deref(), "this capability")
+                .map(|reason| format!("{title}: {reason}")),
+        }
     }
 
     /// The identity of the installed package whose managed copy holds
