@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 //
 // Declarations for `@pane-app/extension/capabilities` (capabilities.js):
-// calling a capability by name (ADR 0041), and asking which providers can
-// serve one now.
+// calling a capability by name (ADR 0041), fanning a call out to every
+// provider of a use that says "use": "all", and asking which providers
+// can serve one now.
 
-import type { Provider } from "pane:extension/operations@0.1.0";
+import type { Provider, ProviderAnswer } from "pane:extension/operations@0.1.0";
 
-export type { Provider };
+export type { Provider, ProviderAnswer };
 
 export {
   /**
@@ -28,6 +29,19 @@ export {
    * @returns {Promise<string>}
    */
   callCapability as call,
+  /**
+   * Calls `operation` of the capability `capability` on every provider that
+   * can serve it now, and resolves with each one's answer, with its source,
+   * its title and its result or error, so the caller can merge them. The
+   * caller's pane.json must declare the capability under `uses` with
+   * "use": "all"; fanning out a "use": "one" capability is `refused`. With
+   * no provider that can serve, the answer is an empty list.
+   * @param {string} capability
+   * @param {string} operation
+   * @param {string} input
+   * @returns {Promise<import("pane:extension/operations@0.1.0").ProviderAnswer[]>}
+   */
+  callEvery,
   /**
    * The installed packages that provide the capability `capability` and
    * can serve a call to it now, in the order Pane calls them; the calling

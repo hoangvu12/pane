@@ -23,6 +23,10 @@ A package that requires another can also **wait** for it: while a
 required dependency is missing, disabled, [paused](pausing.md) or waiting
 itself, the dependent's commands stay listed, saying what they need, and
 none of their work runs ([below](#waiting-for-a-required-dependency)).
+Since [#156](https://github.com/pane-app/pane/issues/156) the same holds
+for a required [capability](operations.md#capabilities) that no provider
+can serve, and a use of every provider (`"use": "all"`) never waits:
+a call to it degrades to an empty list.
 
 ## Declaring
 
@@ -368,18 +372,27 @@ uninstalls only the package given, without asking.
 ## Waiting for a required dependency
 
 Added for [#152](https://github.com/pane-app/pane/issues/152), the first
-slice of [#151](https://github.com/pane-app/pane/issues/151) (ADR 0041).
+slice of [#151](https://github.com/pane-app/pane/issues/151) (ADR 0041),
+and extended to capabilities by
+[#156](https://github.com/pane-app/pane/issues/156).
 A command of an enabled, unpaused package **waits** while one of its
 package's required dependencies is missing, disabled, [paused](pausing.md)
-or waiting itself. Optional dependencies never make a command wait, nor
-does one the package needs only on other systems, and nothing changes in
-`pane.json`: Pane computes who waits from the dependencies already
-declared and the packages' states. Every enabled, unpaused package starts
-as able to run, and any package with an unmet requirement is removed,
-repeating until nothing changes: a cycle of healthy packages runs, and a
-cycle with one member missing waits as a whole. It is recomputed whenever
-a package is installed, uninstalled, enabled, disabled, paused, retried,
-reloaded or updated.
+or waiting itself, or while one of its required capabilities
+([operations](operations.md#capabilities)) has no provider that is
+installed, enabled, not paused and not waiting — a provider that is also
+a consumer of the same capability never serving itself. Optional
+dependencies and optional uses never make a command wait, nor does a
+dependency the package needs only on other systems, nor a use narrowed
+to some commands for the commands it does not name, nor a use of every
+provider (`"use": "all"`), which degrades to an empty list instead. Pane
+computes who waits from what `pane.json` already declares and the
+packages' states. Every enabled, unpaused package starts as able to run,
+and any package with an unmet requirement is removed, repeating until
+nothing changes: a cycle of healthy packages runs, and a cycle with one
+member missing waits as a whole. A capability a waiting package provides
+does not count as provided, so its own consumers wait in turn. It is
+recomputed whenever a package is installed, uninstalled, enabled,
+disabled, paused, retried, reloaded or updated.
 
 While a command waits, nothing of it runs: not its view, run entry point,
 actions, arguments or setup screen; its [schedule](schedules.md)'s ticks,
@@ -393,19 +406,27 @@ as calls do. Waiting never counts towards [pausing](pausing.md).
 
 The command's row in root search stays listed, saying what it needs
 ("Needs <title>, which is <state>", the state being not installed,
-disabled, paused, or waiting for something else), and a chain names what
-is actually missing ("Needs Notes Sync, which waits for Auth: Auth is
-disabled"). Pressing Enter shows the reason with a row that fixes it:
-"Enable <title>", "Retry <title>", or "Open Manage extensions". Its
-quick slots, aliases, global hotkeys and fallbacks say the same reason
-and run nothing.
+disabled, paused, or waiting for something else; for a capability,
+"Needs <capability>: <provider> is <state>" or "…: no extension provides
+it"), and a chain names what is actually missing ("Needs Notes Sync,
+which waits for Auth: Auth is disabled", or "Needs acme:translate@1:
+DeepL Translate, which waits for acme:auth@1: no extension provides it").
+A use narrowed with `commands` gates only the commands it names: the
+package's other commands stay available, and its status line says some
+commands wait. Pressing Enter shows the reason with a row that fixes it:
+"Enable <title>", "Retry <title>", "Open Manage extensions", or, for a
+capability nobody provides, "Install <default> (named by <title>)" — the
+default its use names — or "Install an extension that provides
+<capability>", which opens the install forms. Its quick slots, aliases,
+global hotkeys and fallbacks say the same reason and run nothing.
 
 When the requirement is met again — the dependency is enabled, retried,
-installed, or its package reloaded or updated — the command comes back by
-itself, with nothing for the user to do: its row is ordinary again, its
-schedule starts from a full interval, its service's first cycle runs at
-once in the instance it still has, and root search asks for its results
-on the next query.
+installed, or its package reloaded or updated, or a provider of the
+capability can serve again — the command comes back by itself, with
+nothing for the user to do: its row is ordinary again, its schedule starts
+from a full interval, its service's first cycle runs at once in the
+instance it still has, and root search asks for its results on the next
+query.
 
 ## For later slices
 
@@ -449,6 +470,17 @@ check the set again when chosen with one step (`still_shown` in
   cycles; schedules and services waiting and coming back; root results not
   asked for; the open screen and its calls left alone; and the quick slot,
   alias and fallback saying the reason and running nothing.
+- [`crates/pane-core/tests/capability_waiting.rs`](../crates/pane-core/tests/capability_waiting.rs)
+  drives the same for capabilities (#156) with the capability samples in
+  all three languages: a consumer waiting with no provider, while its only
+  provider is disabled or waiting for something itself, and staying up
+  while another provider serves; a use narrowed with `commands`; a chain
+  through capabilities and a cycle; a use of every provider and an optional
+  use, with `available` answering as providers come and go; the install fix
+  row and the install forms it opens; the fan-out's order, skips, empty
+  list, each provider's own error and the refused fan-out of a use of one
+  provider; and the schedule, the service and root results waiting and
+  coming back with the manual clock.
 - [`crates/pane-core/tests/disable_dependents.rs`](../crates/pane-core/tests/disable_dependents.rs)
   drives disabling a required dependency through the extension list: the
   question listing the closure (through a dependent of a dependent) before
@@ -509,8 +541,10 @@ check the set again when chosen with one step (`still_shown` in
 - Local folders, npm (#45) and Git (#46), with these semantics.
 - One copy per source, no version ranges and no multi-version solving.
 - Waiting covers only what the packages' `pane.json` files already declare:
-  the requirement is a whole package, not one operation of it, and the
-  Manage extensions rows that would list and fix each one are #157's.
+  the requirement is a whole package, a capability of it, or (for a
+  capability) a use narrowed to some of its commands — never one operation
+  of it. The Manage extensions rows that would list and fix each one are
+  #157's.
 - Only the extension list asks about dependents; `Launcher::set_enabled`
   and `Launcher::uninstall` (used by tests and internal callers) change one
   package. The extension list offers no way to disable or uninstall a

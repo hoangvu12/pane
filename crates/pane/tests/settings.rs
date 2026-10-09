@@ -2475,6 +2475,74 @@ fn manage_extensions_and_the_install_rows_open_settings(cx: &mut TestAppContext)
 }
 
 #[gpui::test]
+fn a_row_waiting_on_a_capability_offers_the_install_row_that_opens_the_install_form(
+    cx: &mut TestAppContext,
+) {
+    let (sources, data) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    // The consumer sample, its use of the greet capability made one
+    // provider again (its pane.json ships "use": "all" for the fan-out
+    // item): with no provider installed, its command waits (#156).
+    let consumer = assembled("sample-capabilities", &sources.path().join("consumer"));
+    one_provider_use(&consumer);
+    let (launcher, cx) = open_installed(cx, &data, &consumer);
+    cx.simulate_resize(gpui::size(gpui::px(640.), gpui::px(420.)));
+
+    // The waiting command stays listed, with what it needs under its row.
+    let view = settle(&launcher, cx);
+    assert_eq!(view.rows[0].title, "Greet from Rust");
+    assert_eq!(view.selected, Some(0));
+    assert_eq!(
+        view.rows[0]
+            .unavailable
+            .as_ref()
+            .map(|reason| reason.reason().to_owned()),
+        Some("Needs pane-samples:greet@1: no extension provides it".to_owned())
+    );
+
+    // Enter shows the reason, with the row that installs a provider.
+    cx.simulate_keystrokes("enter");
+    let view = settle(&launcher, cx);
+    assert_eq!(view.title, "Why Greet from Rust cannot run");
+    assert_eq!(
+        view.details().first().map(String::as_str),
+        Some("Needs pane-samples:greet@1: no extension provides it.")
+    );
+    let rows: Vec<&str> = view.rows.iter().map(|row| row.title.as_str()).collect();
+    assert_eq!(
+        rows,
+        ["Install an extension that provides pane-samples:greet@1"]
+    );
+    let install = "row-Install an extension that provides pane-samples:greet@1";
+    assert!(cx.debug_bounds(install).is_some());
+
+    // Enter on that row opens Settings' install flow: npm's field, focused.
+    cx.simulate_keystrokes("enter");
+    cx.run_until_parked();
+    let settings = settings_windows(cx).pop().expect("Settings opened");
+    let mut settings_cx = settings_context(&settings, cx);
+    settings_cx.run_until_parked();
+    assert!(
+        settings_cx.debug_bounds("extension-install-field").is_some(),
+        "the npm field is asked for"
+    );
+    let view = cx.read_entity(&launcher, |window, _| window.launcher().view());
+    assert!(
+        matches!(view.screen, Screen::WaitingDetails { .. }),
+        "the launcher keeps showing why the command waits: {view:?}"
+    );
+}
+
+/// Makes the consumer sample's use of the greet capability one provider
+/// again (its pane.json ships "use": "all" for the fan-out item): with no
+/// provider installed, its command waits (#156).
+fn one_provider_use(folder: &Path) {
+    let manifest = fs::read_to_string(folder.join("pane.json")).unwrap();
+    let mut manifest: serde_json::Value = serde_json::from_str(&manifest).unwrap();
+    manifest["uses"][0].as_object_mut().unwrap().remove("use");
+    fs::write(folder.join("pane.json"), manifest.to_string()).unwrap();
+}
+
+#[gpui::test]
 fn the_search_finds_an_extension_and_its_preferences(cx: &mut TestAppContext) {
     let (sources, data) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
     let folder = assembled("sample-preferences", &sources.path().join("preferences"));

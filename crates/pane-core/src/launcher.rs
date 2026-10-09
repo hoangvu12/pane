@@ -241,9 +241,12 @@ pub enum Screen {
     },
     /// Why a command of the installed package with `identity` waits for
     /// what its package requires, as lines of information under the title,
-    /// with a row that fixes what is missing (see `waiting`).
+    /// with a row that fixes what is missing (see `waiting`). The command
+    /// is named by its manifest id: the package may run while only it
+    /// waits, when a use is narrowed to it.
     WaitingDetails {
         identity: PackageIdentity,
+        command: String,
         details: Vec<String>,
     },
     /// Why the last development build of an installed package failed, as
@@ -866,9 +869,11 @@ struct State {
     /// What this start forgot because its command is a root provider (see
     /// `providers`), for the toast naming it.
     provider_forgotten: providers::Forgotten,
-    /// Which packages wait for a required dependency that cannot serve
-    /// them, each with why (see `waiting`): recomputed whenever the
-    /// packages or their pauses change, under this lock.
+    /// Which packages wait for a required dependency or capability that
+    /// cannot serve them, each with why, and which commands of running
+    /// packages wait for a use narrowed to them (see `waiting`):
+    /// recomputed whenever the packages or their pauses change, under this
+    /// lock.
     waiting: Waiting,
 }
 
@@ -920,11 +925,12 @@ impl State {
     }
 
     /// Whether `package`'s code may run: it is enabled, not paused, and not
-    /// waiting for a required dependency that cannot serve it (see
-    /// `waiting`). Waiting gates what Pane starts for a package — its
-    /// commands' views and runs, scheduled work, services and results — but
-    /// ends no generation: what already runs keeps running, and an open
-    /// screen stays.
+    /// waiting for a required dependency or capability that cannot serve
+    /// it (see `waiting`). Waiting gates what Pane starts for a package —
+    /// its commands' views and runs, scheduled work, services and results —
+    /// but ends no generation: what already runs keeps running, and an open
+    /// screen stays. A command a use is narrowed into waiting does not run
+    /// its own work either, while the package's other commands do.
     fn runs(&self, package: &InstalledPackage) -> bool {
         package.enabled
             && !self.paused.is_paused(&package.identity)
@@ -1174,10 +1180,13 @@ enum Entry {
     Unavailable(String),
     /// Show why this command of the installed package with `identity` waits
     /// for what its package requires, with the row that fixes it (root;
-    /// see `waiting`). The command's title names the screen.
+    /// see `waiting`). The command's title names the screen, and its
+    /// manifest id finds the reason: the package may run while only this
+    /// command waits, when a use is narrowed to it.
     Waiting {
         identity: PackageIdentity,
         command: String,
+        manifest: String,
     },
     /// Nothing in the launcher: the window asks for a folder (root).
     InstallFromFolder,
@@ -2090,6 +2099,7 @@ impl Launcher {
         if query.trim().is_empty() {
             return Vec::new();
         }
+        let waiting = &state.waiting;
         let commands = state
             .packages
             .iter()
@@ -2103,8 +2113,15 @@ impl Launcher {
                     .indexed_result_commands()
                     .into_iter()
                     // One whose required preferences are unset is not
-                    // asked: it says "Needs setup" instead (see `setup`).
-                    .filter(move |command| !self.needs_setup(package, command.manifest_id()))
+                    // asked: it says "Needs setup" instead (see `setup`);
+                    // nor is one a use is narrowed into waiting (see
+                    // `waiting`).
+                    .filter(move |command| {
+                        !self.needs_setup(package, command.manifest_id())
+                            && waiting
+                                .reason_for(&package.identity, command.manifest_id())
+                                .is_none()
+                    })
                     .map(move |command| (command, data.clone()))
             })
             .collect();
@@ -2280,8 +2297,16 @@ impl Launcher {
                     .root_result_commands()
                     .into_iter()
                     // One whose required preferences are unset is not
-                    // asked: it says "Needs setup" instead (see `setup`).
-                    .filter(move |command| !self.needs_setup(package, command.manifest_id()))
+                    // asked: it says "Needs setup" instead (see `setup`);
+                    // nor is one a use is narrowed into waiting (see
+                    // `waiting`).
+                    .filter(move |command| {
+                        !self.needs_setup(package, command.manifest_id())
+                            && state
+                                .waiting
+                                .reason_for(&package.identity, command.manifest_id())
+                                .is_none()
+                    })
                     .map(move |command| (command, data.clone()))
             })
             .collect()
@@ -2747,8 +2772,8 @@ impl Launcher {
                 state.view.status = Status::Error(problem);
                 Pending::Nothing
             }
-            Entry::Waiting { identity, command } => {
-                self.show_waiting_details(state, &identity, &command);
+            Entry::Waiting { identity, command, manifest } => {
+                self.show_waiting_details(state, &identity, &command, &manifest);
                 Pending::Nothing
             }
             Entry::Copy(text) => {
@@ -3422,10 +3447,12 @@ impl Launcher {
                 state.screen_epoch = epoch;
             }
             Screen::PauseDetails { .. } => {}
-            // Once the package no longer waits (what it needed came back, or
+            // Once the command no longer waits (what it needed came back, or
             // it is gone or disabled), root search lists its commands as
             // they are now, keeping the screen epoch as refreshing does.
-            Screen::WaitingDetails { identity, .. } if state.waiting.reason(identity).is_none() => {
+            Screen::WaitingDetails { identity, command, .. }
+                if state.waiting.reason_for(identity, command).is_none() =>
+            {
                 let epoch = state.screen_epoch;
                 self.show_root(state, None);
                 state.screen_epoch = epoch;
@@ -3462,15 +3489,27 @@ impl Launcher {
             .map(|row| row.id.clone());
         self.note_setup_needed(state);
         state.root = self.root_results(state);
-        // A command that was disabled, paused or replaced contributes
-        // nothing more; one enabled again answers from the next change of the
-        // query.
+        // A command that was disabled, paused, replaced or narrowed into
+        // waiting contributes nothing more; one enabled again answers from
+        // the next change of the query.
         let computing: Vec<PathBuf> = state
             .packages
             .iter()
             .filter(|package| state.runs(package))
-            .flat_map(|package| package.root_result_commands())
-            .map(|command| command.component)
+            .flat_map(|package| {
+                package
+                    .root_result_commands()
+                    .into_iter()
+                    // A use narrowed to a command keeps it waiting: what it
+                    // computed before is listed no longer (see `waiting`).
+                    .filter(|command| {
+                        state
+                            .waiting
+                            .reason_for(&package.identity, command.manifest_id())
+                            .is_none()
+                    })
+                    .map(|command| command.component)
+            })
             .collect();
         state
             .computed
@@ -3511,13 +3550,15 @@ impl Launcher {
         };
         let command = |(command, unavailable): (CommandRegistration, Option<Unavailable>),
                        no_view: bool,
-                       waiting: Option<&PackageIdentity>| {
+                       waiting: Option<&PackageIdentity>,
+                       manifest: &str| {
             let entry = match &unavailable {
                 // A waiting command's reason comes with the row that fixes
                 // what it waits for (see `waiting`).
                 Some(Unavailable::Waiting(_)) => Entry::Waiting {
                     identity: waiting.cloned().expect("the package that waits"),
                     command: command.title.clone(),
+                    manifest: manifest.to_owned(),
                 },
                 Some(reason) => Entry::Unavailable(reason.reason().to_owned()),
                 None => Entry::Open(Opening::of(&command, no_view, LaunchSource::RootSearch)),
@@ -3540,7 +3581,7 @@ impl Launcher {
         // A disabled package contributes nothing to root search.
         let enabled = || state.packages.iter().filter(|package| package.enabled);
         for built in self.commands.iter().cloned() {
-            let (row, entry) = command((built, None), false, None);
+            let (row, entry) = command((built, None), false, None, "");
             add(row, entry, None, None);
         }
         for package in enabled() {
@@ -3553,18 +3594,19 @@ impl Launcher {
                 .paused
                 .is_paused(&package.identity)
                 .then(|| Unavailable::Paused(paused_reason(&title)));
-            // A package that waits for a required dependency (see
-            // `waiting`) keeps its commands listed, saying what they need:
-            // they come back by themselves once what it needs returns.
-            let waiting = state
-                .waiting
-                .reason(&package.identity)
-                .map(|reason| Unavailable::Waiting(reason.row.clone()));
+            // A package that waits for a required dependency or capability
+            // (see `waiting`) keeps its commands listed, saying what they
+            // need: they come back by themselves once what it needs
+            // returns. A use narrowed to one command waits there alone.
             // A root provider has no row: its results answer instead.
             for (registration, unavailable) in package.launchable_commands() {
+                let waiting = state
+                    .waiting
+                    .reason_for(&package.identity, registration.manifest_id())
+                    .map(|reason| Unavailable::Waiting(reason.row.clone()));
                 let unavailable = paused
                     .clone()
-                    .or(waiting.clone())
+                    .or(waiting)
                     .or(unavailable.map(Unavailable::OnThisSystem));
                 let no_view = package.mode_of(registration.manifest_id())
                     == crate::packages::CommandMode::NoView;
@@ -3574,10 +3616,12 @@ impl Launcher {
                     unavailable: unavailable.clone(),
                     no_view,
                 };
+                let manifest = registration.manifest_id().to_owned();
                 let (row, entry) = command(
                     (registration, unavailable),
                     no_view,
                     Some(&package.identity),
+                    &manifest,
                 );
                 add(row, entry, Some(&title), Some(target));
             }
@@ -3912,11 +3956,17 @@ impl Launcher {
 
     /// Shows why the command titled `command` of the package with
     /// `identity` waits for what its package requires, with the row that
-    /// fixes what it waits for (see `waiting`). Once the package no longer
-    /// waits — what it needed came back — root search lists its commands
-    /// again, so the screen is left for it.
-    fn show_waiting_details(&self, state: &mut State, identity: &PackageIdentity, command: &str) {
-        let Some(reason) = state.waiting.reason(identity).cloned() else {
+    /// fixes what it waits for (see `waiting`). Once the command no longer
+    /// waits — what it needed came back — root search lists it again, so
+    /// the screen is left for it.
+    fn show_waiting_details(
+        &self,
+        state: &mut State,
+        identity: &PackageIdentity,
+        command: &str,
+        manifest: &str,
+    ) {
+        let Some(reason) = state.waiting.reason_for(identity, manifest).cloned() else {
             self.show_root(state, None);
             return;
         };
@@ -3953,6 +4003,41 @@ impl Launcher {
                     Entry::Retry(target),
                 )
             }
+            // A capability with no provider that can serve it: the default
+            // its use names, or any extension that provides it. Either way
+            // the row opens one of Settings' install forms, where a
+            // provider is chosen and installed.
+            Fix::Install { capability, default } => {
+                let named_by = state.title_of(identity);
+                // Which install form the row opens: the one for the default's
+                // source, or npm's, where a published provider is named.
+                let entry = match default.as_deref().and_then(|source| {
+                    crate::packages::SourceSpec::parse(source).ok()
+                }) {
+                    Some(crate::packages::SourceSpec::Local(_)) => Entry::InstallFromFolder,
+                    Some(crate::packages::SourceSpec::Git(_)) => Entry::AskGit,
+                    _ => Entry::AskNpm,
+                };
+                let (title, subtitle) = match default {
+                    Some(default) => (
+                        format!("Install {default} (named by {named_by})"),
+                        format!("A provider of {capability}, which it names as its default"),
+                    ),
+                    None => (
+                        format!("Install an extension that provides {capability}"),
+                        "A provider of the capability, named in the install form".into(),
+                    ),
+                };
+                (
+                    Row {
+                        id: format!("install-provider:{capability}"),
+                        title,
+                        subtitle: Some(subtitle),
+                        unavailable: None,
+                    },
+                    entry,
+                )
+            }
             Fix::Manage => (
                 Row {
                     id: MANAGE_EXTENSIONS.into(),
@@ -3967,6 +4052,7 @@ impl Launcher {
         state.entries = vec![entry];
         let screen = Screen::WaitingDetails {
             identity: identity.clone(),
+            command: manifest.to_owned(),
             details,
         };
         state.view =

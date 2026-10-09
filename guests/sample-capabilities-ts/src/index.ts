@@ -6,18 +6,21 @@
 // which the greet provider samples provide in Rust, JavaScript and
 // TypeScript (guests/sample-greet*), each answering with its own language's
 // name: whoever is installed serves the call, and the code names none of
-// them. It also uses `pane-samples:farewell@1` optionally, which no sample
-// provides: a call to it answers `not-found`, and nothing is gated on it.
-// Items, titles, results and errors match the Rust sample
-// (guests/sample-capabilities) and the JavaScript one.
+// them. Its use of it says `"use": "all"`, so beside the call that reaches
+// one provider, an item fans a call out to every provider, answering each
+// one's greeting labelled with its title. It also uses
+// `pane-samples:farewell@1` optionally, which no sample provides: a call
+// to it answers `not-found`, and nothing is gated on it. Items, titles,
+// results and errors match the Rust sample (guests/sample-capabilities)
+// and the JavaScript one.
 //
 // Each capability's `greet`/`farewell` operation takes `{"name": "<name>"}`
 // and answers `{"greeting": "..."}`. Before calling, "Who provides it"
 // asks for the providers that can serve the capability now, with their
 // titles.
 import type { Command } from "@pane-app/extension";
-import { available, call, providers } from "@pane-app/extension/capabilities";
-import type { CallError, Provider } from "pane:extension/operations@0.1.0";
+import { available, call, callEvery, providers } from "@pane-app/extension/capabilities";
+import type { CallError, Provider, ProviderAnswer } from "pane:extension/operations@0.1.0";
 import { showToast } from "@pane-app/extension/feedback";
 
 /** The capabilities this package uses, as its pane.json declares them. */
@@ -59,6 +62,31 @@ async function outcome(itemId: string): Promise<string> {
     // fix; Pane's reason is the answer.
     case "greet":
       return callName(GREET, "greet");
+    // A use of every provider: each provider's answer, labelled with its
+    // title, and an empty list when none can serve.
+    case "every": {
+      let answers: ProviderAnswer[];
+      try {
+        const input: NameInput = { name: "Pane" };
+        answers = await callEvery(GREET, "greet", JSON.stringify(input));
+      } catch (error) {
+        const { kind, message } = (error as { payload: CallError }).payload;
+        throw new Error(`${kind}: ${message}`);
+      }
+      const said: string[] = answers.map((answer: ProviderAnswer) => {
+        if (answer.answer.tag === "ok") {
+          const { greeting } = JSON.parse(answer.answer.val) as GreetingResult;
+          if (typeof greeting !== "string") {
+            throw new Error("the answer has no greeting");
+          }
+          return `${answer.title}: ${greeting}`;
+        }
+        return `${answer.title}: ${answer.answer.val.kind}: ${answer.answer.val.message}`;
+      });
+      return said.length === 0
+        ? `No installed extension provides ${GREET}`
+        : said.join("; ");
+    }
     case "farewell":
       try {
         return await callName(FAREWELL, "farewell");
@@ -99,6 +127,11 @@ const ITEMS: SampleItem[] = [
     id: "greet",
     title: "Greet through a capability",
     subtitle: "Calls pane-samples:greet@1, whichever extension provides it",
+  },
+  {
+    id: "every",
+    title: "Greet every provider",
+    subtitle: "Calls pane-samples:greet@1 on every extension that provides it",
   },
   {
     id: "farewell",

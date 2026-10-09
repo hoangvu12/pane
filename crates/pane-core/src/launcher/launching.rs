@@ -108,8 +108,9 @@ impl Launcher {
     }
 
     /// The waiting gate (see `launch_opening`): a command of a package
-    /// that waits for a required dependency runs nothing — not its view,
-    /// run entry point, actions, arguments or setup screen. A launch by
+    /// that waits for a required dependency or capability, or a command a
+    /// use is narrowed into waiting, runs nothing — not its view, run
+    /// entry point, actions, arguments or setup screen. A launch by
     /// the user, on the screen it started from, shows why on the status
     /// line, as a paused command's launch does; a background launch shows
     /// nothing. Neither is a failure of the package, and waiting never
@@ -117,7 +118,11 @@ impl Launcher {
     fn waiting_gate(&self, epoch: u64, opening: &Opening) -> bool {
         let mut state = self.lock();
         let Some(reason) = owner(&state.packages, &opening.component)
-            .and_then(|package| state.waiting.reason(&package.identity))
+            .and_then(|package| {
+                state
+                    .waiting
+                    .reason_for(&package.identity, &opening.command)
+            })
             .cloned()
         else {
             return true;
