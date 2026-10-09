@@ -3402,6 +3402,7 @@ impl Launcher {
             | Screen::Package { .. }
             | Screen::Form(_)
             | Screen::CustomView(_)
+            | Screen::DesignedView(_)
             | Screen::Confirm { .. }
             | Screen::Hotkey { .. } => {}
             // Its lines stay, also once development ended: the window reads

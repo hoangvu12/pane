@@ -423,30 +423,27 @@ fn padding(value: Option<&Value>) -> Result<Padding, String> {
     };
     match value {
         None | Some(Value::Null) => Ok(Padding::default()),
+        Some(Value::Object(fields)) => {
+            let mut padding = Padding {
+                top: side(fields, "top")?,
+                right: side(fields, "right")?,
+                bottom: side(fields, "bottom")?,
+                left: side(fields, "left")?,
+            };
+            let x = side(fields, "x")?;
+            let y = side(fields, "y")?;
+            padding.left = padding.left.or(x);
+            padding.right = padding.right.or(x);
+            padding.top = padding.top.or(y);
+            padding.bottom = padding.bottom.or(y);
+            Ok(padding)
+        }
         Some(value) => space_of(value)
             .map(|all| Padding {
                 top: Some(all),
                 right: Some(all),
                 bottom: Some(all),
                 left: Some(all),
-            })
-            .or_else(|| match value {
-                Value::Object(fields) => Some({
-                    let mut padding = Padding {
-                        top: side(fields, "top")?,
-                        right: side(fields, "right")?,
-                        bottom: side(fields, "bottom")?,
-                        left: side(fields, "left")?,
-                    };
-                    let x = side(fields, "x")?;
-                    let y = side(fields, "y")?;
-                    padding.left = padding.left.or(x);
-                    padding.right = padding.right.or(x);
-                    padding.top = padding.top.or(y);
-                    padding.bottom = padding.bottom.or(y);
-                    padding
-                }),
-                _ => None,
             })
             .ok_or_else(|| "its padding is not a space token or an object".into()),
     }
@@ -639,8 +636,9 @@ mod tests {
         // and with no fallback and no children draws nothing.
         assert!(matches!(&tree.root.kind, NodeKind::Unknown(name) if name == "stack"));
         assert!(matches!(
-            &tree.root.children[0]
+            tree.root.children[0]
                 .fallback
+                .as_ref()
                 .map(|fallback| fallback.kind.clone()),
             Some(NodeKind::Text(_))
         ));
@@ -783,12 +781,12 @@ mod tests {
         };
         assert_eq!(layout.gap, None);
         assert_eq!(layout.align, None);
-        let NodeKind::Text(text) = tree.root.children[0].kind else {
+        let NodeKind::Text(text) = &tree.root.children[0].kind else {
             panic!("a text");
         };
         assert_eq!(text.style, None);
         assert_eq!(text.level, None);
-        let NodeKind::Button(button) = tree.root.children[1].kind else {
+        let NodeKind::Button(button) = &tree.root.children[1].kind else {
             panic!("a button");
         };
         assert_eq!(button.tone, None);
