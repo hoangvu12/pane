@@ -458,9 +458,7 @@ impl Launcher {
                     Row {
                         id: format!("unlisted-setting:{id}"),
                         title: format!("{what} of a dynamic root item"),
-                        subtitle: Some(format!(
-                            "Not active: {title}; Enter forgets it · {id}"
-                        )),
+                        subtitle: Some(format!("Not active: {title}; Enter forgets it · {id}")),
                         unavailable: None,
                     },
                     Entry::ForgetChoices(id.clone()),

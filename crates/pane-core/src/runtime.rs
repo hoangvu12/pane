@@ -2445,9 +2445,7 @@ impl registering::Host for GuestState {
                         .commands
                         .iter()
                         .find(|declared| declared.id == command)
-                        .ok_or_else(|| {
-                            format!("{} has no command `{command}`", manifest.title)
-                        })?;
+                        .ok_or_else(|| format!("{} has no command `{command}`", manifest.title))?;
                     if state.component != state.location_of(installed).join(&declared.component) {
                         return Err(format!(
                             "command `{command}` is not served by this component; a dynamic \
@@ -2706,7 +2704,10 @@ impl GuestState {
     }
 
     /// The manifest of the guest's own package, as `installed` holds it.
-    fn manifest_of(&self, installed: &operations::Installed) -> Result<crate::packages::Manifest, String> {
+    fn manifest_of(
+        &self,
+        installed: &operations::Installed,
+    ) -> Result<crate::packages::Manifest, String> {
         let owner = self.owner().expect("checked by add_registration");
         let package = installed
             .packages

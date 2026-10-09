@@ -56,7 +56,7 @@ interface registrations {
   /// due while one is pending are coalesced into one, and so are firings
   /// that fall due while the package waits for what it needs: none of its
   /// code runs then, and one firing is delivered when it can run again.
-  resource timer {}
+  resource timer;
 
   /// A folder watcher the guest owns: changes under `path` (a folder the
   /// system can watch), recursive or not, through the native watcher
@@ -64,7 +64,7 @@ interface registrations {
   /// delivered to the component's `events` export with the watcher's tag
   /// and the paths that changed; an overflow is delivered as one "rescan"
   /// event. A path Pane cannot watch is refused when the watcher is made.
-  resource watcher {}
+  resource watcher;
 
   /// A run-time provision the guest owns: the package provides the
   /// capability its `pane.json` marks `atRunTime` while this is held,
@@ -72,7 +72,7 @@ interface registrations {
   /// going away, withdraws the provider at once, and the capability's
   /// consumers fall back to another provider or wait. A capability the
   /// manifest does not declare and mark is refused.
-  resource provision {}
+  resource provision;
 
   /// Registers a dynamic root item under the command with manifest id
   /// `command` (its id in `pane.json`, served by this component), from

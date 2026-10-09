@@ -98,10 +98,7 @@ struct Entry {
 #[derive(Clone, Debug)]
 pub(crate) enum Kind {
     /// A dynamic root item under the command with this manifest id.
-    RootItem {
-        command: String,
-        item: DynamicItem,
-    },
+    RootItem { command: String, item: DynamicItem },
     /// A timer: one firing (`after`) or one every interval (`every`), of
     /// `seconds`, firing with `tag`.
     Timer {
@@ -175,7 +172,10 @@ pub(crate) enum GuestEvent {
     /// A timer fired: its tag.
     Timer { tag: String },
     /// A watcher's coalesced changes: its tag and what changed.
-    Watcher { tag: String, changes: WatcherChanges },
+    Watcher {
+        tag: String,
+        changes: WatcherChanges,
+    },
 }
 
 /// What a folder watcher reports: the paths that changed, or an
@@ -408,9 +408,9 @@ impl Registrations {
         {
             let mut state = self.lock();
             let number = generation.number();
-            state
-                .activations
-                .retain(|activation| !(activation.owner == owner && activation.generation.number() == number));
+            state.activations.retain(|activation| {
+                !(activation.owner == owner && activation.generation.number() == number)
+            });
             state.activations.push(Activation {
                 owner: owner.to_owned(),
                 generation: generation.clone(),
@@ -616,7 +616,10 @@ mod tests {
         registrations.activated("local:/somewhere", &generation, (1, 7));
         assert!(registrations.is_activated("local:/somewhere", &generation));
         registrations.instance_gone(Path::new("/somewhere/fixture.wasm"), (1, 7));
-        assert!(registrations.lock().entries.is_empty(), "the registration ended");
+        assert!(
+            registrations.lock().entries.is_empty(),
+            "the registration ended"
+        );
         assert!(
             !registrations.is_activated("local:/somewhere", &generation),
             "the activation starts again"

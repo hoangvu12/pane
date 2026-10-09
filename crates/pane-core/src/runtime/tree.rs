@@ -688,9 +688,7 @@ struct WireAnswer {
 /// docs/list-tree.md plus the `mode` that makes it a dynamic command, or
 /// why it cannot be read. Kept here, as the tree's items are, so the JSON
 /// stays at the edge of the runtime (see `registrations`).
-pub(super) fn dynamic_item(
-    json: &str,
-) -> Result<crate::registrations::DynamicItem, String> {
+pub(super) fn dynamic_item(json: &str) -> Result<crate::registrations::DynamicItem, String> {
     #[derive(Deserialize)]
     #[serde(rename_all = "camelCase")]
     struct WireDynamic {
@@ -710,7 +708,7 @@ pub(super) fn dynamic_item(
         Some(other) => {
             return Err(format!(
                 "the item's mode “{other}” is neither “view” nor “no-view”"
-            ))
+            ));
         }
     };
     Ok(crate::registrations::DynamicItem {

@@ -237,10 +237,7 @@ pub(super) fn row_presentation(state: &State, index: usize) -> RowPresentation {
     };
     let command = matches!(
         entry,
-        Entry::Open(_)
-            | Entry::Unavailable(_)
-            | Entry::Waiting { .. }
-            | Entry::DynamicAction(_)
+        Entry::Open(_) | Entry::Unavailable(_) | Entry::Waiting { .. } | Entry::DynamicAction(_)
     );
     // A dynamic root item draws what its item says: its own icon and
     // accessories, resolved in its package's managed copy (#158).
@@ -309,11 +306,11 @@ pub(super) fn want_row_icons(state: &State, index: usize) {
     // A dynamic root item's row loads what its item's look needs (#158);
     // its packaged images are already resolved to the package's copy.
     if let Some(look) = state.dynamic.of(&row.id) {
-        for icon in look
-            .icon
-            .iter()
-            .chain(look.accessories.iter().filter_map(|accessory| accessory.icon.as_ref()))
-        {
+        for icon in look.icon.iter().chain(
+            look.accessories
+                .iter()
+                .filter_map(|accessory| accessory.icon.as_ref()),
+        ) {
             looks::want_icon(state, None, icon);
         }
         return;

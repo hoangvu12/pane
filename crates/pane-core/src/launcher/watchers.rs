@@ -197,7 +197,10 @@ fn look(watchers: &Watchers, launcher: &Launcher) -> Vec<Delivery> {
         };
         (
             wanted.clone(),
-            wanted.iter().map(|registered| (registered.id, runs(registered))).collect::<Vec<_>>(),
+            wanted
+                .iter()
+                .map(|registered| (registered.id, runs(registered)))
+                .collect::<Vec<_>>(),
             wanted
                 .iter()
                 .map(|registered| (registered.id, data(registered)))
@@ -286,10 +289,7 @@ fn look(watchers: &Watchers, launcher: &Launcher) -> Vec<Delivery> {
         } else {
             // None of its code runs: held, merged with what is held
             // already, and delivered as one when it can run again.
-            merge(
-                watching.held.entry(*id).or_insert(changes.clone()),
-                changes,
-            );
+            merge(watching.held.entry(*id).or_insert(changes.clone()), changes);
         }
     }
     // The held changes of packages whose code may run again are
@@ -319,13 +319,12 @@ fn make(watchers: &Watchers, registered: &WatcherOf) -> Option<Held> {
     let id = registered.id;
     let path = registered.path.clone();
     let recursive = registered.recursive;
-    let mut native =
-        notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
-            // The native watcher's own thread: sent on, never worked on
-            // here.
-            let _ = sender.send(Report { id, event });
-        })
-        .ok()?;
+    let mut native = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
+        // The native watcher's own thread: sent on, never worked on
+        // here.
+        let _ = sender.send(Report { id, event });
+    })
+    .ok()?;
     let mode = if recursive {
         RecursiveMode::Recursive
     } else {
@@ -348,7 +347,10 @@ fn coalesced(root: &Path, paths: Vec<PathBuf>, rescan: bool) -> WatcherChanges {
     }
     let mut seen: Vec<PathBuf> = Vec::new();
     for path in paths {
-        let relative = path.strip_prefix(root).map(Path::to_path_buf).unwrap_or(path);
+        let relative = path
+            .strip_prefix(root)
+            .map(Path::to_path_buf)
+            .unwrap_or(path);
         if !seen.contains(&relative) {
             seen.push(relative);
         }
@@ -389,8 +391,11 @@ fn start_delivery(watchers: &Watchers, launcher: &WeakLauncher, delivery: Delive
                 && let Ok(runtime) = launcher.runtime()
             {
                 let runtime = runtime.clone();
-                let _ =
-                    futures::executor::block_on(runtime.event_with(&delivery.component, delivery.event, delivery.data));
+                let _ = futures::executor::block_on(runtime.event_with(
+                    &delivery.component,
+                    delivery.event,
+                    delivery.data,
+                ));
             }
             wake.finished();
         });

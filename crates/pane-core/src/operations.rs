@@ -769,12 +769,10 @@ impl Installed {
                 };
                 // An entry marked `atRunTime` makes the package a provider
                 // only while its code holds a provision for it.
-                let provisioned =
-                    !entry.at_run_time
-                        || self
-                            .provisions
-                            .iter()
-                            .any(|(owner, provided)| *provided == capability && *owner == package.identity.key());
+                let provisioned = !entry.at_run_time
+                    || self.provisions.iter().any(|(owner, provided)| {
+                        *provided == capability && *owner == package.identity.key()
+                    });
                 (serves && provisioned).then_some((package, entry))
             })
             .collect()

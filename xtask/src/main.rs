@@ -423,7 +423,7 @@ fn git_sample(root: &Path, out: &Path) -> Result<(), String> {
 /// (package folder in `guests/packages`, component) of each sample package,
 /// and of the default extensions (the calculator, applications and
 /// quicklinks).
-const SAMPLE_PACKAGES: [(&str, &str); 65] = [
+const SAMPLE_PACKAGES: [(&str, &str); 68] = [
     ("sample-rust", "sample_rust"),
     ("sample-settings", "sample_settings"),
     ("sample-js", "sample_js"),

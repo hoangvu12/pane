@@ -410,21 +410,18 @@ impl Launcher {
             .iter()
             .find(|(_, registered)| registered.shortcut == *shortcut)
             .map(|(command, _)| command.as_str())?;
-        if let Some(opening) = state
-            .packages
-            .iter()
-            .filter(|package| package.enabled)
-            .find_map(|package| {
-                let (offered, _) =
-                    package
-                        .launchable_commands()
-                        .into_iter()
-                        .find(|(offered, unavailable)| {
-                            offered.id == command && unavailable.is_none()
-                        })?;
-                let no_view = package.mode_of(offered.manifest_id()) == CommandMode::NoView;
-                Some(Opening::of(&offered, no_view, LaunchSource::Hotkey))
-            })
+        if let Some(opening) =
+            state
+                .packages
+                .iter()
+                .filter(|package| package.enabled)
+                .find_map(|package| {
+                    let (offered, _) = package.launchable_commands().into_iter().find(
+                        |(offered, unavailable)| offered.id == command && unavailable.is_none(),
+                    )?;
+                    let no_view = package.mode_of(offered.manifest_id()) == CommandMode::NoView;
+                    Some(Opening::of(&offered, no_view, LaunchSource::Hotkey))
+                })
         {
             return Some(opening);
         }

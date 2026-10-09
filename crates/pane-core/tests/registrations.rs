@@ -298,51 +298,67 @@ fn a_dynamic_root_item_appears_updates_and_disappears_in_root_search() {
         let (launcher, identity, _folder) = pane.installed(&sample);
         // The activation entry point registered the item: the row is
         // listed with nothing counted yet.
-        pane.until(
-            "the dynamic root item's row",
-            true,
-            || launcher.view().rows.iter().any(|row| row.id.ends_with(":counted")),
-        );
+        pane.until("the dynamic root item's row", true, || {
+            launcher
+                .view()
+                .rows
+                .iter()
+                .any(|row| row.id.ends_with(":counted"))
+        });
         let row = dynamic_row(&launcher);
         assert_eq!(row.title, "Registrations: counting");
         assert_eq!(row.subtitle, Some(item_subtitle(&sample, 0, 0)));
         // The undo list holds what the activation registered: the item
         // and the timer (no watcher: no folder is named).
-        assert!(launcher.undo_list(&identity).iter().any(|what| *what == "dynamic root item"));
-        assert!(launcher.undo_list(&identity).iter().any(|what| *what == "timer"));
+        assert!(
+            launcher
+                .undo_list(&identity)
+                .iter()
+                .any(|what| *what == "dynamic root item")
+        );
+        assert!(
+            launcher
+                .undo_list(&identity)
+                .iter()
+                .any(|what| *what == "timer")
+        );
         // The timer fires and updates the row.
         pane.clock.advance(SECOND);
         pane.timers_settled(&launcher);
-        pane.until(
-            "the row's count",
-            item_subtitle(&sample, 1, 0),
-            || dynamic_row(&launcher).subtitle.unwrap(),
-        );
+        pane.until("the row's count", item_subtitle(&sample, 1, 0), || {
+            dynamic_row(&launcher).subtitle.unwrap()
+        });
         // Disabling ends the generation: the row goes, and the undo list
         // is empty.
         block_on(launcher.set_enabled(&identity, false));
-        pane.until(
-            "the row's removal",
-            false,
-            || launcher.view().rows.iter().any(|row| row.id.ends_with(":counted")),
-        );
+        pane.until("the row's removal", false, || {
+            launcher
+                .view()
+                .rows
+                .iter()
+                .any(|row| row.id.ends_with(":counted"))
+        });
         assert_eq!(launcher.undo_list(&identity), Vec::<&str>::new());
         // Enabling activates again: the item is registered afresh, on a
         // new generation.
         block_on(launcher.set_enabled(&identity, true));
-        pane.until(
-            "the dynamic root item's row again",
-            true,
-            || launcher.view().rows.iter().any(|row| row.id.ends_with(":counted")),
-        );
+        pane.until("the dynamic root item's row again", true, || {
+            launcher
+                .view()
+                .rows
+                .iter()
+                .any(|row| row.id.ends_with(":counted"))
+        });
         // A restart of Pane starts the activation again where the package
         // is enabled, and the row is back.
         let restarted = pane.start();
-        pane.until(
-            "the dynamic root item's row after a restart",
-            true,
-            || restarted.view().rows.iter().any(|row| row.id.ends_with(":counted")),
-        );
+        pane.until("the dynamic root item's row after a restart", true, || {
+            restarted
+                .view()
+                .rows
+                .iter()
+                .any(|row| row.id.ends_with(":counted"))
+        });
     }
 }
 
@@ -353,22 +369,22 @@ fn a_dynamic_root_item_appears_updates_and_disappears_in_root_search() {
 fn a_dynamic_root_items_action_runs_as_often_as_chosen() {
     let pane = Pane::new();
     let (launcher, _identity, folder) = pane.installed(&SAMPLES[0]);
-    pane.until(
-        "the dynamic root item's row",
-        true,
-        || launcher.view().rows.iter().any(|row| row.id.ends_with(":counted")),
-    );
+    pane.until("the dynamic root item's row", true, || {
+        launcher
+            .view()
+            .rows
+            .iter()
+            .any(|row| row.id.ends_with(":counted"))
+    });
     let ticks = pane.counted(&folder, "ticks").unwrap_or(0);
     for added in 1..=2 {
         to_root(&launcher);
         select_title(&launcher, "Registrations: counting");
         block_on(launcher.activate_selected());
         let added = added;
-        pane.until(
-            "the action's count",
-            ticks + added,
-            || pane.counted(&folder, "ticks").unwrap_or(0),
-        );
+        pane.until("the action's count", ticks + added, || {
+            pane.counted(&folder, "ticks").unwrap_or(0)
+        });
     }
 }
 
@@ -391,29 +407,32 @@ fn a_folder_watcher_delivers_coalesced_changes() {
     });
     fs::write(&file, serde_json::to_string(&settings).unwrap()).unwrap();
     let (launcher, identity, _folder) = pane.installed(&SAMPLES[0]);
-    pane.until(
-        "the dynamic root item's row",
-        true,
-        || launcher.view().rows.iter().any(|row| row.id.ends_with(":counted")),
+    pane.until("the dynamic root item's row", true, || {
+        launcher
+            .view()
+            .rows
+            .iter()
+            .any(|row| row.id.ends_with(":counted"))
+    });
+    assert!(
+        launcher
+            .undo_list(&identity)
+            .iter()
+            .any(|what| *what == "folder watcher")
     );
-    assert!(launcher.undo_list(&identity).iter().any(|what| *what == "folder watcher"));
     // Two files written at once: one coalesced event, both paths in it.
     fs::write(watched.path().join("one.txt"), "one").unwrap();
     fs::write(watched.path().join("two.txt"), "two").unwrap();
     let folder = pane.sources.path().join("sample-registrations");
-    pane.until(
-        "the watcher's changes",
-        2,
-        || pane.counted(&folder, "changes").unwrap_or(0),
-    );
+    pane.until("the watcher's changes", 2, || {
+        pane.counted(&folder, "changes").unwrap_or(0)
+    });
     // A third file, after the coalescing window: another event.
     thread::sleep(Duration::from_millis(700));
     fs::write(watched.path().join("three.txt"), "three").unwrap();
-    pane.until(
-        "the watcher's changes again",
-        3,
-        || pane.counted(&folder, "changes").unwrap_or(0),
-    );
+    pane.until("the watcher's changes again", 3, || {
+        pane.counted(&folder, "changes").unwrap_or(0)
+    });
     assert!(
         launcher.wait_for_watchers(PROMPTLY),
         "the watchers did not settle"
@@ -447,14 +466,12 @@ fn a_run_time_provision_makes_the_package_a_provider_only_while_held() {
     // Signing in holds the provision: the provider is one of the
     // fan-out's answers.
     open_and_run(&launcher, SAMPLES[0].command, "Sign in to the provision");
-    pane.until(
-        "the provision's undo entry",
-        true,
-        || launcher
+    pane.until("the provision's undo entry", true, || {
+        launcher
             .undo_list(&identity)
             .iter()
-            .any(|what| *what == "run-time provision"),
-    );
+            .any(|what| *what == "run-time provision")
+    });
     assert!(
         every_provider(&launcher).contains("Rust registrations sample"),
         "the provider did not answer with the provision held"
@@ -506,11 +523,12 @@ fn a_waiting_package_runs_no_timer_code_until_the_provision_comes() {
     // Signing in holds the provision: the fixture comes back by itself,
     // its activation runs, and its timer counts firings.
     open_and_run(&launcher, SAMPLES[0].command, "Sign in to the provision");
-    pane.until(
-        "the activation's timer",
-        true,
-        || launcher.undo_list(&identity).iter().any(|what| *what == "timer"),
-    );
+    pane.until("the activation's timer", true, || {
+        launcher
+            .undo_list(&identity)
+            .iter()
+            .any(|what| *what == "timer")
+    });
     pane.clock.advance(3 * SECOND);
     pane.timers_settled(&launcher);
     assert_eq!(pane.counted(&fixture, "fired"), Some(3));
@@ -536,11 +554,9 @@ fn a_waiting_package_runs_no_timer_code_until_the_provision_comes() {
     // five.
     open_and_run(&launcher, SAMPLES[0].command, "Sign in to the provision");
     pane.timers_settled(&launcher);
-    pane.until(
-        "the coalesced firing",
-        4,
-        || pane.counted(&fixture, "fired").unwrap_or(0),
-    );
+    pane.until("the coalesced firing", 4, || {
+        pane.counted(&fixture, "fired").unwrap_or(0)
+    });
     assert_eq!(pane.counted(&fixture, "fired"), Some(4));
 }
 
@@ -563,11 +579,12 @@ fn beyond_the_limits_bounds_and_declarations_is_refused() {
     );
     block_on(launcher.install_package(&fixture));
     let identity = PackageIdentity::local(&fixture).unwrap();
-    pane.until(
-        "the activation's timer",
-        true,
-        || launcher.undo_list(&identity).iter().any(|what| *what == "timer"),
-    );
+    pane.until("the activation's timer", true, || {
+        launcher
+            .undo_list(&identity)
+            .iter()
+            .any(|what| *what == "timer")
+    });
     open_fixture(&launcher);
     run_fixture_item(&launcher, "Register many items");
     assert!(
@@ -581,7 +598,9 @@ fn beyond_the_limits_bounds_and_declarations_is_refused() {
     open_fixture(&launcher);
     run_fixture_item(&launcher, "Register many timers");
     assert!(
-        shown(&launcher).to_string().contains("64 of Pane's limit of 64 timers"),
+        shown(&launcher)
+            .to_string()
+            .contains("64 of Pane's limit of 64 timers"),
         "the timers limit is not named: {:?}",
         shown(&launcher)
     );
@@ -607,7 +626,9 @@ fn beyond_the_limits_bounds_and_declarations_is_refused() {
     );
     run_fixture_item(&launcher, "Provide the undeclared capability");
     assert!(
-        shown(&launcher).to_string().contains("declares no `provides` entry"),
+        shown(&launcher)
+            .to_string()
+            .contains("declares no `provides` entry"),
         "the undeclared provision is not refused: {:?}",
         shown(&launcher)
     );
@@ -615,7 +636,9 @@ fn beyond_the_limits_bounds_and_declarations_is_refused() {
     pane.save_setting(&identity, "folder", "/not/there");
     run_fixture_item(&launcher, "Watch the folder");
     assert!(
-        shown(&launcher).to_string().contains("there is nothing there"),
+        shown(&launcher)
+            .to_string()
+            .contains("there is nothing there"),
         "the unwatchable path is not refused: {:?}",
         shown(&launcher)
     );
@@ -665,16 +688,17 @@ fn a_trapping_activation_counts_towards_pausing() {
     block_on(launcher.install_package(&fixture));
     // The activation traps, is started again, traps again: three within
     // the window pause the package.
-    pane.until(
-        "the pause",
-        true,
-        || match fixture_row(&launcher).unavailable {
+    pane.until("the pause", true, || {
+        match fixture_row(&launcher).unavailable {
             Some(Unavailable::Paused(_)) => true,
             _ => false,
-        },
-    );
+        }
+    });
     assert!(
-        matches!(fixture_row(&launcher).unavailable, Some(Unavailable::Paused(_))),
+        matches!(
+            fixture_row(&launcher).unavailable,
+            Some(Unavailable::Paused(_))
+        ),
         "the trapping activation did not pause the package"
     );
 }
@@ -686,11 +710,13 @@ fn a_trapping_activation_counts_towards_pausing() {
 fn a_quick_slot_and_a_hotkey_of_a_dynamic_item_say_why() {
     let pane = Pane::new();
     let (launcher, identity, _folder) = pane.installed(&SAMPLES[0]);
-    pane.until(
-        "the dynamic root item's row",
-        true,
-        || launcher.view().rows.iter().any(|row| row.id.ends_with(":counted")),
-    );
+    pane.until("the dynamic root item's row", true, || {
+        launcher
+            .view()
+            .rows
+            .iter()
+            .any(|row| row.id.ends_with(":counted"))
+    });
     let row = dynamic_row(&launcher);
     // A quick slot holds it: the slot runs while the item is registered.
     let (change, recorded) = launcher.change_quick_slots(&row.id, ResultAction::Pin);
@@ -702,7 +728,11 @@ fn a_quick_slot_and_a_hotkey_of_a_dynamic_item_say_why() {
     assert!(slots[0].ready());
     // A global hotkey holds it too: pressing it launches the command.
     let shortcut = pane_core::hotkeys::Shortcut::parse("ctrl+alt+r").unwrap();
-    block_on(launcher.set_hotkey(&row.id, Some(shortcut.clone())).unwrap());
+    block_on(
+        launcher
+            .set_hotkey(&row.id, Some(shortcut.clone()))
+            .unwrap(),
+    );
     assert!(
         launcher.press_hotkey(&shortcut).is_some(),
         "the hotkey launches the dynamic item's command"
@@ -734,11 +764,13 @@ fn a_quick_slot_and_a_hotkey_of_a_dynamic_item_say_why() {
 fn an_alias_of_a_dynamic_item_says_why_while_it_is_not_registered() {
     let pane = Pane::new();
     let (launcher, identity, _folder) = pane.installed(&SAMPLES[0]);
-    pane.until(
-        "the dynamic root item's row",
-        true,
-        || launcher.view().rows.iter().any(|row| row.id.ends_with(":counted")),
-    );
+    pane.until("the dynamic root item's row", true, || {
+        launcher
+            .view()
+            .rows
+            .iter()
+            .any(|row| row.id.ends_with(":counted"))
+    });
     let row = dynamic_row(&launcher);
     // Record the alias from the Actions panel, as the user would.
     assert!(
@@ -752,7 +784,11 @@ fn an_alias_of_a_dynamic_item_says_why_while_it_is_not_registered() {
     to_root(&launcher);
     block_on(launcher.set_query("reg"));
     assert!(
-        launcher.view().rows.iter().any(|row| row.id.ends_with(":counted")),
+        launcher
+            .view()
+            .rows
+            .iter()
+            .any(|row| row.id.ends_with(":counted")),
         "the alias finds the dynamic item's row"
     );
     // The generation ends: the item is not registered, and the alias
@@ -766,7 +802,11 @@ fn an_alias_of_a_dynamic_item_says_why_while_it_is_not_registered() {
         .find(|row| row.id.starts_with("unlisted-setting:"))
         .expect("the alias's row in the extension list");
     assert!(
-        unlisted.subtitle.as_deref().unwrap_or("").contains("no longer lists it"),
+        unlisted
+            .subtitle
+            .as_deref()
+            .unwrap_or("")
+            .contains("no longer lists it"),
         "the alias says why it is not active: {:?}",
         unlisted.subtitle
     );
@@ -781,28 +821,29 @@ fn a_reload_undoes_the_registrations_and_activates_again() {
     let pane = Pane::new();
     let (launcher, identity, folder) = pane.installed(&SAMPLES[0]);
     open_and_run(&launcher, SAMPLES[0].command, "Sign in to the provision");
-    pane.until(
-        "the registrations",
-        3,
-        || {
-            launcher
-                .undo_list(&identity)
-                .iter()
-                .filter(|what| **what != "extension instance")
-                .count()
-        },
-    );
+    pane.until("the registrations", 3, || {
+        launcher
+            .undo_list(&identity)
+            .iter()
+            .filter(|what| **what != "extension instance")
+            .count()
+    });
     // The package's code is replaced from its source folder: a reload.
     block_on(launcher.reload(&identity));
     // The undo list ran with the old generation and is empty; activating
     // again registered the item and the timer afresh.
-    pane.until(
-        "the item again",
-        true,
-        || launcher.view().rows.iter().any(|row| row.id.ends_with(":counted")),
-    );
+    pane.until("the item again", true, || {
+        launcher
+            .view()
+            .rows
+            .iter()
+            .any(|row| row.id.ends_with(":counted"))
+    });
     assert!(
-        launcher.undo_list(&identity).iter().any(|what| *what == "dynamic root item"),
+        launcher
+            .undo_list(&identity)
+            .iter()
+            .any(|what| *what == "dynamic root item"),
         "the activation did not register the item again: {:?}",
         launcher.undo_list(&identity)
     );

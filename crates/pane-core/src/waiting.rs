@@ -199,8 +199,9 @@ impl Waiting {
                         unmet_capability(packages, &able, provisions, paused, package, used)
                     })
                     .flat_map(|unmet| {
-                        let why =
-                            capability_reason(packages, &able, provisions, paused, title_of, package, &unmet);
+                        let why = capability_reason(
+                            packages, &able, provisions, paused, title_of, package, &unmet,
+                        );
                         unmet
                             .commands
                             .iter()
@@ -398,9 +399,9 @@ fn unmet_capability(
         // only while its code holds a provision for it (#158): while it
         // does not, it is no provider at all, not one that cannot serve.
         if entry.at_run_time
-            && !provisions
-                .iter()
-                .any(|(owner, provided)| *provided == used.capability && *owner == other.identity.key())
+            && !provisions.iter().any(|(owner, provided)| {
+                *provided == used.capability && *owner == other.identity.key()
+            })
         {
             continue;
         }
@@ -470,13 +471,7 @@ fn root_of(
         // can enable or retry, or the capability itself, whose fix row
         // installs a provider.
         Requirement::Capability(unmet) => Some(root_of_capability(
-            packages,
-            able,
-            provisions,
-            paused,
-            title_of,
-            path,
-            &unmet,
+            packages, able, provisions, paused, title_of, path, &unmet,
         )),
     }
 }
@@ -504,7 +499,8 @@ fn root_of_capability(
                 let mut path = path.to_vec();
                 if !path.contains(&provider.identity) {
                     path.push(provider.identity.clone());
-                    if let Some(root) = root_of(packages, able, provisions, paused, title_of, &path) {
+                    if let Some(root) = root_of(packages, able, provisions, paused, title_of, &path)
+                    {
                         return root;
                     }
                 }
@@ -688,16 +684,18 @@ fn providers_say(
                 // It waits for another: what is actually missing is at the
                 // end of its chain, or beyond naming if the chain is a
                 // cycle.
-                Cannot::Waiting => match root_of(packages, able, provisions, paused, title_of, &path) {
-                    Some(root) => {
-                        format!(
-                            "{}, which waits for {}",
-                            provider.title,
-                            root.what(title_of)
-                        )
+                Cannot::Waiting => {
+                    match root_of(packages, able, provisions, paused, title_of, &path) {
+                        Some(root) => {
+                            format!(
+                                "{}, which waits for {}",
+                                provider.title,
+                                root.what(title_of)
+                            )
+                        }
+                        None => format!("{}, which is waiting for something else", provider.title),
                     }
-                    None => format!("{}, which is waiting for something else", provider.title),
-                },
+                }
             }
         })
         .collect();

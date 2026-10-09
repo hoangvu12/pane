@@ -4465,7 +4465,8 @@ fn five_pins_leave_no_room_for_the_pin_hint(cx: &mut TestAppContext) {
 #[gpui::test]
 fn a_dynamic_root_items_row_and_its_action_run(cx: &mut TestAppContext) {
     let data = tempfile::tempdir().unwrap();
-    let launcher = Launcher::with_packages(Runtime::start(), vec![], data.path().join("extensions"));
+    let launcher =
+        Launcher::with_packages(Runtime::start(), vec![], data.path().join("extensions"));
     let (window, cx) = open_launcher(cx, launcher.clone());
     let folder = tempfile::tempdir().unwrap();
     let package = packages::assembled_package("sample-registrations", folder.path());
@@ -4475,14 +4476,19 @@ fn a_dynamic_root_items_row_and_its_action_run(cx: &mut TestAppContext) {
     // The activation entry point registered the item: its row is listed
     // and drawn.
     let view = until(&window, cx, |view| {
-        view.rows.iter().any(|row| row.title == "Registrations: counting")
+        view.rows
+            .iter()
+            .any(|row| row.title == "Registrations: counting")
     });
     let row = view
         .rows
         .iter()
         .find(|row| row.title == "Registrations: counting")
         .unwrap();
-    assert_eq!(row.subtitle.as_deref(), Some("0 timer firings, 0 watcher changes (Rust)"));
+    assert_eq!(
+        row.subtitle.as_deref(),
+        Some("0 timer firings, 0 watcher changes (Rust)")
+    );
     assert!(
         cx.debug_bounds("row-Registrations: counting").is_some(),
         "the dynamic item's row is rendered"
@@ -4491,17 +4497,24 @@ fn a_dynamic_root_items_row_and_its_action_run(cx: &mut TestAppContext) {
     // Enter runs its first action: the count rises in the row.
     cx.simulate_keystrokes("enter");
     let view = until(&window, cx, |view| {
-        view.rows.iter().any(|row| {
-            row.subtitle.as_deref() == Some("1 timer firings, 0 watcher changes (Rust)")
-        })
+        view.rows
+            .iter()
+            .any(|row| row.subtitle.as_deref() == Some("1 timer firings, 0 watcher changes (Rust)"))
     });
-    assert_eq!(view.rows.iter().find(|row| row.title == "Registrations: counting").unwrap().subtitle.as_deref(),
-        Some("1 timer firings, 0 watcher changes (Rust)"));
+    assert_eq!(
+        view.rows
+            .iter()
+            .find(|row| row.title == "Registrations: counting")
+            .unwrap()
+            .subtitle
+            .as_deref(),
+        Some("1 timer firings, 0 watcher changes (Rust)")
+    );
 
     // The timer fires by the system's clock and updates the row again.
     until(&window, cx, |view| {
-        view.rows.iter().any(|row| {
-            row.subtitle.as_deref() == Some("2 timer firings, 0 watcher changes (Rust)")
-        })
+        view.rows
+            .iter()
+            .any(|row| row.subtitle.as_deref() == Some("2 timer firings, 0 watcher changes (Rust)"))
     });
 }

@@ -105,9 +105,9 @@ mod shortcuts;
 mod subtitles;
 mod system;
 mod timers;
-mod watchers;
 mod uninstall;
 mod updates;
+mod watchers;
 
 use acquire::{Acquisitions, Defaults};
 use actions::selected_action;
@@ -1686,11 +1686,7 @@ impl Launcher {
             launcher.services = Some(services);
             // The timers and watchers the packages' code registers at run
             // time (#158) run only with a runtime to deliver their events.
-            if let Some(registrations) = launcher
-                .runtime
-                .as_ref()
-                .ok()
-                .map(Runtime::registrations)
+            if let Some(registrations) = launcher.runtime.as_ref().ok().map(Runtime::registrations)
             {
                 let timers = timers::Timers::start(Arc::new(crate::clipboard::SystemClock));
                 let watchers = watchers::Watchers::start();
@@ -3685,8 +3681,9 @@ impl Launcher {
                         // begins, in the instance it runs in; a trap in it
                         // is a crash of the package like any call's,
                         // counted towards pausing it.
-                        let _ =
-                            futures::executor::block_on(runtime.activate_with(&component, Some(data)));
+                        let _ = futures::executor::block_on(
+                            runtime.activate_with(&component, Some(data)),
+                        );
                     }
                     launcher.lock().activating.remove(&identity.key());
                     launcher.changed();

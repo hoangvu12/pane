@@ -341,8 +341,15 @@ impl Launcher {
                         .filter(|(_, unavailable)| unavailable.is_none())
                         .map(|(command, _)| command.component)
                         .collect();
-                    (commands, package.manifest.as_ref().ok().and_then(|m| m.activate.clone())
-                        .map(|component| package.location.join(component)))
+                    (
+                        commands,
+                        package
+                            .manifest
+                            .as_ref()
+                            .ok()
+                            .and_then(|m| m.activate.clone())
+                            .map(|component| package.location.join(component)),
+                    )
                 })
                 .unwrap_or((Vec::new(), None))
         };

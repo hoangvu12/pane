@@ -187,9 +187,10 @@ impl Timers {
             .retain(|id, _| timers.iter().any(|timer| timer.id == *id));
         let mut due = Vec::new();
         for timer in timers {
-            let entry = timing.entries.entry(timer.id).or_insert_with(|| {
-                Entry::begins(timer.clone(), now)
-            });
+            let entry = timing
+                .entries
+                .entry(timer.id)
+                .or_insert_with(|| Entry::begins(timer.clone(), now));
             if entry.timer != timer {
                 // The same registration is another timer now (its code
                 // was replaced): it begins again.
@@ -347,9 +348,8 @@ fn fire_once(timers: Weak<Timers>, launcher: WeakLauncher, run: Run) {
         && let Ok(runtime) = launcher.runtime()
     {
         let runtime = runtime.clone();
-        let _ = futures::executor::block_on(
-            runtime.event_with(&run.component, run.event, run.data),
-        );
+        let _ =
+            futures::executor::block_on(runtime.event_with(&run.component, run.event, run.data));
     }
     if let Some(timers) = timers.upgrade() {
         timers.fired(id);
