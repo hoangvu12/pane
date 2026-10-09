@@ -102,7 +102,7 @@ const MOVES: Record<Exclude<Key, "home" | "end">, [number, number]> = {
  * An open color picker: a grid of swatches and a preview of the chosen color.
  * Arrow keys, Home and End move the choice; pressing or dragging the pointer
  * over the grid chooses the swatch under it. Pane creates one per opened view
- * (`openView`) and drops it when the view closes.
+ * (`openCustomView`) and drops it when the view closes.
  */
 class ColorPicker implements CustomView {
   // Blue.
@@ -260,14 +260,14 @@ async function submitForm(itemId: string, values: FieldValue[]): Promise<string>
   return `${GREETINGS[greeting]}, ${name}, from the TypeScript guest`;
 }
 
-async function openView(itemId: string): Promise<CustomView> {
+async function openCustomView(itemId: string): Promise<CustomView> {
   if (itemId !== "color") {
     throw new Error(`unknown view: ${itemId}`);
   }
   return new ColorPicker();
 }
 
-export const command: Command = { render, submitForm, openView };
+export const command: Command = { render, submitForm, openCustomView };
 
 /**
  * "reverse <text>" typed into root search lists the text reversed, which

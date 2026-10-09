@@ -38,9 +38,10 @@
 //   whole form;
 // - from every other handler that answers with an error (`render`, an
 //   item's `onAction`, a submenu's `onOpen`, `runSearchResult`, `run`,
-//   `openView`, a custom view's `handleEvent`, `resultsFor`, `results`,
-//   `runOperation`, `runCycle`), the message of an `Error` or of an object
-//   with a `message`, or the text of anything else. A submenu's `onOpen`
+//   `openCustomView`, a custom view's `handleEvent`, `openView`, a designed
+//   view's `handleEvent`, `resultsFor`, `results`, `runOperation`,
+//   `runCycle`), the message of an `Error` or of an object with a
+//   `message`, or the text of anything else. A submenu's `onOpen`
 //   resolving with something other than a list is such an error too.
 //
 // What a handler throws is also logged, with its stack, to the package's
@@ -113,6 +114,13 @@ function adaptView(view) {
   }
   return view;
 }
+
+/**
+ * `view`, a designed view, with `handleEvent` answering errors as text: the
+ * same wrapping a custom view's gets, its `render` throwing being a crash
+ * (the tree it answers is checked host-side).
+ */
+const adaptDesignedView = adaptView;
 
 /** A form as the tree carries it, from the `Form` the command gives. */
 function treeForm(form) {
@@ -201,7 +209,7 @@ function tree(list, actions) {
   return JSON.stringify({ version: TREE_VERSION, view: { type: "list", title: list?.title, items } });
 }
 
-/** What a command without `render`, `submitForm` or `openView` answers. */
+/** What a command without `render`, `submitForm` or a view answers. */
 const missing = {
   async render() {
     throw new Error("this command opens no screen");
@@ -209,8 +217,11 @@ const missing = {
   async submitForm() {
     throw new Error("this command has no forms");
   },
-  async openView() {
+  async openCustomView() {
     throw new Error("this command has no custom views");
+  },
+  async openView() {
+    throw new Error("this command opens no designed view");
   },
 };
 
@@ -324,7 +335,8 @@ export function adaptCommand(command) {
       return answer(value);
     },
     submitForm: adapted(own, "submitForm", formError),
-    openView: adapted(own, "openView", message, adaptView),
+    openCustomView: adapted(own, "openCustomView", message, adaptView),
+    openView: adapted(own, "openView", message, adaptDesignedView),
   };
 }
 

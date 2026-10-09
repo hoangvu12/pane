@@ -21,6 +21,7 @@ pane_extension::root::export!(Calculator);
 /// defaults (opening it is an error).
 impl Command for Calculator {
     type CustomView = NoCustomView;
+    type DesignedView = pane_extension::view::NoDesignedView;
 }
 
 impl pane_extension::root::Guest for Calculator {

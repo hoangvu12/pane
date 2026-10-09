@@ -105,6 +105,7 @@ fn last() -> Result<String, String> {
 
 impl Command for Preferences {
     type CustomView = NoCustomView;
+    type DesignedView = pane_extension::view::NoDesignedView;
 
     /// "Show preferences": every value it received, one per item.
     async fn render() -> Result<List, String> {

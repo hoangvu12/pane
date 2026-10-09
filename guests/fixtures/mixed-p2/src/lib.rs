@@ -2,7 +2,8 @@
 wit_bindgen::generate!({ path: "../../../wit", world: "extension" });
 
 use exports::pane::extension::command::{
-    CustomView, FieldValue, FormError, Frame, Guest, GuestCustomView, LaunchRecord, ViewEvent,
+    CustomView, FieldValue, FormError, Frame, Guest, GuestCustomView, GuestView, LaunchRecord,
+    Outcome, Rendered, UiEvent, View, ViewEvent,
 };
 
 struct Mixed;
@@ -21,8 +22,22 @@ impl GuestCustomView for NoView {
     }
 }
 
+/// A designed view type that is never opened.
+enum NoDesignedView {}
+
+impl GuestView for NoDesignedView {
+    async fn render(&self, _context: String) -> Result<Rendered, String> {
+        match *self {}
+    }
+
+    async fn handle_event(&self, _event: UiEvent) -> Result<Outcome, String> {
+        match *self {}
+    }
+}
+
 impl Guest for Mixed {
     type CustomView = NoView;
+    type View = NoDesignedView;
 
     async fn render(_launch: LaunchRecord) -> Result<String, String> {
         let now = std::time::SystemTime::now();
@@ -46,7 +61,11 @@ impl Guest for Mixed {
         Ok(item_id)
     }
 
-    async fn open_view(item_id: String) -> Result<CustomView, String> {
+    async fn open_custom_view(item_id: String) -> Result<CustomView, String> {
         Err(item_id)
+    }
+
+    async fn open_view(command: String, _launch: LaunchRecord) -> Result<View, String> {
+        Err(command)
     }
 }

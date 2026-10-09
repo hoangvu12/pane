@@ -358,11 +358,14 @@ pub(in crate::launcher) fn selected_action(state: &State) -> SelectedAction {
         // extension gave it, but Enter — and the footer's button with it —
         // submits the form.
         (Screen::Form(_), _) => acting("Submit"),
-        // A custom view takes the keys itself, and the network and program
-        // details screens have only Back: Enter does nothing, so there is
-        // no primary action to show.
+        // A custom view or a designed view takes the keys itself, and the
+        // network and program details screens have only Back: Enter does
+        // nothing, so there is no primary action to show.
         (
-            Screen::CustomView(_) | Screen::NetworkDetails { .. } | Screen::ProgramDetails { .. },
+            Screen::CustomView(_)
+            | Screen::DesignedView(_)
+            | Screen::NetworkDetails { .. }
+            | Screen::ProgramDetails { .. },
             _,
         ) => unusable(""),
         // A row is selected: what activating it does is the action.

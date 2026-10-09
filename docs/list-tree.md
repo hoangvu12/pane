@@ -22,7 +22,7 @@ actions, icons, accessories) is a field here, and the "Extension UI you can
 design" specification (#121) adds layout primitives, components, Detail,
 Grid, Form, navigation and the canvas to the same envelope without
 redefining it. Forms (#20) and custom views (#21) keep their own functions,
-`submit-form` and `open-view`, which take the item's id.
+`submit-form` and `open-custom-view`, which take the item's id.
 
 Authors never see the JSON or the callback ids. In Rust (`pane-extension`) a
 command implements `pane_extension::Command`, whose `render` returns a
@@ -123,7 +123,7 @@ and a lazy submenu's `onOpen` as the action itself would be named.
   Quicklink", "submitLabel": "Create Quicklink", "fields": [...]}}`). The
   "Extension UI you can design" specification (#121) extends it.
 - An item has an **`id`** (Pane keeps the selection on it when the list is
-  drawn again, and passes it to `submit-form` and `open-view`), a
+  drawn again, and passes it to `submit-form` and `open-custom-view`), a
   **`title`**, and optionally:
   - **`subtitle`**: a second line;
   - **`actions`**: what the item offers, in order (#137). The first is its

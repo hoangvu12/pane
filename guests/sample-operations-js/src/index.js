@@ -138,7 +138,7 @@ export const command = {
     }
   },
 
-  async openView(itemId) {
+  async openCustomView(itemId) {
     throw new Error(`unknown view: ${itemId}`);
   },
 };

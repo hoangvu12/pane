@@ -508,6 +508,7 @@ fn paste_item() -> Item {
 
 impl Command for Actions {
     type CustomView = NoCustomView;
+    type DesignedView = pane_extension::view::NoDesignedView;
 
     async fn render() -> Result<List, String> {
         let alpha = "Alpha note";
@@ -667,7 +668,7 @@ impl Command for Actions {
         })
     }
 
-    async fn open_view(_item_id: String) -> Result<CustomView, String> {
+    async fn open_custom_view(_item_id: String) -> Result<CustomView, String> {
         Err("The actions sample has no custom views".into())
     }
 }

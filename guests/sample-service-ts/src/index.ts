@@ -131,7 +131,7 @@ export const command = {
     throw new Error(`The service sample has no forms: ${itemId}`);
   },
 
-  async openView(itemId: string): Promise<never> {
+  async openCustomView(itemId: string): Promise<never> {
     throw new Error(`The service sample has no custom views: ${itemId}`);
   },
 };

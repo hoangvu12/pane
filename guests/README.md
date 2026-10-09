@@ -91,6 +91,14 @@ Rust's standard library on `wasm32-wasip2`) is rejected with an explanation.
   calling each by its dependency id; installing it installs the JavaScript
   sample too ([Dependencies](#dependencies-on-other-extensions)); held by
   `crates/pane-core/tests/dependencies.rs`.
+- `sample-view`, `sample-view-js`, `sample-view-ts`: the designed view
+  sample in Rust, JavaScript and TypeScript (#235): a counter whose screen
+  the extension describes as a tree Pane renders — a column of a text and a
+  row of buttons — written with the Rust builder, the JSX runtime's
+  elements and JSX itself (`"mode": "designed"` in their `pane.json`,
+  [designed-tree.md](../docs/designed-tree.md)); held by
+  `crates/pane-core/tests/designed_views.rs` and the window tests of
+  `crates/pane/tests/designed_views.rs`.
 - `sample-icons`, `sample-icons-js`, `sample-icons-ts`: the icons sample in
   Rust, JavaScript and TypeScript (#139): rows with a built-in icon, a
   packaged image with `@light` and `@dark` variants, a light and dark pair,
@@ -268,6 +276,11 @@ Rust's standard library on `wasm32-wasip2`) is rejected with an explanation.
   written by hand, not by `pane-extension`, with fields Pane does not know, a
   newer version, a view Pane cannot show and trees and answers it cannot
   read ([list-tree.md](../docs/list-tree.md)).
+- `fixtures/designed`: test fixture whose designed view's trees and answers
+  are JSON written by hand, not by `pane-extension`, with an unknown node
+  with and without a fallback, a newer minor and another major version, a
+  tree over the node limit, an error, and text that is not JSON
+  ([designed-tree.md](../docs/designed-tree.md)).
 
 ## Writing a Rust command
 

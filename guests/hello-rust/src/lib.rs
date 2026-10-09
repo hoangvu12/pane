@@ -29,6 +29,7 @@ async fn act(id: &str) -> Result<(), String> {
 
 impl Command for Hello {
     type CustomView = NoCustomView;
+    type DesignedView = pane_extension::view::NoDesignedView;
 
     async fn render() -> Result<List, String> {
         Ok(List::new("Hello").item(Item::new("hello", "Say hello").on_action(|| act("hello"))))
@@ -41,7 +42,7 @@ impl Command for Hello {
         })
     }
 
-    async fn open_view(_item_id: String) -> Result<CustomView, String> {
+    async fn open_custom_view(_item_id: String) -> Result<CustomView, String> {
         Err("this command has no custom views".into())
     }
 }

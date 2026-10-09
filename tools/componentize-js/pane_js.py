@@ -106,6 +106,8 @@ SAMPLES = [
     ("sample_icons_ts.wasm", "guests/sample-icons-ts"),
     ("sample_programs_js.wasm", "guests/sample-programs-js"),
     ("sample_programs_ts.wasm", "guests/sample-programs-ts"),
+    ("sample_view_js.wasm", "guests/sample-view-js"),
+    ("sample_view_ts.wasm", "guests/sample-view-ts"),
 ]
 # Pane's WIT, copied beside the world in guests/js/wit.
 PANE_WIT = ["extension.wit", "commands.wit", "feedback.wit", "system.wit", "data.wit", "preferences.wit", "root-results.wit",
@@ -599,6 +601,10 @@ def samples() -> None:
             "bytes": out.stat().st_size,
             "sha256": sha256_file(out),
         }
+    # The samples' TypeScript is strictly typed, so a misspelt property
+    # fails the build: prove it, with a one-file package whose tree
+    # misspells one.
+    check_strict(toolchain)
     manifest = {
         "about": ("JS/TS sample components used by tests and `cargo run -p pane`; rebuild with "
                   "`cargo xtask js-guests`. Rebuilds are not byte-identical: the QuickJS snapshot "
@@ -608,6 +614,59 @@ def samples() -> None:
     }
     MANIFEST.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     log(f"wrote {MANIFEST}")
+
+
+def check_strict(toolchain: Toolchain) -> None:
+    """Checks that the SDK's component properties are strictly typed: a
+    tree that misspells one (`gapg` for `gap`) must fail tsc, which the
+    TypeScript samples' build runs."""
+    work = CACHE / "check-strict"
+    staged = work / "sample"
+    if staged.exists():
+        shutil.rmtree(staged)
+    (staged / "src").mkdir(parents=True)
+    # The SDK beside the fixture, as a dependency would install it.
+    modules = staged / "node_modules" / "@pane-app" / "extension"
+    if modules.exists():
+        shutil.rmtree(modules)
+    shutil.copytree(REPO / "guests" / "js", modules)
+    (staged / "package.json").write_text(
+        json.dumps({"name": "pane-check-strict", "private": True, "type": "module"}), encoding="utf-8")
+    (staged / "tsconfig.json").write_text("""{
+  "compilerOptions": {
+    "strict": true,
+    "noEmit": true,
+    "target": "es2022",
+    "lib": ["es2022"],
+    "types": [],
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "jsxImportSource": "@pane-app/extension"
+  },
+  "include": ["src"]
+}
+""", encoding="utf-8")
+    (staged / "src" / "index.tsx").write_text("""import { Column, Text } from "@pane-app/extension/view";
+
+export function Misspelt() {
+  return (
+    <Column gapg="m">
+      <Text>Hello</Text>
+    </Column>
+  );
+}
+""", encoding="utf-8")
+    node = tool("node")
+    typescript = toolchain.node / "node_modules" / "typescript" / "bin" / "tsc"
+    log("checking that a misspelt property fails the build")
+    cmd = [str(part) for part in [node, typescript, "-p", staged / "tsconfig.json"]]
+    result = subprocess.run(cmd, cwd=staged, text=True, stdout=subprocess.PIPE)
+    report = result.stdout or ""
+    if "gapg" not in report:
+        raise SystemExit(
+            f"pane-js: a misspelt property must fail tsc; the check found:\n{report.strip()}"
+        )
 
 
 def check() -> None:

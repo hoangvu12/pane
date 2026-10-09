@@ -48,6 +48,7 @@ pub mod clipboard_view;
 mod command_search;
 mod confirmations;
 mod crash_notice;
+mod designed_views;
 mod feedback;
 mod hotkeys;
 mod icon_loads;
@@ -74,14 +75,14 @@ use crate::launch::{LaunchRecord, LaunchSource};
 use crate::links::{LinkOpener, NoOpener};
 use crate::operations::Installed;
 use crate::packages::{
-    InstalledPackage, PackageError, PackageIdentity, RetainedData, SavedData, SourcePackage, Store,
-    paused_reason,
+    CommandMode, InstalledPackage, PackageError, PackageIdentity, RetainedData, SavedData,
+    SourcePackage, Store, paused_reason,
 };
 use crate::platform;
 use crate::runtime::{
-    CallError, CustomViewInfo, CustomViewRole, FieldKind, FieldValue, Form, Frame, Item, Point,
-    ResultListing, RootAction, RootResult as ComputedResult, Runtime, ScreenForm, View, ViewEvent,
-    ViewId, WeakRuntime,
+    CallError, CustomViewInfo, CustomViewRole, DesignedTree, FieldKind, FieldValue, Form, Frame,
+    Item, Point, ResultListing, RootAction, RootResult as ComputedResult, Runtime, ScreenForm,
+    View, ViewEvent, ViewId, WeakRuntime,
 };
 use crate::search::{self, Keys, Query};
 
@@ -223,6 +224,10 @@ pub enum Screen {
     /// A custom view opened from an item of the command's list view. It has
     /// no rows.
     CustomView(CustomViewSnapshot),
+    /// A designed view opened as the command's own screen (`"mode":
+    /// "designed"`): the tree its extension describes, which the window
+    /// renders. It has no rows.
+    DesignedView(DesignedViewSnapshot),
     /// What an installed package that uses the network did on it this
     /// session (the addresses it tried to reach), as lines of information
     /// under the title. It has no rows.
@@ -494,6 +499,19 @@ pub struct CustomViewSnapshot {
     pub frame: Frame,
 }
 
+/// The designed view on screen, as the window draws it (`Screen::DesignedView`,
+/// ADR 0036): the tree its extension described, typed, so the window never
+/// meets the JSON the extension answered with.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DesignedViewSnapshot {
+    /// Which opened view this is: a view opened again has another id.
+    pub id: ViewId,
+    /// The latest tree: the answer to the most recent event whose answer has
+    /// arrived, or the first render. A tree the extension answered with an
+    /// error or over a limit never reaches here; the last good one stays.
+    pub tree: DesignedTree,
+}
+
 /// A snapshot of what the launcher shows.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LauncherView {
@@ -743,6 +761,9 @@ struct State {
     actions_return: Option<actions::Return>,
     /// The custom view on screen, if one is open.
     custom_view: Option<OpenCustomView>,
+    /// The designed view on screen, if one is open: the command's own
+    /// screen, rather than one opened from an item of its list.
+    designed_view: Option<designed_views::OpenDesignedView>,
     /// The open command's items' icons, tooltips and accessories, by item
     /// id (see `looks`).
     looks: looks::Looks,
@@ -1323,6 +1344,9 @@ struct Opening {
     /// Whether it is a no-view command, which runs instead of opening a
     /// screen.
     no_view: bool,
+    /// Whether its screen is a designed view (`"mode": "designed"`, ADR
+    /// 0036), which opening it calls `open-view` for instead of `render`.
+    designed: bool,
     /// How it is launched.
     launch: LaunchRecord,
     /// The text its own search field opens with, for a command that
@@ -1331,14 +1355,15 @@ struct Opening {
 }
 
 impl Opening {
-    /// `command`, launched by the user from `source`; a no-view command if
-    /// `no_view`.
-    fn of(command: &CommandRegistration, no_view: bool, source: LaunchSource) -> Opening {
+    /// `command`, launched by the user from `source`, of `mode`
+    /// (`packages::CommandMode`, read from its manifest by the caller).
+    fn of(command: &CommandRegistration, mode: CommandMode, source: LaunchSource) -> Opening {
         Opening {
             component: command.component.clone(),
             command: command.manifest_id().to_owned(),
             search: command.search,
-            no_view,
+            no_view: mode == CommandMode::NoView,
+            designed: mode == CommandMode::Designed,
             launch: LaunchRecord::by_user(source),
             initial_search: None,
         }
@@ -1477,6 +1502,7 @@ impl Launcher {
             form: None,
             actions_return: None,
             custom_view: None,
+            designed_view: None,
             looks: looks::Looks::default(),
             icon_loads,
             application_icons,
@@ -2520,6 +2546,9 @@ impl Launcher {
                 state.view.status = Status::Idle;
             }
             Screen::CustomView(_) => self.return_from_custom_view(&mut state, Status::Idle),
+            // The designed view is the command's own screen: leaving it
+            // leaves the command, as leaving its list does.
+            Screen::DesignedView(_) => self.show_root(&mut state, None),
             Screen::Confirm { .. } => self.leave_confirm(&mut state),
             Screen::Hotkey { command, .. } => {
                 let command = command.clone();
@@ -3373,6 +3402,7 @@ impl Launcher {
             | Screen::Package { .. }
             | Screen::Form(_)
             | Screen::CustomView(_)
+            | Screen::DesignedView(_)
             | Screen::Confirm { .. }
             | Screen::Hotkey { .. } => {}
             // Its lines stay, also once development ended: the window reads
@@ -3476,10 +3506,10 @@ impl Launcher {
             });
         };
         let command = |(command, unavailable): (CommandRegistration, Option<Unavailable>),
-                       no_view: bool| {
+                       mode: CommandMode| {
             let entry = match &unavailable {
                 Some(reason) => Entry::Unavailable(reason.reason().to_owned()),
-                None => Entry::Open(Opening::of(&command, no_view, LaunchSource::RootSearch)),
+                None => Entry::Open(Opening::of(&command, mode, LaunchSource::RootSearch)),
             };
             // A subtitle the command set replaces its manifest's.
             let subtitle = state
@@ -3499,7 +3529,7 @@ impl Launcher {
         // A disabled package contributes nothing to root search.
         let enabled = || state.packages.iter().filter(|package| package.enabled);
         for built in self.commands.iter().cloned() {
-            let (row, entry) = command((built, None), false);
+            let (row, entry) = command((built, None), CommandMode::View);
             add(row, entry, None, None);
         }
         for package in enabled() {
@@ -3517,15 +3547,14 @@ impl Launcher {
                 let unavailable = paused
                     .clone()
                     .or(unavailable.map(Unavailable::OnThisSystem));
-                let no_view = package.mode_of(registration.manifest_id())
-                    == crate::packages::CommandMode::NoView;
+                let mode = package.mode_of(registration.manifest_id());
                 let target = aliases::Target {
                     registration: registration.clone(),
                     identity: package.identity.clone(),
                     unavailable: unavailable.clone(),
-                    no_view,
+                    mode,
                 };
-                let (row, entry) = command((registration, unavailable), no_view);
+                let (row, entry) = command((registration, unavailable), mode);
                 add(row, entry, Some(&title), Some(target));
             }
         }
@@ -4167,6 +4196,7 @@ impl Launcher {
     /// the runtime, and replies for the old screen are discarded.
     fn leave_command(&self, state: &mut State) {
         self.close_custom_view(state);
+        self.close_designed_view(state);
         // Its search in progress, if any, is stopped.
         state.searching = None;
         state.open = None;

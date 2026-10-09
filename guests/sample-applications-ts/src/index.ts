@@ -65,11 +65,11 @@ async function submitForm(_itemId: string, _values: FieldValue[]): Promise<strin
   throw { message: "this sample has no forms" } satisfies FormError;
 }
 
-async function openView(_itemId: string): Promise<CustomView> {
+async function openCustomView(_itemId: string): Promise<CustomView> {
   throw new Error("this sample has no custom views");
 }
 
-export const command: Command = { render, submitForm, openView };
+export const command: Command = { render, submitForm, openCustomView };
 
 export const indexedResults: IndexedResults = {
   async results(): Promise<IndexedResult[]> {

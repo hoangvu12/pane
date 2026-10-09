@@ -132,7 +132,7 @@ export const command: Command = {
     host(() => set(SERVICE, address));
     return `Searching ${address} from now on`;
   },
-  async openView() {
+  async openCustomView() {
     throw new Error("Package search has no custom views");
   },
 };

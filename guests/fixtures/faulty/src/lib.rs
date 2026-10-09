@@ -139,6 +139,7 @@ impl GuestCustomView for Counter {
 
 impl Command for Faulty {
     type CustomView = Counter;
+    type DesignedView = pane_extension::view::NoDesignedView;
 
     async fn render() -> Result<List, String> {
         // A form whose submission is always refused as a whole.
@@ -187,7 +188,7 @@ impl Command for Faulty {
         })
     }
 
-    async fn open_view(item_id: String) -> Result<CustomView, String> {
+    async fn open_custom_view(item_id: String) -> Result<CustomView, String> {
         match item_id.as_str() {
             "view" => Ok(CustomView::new(Counter {
                 events: Cell::new(0),

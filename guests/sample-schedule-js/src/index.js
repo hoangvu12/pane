@@ -134,7 +134,7 @@ export const command = {
     throw new Error(`The schedule sample has no forms: ${itemId}`);
   },
 
-  async openView(itemId) {
+  async openCustomView(itemId) {
     throw new Error(`The schedule sample has no custom views: ${itemId}`);
   },
 };
