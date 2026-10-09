@@ -761,7 +761,7 @@ impl Plan {
                 format!("no installed extension provides it; {who} waits until one does")
             }
         };
-        format!("Uses{needs}: {capability}: {what}")
+        format!("Uses{needs} {capability}: {what}")
     }
 
     /// The source `required`'s dependent declares for it, as written
@@ -1792,7 +1792,7 @@ pub(crate) fn last_provided(
         let consumers: Vec<Named> = installed
             .iter()
             .filter(|other| other.enabled && other.identity != *of)
-            .filter(|other| requires_capability(*other, &entry.capability))
+            .filter(|other| requires_capability(other, &entry.capability))
             .map(|other| Named {
                 identity: other.identity.clone(),
                 title: other.title(),

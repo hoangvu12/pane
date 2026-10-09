@@ -1215,10 +1215,12 @@ fn not_found() -> Status {
 
 impl Dirs {
     /// Writes a capabilities fixture package in source folder `name`,
-    /// titled "Package <name>", whose command calls the fixture's
-    /// capability, with `members` (manifest members, each starting with a
-    /// comma): its `uses`, `provides` or `dependencies`.
-    fn capability(&self, name: &str, members: &str) -> PathBuf {
+    /// titled "Package <name>", whose one command is titled `command`, with
+    /// `members` (manifest members, each starting with a comma): its `uses`,
+    /// `provides` or `dependencies`. A provider takes a command title of
+    /// its own, so a consumer's "Capabilities fixture" stays the only row
+    /// by that name.
+    fn capability(&self, name: &str, command: &str, members: &str) -> PathBuf {
         let folder = self.folder(name);
         fs::create_dir_all(&folder).unwrap();
         fs::copy(
@@ -1232,7 +1234,7 @@ impl Dirs {
                 "title": "Package {name}",
                 "apiVersion": "0.1",
                 "commands": [
-                    {{ "id": "fixture", "title": "Capabilities fixture",
+                    {{ "id": "fixture", "title": "{command}",
                        "component": "fixture.wasm" }}
                 ]{members}
             }}"#
@@ -1258,8 +1260,8 @@ fn call_capability(launcher: &Launcher) -> Status {
 #[test]
 fn an_installed_provider_is_named_and_nothing_is_installed_beside_it() {
     let dirs = Dirs::new();
-    let provider = dirs.capability("b", &provides());
-    let consumer = dirs.capability("a", &uses(""));
+    let provider = dirs.capability("b", "Greeting provider", &provides());
+    let consumer = dirs.capability("a", "Capabilities fixture", &uses(""));
     let launcher = dirs.launcher();
     block_on(launcher.install_package(&provider));
 
@@ -1283,11 +1285,15 @@ fn an_installed_provider_is_named_and_nothing_is_installed_beside_it() {
 #[test]
 fn a_disabled_provider_is_used_rather_than_the_default_beside_it() {
     let dirs = Dirs::new();
-    let provider = dirs.capability("b", &provides());
+    let provider = dirs.capability("b", "Greeting provider", &provides());
     // Another provider the consumer names as its default, never installed:
     // the disabled one is used rather than it being installed beside.
-    dirs.capability("c", &provides());
-    let consumer = dirs.capability("a", &uses(r#", "default": "local:../c""#));
+    dirs.capability("c", "Second greeting provider", &provides());
+    let consumer = dirs.capability(
+        "a",
+        "Capabilities fixture",
+        &uses(r#", "default": "local:../c""#),
+    );
     let launcher = dirs.launcher();
     block_on(launcher.install_package(&provider));
     block_on(launcher.set_enabled(&dirs.identity("b"), false));
@@ -1310,8 +1316,12 @@ fn a_disabled_provider_is_used_rather_than_the_default_beside_it() {
 #[test]
 fn the_default_a_use_names_is_installed_when_no_provider_is() {
     let dirs = Dirs::new();
-    dirs.capability("b", &provides());
-    let consumer = dirs.capability("a", &uses(r#", "default": "local:../b""#));
+    dirs.capability("b", "Greeting provider", &provides());
+    let consumer = dirs.capability(
+        "a",
+        "Capabilities fixture",
+        &uses(r#", "default": "local:../b""#),
+    );
     let launcher = dirs.launcher();
 
     block_on(launcher.preview_package(&consumer));
@@ -1348,7 +1358,7 @@ fn the_default_a_use_names_is_installed_when_no_provider_is() {
 #[test]
 fn a_use_with_no_provider_and_no_default_waits() {
     let dirs = Dirs::new();
-    let consumer = dirs.capability("a", &uses(""));
+    let consumer = dirs.capability("a", "Capabilities fixture", &uses(""));
     let launcher = dirs.launcher();
 
     block_on(launcher.preview_package(&consumer));
@@ -1367,7 +1377,7 @@ fn a_use_with_no_provider_and_no_default_waits() {
     assert_eq!(call_capability(&launcher), not_found());
 
     // A provider installed later serves it, and it comes back by itself.
-    let provider = dirs.capability("b", &provides());
+    let provider = dirs.capability("b", "Greeting provider", &provides());
     block_on(launcher.install_package(&provider));
     assert_eq!(call_capability(&launcher), answered());
 }
@@ -1375,7 +1385,11 @@ fn a_use_with_no_provider_and_no_default_waits() {
 #[test]
 fn a_use_narrowed_to_some_commands_says_which_wait() {
     let dirs = Dirs::new();
-    let consumer = dirs.capability("a", &uses(r#", "commands": ["fixture"]"#));
+    let consumer = dirs.capability(
+        "a",
+        "Capabilities fixture",
+        &uses(r#", "commands": ["fixture"]"#),
+    );
     let launcher = dirs.launcher();
 
     block_on(launcher.preview_package(&consumer));
@@ -1392,8 +1406,12 @@ fn a_use_narrowed_to_some_commands_says_which_wait() {
 #[test]
 fn an_optional_use_never_installs_its_default() {
     let dirs = Dirs::new();
-    dirs.capability("b", &provides());
-    let consumer = dirs.capability("a", &uses(r#", "optional": true, "default": "local:../b""#));
+    dirs.capability("b", "Greeting provider", &provides());
+    let consumer = dirs.capability(
+        "a",
+        "Capabilities fixture",
+        &uses(r#", "optional": true, "default": "local:../b""#),
+    );
     let launcher = dirs.launcher();
 
     block_on(launcher.preview_package(&consumer));
@@ -1419,7 +1437,11 @@ fn an_optional_use_never_installs_its_default() {
 #[test]
 fn a_default_that_cannot_be_installed_stops_the_install() {
     let dirs = Dirs::new();
-    let consumer = dirs.capability("a", &uses(r#", "default": "local:../missing""#));
+    let consumer = dirs.capability(
+        "a",
+        "Capabilities fixture",
+        &uses(r#", "default": "local:../missing""#),
+    );
     let launcher = dirs.launcher();
 
     block_on(launcher.preview_package(&consumer));
@@ -1453,10 +1475,15 @@ fn a_default_that_does_not_provide_the_capability_stops_the_install() {
     // The default is a package that provides a different capability.
     dirs.capability(
         "b",
+        "Other provider",
         r#","provides": [{ "capability": "fixture:other@1", "component": "fixture.wasm",
              "operations": ["greet"] }]"#,
     );
-    let consumer = dirs.capability("a", &uses(r#", "default": "local:../b""#));
+    let consumer = dirs.capability(
+        "a",
+        "Capabilities fixture",
+        &uses(r#", "default": "local:../b""#),
+    );
     let launcher = dirs.launcher();
 
     block_on(launcher.install_package(&consumer));
@@ -1475,8 +1502,9 @@ fn a_default_that_does_not_provide_the_capability_stops_the_install() {
 #[test]
 fn a_package_providing_an_already_provided_capability_says_so() {
     let dirs = Dirs::new();
-    let installed = dirs.capability("b", &provides());
-    let provider = dirs.capability("c", &provides());
+    let installed = dirs.capability("b", "Greeting provider", &provides());
+    let provider = dirs.capability("c", "Second greeting provider", &provides());
+    let consumer = dirs.capability("a", "Capabilities fixture", &uses(""));
     let launcher = dirs.launcher();
     block_on(launcher.install_package(&installed));
 
@@ -1491,21 +1519,22 @@ fn a_package_providing_an_already_provided_capability_says_so() {
     block_on(launcher.activate_selected());
 
     assert_eq!(launcher.view().status, result("Installed Package c"));
-    // The first provider installed still serves.
+    // The first provider installed still serves the consumer's call.
+    block_on(launcher.install_package(&consumer));
     assert_eq!(call_capability(&launcher), answered());
 }
 
 #[test]
 fn an_update_plans_the_new_copy_s_uses() {
     let dirs = Dirs::new();
-    dirs.capability("b", &provides());
-    let consumer = dirs.capability("a", &uses(""));
+    dirs.capability("b", "Greeting provider", &provides());
+    let consumer = dirs.capability("a", "Capabilities fixture", &uses(""));
     let launcher = dirs.launcher();
     block_on(launcher.install_package(&consumer));
     assert_eq!(call_capability(&launcher), not_found());
 
     // The new copy uses the capability and names its default provider.
-    dirs.capability("a", &uses(r#", "default": "local:../b""#));
+    dirs.capability("a", "Capabilities fixture", &uses(r#", "default": "local:../b""#));
     block_on(launcher.preview_package(&consumer));
     assert_eq!(titles(&launcher), ["Update"]);
     assert!(
