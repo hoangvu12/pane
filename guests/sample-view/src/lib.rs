@@ -7,7 +7,7 @@
 
 use core::cell::Cell;
 
-use pane_extension::alloc::format;
+use pane_extension::alloc::{format, string::String};
 use pane_extension::view::{
     Cx, IntoNode, Space, TextLevel, TextStyle, Tone, View, button, column, row, text,
 };
