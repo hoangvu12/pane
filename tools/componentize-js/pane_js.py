@@ -175,7 +175,10 @@ def tree_files(root: Path) -> list[Path]:
     for directory, dirs, names in os.walk(root):
         dirs[:] = sorted(d for d in dirs if d not in SKIP_DIRS)
         files += [Path(directory) / name for name in names]
-    return sorted(files)
+    # By their parts, which compare case-sensitively everywhere: Windows
+    # paths compare ignoring case, which would order `README.md` and
+    # `adapt.js` otherwise than Linux does, and so digest them differently.
+    return sorted(files, key=lambda path: path.parts)
 
 
 def inputs_digest(paths: list[Path]) -> str:
