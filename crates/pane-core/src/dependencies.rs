@@ -752,13 +752,14 @@ impl Plan {
                 "no installed extension provides it; Pane installs {}, which {consumer} names",
                 provider.title
             ),
+            UseKind::NoProvider if used.some_commands => {
+                format!(
+                    "no installed extension provides it; the commands of {consumer} that need \
+                     it wait until one does"
+                )
+            }
             UseKind::NoProvider => {
-                let who = if used.some_commands {
-                    format!("the commands of {consumer} that need it")
-                } else {
-                    consumer.clone()
-                };
-                format!("no installed extension provides it; {who} waits until one does")
+                format!("no installed extension provides it; {consumer} waits until one does")
             }
         };
         format!("Uses{needs} {capability}: {what}")
