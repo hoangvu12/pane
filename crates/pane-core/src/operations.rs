@@ -54,7 +54,8 @@ use wasmtime::component::{Access, Accessor, HasData};
 
 use crate::extension_data::{ExtensionData, PackageData};
 use crate::packages::{
-    InstalledPackage, ManifestProvides, PackageIdentity, SourceSpec, installed_as, paused_reason,
+    InstalledPackage, ManifestOperation, ManifestProvides, PackageIdentity, SourceSpec,
+    installed_as, paused_reason,
 };
 use crate::platform;
 use crate::runtime::{CallError, GuestState, bindings};
@@ -749,7 +750,10 @@ impl<T> operations::HostWithStore<T> for Calls {
         .await
     }
 
-    fn providers(host: Access<'_, T, Self>, capability: String) -> Vec<operations::Provider> {
+    fn providers(
+        mut host: Access<'_, T, Self>,
+        capability: String,
+    ) -> Vec<operations::Provider> {
         let state = host.get();
         let installed = state.installed();
         let caller = state.component.clone();

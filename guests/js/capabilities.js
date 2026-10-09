@@ -12,7 +12,7 @@
 
 import { providers } from "pane:extension/operations@0.1.0";
 
-export { callCapability as call, providers };
+export { callCapability as call, providers } from "pane:extension/operations@0.1.0";
 
 /**
  * The provider of `capability` that a call reaches, with its `source` and

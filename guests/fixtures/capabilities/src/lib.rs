@@ -218,7 +218,7 @@ impl publish::Guest for Fixture {
                 }
                 Ok(json!({
                     "greeting": format!("Hello, {name}"),
-                    "operation": operation,
+                    "operation": operation.clone(),
                 })
                 .to_string())
             }

@@ -276,7 +276,7 @@ fn a_disabled_provider_is_skipped_until_none_is_left() {
         greet(&launcher, "Greet from Rust"),
         error(&format!(
             "disabled: every installed extension providing `{GREET}` is disabled (JavaScript \
-             greet provider sample, Rust greet provider sample); enable one in Settings"
+             greet provider sample and Rust greet provider sample); enable one in Settings"
         ))
     );
 }
