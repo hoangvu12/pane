@@ -243,14 +243,6 @@ impl IntoNode for Node {
     }
 }
 
-// The empty type is a node of nothing, so a view that can never exist
-// (NoDesignedView) renders one.
-impl IntoNode for ! {
-    fn into_node(self) -> Node {
-        self
-    }
-}
-
 /// A column: children below each other.
 pub fn column() -> Container {
     Container(Node::Column {
@@ -405,8 +397,10 @@ impl IntoNode for Button {
 pub enum NoDesignedView {}
 
 impl View for NoDesignedView {
+    // No value of the type exists, so this never runs: an empty column is
+    // the node of nothing.
     fn render(&mut self, _cx: &mut Cx<Self>) -> impl IntoNode {
-        match *self {}
+        column()
     }
 }
 
