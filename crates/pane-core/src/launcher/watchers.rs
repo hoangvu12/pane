@@ -256,10 +256,11 @@ fn look(watchers: &Watchers, launcher: &Launcher) -> Vec<Delivery> {
                     EventKind::Access(_)
                         | EventKind::Modify(ModifyKind::Metadata(MetadataKind::AccessTime))
                 );
+                let rescan = event.need_rescan();
                 if !read {
                     entry.1.extend(event.paths);
                 }
-                entry.2 |= event.need_rescan();
+                entry.2 |= rescan;
             }
             Err(_) => entry.2 = true,
         }
