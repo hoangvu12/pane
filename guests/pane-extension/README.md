@@ -9,7 +9,8 @@ the rest), the extension UI builder and the print and log macros. It is
 the allocator and a panic handler.
 
 You need only rustup's stable toolchain and the `wasm32-wasip2` target
-(`rustup target add wasm32-wasip2`).
+(`rustup target add wasm32-wasip2`). Until the crate is published, depend on
+it by `path`, at `guests/pane-extension` in a checkout of Pane's repository.
 
 ```toml
 [package]
@@ -80,8 +81,9 @@ component in the package's `pane.json`:
 
 The crate's version follows the extension API it targets: 0.1.x builds
 components for API 0.1 (`"apiVersion": "0.1"`, the WIT package
-`pane:extension@0.1.0`). A new API version is a new minor version of the
-crate before 1.0, and a new major version from 1.0.
+`pane:extension@0.1.0`), writing version 1 of the list tree. A new API
+version is a new minor version of the crate before 1.0, and a new major
+version from 1.0.
 
 ## More
 

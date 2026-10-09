@@ -12,8 +12,8 @@
 //!   then run `guests`.
 //! - `ci`: the lints of `ci-lints`, then the tests of `ci-tests`.
 //! - `ci-lints`: check formatting, the prebuilt JS/TS samples, the SDKs'
-//!   packages (`sdks`) and clippy: the half of `ci` that builds no guests
-//!   and runs no tests.
+//!   packages (`sdks`) and clippy: the half of `ci` that runs no tests and
+//!   builds no guest but the Rust SDK.
 //! - `sdks`: check that the SDKs package as they would be published,
 //!   publishing nothing: the Rust SDK's copy of the WIT is `wit/`, `cargo
 //!   publish --dry-run` packages `pane-extension` and builds it from the
@@ -496,8 +496,9 @@ fn pane_js(subcommand: &str) -> Command {
 }
 
 /// The lints half of `ci`: the formatting checks, the prebuilt-samples
-/// check, the SDKs' packages and clippy — everything that builds no
-/// guests and runs no tests. `ci-branch.yml` runs this as a job beside `ci-tests`, so the
+/// check, the SDKs' packages and clippy — everything that runs no tests
+/// and builds no guest but the Rust SDK, which `sdks` builds from its
+/// package. `ci-branch.yml` runs this as a job beside `ci-tests`, so the
 /// lints and the tests of a push finish in the time of the slower one.
 fn ci_lints() -> Result<(), String> {
     // Formatting first: it is free, so a formatting error is seen at once
