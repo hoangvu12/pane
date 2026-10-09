@@ -811,7 +811,7 @@ fn the_same_capability_provided_twice_at_one_major_is_refused() {
         { "capability": "fixture:greet@1", "component": "fixture.wasm", "operations": ["greet"] },
         { "capability": "fixture:greet@1", "component": "fixture.wasm", "operations": ["greet"] }
     ]"#
-        .to_string();
+    .to_string();
     let message = dirs.refused(&members);
     assert_eq!(
         message,
