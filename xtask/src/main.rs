@@ -26,8 +26,8 @@
 //!   passes `--partition hash:1/3` to run one shard of the tests, `-E
 //!   <filter>` to run only some, `--no-run` to build them only.
 //! - `package-linux`: build Pane's Linux package and the artifacts its
-//!   default extensions are acquired from, under `target/dist/` (with
-//!   `--dev`, the package's program is the development profile; see
+//!   own application updates are downloaded from, under `target/dist/`
+//!   (with `--dev`, the package's program is the development profile; see
 //!   `package.rs`).
 //! - `package-windows`: build Pane's Windows package and the same
 //!   artifacts, under `target/dist/` (`--dev` as for `package-linux`;

@@ -554,7 +554,7 @@ fn shown_bytes(bytes: &[u8]) -> String {
 }
 
 /// Whether `text` is a full SHA-1 commit id.
-fn is_commit_id(text: &str) -> bool {
+pub fn is_commit_id(text: &str) -> bool {
     text.len() == 40 && text.chars().all(|c| c.is_ascii_hexdigit())
 }
 

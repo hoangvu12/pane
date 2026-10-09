@@ -1,6 +1,8 @@
 //! Search Files like Raycast's (#177), through the launcher's public
-//! interface: Pane's registered Files default extension, acquired from an
-//! artifact source on 127.0.0.1 (`support/artifacts.rs`), over the real file
+//! interface: Pane's registered Files default extension, installed from
+//! its pinned commit in a repository served over Git's smart HTTP
+//! protocol from 127.0.0.1 (`support/repo_server.rs`,
+//! `support/defaults.rs`), over the real file
 //! index of a fixture folder standing for the home folder, with a recording
 //! opener and system so that nothing opens or shows. Search Files opens with
 //! no folder to choose on "Recently Used" (the most recently modified
@@ -19,24 +21,20 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime};
 
 use futures::executor::block_on;
-use pane_core::defaults::ArtifactSource;
 use pane_core::file_index::{Category, IndexState, IndexerConfig, WalkOptions};
 use pane_core::search_files::{FileType, PAGE, RECENTLY_USED};
 use pane_core::{DefaultExtension, Launcher, LinkOpener, Runtime, Screen, Status};
-use serde_json::Value;
 use tempfile::TempDir;
 
-#[path = "support/artifacts.rs"]
-mod artifacts;
-#[path = "support/guests.rs"]
-mod guests;
+#[path = "support/defaults.rs"]
+mod defaults;
+#[path = "support/repo_server.rs"]
+mod repo_server;
 #[path = "support/rows.rs"]
 mod rows;
 #[path = "support/system.rs"]
 mod system;
 
-use artifacts::Artifacts;
-use guests::guests;
 use rows::{select_title, titles};
 use system::{Done, RecordingSystem};
 
@@ -75,23 +73,7 @@ fn same_file(reported: &Path, made: &Path) -> bool {
 
 /// The files of the assembled Files package, by their path in the package.
 fn package_files() -> Vec<(String, Vec<u8>)> {
-    let folder = guests().join("packages/files");
-    assert!(
-        folder.is_dir(),
-        "{} is missing; run `cargo xtask guests`",
-        folder.display()
-    );
-    let mut files: Vec<(String, Vec<u8>)> = fs::read_dir(&folder)
-        .unwrap()
-        .map(|entry| entry.unwrap().path())
-        .filter(|path| path.is_file())
-        .map(|path| {
-            let name = path.file_name().unwrap().to_str().unwrap().to_owned();
-            (name, fs::read(&path).unwrap())
-        })
-        .collect();
-    files.sort();
-    files
+    defaults::package_files("files")
 }
 
 /// `path`'s last modified time set `days` days before now.
@@ -101,12 +83,19 @@ fn modified_days_ago(path: &Path, days: u64) {
         .unwrap();
 }
 
-/// The fixture home folder, Pane's data and cache folders, the artifact
-/// source serving Files, and the fakes Pane acts through.
+/// The fixture home folder, Pane's data and cache folders, the server
+/// serving Files' repository, and the fakes Pane acts through.
 struct Home {
     dir: TempDir,
     home: PathBuf,
-    artifacts: Artifacts,
+    /// Kept, not read: the repository's work tree, which the server serves
+    /// as long as this lives.
+    _repos: TempDir,
+    /// Kept, not read: the server the repository is served from, which
+    /// stops when this is dropped.
+    _server: repo_server::Server,
+    /// The pin that names the served repository.
+    pin: DefaultExtension,
     opener: FakeOpener,
     system: Arc<RecordingSystem>,
 }
@@ -147,25 +136,15 @@ impl Home {
             fs::write(&path, vec![b'x'; 100 + days]).unwrap();
             modified_days_ago(&path, days as u64);
         }
-        let artifacts = Artifacts::start();
-        let files = package_files();
-        let manifest: Value = serde_json::from_slice(
-            &files
-                .iter()
-                .find(|(path, _)| path == "pane.json")
-                .expect("the package has a pane.json")
-                .1,
-        )
-        .unwrap();
-        let borrowed: Vec<(&str, Vec<u8>)> = files
-            .iter()
-            .map(|(path, contents)| (path.as_str(), contents.clone()))
-            .collect();
-        artifacts.publish("files", manifest["version"].as_str().unwrap(), &borrowed);
+        let server = repo_server::Server::start();
+        let repos = tempfile::tempdir().unwrap();
+        let pin = defaults::from_package(&server, repos.path(), "files", "Files");
         Home {
             dir,
             home,
-            artifacts,
+            _repos: repos,
+            _server: server,
+            pin,
             opener: FakeOpener::default(),
             system: Arc::new(RecordingSystem::default()),
         }
@@ -196,20 +175,14 @@ impl Home {
         }
     }
 
-    /// Pane with Files acquired as its default extension, and its index
+    /// Pane with Files set up as its default extension, and its index
     /// settled unless `deferred`.
     fn start_with(&self, deferred: bool) -> Launcher {
         let runtime = Runtime::start().unwrap();
         runtime.set_applications(self.system.clone());
         let launcher =
             Launcher::with_packages(Ok(runtime), vec![], self.dir.path().join("data/extensions"))
-                .with_defaults(
-                    ArtifactSource::local(self.artifacts.url()).unwrap(),
-                    vec![DefaultExtension {
-                        id: "files".into(),
-                        title: "Files".into(),
-                    }],
-                )
+                .with_defaults(vec![self.pin.clone()])
                 .with_link_opener(Arc::new(self.opener.clone()))
                 .with_system(self.system.clone())
                 .with_file_index(self.config(deferred));

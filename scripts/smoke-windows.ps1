@@ -1,8 +1,11 @@
 # Native GUI smoke on Windows: launches Pane, drives it with real key events
 # and captures the screen. Pane keeps installed packages in <output-dir>\data,
 # not the user's data folder. Settings is driven through UI Automation (see
-# Press-Named). The clipboard phases serve the artifacts the #51 phase's
-# package build leaves in target\dist\artifacts, so they run after it.
+# Press-Named). The phases that set the default extensions up serve their
+# repositories (made from the packages `cargo xtask guests` assembles) on
+# 127.0.0.1, so they run after it. The update phases serve the artifacts
+# the #51 phase's package build leaves in target\dist\artifacts, so they
+# run after it too.
 # Usage: scripts/smoke-windows.ps1 -OutDir <output-dir>
 param([string]$OutDir = "smoke")
 $ErrorActionPreference = "Stop"
@@ -13,6 +16,15 @@ New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
 $data = Join-Path $OutDir "data"
 if (Test-Path $data) { Remove-Item -Recurse -Force $data }
 $env:PANE_DATA_DIR = $data
+# A development build takes its default extensions' pins from
+# PANE_DEFAULTS; without it, the committed pins point at the real
+# repositories, which no check may reach. Until a phase names its own
+# pins, the file names none: first setup adds nothing, which the phases
+# that install samples by hand need (the phase that checks first setup
+# points it at the repositories it serves).
+$NoDefaultPins = Join-Path $OutDir "no-default-pins.json"
+Set-Content -Path $NoDefaultPins -Value "[]"
+$env:PANE_DEFAULTS = $NoDefaultPins
 # The tested OS version and architecture
 "$([System.Environment]::OSVersion.VersionString) $env:PROCESSOR_ARCHITECTURE" | Set-Content (Join-Path $OutDir "system.txt")
 'theme=dark material=opaque (behavior smoke; not blur evidence)' | Add-Content (Join-Path $OutDir "system.txt")
@@ -1950,30 +1962,43 @@ try {
     if (-not $service.HasExited) { Stop-Process -Id $service.Id }
 }
 
-# Installing Pane and acquiring its calculator (#51): the package
-# `cargo xtask package-windows --dev` builds is installed on a clean
+# Installing Pane and setting its default extensions up (#51, #278): the
+# package `cargo xtask package-windows --dev` builds is installed on a clean
 # machine — a fresh user profile (LOCALAPPDATA and APPDATA pointing into
 # the smoke's own output folder, so the install, Pane's data and the
 # shortcut touch nothing of the runner's user) and a PATH that holds
 # nothing at all, so no Rust, Node, npm, Git or compiler can be reached —
-# and Pane, started from what the install script installed, acquires its
+# and Pane, started from what the install script installed, fetches its
 # default extensions (the five of #60; no sample is one, #162) from the
-# artifact source this smoke serves on 127.0.0.1
-# (scripts/artifact_server.py, the payloads `cargo xtask package-windows`
-# assembled; nothing reaches the network or Pane's published downloads).
-# The calculator answers "6*7" with 42, with no developer tool anywhere.
-# The package is the development profile, because only a
-# development build takes its artifact source from PANE_ARTIFACTS; a
-# release build uses Pane's published downloads, which no controlled
-# source may replace. (The program files are removed again at the end of
-# the phase: the uploaded evidence is the screenshots and records, not the
-# program.)
+# commits this release pins: their repositories, made from the packages
+# `cargo xtask guests` assembles and served on 127.0.0.1 over Git's smart
+# HTTP protocol (scripts/repository_server.py; nothing reaches the
+# network or a real Git host), named by the pins file the development
+# build reads through PANE_DEFAULTS. The calculator answers "6*7" with 42,
+# with no developer tool anywhere. The package is the development
+# profile, because only a development build takes its pins from
+# PANE_DEFAULTS; a release build uses the committed pins, which no
+# controlled source may replace. (The program files are removed again at
+# the end of the phase: the uploaded evidence is the screenshots and
+# records, not the program.)
 # The task's own output goes to CI's log, as the smoke's other cargo runs'
 # do (the runner's console), not to a file of the smoke's.
 cargo xtask package-windows --dev
 if ($LASTEXITCODE -ne 0) { throw "the package was not built" }
 $package = Get-ChildItem "target/dist/pane-*-windows-*-dev.zip" | Select-Object -First 1
 if (-not $package) { throw "the package was not built" }
+# The default extensions' repositories, served from this computer for the
+# rest of the smoke: the phases that check first setup point PANE_DEFAULTS
+# at the pins naming them.
+$DefaultRepositories = Join-Path $OutDir "default-repositories"
+if (Test-Path $DefaultRepositories) { Remove-Item -Recurse -Force $DefaultRepositories }
+New-Item -ItemType Directory -Force -Path $DefaultRepositories | Out-Null
+$defaultsPortFile = Join-Path $OutDir "default-repository-server.port"
+if (Test-Path $defaultsPortFile) { Remove-Item -Force $defaultsPortFile }
+$defaultsServer = Start-Process python -PassThru -NoNewWindow `
+    -ArgumentList @("`"$PSScriptRoot/repository_server.py`"", "serve", "`"$DefaultRepositories`"", "`"$defaultsPortFile`"") `
+    -RedirectStandardError (Join-Path $OutDir "default-repository-server.log")
+$DefaultPins = Join-Path $OutDir "default-pins.json"
 # Not $PROFILE: PowerShell fills that variable with the user's own
 # profile script's path.
 $cleanProfile = Join-Path $OutDir "clean-profile"
@@ -1994,6 +2019,10 @@ try {
     # Generous: a slow runner may take seconds to start Python.
     for ($i = 0; $i -lt 600 -and -not (Test-Path $portFile) -and -not $server.HasExited; $i++) { Start-Sleep -Milliseconds 100 }
     if (-not (Test-Path $portFile)) { throw "the local artifact source did not start (see artifact-server.log)" }
+    for ($i = 0; $i -lt 600 -and -not (Test-Path $defaultsPortFile) -and -not $defaultsServer.HasExited; $i++) { Start-Sleep -Milliseconds 100 }
+    if (-not (Test-Path $defaultsPortFile)) { throw "the default extensions' repository server did not start (see default-repository-server.log)" }
+    python "$PSScriptRoot/repository_server.py" make-defaults target/guests/packages "$DefaultRepositories" "$DefaultPins" "http://127.0.0.1:$((Get-Content $defaultsPortFile).Trim())/"
+    if ($LASTEXITCODE -ne 0) { throw "the default extensions' repositories were not made" }
     Expand-Archive -Path $package.FullName -DestinationPath $unpack
     $env:LOCALAPPDATA = Join-Path $cleanProfile "Local"
     $env:APPDATA = Join-Path $cleanProfile "Roaming"
@@ -2019,14 +2048,15 @@ try {
     $tools = Get-Command cargo, rustc, node, npm, git, cc, clang, make -ErrorAction SilentlyContinue
     if ($tools) { throw "the clean machine still reaches a development tool" }
     $env:PANE_ARTIFACTS = "http://127.0.0.1:$((Get-Content $portFile).Trim())/"
+    $env:PANE_DEFAULTS = $DefaultPins
     $process = Start-Pane "stderr-installed.log" @() $installed
     $env:PATH = $realPath
     $extensions = Join-Path $install "data\extensions"
-    # Generous: a slow runner may take a while to check every payload's
+    # Generous: a slow runner may take a while to check every revision's
     # components (120 s each).
     if ($process.HasExited) { throw "the installed Pane exited during setup" }
     # The default extensions (#60): all five, in every build; no sample
-    # is acquired (#162).
+    # is set up (#162).
     foreach ($default in "calculator", "applications", "quicklinks", "files", "clipboard-history") {
         Wait-For (Join-Path $extensions "installed.json") ('"default": "' + $default + '"') $true 1200
     }
@@ -2040,9 +2070,12 @@ try {
     Capture "502-calculator-copied.png"
     Check "502-calculator-copied.png" "success"   # "Copied 42 to the clipboard"
     if (Select-String -Quiet -SimpleMatch '"default": "helper-sample"' (Join-Path $extensions "installed.json")) {
-        throw "a sample was acquired as a default extension"
+        throw "a sample was set up as a default extension"
     }
-    if ((Get-ChildItem (Join-Path $extensions "acquired\calculator")).Count -ne 1) { throw "the calculator's payload is not cached" }
+    # Each default's record keeps the Git source it was fetched from: the
+    # repository, the pin's release tag, its commit and that it is pinned.
+    python "$PSScriptRoot/check_git_record.py" --defaults $DefaultPins (Join-Path $extensions "installed.json")
+    if ($LASTEXITCODE -ne 0) { throw "a default's record does not keep its Git source" }
     $downloads = Join-Path $extensions "downloads"
     if ((Test-Path $downloads) -and (Get-ChildItem $downloads)) { throw "downloads were left behind" }
     $shots = "500-installed-root", "501-calculator-answer" | ForEach-Object { Join-Path $OutDir "$_.png" }
@@ -2055,7 +2088,12 @@ try {
     Remove-Item -Force (Join-Path $unpack "pane\pane.exe")
 } finally {
     Stop-Process -Id $server.Id -ErrorAction SilentlyContinue
+    # The default extensions' repository server keeps serving: the
+    # clipboard and update phases below set the installed Panes up from
+    # the same repositories, and the last of them stops it.
     Remove-Item Env:PANE_ARTIFACTS -ErrorAction SilentlyContinue
+    Remove-Item Env:PANE_DEFAULTS -ErrorAction SilentlyContinue
+    $env:PANE_DEFAULTS = $NoDefaultPins
     $env:PATH = $realPath
     $env:APPDATA = $realAppData
     $env:LOCALAPPDATA = $realLocal
@@ -2064,9 +2102,9 @@ try {
 # Clipboard history (#35, #166, #167): Pane's own Clipboard History
 # records what is copied from the first start, with nothing to turn on.
 # Only the registered default extension does (a copy installed from its
-# folder starts off and shows the generic list), so this phase acquires
-# the default set from the artifact source the #51 phase built, served on
-# 127.0.0.1 as there, with the smoke's own build; Files' index covers an
+# folder starts off and shows the generic list), so this phase sets
+# the default set up from the pinned repositories the #51 phase serves,
+# with the smoke's own build; Files' index covers an
 # empty folder of the smoke's (PANE_TEST_FILE_INDEX_HOME), not the
 # runner's home. The text this smoke copies is kept, except text marked as
 # a password manager marks it (ExcludeClipboardContentFromMonitorProcessing,
@@ -2093,14 +2131,7 @@ $clipboardHome = Join-Path $OutDir "clipboard-home"
 if (Test-Path $clipboardHome) { Remove-Item -Recurse -Force $clipboardHome }
 New-Item -ItemType Directory -Force -Path $clipboardHome | Out-Null
 $env:PANE_TEST_FILE_INDEX_HOME = (Resolve-Path $clipboardHome).Path
-$portFile = Join-Path $OutDir "clipboard-artifact-server.port"
-if (Test-Path $portFile) { Remove-Item -Force $portFile }
-$server = Start-Process python -PassThru -NoNewWindow `
-    -ArgumentList @("`"$PSScriptRoot/artifact_server.py`"", "target/dist/artifacts", "`"$portFile`"") `
-    -RedirectStandardError (Join-Path $OutDir "clipboard-artifact-server.log")
-for ($i = 0; $i -lt 600 -and -not (Test-Path $portFile) -and -not $server.HasExited; $i++) { Start-Sleep -Milliseconds 100 }
-if (-not (Test-Path $portFile)) { throw "the clipboard phase's artifact source did not start (see clipboard-artifact-server.log)" }
-$env:PANE_ARTIFACTS = "http://127.0.0.1:$((Get-Content $portFile).Trim())/"
+$env:PANE_DEFAULTS = $DefaultPins
 Add-Type @"
 using System; using System.Runtime.InteropServices; using System.Text; using System.Threading;
 public static class PaneClip {
@@ -2217,7 +2248,7 @@ function History-Action($label) {
 $process = $null
 try {
     $process = Start-Pane "stderr-clipboard.log"
-    # The default set (#60), acquired at this first start.
+    # The default set (#60), set up at this first start.
     foreach ($default in "calculator", "applications", "quicklinks", "files", "clipboard-history") {
         Wait-For $registry ('"default": "' + $default + '"') $true 1200
     }
@@ -2358,6 +2389,9 @@ try {
         Stop-Process -Id $process.Id -ErrorAction SilentlyContinue
         $process.WaitForExit()
     }
+    # The default extensions' repository server keeps serving the update
+    # phase below; this phase's Pane is the last one started with its
+    # pins, but the update phase's installs the same defaults.
     Stop-Process -Id $server.Id -ErrorAction SilentlyContinue
     Remove-Item Env:PANE_ARTIFACTS -ErrorAction SilentlyContinue
     Remove-Item Env:PANE_TEST_FILE_INDEX_HOME -ErrorAction SilentlyContinue
@@ -2382,9 +2416,9 @@ try {
 # old one renamed pane.exe.old, removed on a later start — so the new
 # version is used the next time Pane starts (Pane never restarts itself).
 # The new Pane, started again, reports 99.0.0, with the old version's
-# data (the calculator acquired at first setup) and the extension the
-# user disabled (Clipboard History) kept, and with nothing of the update
-# left in the install folder.
+# data (the calculator set up at first setup, from the pinned
+# repositories) and the extension the user disabled (Clipboard History)
+# kept, and with nothing of the update left in the install folder.
 cargo xtask package-windows --dev --package-version 99.0.0
 if ($LASTEXITCODE -ne 0) { throw "the update package was not built" }
 $older = Get-ChildItem "target/dist/pane-0.1.0-windows-*-dev.zip" | Select-Object -First 1
@@ -2428,23 +2462,24 @@ try {
     New-Item -ItemType Directory -Force -Path $cleanBin | Out-Null
     $env:PATH = $cleanBin
     $env:PANE_ARTIFACTS = "http://127.0.0.1:$((Get-Content $portFile).Trim())/"
+    $env:PANE_DEFAULTS = $DefaultPins
     $process = Start-Pane "update-stderr-0.1.0.log" @() $installed
     $env:PATH = $realPath
-    # First setup: the default extensions are acquired (one index read
-    # per payload), and Pane's own check reads the index once more.
+    # First setup fetches the pinned commits from the repositories (no
+    # request reaches the artifact source for them), and Pane's own check
+    # reads the index once — its request is the first.
     if ($process.HasExited) { throw "the installed Pane exited during setup" }
     # The default set (#60).
     foreach ($default in "calculator", "applications", "quicklinks", "files", "clipboard-history") {
         Wait-For $registry ('"default": "' + $default + '"') $true 1200
     }
-    # The check has read the index (its request is the third): the offer
-    # is in root search. The status line tells what it found; nothing has
-    # been downloaded.
+    # The check has read the index: the offer is in root search. The
+    # status line tells what it found; nothing has been downloaded.
     for ($i = 0; $i -lt 100; $i++) {
-        if ((Select-String -SimpleMatch "pane-defaults.json" $serverLog).Count -ge 3) { break }
+        if ((Select-String -SimpleMatch "pane-defaults.json" $serverLog).Count -ge 1) { break }
         Start-Sleep -Milliseconds 100
     }
-    if ((Select-String -SimpleMatch "pane-defaults.json" $serverLog).Count -lt 3) { throw "Pane never checked for its own update" }
+    if ((Select-String -SimpleMatch "pane-defaults.json" $serverLog).Count -lt 1) { throw "Pane never checked for its own update" }
     Start-Sleep -Seconds 2
     Capture "600-notification.png"
     Check "600-notification.png" "success"   # "Pane 99.0.0 is available" (or the setup's own outcome)
@@ -2535,7 +2570,10 @@ try {
     Remove-Item -Force $installed
 } finally {
     Stop-Process -Id $server.Id -ErrorAction SilentlyContinue
+    Stop-Process -Id $defaultsServer.Id -ErrorAction SilentlyContinue
     Remove-Item Env:PANE_ARTIFACTS -ErrorAction SilentlyContinue
+    Remove-Item Env:PANE_DEFAULTS -ErrorAction SilentlyContinue
+    $env:PANE_DEFAULTS = $NoDefaultPins
     $env:PATH = $realPath
     $env:APPDATA = $realAppData
     $env:LOCALAPPDATA = $realLocal

@@ -18,19 +18,16 @@
 # one screenshot check), a Vulkan driver, and for Settings, where the
 # lifecycle's reloads and disables happen (#168), dbus-launch (dbus-x11),
 # at-spi2-core, python3-gi and gir1.2-atspi-2.0; plus the guests built
-# (`cargo xtask ci` or `cargo xtask guests`) and, for the hidden phase
-# only, the default extensions' payloads in target/dist/artifacts (`cargo
-# xtask package-linux --dev`, which CI's smoke run, before this one, leaves
-# there): without them that phase is skipped, said so on standard error
-# and in record.json ("skipped"), and the other phases run and are checked
-# as before. The hidden phase serves those payloads with an index whose
-# `application` entry is left out, so the measured Pane is offered no
-# update of its own (the smoke leaves a 99.0.0 package named there). The
-# binary measured
+# (`cargo xtask ci` or `cargo xtask guests`), whose assembled packages
+# the hidden phase serves as the default extensions' repositories. The
+# hidden phase sets them up from those repositories on 127.0.0.1 and
+# wires no application update source, so the measured Pane is offered no
+# update of its own. The binary measured
 # is the one given (target/debug/pane by default, the smoke's; record.json
-# records the profile: a release build reaches for the not-yet-deployed
-# artifact source at start, so the release profile's workload waits for
-# that source).
+# records the profile: a release build's first setup fetches its default
+# extensions from the repositories its committed pins name, so the
+# release profile's workload waits for a network the runner may not
+# give).
 # Set PANE_XVFB / PANE_XDOTOOL to use binaries outside PATH.
 #
 # The workload's fixed durations can be shortened for a quick run; the
@@ -61,16 +58,21 @@ sample_seconds=${PANE_MEASURE_SAMPLE_SECONDS:-1}
 # The seven packages installed but never invoked: the four default
 # extensions and the three language samples.
 unused_packages=(calculator quicklinks applications files sample-rust sample-js sample-ts)
-# Pane's default extensions (#60), acquired at the hidden phase's first
-# setup from the artifact source the workload serves on 127.0.0.1.
+# Pane's default extensions (#60), set up at the hidden phase's first
+# setup from the repositories the workload serves on 127.0.0.1.
 default_extensions=(calculator applications quicklinks files clipboard-history)
-artifacts=target/dist/artifacts
+# A development build takes its default extensions' pins from PANE_DEFAULTS;
+# the hidden phase names its own pins, and every other phase names none:
+# first setup adds nothing to their measurements.
+no_default_pins=$out/no-default-pins.json
+printf '[]\n' >"$no_default_pins"
+export PANE_DEFAULTS=$no_default_pins
 
 [ -x "$pane" ] || { echo "no pane binary at $pane (cargo build -p pane)"; exit 1; }
-# The hidden phase needs the default extensions' payloads; the rest does not.
+# The hidden phase needs the guests' assembled packages; the rest does too.
 skipped=
-if [ ! -f "$artifacts/pane-defaults.json" ]; then
-  echo "SKIPPED the hidden phase (#189): $artifacts holds no default extensions (cargo xtask package-linux --dev)" >&2
+if [ ! -f target/guests/packages/calculator/pane.json ]; then
+  echo "SKIPPED the hidden phase (#189): the guests are not built (cargo xtask guests)" >&2
   skipped=hidden-idle
 fi
 for package in "${unused_packages[@]}" sample-service sample-schedule; do
@@ -106,7 +108,7 @@ record = {
     "pane": {
         "path": os.path.abspath(pane),
         "bytes": os.path.getsize(pane),
-        "profile": profile,   # debug by default: a release build's first setup reaches for the artifact source
+        "profile": profile,   # debug by default: a release build's first setup fetches its default extensions from the repositories its committed pins name
     },
     "commit": "",
     "rustc": "",
@@ -133,13 +135,13 @@ PY
 xvfb_pid=
 pane_pid=
 sampler_pid=
+repository_server_pid=
 a11y_bus_pid=
 dbus_pid=
-artifact_server_pid=
 cleanup() {
   [ -n "$pane_pid" ] && kill "$pane_pid" 2>/dev/null || true
   [ -n "$sampler_pid" ] && kill "$sampler_pid" 2>/dev/null || true
-  [ -n "$artifact_server_pid" ] && kill "$artifact_server_pid" 2>/dev/null || true
+  [ -n "$repository_server_pid" ] && kill "$repository_server_pid" 2>/dev/null || true
   [ -n "$a11y_bus_pid" ] && kill "$a11y_bus_pid" 2>/dev/null || true
   [ -n "$dbus_pid" ] && kill "$dbus_pid" 2>/dev/null || true
   [ -n "$xvfb_pid" ] && kill "$xvfb_pid" 2>/dev/null || true
@@ -447,19 +449,20 @@ stop_pane
 # 4. Hidden idle (#189): Pane with its default extensions and nothing
 # else, hidden after the one show of its start and left alone, as it sits
 # in the background most of a user's day. A data folder of its own; the
-# defaults are acquired at its first setup from the payloads in
-# target/dist/artifacts, served on 127.0.0.1 as the smoke serves them.
+# defaults are set up at its first setup from the repositories the
+# workload makes of the guests' assembled packages and serves on
+# 127.0.0.1, as the smoke serves them.
 # Files' index covers an empty folder of the workload's
 # (PANE_TEST_FILE_INDEX_HOME), not the runner's home, so the phase
 # measures Pane idling, not a first walk of a home folder. The launcher is
 # hidden while the setup runs; the phase starts once the five defaults are
 # recorded and Pane has settled for PANE_MEASURE_SETTLE_SECONDS. Whatever
 # still runs then (the applications' icons, say) is part of the phase, and
-# the per-thread wake-ups and CPU in summary.json say whose it is. The
-# payloads are served from a folder of links to them beside an index
-# without its `application` entry: the smoke leaves a newer Pane package
-# named there, and an update offered would be no part of idling. Skipped
-# without the payloads (see above); its lines are left unindented.
+# the per-thread wake-ups and CPU in summary.json say whose it is. No
+# application update source is named, so no update of Pane's own is
+# offered (the smoke leaves a newer Pane package in the artifacts it
+# serves): an update offered would be no part of idling. Skipped
+# without the guests (see above); its lines are left unindented.
 if [ -z "$skipped" ]; then
 set_phase hidden-setup
 main_data=$PANE_DATA_DIR
@@ -467,31 +470,24 @@ export PANE_DATA_DIR=$out/hidden-data
 mkdir -p "$out/hidden-home"
 file_index_home=$(cd "$out/hidden-home" && pwd)
 export PANE_TEST_FILE_INDEX_HOME=$file_index_home
-hidden_artifacts=$out/hidden-artifacts
-rm -rf "$hidden_artifacts"
-mkdir -p "$hidden_artifacts"
-artifacts_path=$(cd "$artifacts" && pwd)
-for payload in "$artifacts_path"/*; do
-  [ "$(basename "$payload")" = pane-defaults.json ] || ln -s "$payload" "$hidden_artifacts/"
-done
-python3 - "$artifacts/pane-defaults.json" "$hidden_artifacts/pane-defaults.json" <<'PY'
-import json, sys
-with open(sys.argv[1], encoding="utf-8") as handle:
-    index = json.load(handle)
-index.pop("application", None)   # no update of Pane's own is offered
-with open(sys.argv[2], "w", encoding="utf-8") as handle:
-    json.dump(index, handle, indent=2)
-PY
-rm -f "$out/artifact-server.port"
-python3 "$here/artifact_server.py" "$hidden_artifacts" "$out/artifact-server.port" 2>>"$out/artifact-server.log" &
-artifact_server_pid=$!
-for _ in $(seq 600); do [ -s "$out/artifact-server.port" ] && break; kill -0 "$artifact_server_pid" 2>/dev/null || break; sleep 0.1; done
-[ -s "$out/artifact-server.port" ] || { echo "the local artifact source did not start (see $out/artifact-server.log)"; exit 1; }
-export PANE_ARTIFACTS="http://127.0.0.1:$(cat "$out/artifact-server.port")/"
+hidden_repositories=$out/hidden-repositories
+rm -rf "$hidden_repositories"
+mkdir -p "$hidden_repositories"
+rm -f "$out/hidden-repository-server.port"
+python3 "$here/repository_server.py" serve "$hidden_repositories" \
+  "$out/hidden-repository-server.port" 2>>"$out/hidden-repository-server.log" &
+repository_server_pid=$!
+for _ in $(seq 600); do [ -s "$out/hidden-repository-server.port" ] && break; kill -0 "$repository_server_pid" 2>/dev/null || break; sleep 0.1; done
+[ -s "$out/hidden-repository-server.port" ] \
+  || { echo "the default extensions' repository server did not start (see $out/hidden-repository-server.log)"; exit 1; }
+python3 "$here/repository_server.py" make-defaults target/guests/packages \
+  "$hidden_repositories" "$out/hidden-pins.json" \
+  "http://127.0.0.1:$(cat "$out/hidden-repository-server.port")"
+export PANE_DEFAULTS=$out/hidden-pins.json
 start_pane
 hide_launcher
 # Generous, as the smoke's: a slow runner may take a while to check every
-# payload's components.
+# revision's components.
 for default_ in "${default_extensions[@]}"; do
   wait_for "$PANE_DATA_DIR/extensions/installed.json" "\"default\": \"$default_\"" present 6000
 done
@@ -503,10 +499,11 @@ if viewable "$window"; then echo "the launcher showed itself during the hidden p
 stop_pane
 # The server may have ended already: under `set -e` a failed kill must not
 # end the workload.
-kill "$artifact_server_pid" 2>/dev/null || true
-wait "$artifact_server_pid" 2>/dev/null || true
-artifact_server_pid=
-unset PANE_ARTIFACTS PANE_TEST_FILE_INDEX_HOME
+kill "$repository_server_pid" 2>/dev/null || true
+wait "$repository_server_pid" 2>/dev/null || true
+repository_server_pid=
+unset PANE_DEFAULTS PANE_TEST_FILE_INDEX_HOME
+export PANE_DEFAULTS=$no_default_pins
 export PANE_DATA_DIR=$main_data
 fi   # the hidden phase
 

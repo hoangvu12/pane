@@ -10,6 +10,11 @@ use pane_core::{CommandRegistration, Launcher, Runtime, Screen, Status};
 
 #[path = "../../pane-core/tests/support/platforms.rs"]
 mod platforms;
+// The default extensions' repositories, pane-core's test support.
+#[path = "../../pane-core/tests/support/defaults.rs"]
+mod defaults;
+#[path = "../../pane-core/tests/support/repo_server.rs"]
+mod repo_server;
 #[path = "support/settle.rs"]
 mod settle;
 
@@ -20,9 +25,6 @@ mod samples;
 
 #[path = "support/paint.rs"]
 mod paint;
-
-#[path = "../../pane-core/tests/support/artifacts.rs"]
-mod artifacts;
 
 use settle::{enter_flow, settle, settle_shown, until};
 
@@ -3186,8 +3188,9 @@ fn a_window_that_stops_drawing_settles_its_arrival_on_the_next_frame_it_draws(
 }
 
 /// Pane's Clipboard History in the split view (#102, #166), through the
-/// window: the real default extension from `cargo xtask guests`, acquired
-/// from an artifact source on 127.0.0.1, over a fake system clipboard that
+/// window: the real default extension from `cargo xtask guests`, installed
+/// from its pinned commit in a repository served over Git's smart HTTP
+/// protocol from 127.0.0.1, over a fake system clipboard that
 /// never touches the real one. It records from the first start; the search
 /// field has no badge and no tabs follow it, a type dropdown at its right
 /// filters by kind, rows are grouped by day, the detail shows the record's
@@ -3202,12 +3205,11 @@ mod clipboard_split {
     use pane_core::clipboard::{
         CaptureState, ClipboardSystem, Content, ManualClock, Markers, Observation, Sink, Watch,
     };
-    use pane_core::defaults::ArtifactSource;
     use pane_core::tray::TrayAction;
     use pane_core::{DefaultExtension, Launcher, PackageIdentity, Runtime, Screen};
     use tempfile::TempDir;
 
-    use super::artifacts::Artifacts;
+    use super::defaults::from_package;
     use super::{open_launcher, settle, until};
 
     #[derive(Default)]
@@ -3310,64 +3312,46 @@ mod clipboard_split {
 
     /// The assembled Clipboard History package's files.
     fn package_files() -> Vec<(String, Vec<u8>)> {
-        let folder = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../target/guests/packages/clipboard-history");
-        assert!(
-            folder.is_dir(),
-            "{} is missing; run `cargo xtask guests`",
-            folder.display()
-        );
-        let mut files: Vec<(String, Vec<u8>)> = fs::read_dir(&folder)
-            .unwrap()
-            .map(|entry| entry.unwrap().path())
-            .filter(|path| path.is_file())
-            .map(|path| {
-                let name = path.file_name().unwrap().to_str().unwrap().to_owned();
-                (name, fs::read(&path).unwrap())
-            })
-            .collect();
-        files.sort();
-        files
+        super::defaults::package_files("clipboard-history")
     }
 
-    /// One test's Pane: its data, artifact source, clock and clipboard.
+    /// One test's Pane: its data, the server its default extension's
+    /// repository is served from, clock and clipboard.
     struct World {
         data: TempDir,
-        artifacts: Artifacts,
+        /// Kept, not read: the repository's work tree, which the server
+        /// serves as long as this lives.
+        _repos: TempDir,
         clipboard: FakeClipboard,
         clock: Arc<ManualClock>,
+        /// Kept, not read: the server the repository is served from, which
+        /// stops when this is dropped.
+        _server: super::repo_server::Server,
+        /// The pin that names the served repository.
+        pin: DefaultExtension,
     }
 
     impl World {
         fn new() -> World {
-            let world = World {
+            let server = super::repo_server::Server::start();
+            let repos = tempfile::tempdir().unwrap();
+            let pin = from_package(
+                &server,
+                repos.path(),
+                "clipboard-history",
+                "Clipboard History",
+            );
+            World {
                 data: tempfile::tempdir().unwrap(),
-                artifacts: Artifacts::start(),
+                _repos: repos,
                 clipboard: FakeClipboard::default(),
                 clock: ManualClock::at(1_791_208_920_000),
-            };
-            let files = package_files();
-            let manifest: serde_json::Value = serde_json::from_slice(
-                &files
-                    .iter()
-                    .find(|(path, _)| path == "pane.json")
-                    .expect("the package has a pane.json")
-                    .1,
-            )
-            .unwrap();
-            let borrowed: Vec<(&str, Vec<u8>)> = files
-                .iter()
-                .map(|(path, contents)| (path.as_str(), contents.clone()))
-                .collect();
-            world.artifacts.publish(
-                "clipboard-history",
-                manifest["version"].as_str().unwrap(),
-                &borrowed,
-            );
-            world
+                _server: server,
+                pin,
+            }
         }
 
-        /// Pane with Clipboard History acquired as its default extension,
+        /// Pane with Clipboard History set up as its default extension,
         /// recording from the first start, and `texts` copied in order (the
         /// last newest), a minute apart.
         fn launcher(&self, cx: &mut TestAppContext, texts: &[&str]) -> Launcher {
@@ -3377,13 +3361,7 @@ mod clipboard_split {
                 vec![],
                 self.data.path().join("extensions"),
             )
-            .with_defaults(
-                ArtifactSource::local(self.artifacts.url()).unwrap(),
-                vec![DefaultExtension {
-                    id: "clipboard-history".into(),
-                    title: "Clipboard History".into(),
-                }],
-            )
+            .with_defaults(vec![self.pin.clone()])
             .with_clock(self.clock.clone())
             .with_clipboard(Arc::new(self.clipboard.clone()));
             cx.foreground_executor()

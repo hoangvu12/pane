@@ -1,18 +1,20 @@
-//! Installing Pane and acquiring its default extensions through the
-//! launcher's public interface (#53): a first setup that downloads the
-//! calculator and the prebuilt-helper sample from an artifact source on
-//! 127.0.0.1 (`support/artifacts.rs`; nothing reaches the network or
-//! Pane's published downloads) and installs them as packages from folders
-//! are, into managed copies with the default extensions' own identity,
-//! with progress, retries and compatible cache reuse, while the core
-//! (root search, the install rows, Manage extensions) stays usable.
+//! Installing Pane and setting its default extensions up through the
+//! launcher's public interface (#53, #278): a first setup that fetches
+//! each default extension's pinned commit from its own repository —
+//! served, as Pane's Git tests serve theirs, over Git's smart HTTP
+//! protocol from 127.0.0.1 (`support/repo_server.rs`; nothing reaches
+//! the network or a real Git host) — and installs it as a package from
+//! a folder is, into a managed copy with the default extension's own
+//! identity and its Git source recorded, with retries and the rows that
+//! try a failed one again, while the core (root search, the install
+//! rows, Manage extensions) stays usable.
 //!
 //! The packages are the ones `cargo xtask guests` assembles under
-//! `target/guests/packages`: the real calculator (`guests/calculator`) and
-//! the helper sample (`guests/sample-helper`) with its real helper
+//! `target/guests/packages`: the real calculator (`guests/calculator`)
+//! and the helper sample (`guests/sample-helper`) with its real helper
 //! program `pane-echo` built for this system, so the helper is run as an
-//! end user runs it: a prebuilt program from the payload, with no Node,
-//! Rust, npm, Git or compiler involved.
+//! end user runs it: a prebuilt program from the repository, with no
+//! Node, Rust, npm, Git or compiler involved.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -20,94 +22,39 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use futures::executor::block_on;
-use pane_core::defaults::ArtifactSource;
-use pane_core::{DefaultExtension, IconSource, Launcher, PackageIdentity, Runtime, Status, Target};
+use pane_core::defaults::DefaultExtension;
+use pane_core::{IconSource, Launcher, PackageIdentity, Runtime, Status, Target};
 use serde_json::Value;
 use tempfile::TempDir;
 
-#[path = "support/artifacts.rs"]
-mod artifacts;
+#[path = "support/defaults.rs"]
+mod defaults;
+#[path = "support/repo_server.rs"]
+mod repo_server;
 
-use artifacts::Artifacts;
+use defaults::{from_package, made, package_files, pinned, version_of};
+use repo_server::{Mode, Server};
 
 #[path = "support/feedback.rs"]
 mod feedback;
-#[path = "support/guests.rs"]
-mod guests;
 #[path = "support/rows.rs"]
 mod rows;
 
 use feedback::shown;
-use guests::guests;
 use rows::{select_title, titles};
 
-/// The default set the tests acquire: the calculator, and the
-/// prebuilt-helper sample with it, a payload carrying a native helper.
-/// Pane's own build no longer acquires the sample (#162); the core still
-/// acquires whatever default set it is given, helpers included.
-fn defaults() -> Vec<DefaultExtension> {
-    vec![
-        DefaultExtension {
-            id: "calculator".into(),
-            title: "Calculator".into(),
-        },
-        DefaultExtension {
-            id: "helper-sample".into(),
-            title: "Helper sample".into(),
-        },
-    ]
-}
+/// The default set the tests set up: the calculator, and the
+/// prebuilt-helper sample with it, a repository carrying a native helper.
+/// Pane's own build no longer sets the sample up (#162); the core still
+/// sets up whatever default set it is given, helpers included.
+const DEFAULTS: [(&str, &str); 2] = [
+    ("calculator", "Calculator"),
+    ("helper-sample", "Helper sample"),
+];
 
-/// The files of the assembled package `package` under
-/// `target/guests/packages`, by their path in the package.
-fn package_files(package: &str) -> Vec<(String, Vec<u8>)> {
-    let folder = guests().join("packages").join(package);
-    assert!(
-        folder.is_dir(),
-        "{} is missing; run `cargo xtask guests`",
-        folder.display()
-    );
-    read_files(&folder, "")
-}
-
-fn read_files(folder: &Path, prefix: &str) -> Vec<(String, Vec<u8>)> {
-    let mut files = Vec::new();
-    let mut entries: Vec<_> = fs::read_dir(folder)
-        .unwrap()
-        .map(|entry| entry.unwrap())
-        .collect();
-    entries.sort_by_key(|entry| entry.file_name());
-    for entry in entries {
-        let path = entry.path();
-        let name = entry.file_name().into_string().unwrap();
-        let in_package = if prefix.is_empty() {
-            name.clone()
-        } else {
-            format!("{prefix}/{name}")
-        };
-        if path.is_dir() {
-            files.extend(read_files(&path, &in_package));
-        } else {
-            files.push((in_package, fs::read(&path).unwrap()));
-        }
-    }
-    files
-}
-
-/// The version a package's `pane.json` declares.
-fn version_of(files: &[(String, Vec<u8>)]) -> String {
-    let manifest = files
-        .iter()
-        .find(|(path, _)| path == "pane.json")
-        .map(|(_, contents)| contents.clone())
-        .expect("the package has a pane.json");
-    let manifest: Value = serde_json::from_slice(&manifest).unwrap();
-    manifest["version"].as_str().unwrap().to_owned()
-}
-
-/// The helper sample's payload: its assembled package, with its
-/// `pane.json` naming this system's helper target — the artifact this
-/// build serves carries the helper built for the system it runs on.
+/// The helper sample's files: its assembled package, with its `pane.json`
+/// naming this system's helper target — the repository a test serves
+/// carries the helper built for the system it runs on.
 fn helper_files() -> Vec<(String, Vec<u8>)> {
     let mut files = package_files("sample-helper");
     let target = Target::current().expect("Pane names this system's target");
@@ -136,14 +83,19 @@ fn helper_files() -> Vec<(String, Vec<u8>)> {
     files
 }
 
-/// Pane's data location, compiled code cache, runtime and artifact source
-/// for one test.
+/// Pane's data location, compiled code cache, runtime and the server the
+/// default extensions' repositories are served from, for one test.
 struct Dirs {
     data: TempDir,
+    /// Where the repositories' work trees live, which the server reads
+    /// them from.
+    repos: TempDir,
     /// Kept, not read: it holds the compiled code cache alive.
     _cache: TempDir,
     runtime: Runtime,
-    artifacts: Artifacts,
+    server: Server,
+    /// The pins of the default extensions whose repositories are served.
+    pins: Vec<DefaultExtension>,
 }
 
 impl Dirs {
@@ -151,8 +103,10 @@ impl Dirs {
         let cache = tempfile::tempdir().unwrap();
         Dirs {
             data: tempfile::tempdir().unwrap(),
+            repos: tempfile::tempdir().unwrap(),
             runtime: Runtime::start_with_cache(cache.path().to_path_buf()).unwrap(),
-            artifacts: Artifacts::start(),
+            server: Server::start(),
+            pins: Vec::new(),
             _cache: cache,
         }
     }
@@ -161,28 +115,51 @@ impl Dirs {
         self.data.path().join("extensions")
     }
 
-    /// A launcher on this data folder acquiring its default extensions
-    /// from the local artifact source; a new one is a restart of Pane.
-    fn launcher(&self) -> Launcher {
-        Launcher::with_packages(Ok(self.runtime.clone()), vec![], self.packages_dir())
-            .with_defaults(
-                ArtifactSource::local(self.artifacts.url()).unwrap(),
-                defaults(),
-            )
+    /// The pin of the default extension `id` of the served set.
+    fn pin(&self, id: &str) -> DefaultExtension {
+        self.pins
+            .iter()
+            .find(|pin| pin.id == id)
+            .cloned()
+            .unwrap_or_else(|| panic!("no pin of {id}"))
     }
 
-    /// Publishes the calculator's and the helper sample's payloads, at the
-    /// versions their `pane.json`s declare.
-    fn publish(&self) {
-        let calculator = package_files("calculator");
-        self.artifacts.publish(
-            "calculator",
-            &version_of(&calculator),
-            &borrowed(&calculator),
-        );
-        let helper = helper_files();
-        self.artifacts
-            .publish("helper-sample", &version_of(&helper), &borrowed(&helper));
+    /// Makes and serves the default set's repositories, each tagged as
+    /// its manifest's version, and keeps the pins that name them.
+    fn publish(&mut self) {
+        let mut pins = Vec::new();
+        for (id, title) in DEFAULTS {
+            let files = if id == "helper-sample" {
+                helper_files()
+            } else {
+                package_files(id)
+            };
+            let tag = format!("v{}", version_of(&files));
+            pins.push(pinned(
+                &self.server,
+                self.repos.path(),
+                id,
+                title,
+                &tag,
+                &files,
+            ));
+        }
+        self.pins = pins;
+    }
+
+    /// A launcher on this data folder setting its default extensions up
+    /// from the pins of the served repositories; a new one is a restart
+    /// of Pane.
+    fn launcher(&self) -> Launcher {
+        self.launcher_with(self.pins.clone())
+    }
+
+    /// A launcher on this data folder setting the default extensions
+    /// `extensions` up: the whole served set, or another one (a build
+    /// whose default set shrank, as #162's did).
+    fn launcher_with(&self, extensions: Vec<DefaultExtension>) -> Launcher {
+        Launcher::with_packages(Ok(self.runtime.clone()), vec![], self.packages_dir())
+            .with_defaults(extensions)
     }
 
     /// The record of the default extension `id` in `installed.json`.
@@ -198,20 +175,17 @@ impl Dirs {
             .unwrap_or_else(|| panic!("no record of {id} in {registry:#}"))
     }
 
-    /// The payload files cached for the default extension `id`, and
-    /// everything else in its cache folder.
-    fn acquired(&self, id: &str) -> Vec<String> {
-        let folder = self.packages_dir().join("acquired").join(id);
-        let entries: Vec<String> = fs::read_dir(&folder)
-            .map(|entries| {
-                entries
-                    .map(|entry| entry.unwrap().file_name().into_string().unwrap())
-                    .collect()
-            })
-            .unwrap_or_default();
-        let mut entries = entries;
-        entries.sort();
-        entries
+    /// How many times the repository of the default extension `id` was
+    /// connected to: its `info/refs` requests, one per acquisition
+    /// attempt (a Git acquire connects, lists the references and fetches
+    /// the pack).
+    fn fetches(&self, id: &str) -> usize {
+        let wanted = format!("GET /{id}.git/info/refs");
+        self.server
+            .requests()
+            .iter()
+            .filter(|request| request.starts_with(&wanted))
+            .count()
     }
 
     /// Waits until nothing downloaded is left in Pane's downloads folder,
@@ -230,13 +204,6 @@ impl Dirs {
             std::thread::sleep(Duration::from_millis(20));
         }
     }
-}
-
-fn borrowed(files: &[(String, Vec<u8>)]) -> Vec<(&str, Vec<u8>)> {
-    files
-        .iter()
-        .map(|(path, contents)| (path.as_str(), contents.clone()))
-        .collect()
 }
 
 fn search(launcher: &Launcher, query: &str) {
@@ -268,16 +235,35 @@ fn error_of(launcher: &Launcher) -> String {
     }
 }
 
-/// The files of the managed copy at `location`, by their path in it.
-fn files_of(location: &Path) -> Vec<String> {
-    let mut files = read_files(location, "");
-    files.sort_by(|(a, _), (b, _)| a.cmp(b));
-    files.into_iter().map(|(path, _)| path).collect()
+/// The files of `folder`, by their path under it (as a package holds
+/// them, `/`-separated), in alphabetical order.
+fn read_files(folder: &Path, prefix: &str) -> Vec<String> {
+    let mut files = Vec::new();
+    let mut entries: Vec<_> = fs::read_dir(folder)
+        .unwrap()
+        .map(|entry| entry.unwrap())
+        .collect();
+    entries.sort_by_key(|entry| entry.file_name());
+    for entry in entries {
+        let path = entry.path();
+        let name = entry.file_name().into_string().unwrap();
+        let in_package = if prefix.is_empty() {
+            name
+        } else {
+            format!("{prefix}/{name}")
+        };
+        if path.is_dir() {
+            files.extend(read_files(&path, &in_package));
+        } else {
+            files.push(in_package);
+        }
+    }
+    files
 }
 
 #[test]
-fn a_first_setup_acquires_the_calculator_and_it_answers() {
-    let dirs = Dirs::new();
+fn a_first_setup_installs_the_pinned_commits_and_the_calculator_answers() {
+    let mut dirs = Dirs::new();
     dirs.publish();
     let launcher = dirs.launcher();
 
@@ -287,22 +273,32 @@ fn a_first_setup_acquires_the_calculator_and_it_answers() {
         launcher.view().status,
         Status::Result("Set up Pane's default extensions".into())
     );
-    // Both default extensions are installed, from Pane's own downloads.
+    // Both default extensions are installed, from their pinned commits.
     assert_eq!(installed(&launcher), ["Calculator", "Helper sample"]);
     let identity = PackageIdentity::default_extension("calculator");
     assert_eq!(identity.key(), "default:calculator");
     let package = &launcher.packages()[0];
     assert_eq!(package.identity, identity);
+    // The record keeps the default identity, the version the manifest
+    // declares, and the Git source the revision came from: the
+    // repository, the pin's release tag, its commit and that it is
+    // pinned — what a later release's updater reads (#269).
     let record = dirs.record("calculator");
     assert_eq!(record["default"], "calculator");
     assert_eq!(record["defaultVersion"], "0.5.0");
+    let pin = dirs.pin("calculator");
+    assert_eq!(record["gitUrl"], pin.repository.as_str());
+    assert_eq!(record["gitRef"], format!("refs/tags/{}", pin.tag));
+    assert_eq!(record["gitCommit"], pin.commit.as_str());
+    assert_eq!(record["pinned"], true);
     assert_eq!(record.get("local"), None);
     assert_eq!(record.get("npm"), None);
+    assert_eq!(record.get("git"), None, "the identity is the default's");
     // The managed copy holds the manifest and the component and tile icon
     // it names (#163), installed as a package from a folder is, and the
     // calculator shows that tile from its managed copy.
     assert_eq!(
-        files_of(&package.location),
+        read_files(&package.location, ""),
         ["calculator.wasm", "icon.svg", "pane.json"]
     );
     let icon = launcher.icon_of(&identity.key()).expect("the icon");
@@ -312,8 +308,10 @@ fn a_first_setup_acquires_the_calculator_and_it_answers() {
     assert!(light.starts_with(&package.location), "{light:?}");
     assert_eq!(light.file_name().unwrap(), "icon.svg");
     assert_eq!(dark, light);
-    // The payload is cached; nothing is left in the downloads folder.
-    assert_eq!(dirs.acquired("calculator").len(), 1);
+    // Each repository was fetched from once; nothing is left in the
+    // downloads folder.
+    assert_eq!(dirs.fetches("calculator"), 1);
+    assert_eq!(dirs.fetches("helper-sample"), 1);
     dirs.wait_for_no_downloads();
 
     // The calculator answers in root search: an expression lists its
@@ -332,49 +330,59 @@ fn a_first_setup_acquires_the_calculator_and_it_answers() {
 
     // After a restart the default extensions are listed from their managed
     // copies, with nothing fetched again.
-    let asked = dirs.artifacts.requests().len();
+    let asked = dirs.server.requests().len();
     drop(launcher);
     let launcher = dirs.launcher();
     assert_eq!(installed(&launcher), ["Calculator", "Helper sample"]);
-    assert_eq!(dirs.artifacts.requests().len(), asked);
+    assert_eq!(dirs.server.requests().len(), asked);
     search(&launcher, "12*3");
     assert_eq!(titles(&launcher), ["36"]);
 }
 
 #[test]
-fn acquiring_shows_progress_and_leaves_the_core_usable() {
-    let dirs = Dirs::new();
+fn acquiring_says_what_is_being_set_up_and_leaves_the_core_usable() {
+    let mut dirs = Dirs::new();
     dirs.publish();
-    // The calculator's payload arrives slowly, in two pieces, so its
-    // bytes arrive one at a time.
-    dirs.artifacts.stall(".tgz", 16, Duration::from_millis(400));
+    // Every answer comes 500 ms later, so each fetch is in flight long
+    // enough to watch the status line while it runs.
+    dirs.server.set_mode(Mode::Slow(Duration::from_millis(500)));
     let launcher = dirs.launcher();
 
     // Acquisition runs in the background: another thread drives it, as
     // the window does.
     let acquiring = launcher.clone();
     let acquiring = thread::spawn(move || block_on(acquiring.acquire_defaults()));
-    // While the payload is still arriving, the status line says what is
-    // being acquired, and the core stays usable: root search lists its
-    // rows, including the install rows.
+    // While the pinned revisions are being fetched, the status line says
+    // what is being set up — a Git fetch has no byte progress to follow —
+    // and the core stays usable: root search lists its rows, including
+    // the install rows.
     let deadline = Instant::now() + Duration::from_secs(10);
     let progress = loop {
         assert!(Instant::now() < deadline, "no progress of the calculator");
         if let Status::Progress(text) = launcher.view().status
-            && text.contains('%')
+            && text.starts_with("Acquiring the Calculator")
         {
             break text;
         }
         std::thread::sleep(Duration::from_millis(5));
     };
+    assert_eq!(progress, "Acquiring the Calculator…");
     assert!(
-        progress.starts_with("Acquiring the Calculator"),
-        "{progress}"
+        titles(&launcher).contains(&"Install extension from folder…".to_owned()),
+        "{:?}",
+        titles(&launcher)
     );
-    assert!(progress.contains("0%"), "{progress}");
-    assert!(titles(&launcher).contains(&"Install extension from folder…".to_owned()));
-    assert!(titles(&launcher).contains(&"Install extension from npm…".to_owned()));
-    // Typing in root search still works while the payload arrives.
+    assert!(
+        titles(&launcher).contains(&"Install extension from npm…".to_owned()),
+        "{:?}",
+        titles(&launcher)
+    );
+    assert!(
+        titles(&launcher).contains(&"Install extension from Git…".to_owned()),
+        "{:?}",
+        titles(&launcher)
+    );
+    // Typing in root search still works while the fetches are in flight.
     search(&launcher, "calc");
     assert!(titles(&launcher).is_empty(), "{:?}", titles(&launcher));
     acquiring.join().unwrap();
@@ -392,101 +400,39 @@ fn acquiring_shows_progress_and_leaves_the_core_usable() {
 }
 
 #[test]
-fn an_interrupted_download_is_tried_again_and_set_up() {
-    let dirs = Dirs::new();
+fn an_interrupted_fetch_is_tried_again_and_set_up() {
+    let mut dirs = Dirs::new();
     dirs.publish();
-    // The first download of the calculator's payload is interrupted
-    // partway: the connection closes after its first bytes.
-    dirs.artifacts.drop_after("calculator-0.5.0.tgz", 16, 1);
+    // The calculator's first fetch is interrupted partway: the connection
+    // ends in the middle of the pack it is sending.
+    dirs.server.drop_once();
     let launcher = dirs.launcher();
 
     block_on(launcher.acquire_defaults());
 
-    // The interrupted download was tried again and set up.
+    // The interrupted fetch was tried again and set up.
     assert_eq!(installed(&launcher), ["Calculator", "Helper sample"]);
     search(&launcher, "6*7");
     assert_eq!(titles(&launcher), ["42"]);
-    // The calculator's payload was asked for twice: the interrupted
-    // download and the one that recovered it. The helper sample's was
-    // asked for once.
-    let calculator_requests = dirs
-        .artifacts
-        .requests()
-        .iter()
-        .filter(|path| path.contains("calculator"))
-        .count();
-    assert_eq!(calculator_requests, 2);
-    // Nothing half-written is left in the cache: the payload is there,
-    // complete, and no `.part` file.
-    assert_eq!(dirs.acquired("calculator").len(), 1);
-    assert!(
-        !dirs
-            .acquired("calculator")
-            .iter()
-            .any(|file| file.ends_with(".part"))
-    );
+    // The calculator's repository was fetched from twice: the interrupted
+    // fetch and the one that recovered it. The helper sample's was asked
+    // for once.
+    assert_eq!(dirs.fetches("calculator"), 2);
+    assert_eq!(dirs.fetches("helper-sample"), 1);
+    // Nothing half-written is left: the downloads folder is emptied in
+    // the background once the installs end.
+    dirs.wait_for_no_downloads();
 }
 
-#[test]
-fn a_cached_payload_is_reused_and_a_damaged_one_is_replaced() {
-    let dirs = Dirs::new();
-    dirs.publish();
-    let launcher = dirs.launcher();
-    block_on(launcher.acquire_defaults());
-    assert_eq!(installed(&launcher), ["Calculator", "Helper sample"]);
-    let downloaded = dirs.artifacts.payload_requests().len();
-    assert_eq!(downloaded, 2);
-
-    // Uninstalling the calculator and acquiring it again reuses the
-    // cached payload: the index is read, but nothing is downloaded again.
-    let identity = PackageIdentity::default_extension("calculator");
-    block_on(launcher.uninstall(&identity, pane_core::SavedData::Delete));
-    assert_eq!(
-        launcher.view().status,
-        Status::Result("Uninstalled Calculator and deleted its saved data".into())
-    );
-    let asked = dirs.artifacts.requests().len();
-    drop(launcher);
-    let launcher = dirs.launcher();
-    block_on(launcher.acquire_defaults());
-    assert_eq!(installed(&launcher), ["Helper sample", "Calculator"]);
-    search(&launcher, "6*7");
-    assert_eq!(titles(&launcher), ["42"]);
-    // Only the index was asked for again; the payload was not downloaded.
-    assert_eq!(dirs.artifacts.payload_requests().len(), downloaded);
-    assert_eq!(dirs.artifacts.requests().len() - asked, 1);
-
-    // A damaged cache entry is not reused: it does not match the
-    // integrity its index gives, so the payload is downloaded again.
-    let cached: Vec<PathBuf> = fs::read_dir(dirs.packages_dir().join("acquired/calculator"))
-        .unwrap()
-        .map(|entry| entry.unwrap().path())
-        .collect();
-    assert_eq!(cached.len(), 1);
-    fs::write(&cached[0], b"damaged").unwrap();
-    let identity = PackageIdentity::default_extension("calculator");
-    block_on(launcher.uninstall(&identity, pane_core::SavedData::Delete));
-    drop(launcher);
-    let launcher = dirs.launcher();
-    block_on(launcher.acquire_defaults());
-    assert_eq!(
-        dirs.artifacts.payload_requests().len(),
-        downloaded + 1,
-        "the damaged payload was downloaded again"
-    );
-    search(&launcher, "6*7");
-    assert_eq!(titles(&launcher), ["42"]);
-}
-
-/// A default extension a build no longer acquires stays what it became:
+/// A default extension a build no longer sets up stays what it became:
 /// an installed package (#162, the helper sample leaving Pane's default
 /// set). A Pane whose default set is the calculator alone, started over
-/// data that acquired the helper sample before, keeps it installed and
-/// listed, downloads nothing for it, and lets the user uninstall it, after
+/// data that set the helper sample up before, keeps it installed and
+/// listed, fetches nothing for it, and lets the user uninstall it, after
 /// which no first setup brings it back.
 #[test]
 fn a_default_extension_that_left_the_default_set_stays_until_uninstalled() {
-    let dirs = Dirs::new();
+    let mut dirs = Dirs::new();
     dirs.publish();
     let launcher = dirs.launcher();
     block_on(launcher.acquire_defaults());
@@ -494,26 +440,17 @@ fn a_default_extension_that_left_the_default_set_stays_until_uninstalled() {
     drop(launcher);
 
     // The next build's default set no longer has the helper sample.
-    let calculator_only = || {
-        Launcher::with_packages(Ok(dirs.runtime.clone()), vec![], dirs.packages_dir())
-            .with_defaults(
-                ArtifactSource::local(dirs.artifacts.url()).unwrap(),
-                vec![DefaultExtension {
-                    id: "calculator".into(),
-                    title: "Calculator".into(),
-                }],
-            )
-    };
-    let downloaded = dirs.artifacts.payload_requests().len();
+    let calculator_only = || dirs.launcher_with(vec![dirs.pin("calculator")]);
+    let fetched = dirs.fetches("helper-sample");
     let launcher = calculator_only();
     block_on(launcher.acquire_defaults());
     assert_eq!(
         installed(&launcher),
         ["Calculator", "Helper sample"],
-        "Pane removes nothing it acquired"
+        "Pane removes nothing it set up"
     );
     assert_eq!(dirs.record("helper-sample")["default"], "helper-sample");
-    assert_eq!(dirs.artifacts.payload_requests().len(), downloaded);
+    assert_eq!(dirs.fetches("helper-sample"), fetched);
     search(&launcher, "helper");
     assert!(
         titles(&launcher)
@@ -535,16 +472,114 @@ fn a_default_extension_that_left_the_default_set_stays_until_uninstalled() {
         ["Calculator"],
         "a first setup does not bring it back"
     );
-    assert_eq!(dirs.artifacts.payload_requests().len(), downloaded);
+    assert_eq!(dirs.fetches("helper-sample"), fetched);
+}
+
+/// A default extension whose data an uninstall the user chose keeps is
+/// not acquired again: the user's choice, as disabling is.
+#[test]
+fn a_default_with_retained_data_is_not_acquired_again() {
+    let mut dirs = Dirs::new();
+    dirs.publish();
+    // The calculator's saved data: a value its command saved in an earlier
+    // session, which Pane reads with the data folder at start and an
+    // install again keeps.
+    fs::create_dir_all(dirs.packages_dir()).unwrap();
+    fs::write(
+        dirs.packages_dir().join("settings.json"),
+        r#"{ "version": 1, "packages": { "default:calculator": { "style": "formal" } } }"#,
+    )
+    .unwrap();
+    let launcher = dirs.launcher();
+    block_on(launcher.acquire_defaults());
+    assert_eq!(installed(&launcher), ["Calculator", "Helper sample"]);
+
+    // Uninstalling the calculator while keeping its data.
+    let identity = PackageIdentity::default_extension("calculator");
+    block_on(launcher.uninstall(&identity, pane_core::SavedData::Keep));
+    assert_eq!(
+        launcher.view().status,
+        Status::Result("Uninstalled Calculator; its settings and content are kept".into())
+    );
+    drop(launcher);
+
+    let fetched = dirs.fetches("calculator");
+    let launcher = dirs.launcher();
+    block_on(launcher.acquire_defaults());
+    assert_eq!(
+        installed(&launcher),
+        ["Helper sample"],
+        "the uninstalled default is not re-acquired"
+    );
+    assert_eq!(dirs.fetches("calculator"), fetched);
+    // Its retained data is still managed, and nothing was fetched for it.
+    search(&launcher, "");
+    assert!(titles(&launcher).contains(&"Manage Extensions".to_owned()));
+}
+
+/// An install that acquired a default from the artifact source (an older
+/// Pane) keeps it: its identity, its record and its data are unchanged,
+/// and it is not re-acquired from the repository the pin names.
+#[test]
+fn an_install_that_acquired_a_default_from_the_artifact_source_keeps_it() {
+    let mut dirs = Dirs::new();
+    dirs.publish();
+    // The record an older Pane wrote, which acquired the calculator from
+    // its own downloads: the default identity and a version, and no Git
+    // source. The managed copy is in place, as Pane left it.
+    let copy = dirs.packages_dir().join("packages").join("1");
+    fs::create_dir_all(&copy).unwrap();
+    for (path, contents) in &package_files("calculator") {
+        fs::write(copy.join(path), contents).unwrap();
+    }
+    let registry = r#"{
+        "version": 1,
+        "next": 2,
+        "packages": [
+            { "default": "calculator", "defaultVersion": "0.5.0", "dir": "1" }
+        ]
+    }"#;
+    fs::write(dirs.packages_dir().join("installed.json"), registry).unwrap();
+    // The data the old Pane's calculator saved, under its identity.
+    fs::write(
+        dirs.packages_dir().join("settings.json"),
+        r#"{ "version": 1, "packages": { "default:calculator": { "style": "formal" } } }"#,
+    )
+    .unwrap();
+
+    // The new Pane opens it and acquires nothing over it: its own default
+    // set is the calculator alone, so the pin's repository is never asked
+    // for anything.
+    let asked = dirs.server.requests().len();
+    let launcher = dirs.launcher_with(vec![dirs.pin("calculator")]);
+    block_on(launcher.acquire_defaults());
+    assert_eq!(installed(&launcher), ["Calculator"]);
+    let record = dirs.record("calculator");
+    assert_eq!(record["default"], "calculator");
+    assert_eq!(record["defaultVersion"], "0.5.0");
+    assert_eq!(record.get("gitUrl"), None);
+    assert_eq!(record.get("gitRef"), None);
+    assert_eq!(record.get("gitCommit"), None);
+    assert_eq!(record.get("pinned"), None);
+    assert_eq!(dirs.server.requests().len(), asked);
+    // Its identity keeps the data, and the calculator answers from the
+    // managed copy the old Pane wrote.
+    let data: Value = serde_json::from_str(
+        &fs::read_to_string(dirs.packages_dir().join("settings.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(data["packages"]["default:calculator"]["style"], "formal");
+    search(&launcher, "6*7");
+    assert_eq!(titles(&launcher), ["42"]);
 }
 
 #[test]
-fn an_unreachable_source_leaves_the_core_usable_and_a_row_tries_again() {
-    let dirs = Dirs::new();
+fn an_unreachable_repository_leaves_the_core_usable_and_a_row_tries_again() {
+    let mut dirs = Dirs::new();
     dirs.publish();
     let launcher = dirs.launcher();
-    // Nothing answers where the artifact source is.
-    drop(dirs.artifacts);
+    // Nothing answers where the repositories are.
+    drop(dirs.server);
 
     block_on(launcher.acquire_defaults());
 
@@ -558,7 +593,7 @@ fn an_unreachable_source_leaves_the_core_usable_and_a_row_tries_again() {
         "{error}"
     );
     assert!(
-        error.contains("Pane's downloads at http://127.0.0.1:")
+        error.contains("Could not reach the Git repository 127.0.0.1:")
             && error.contains("Pane tried 3 times"),
         "{error}"
     );
@@ -576,7 +611,7 @@ fn an_unreachable_source_leaves_the_core_usable_and_a_row_tries_again() {
         ]
     );
     // The row tries again, and the failure is explained again: the
-    // source is still unreachable, and the row stays.
+    // repositories are still unreachable, and the row stays.
     select_title(&launcher, "Set up Calculator");
     block_on(launcher.activate_selected());
     let error = error_of(&launcher);
@@ -591,40 +626,55 @@ fn an_unreachable_source_leaves_the_core_usable_and_a_row_tries_again() {
 #[test]
 fn a_row_tries_again_and_sets_the_extension_up() {
     let dirs = Dirs::new();
-    dirs.publish();
-    // The payload is not there yet: the source answers 404 for it.
-    let launcher = dirs.launcher();
-    dirs.artifacts
-        .fail_status("calculator-0.5.0.tgz", 404, usize::MAX);
+    // The helper sample's repository is made, but not served: the server
+    // answers 404 for it.
+    let calculator = from_package(&dirs.server, dirs.repos.path(), "calculator", "Calculator");
+    let files = helper_files();
+    let tag = format!("v{}", version_of(&files));
+    let (repo, helper) = made(
+        &dirs.server,
+        dirs.repos.path(),
+        "helper-sample",
+        "Helper sample",
+        &tag,
+        &files,
+    );
+    let launcher = dirs.launcher_with(vec![calculator, helper]);
     block_on(launcher.acquire_defaults());
     let error = error_of(&launcher);
     assert!(
-        error.contains("the payload `calculator-0.5.0.tgz` its index names is not there"),
+        error.contains("There is no Git repository at http://127.0.0.1:"),
         "{error}"
     );
-    // The helper sample was set up; only the calculator failed.
-    assert_eq!(installed(&launcher), ["Helper sample"]);
+    // The calculator was set up; only the helper sample failed.
+    assert_eq!(installed(&launcher), ["Calculator"]);
 
-    // The source answers now; the row that tries again sets it up.
-    dirs.artifacts.stop_failing("calculator-0.5.0.tgz");
-    select_title(&launcher, "Set up Calculator");
+    // The repository is there now; the row that tries again sets it up.
+    dirs.server.serve("helper-sample", &repo);
+    select_title(&launcher, "Set up Helper sample");
     block_on(launcher.activate_selected());
 
-    assert_eq!(installed(&launcher), ["Helper sample", "Calculator"]);
+    assert_eq!(installed(&launcher), ["Calculator", "Helper sample"]);
     assert_eq!(
         launcher.view().status,
-        Status::Result("Set up the Calculator".into())
+        Status::Result("Set up the Helper sample".into())
     );
-    // The row is gone: what it asked for is there, and the calculator
-    // answers.
-    assert!(!titles(&launcher).contains(&"Set up Calculator".to_owned()));
-    search(&launcher, "6*7");
-    assert_eq!(titles(&launcher), ["42"]);
+    // The row is gone: what it asked for is there, and the helper's
+    // command is in root search.
+    assert!(!titles(&launcher).contains(&"Set up Helper sample".to_owned()));
+    search(&launcher, "helper");
+    assert!(
+        titles(&launcher)
+            .iter()
+            .any(|title| title == "Helper sample"),
+        "{:?}",
+        titles(&launcher)
+    );
 }
 
 #[test]
 fn an_acquired_helper_runs_from_the_managed_copy() {
-    let dirs = Dirs::new();
+    let mut dirs = Dirs::new();
     dirs.publish();
     let launcher = dirs.launcher();
 
@@ -660,47 +710,85 @@ fn an_acquired_helper_runs_from_the_managed_copy() {
     );
 }
 
+/// A repository whose pinned commit is not a release revision: no
+/// `pane.json` at its root (ADR 0021). It is explained and not
+/// installed, with the row that tries again.
 #[test]
-fn a_payload_that_cannot_be_used_is_explained_and_not_installed() {
-    let dirs = Dirs::new();
-    let launcher = dirs.launcher();
-    // The helper sample's payload is not the one its index describes:
-    // its bytes were damaged, so they do not match its integrity.
-    let calculator = package_files("calculator");
-    dirs.artifacts.publish(
+fn a_revision_without_a_pane_json_is_explained_and_not_installed() {
+    let mut dirs = Dirs::new();
+    dirs.publish();
+    // The calculator's pin names a commit of a repository holding its
+    // built component and tile but no manifest.
+    let whole = package_files("calculator");
+    let tag = format!("v{}", version_of(&whole));
+    let mut files = whole;
+    files.retain(|(path, _)| path != "pane.json");
+    let manifestless = pinned(
+        &dirs.server,
+        &dirs.repos.path().join("manifestless"),
         "calculator",
-        &version_of(&calculator),
-        &borrowed(&calculator),
+        "Calculator",
+        &tag,
+        &files,
     );
-    let helper = helper_files();
-    dirs.artifacts
-        .publish("helper-sample", &version_of(&helper), &borrowed(&helper));
-    dirs.artifacts.corrupt("helper-sample");
+    let launcher = dirs.launcher_with(vec![manifestless, dirs.pin("helper-sample")]);
 
     block_on(launcher.acquire_defaults());
 
-    // The calculator is set up; the helper sample is explained and not
-    // installed, with the row that tries again.
-    assert_eq!(installed(&launcher), ["Calculator"]);
+    assert_eq!(installed(&launcher), ["Helper sample"]);
     let error = error_of(&launcher);
     assert!(
-        error.contains("Could not set up the Helper sample: "),
+        error.starts_with("Could not set up the Calculator: Tag"),
         "{error}"
     );
     assert!(
-        error.contains("does not match the sha512 integrity"),
+        error.contains("is not a Pane extension: it has no pane.json"),
         "{error}"
     );
-    assert!(titles(&launcher).contains(&"Set up Helper sample".to_owned()));
-    // Nothing it downloaded was kept.
+    assert!(titles(&launcher).contains(&"Set up Calculator".to_owned()));
+    dirs.wait_for_no_downloads();
+}
+
+/// A repository whose pinned commit holds only the source of its command:
+/// the built component is missing (ADR 0021: Pane never builds).
+#[test]
+fn a_source_only_revision_is_explained_and_not_installed() {
+    let mut dirs = Dirs::new();
+    dirs.publish();
+    let mut files = package_files("calculator");
+    files.retain(|(path, _)| path != "calculator.wasm");
+    let tag = format!("v{}", version_of(&files));
+    let source_only = pinned(
+        &dirs.server,
+        &dirs.repos.path().join("source-only"),
+        "calculator",
+        "Calculator",
+        &tag,
+        &files,
+    );
+    let launcher = dirs.launcher_with(vec![source_only, dirs.pin("helper-sample")]);
+
+    block_on(launcher.acquire_defaults());
+
+    assert_eq!(installed(&launcher), ["Helper sample"]);
+    let error = error_of(&launcher);
+    assert!(
+        error.contains("Could not set up the Calculator: Tag"),
+        "{error}"
+    );
+    assert!(
+        error.contains("holds only the source of \"Calculator\""),
+        "{error}"
+    );
+    assert!(titles(&launcher).contains(&"Set up Calculator".to_owned()));
     dirs.wait_for_no_downloads();
 }
 
 #[test]
 fn an_incompatible_payload_is_explained_and_not_installed() {
-    let dirs = Dirs::new();
-    let launcher = dirs.launcher();
-    // The calculator's payload declares a platform this is not.
+    let mut dirs = Dirs::new();
+    dirs.publish();
+    // The calculator's repository declares a platform this is not.
     let mut files = package_files("calculator");
     let others: Vec<String> = pane_core::Platform::ALL
         .iter()
@@ -715,11 +803,16 @@ fn an_incompatible_payload_is_explained_and_not_installed() {
             *contents = serde_json::to_vec_pretty(&manifest).unwrap();
         }
     }
-    dirs.artifacts
-        .publish("calculator", &version_of(&files), &borrowed(&files));
-    let helper = helper_files();
-    dirs.artifacts
-        .publish("helper-sample", &version_of(&helper), &borrowed(&helper));
+    let tag = format!("v{}", version_of(&files));
+    let elsewhere = pinned(
+        &dirs.server,
+        &dirs.repos.path().join("elsewhere"),
+        "calculator",
+        "Calculator",
+        &tag,
+        &files,
+    );
+    let launcher = dirs.launcher_with(vec![elsewhere, dirs.pin("helper-sample")]);
 
     block_on(launcher.acquire_defaults());
 
@@ -734,23 +827,23 @@ fn an_incompatible_payload_is_explained_and_not_installed() {
 
 #[test]
 fn a_payload_without_its_declared_helper_file_is_explained_and_not_installed() {
-    let dirs = Dirs::new();
-    let calculator = package_files("calculator");
-    dirs.artifacts.publish(
-        "calculator",
-        &version_of(&calculator),
-        &borrowed(&calculator),
-    );
-    // The helper sample's payload declares this system's helper target,
-    // but its tarball holds no helper file: an artifact that is not
+    let mut dirs = Dirs::new();
+    dirs.publish();
+    // The helper sample's repository declares this system's helper
+    // target, but its commit holds no helper file: a release that is not
     // compatible with this system.
-    let mut helper = helper_files();
-    helper.retain(|(path, _)| !path.starts_with("helpers/"));
-    let version = version_of(&helper);
-    dirs.artifacts
-        .publish("helper-sample", &version, &borrowed(&helper));
-    let target = Target::current().unwrap();
-    let launcher = dirs.launcher();
+    let mut files = helper_files();
+    files.retain(|(path, _)| !path.starts_with("helpers/"));
+    let tag = format!("v{}", version_of(&files));
+    let helperless = pinned(
+        &dirs.server,
+        &dirs.repos.path().join("helperless"),
+        "helper-sample",
+        "Helper sample",
+        &tag,
+        &files,
+    );
+    let launcher = dirs.launcher_with(vec![dirs.pin("calculator"), helperless]);
 
     block_on(launcher.acquire_defaults());
 
@@ -762,6 +855,7 @@ fn a_payload_without_its_declared_helper_file_is_explained_and_not_installed() {
         error.contains("Could not set up the Helper sample: "),
         "{error}"
     );
+    let target = Target::current().unwrap();
     assert!(
         error.contains(&format!(
             "Not ready to run: the package ships helper `echo` for {target}, but its file \
@@ -772,13 +866,12 @@ fn a_payload_without_its_declared_helper_file_is_explained_and_not_installed() {
         "{error}"
     );
     assert!(titles(&launcher).contains(&"Set up Helper sample".to_owned()));
-    // Nothing it downloaded was kept.
     dirs.wait_for_no_downloads();
 }
 
 #[test]
 fn a_disabled_default_extension_is_not_acquired_again() {
-    let dirs = Dirs::new();
+    let mut dirs = Dirs::new();
     dirs.publish();
     let launcher = dirs.launcher();
     block_on(launcher.acquire_defaults());
@@ -786,7 +879,7 @@ fn a_disabled_default_extension_is_not_acquired_again() {
     // acquisition never re-acquires or re-enables it.
     let identity = PackageIdentity::default_extension("calculator");
     block_on(launcher.set_enabled(&identity, false));
-    let asked = dirs.artifacts.requests().len();
+    let asked = dirs.server.requests().len();
 
     drop(launcher);
     let launcher = dirs.launcher();
@@ -796,7 +889,7 @@ fn a_disabled_default_extension_is_not_acquired_again() {
     let packages = launcher.packages();
     let calculator = packages.iter().find(|p| p.identity == identity).unwrap();
     assert!(!calculator.enabled);
-    assert_eq!(dirs.artifacts.requests().len(), asked);
+    assert_eq!(dirs.server.requests().len(), asked);
     // Its command contributes nothing while it is disabled.
     search(&launcher, "6*7");
     assert_eq!(titles(&launcher), Vec::<String>::new());
