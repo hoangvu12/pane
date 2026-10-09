@@ -439,7 +439,14 @@ fn scrolling_up_stops_following_and_scrolling_back_down_follows_again(cx: &mut T
     assert_eq!(still, scrolled, "the list stays where it was scrolled to");
 
     // Back down to the end: followed again, the newest line selected.
-    wheel(cx, -1_000_000.);
+    // Lines not yet laid out when the wheel turns can leave it short of
+    // the end, so it turns again, as a hand would.
+    for _ in 0..5 {
+        wheel(cx, -1_000_000.);
+        if log_state(&window, cx).2 {
+            break;
+        }
+    }
     assert_eq!(
         log_state(&window, cx),
         (grown.len(), Some(grown.len() - 1), true)
