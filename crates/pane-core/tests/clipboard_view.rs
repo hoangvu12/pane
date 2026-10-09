@@ -589,12 +589,21 @@ impl Pane {
     }
 
     fn with(clipboard: FakeClipboard) -> Pane {
+        // 14:02 UTC on 5 October 2026.
+        Pane::with_at(clipboard, 1_791_208_920_000)
+    }
+
+    /// Pane whose clock starts at `now`: the one test that restarts Pane
+    /// needs the clock at the system's now, because the start sweep judges
+    /// the file by the system's clock before the manual clock takes over,
+    /// so fixed-date records would be swept once the system's date passed
+    /// them by a retention.
+    fn with_at(clipboard: FakeClipboard, now: u64) -> Pane {
         let pane = Pane {
             data: tempfile::tempdir().unwrap(),
             artifacts: Artifacts::start(),
             clipboard,
-            // 14:02 UTC on 5 October 2026.
-            clock: ManualClock::at(1_791_208_920_000),
+            clock: ManualClock::at(now),
         };
         let files = package_files();
         let manifest: Value = serde_json::from_slice(
@@ -774,7 +783,11 @@ fn only_the_registered_default_extension_on_its_own_screen_is_projected() {
 /// copy, with nothing turned on, before the command was ever opened.
 #[test]
 fn a_fresh_data_folder_records_the_first_copy_with_no_turn_on() {
-    let pane = Pane::new();
+    // The clock at the system's now: this test restarts Pane, and the
+    // start sweep judges the file by the system's clock before the manual
+    // clock takes over, so fixed-date records would be swept once the
+    // system's date passed them by a retention.
+    let pane = Pane::with_at(FakeClipboard::default(), SystemClock.now());
     let launcher = pane.start();
     // Watching as soon as the default extension is installed.
     assert!(pane.clipboard.copy("the first copy", Some("notepad.exe")));
