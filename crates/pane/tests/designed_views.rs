@@ -276,7 +276,7 @@ fn real_key_events_press_the_buttons_and_the_window_shows_the_new_tree(cx: &mut 
         "the first tree is drawn"
     );
     let (focused, json) = accessibility(cx);
-    let buttons = cx.read_entity(&opened.window, |window, _| window.designed_button_count());
+    let buttons = cx.read_entity(&window, |window, _| window.designed_button_count());
     assert!(
         focused.as_deref() == Some("Increment"),
         "the first button has the keyboard: {focused:?}, {} buttons held, in {json}",
