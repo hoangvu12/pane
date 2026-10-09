@@ -315,7 +315,7 @@ async fn accept(
                 tokio::spawn(connection(stream, launcher.clone(), previews.clone()));
             }
             Err(error) => {
-                eprintln!("pane: the local channel could not take a connection: {error}");
+                crate::diagnostic!("pane: the local channel could not take a connection: {error}");
                 tokio::time::sleep(Duration::from_millis(100)).await;
             }
         }
