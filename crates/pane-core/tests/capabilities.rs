@@ -12,8 +12,11 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::time::Duration;
 
 use futures::executor::block_on;
+use pane_core::clipboard::{Clock as _, ManualClock, SystemClock};
 use pane_core::{Launcher, PackageIdentity, Runtime, SavedData, Status};
 use tempfile::TempDir;
 
@@ -312,20 +315,34 @@ fn an_uninstalled_provider_is_not_found() {
 
 // The fixture: package `a` has the command; `b` and the rest only provide.
 
+/// The `provides` of a fixture package providing `capability`, as
+/// manifest members: `operations` (JSON array contents) and `platforms`
+/// (empty for every system).
+fn provides_of(capability: &str, operations: &str, platforms: &str) -> String {
+    format!(
+        r#","provides": [{{ "capability": "{capability}", "component": "fixture.wasm",
+             "operations": [{operations}]{platforms} }}]"#
+    )
+}
+
 /// The `provides` of a fixture package providing the fixture's capability,
 /// as manifest members: `operations` (JSON array contents) and `platforms`
 /// (empty for every system).
 fn provides(operations: &str, platforms: &str) -> String {
+    provides_of("fixture:greet@1", operations, platforms)
+}
+
+/// The `uses` of a fixture package using `capability`, as manifest members.
+fn uses_of(capability: &str, operations: &str) -> String {
     format!(
-        r#","provides": [{{ "capability": "fixture:greet@1", "component": "fixture.wasm",
-             "operations": [{operations}]{platforms} }}]"#
+        r#","uses": [{{ "capability": "{capability}", "operations": [{operations}] }}]"#
     )
 }
 
 /// The `uses` of a fixture package using the fixture's capability, as
 /// manifest members.
 fn uses(operations: &str) -> String {
-    format!(r#","uses": [{{ "capability": "fixture:greet@1", "operations": [{operations}] }}]"#)
+    uses_of("fixture:greet@1", operations)
 }
 
 /// The operations the fixture's capability is made of.
@@ -980,5 +997,467 @@ fn a_default_a_published_package_cannot_name_is_refused() {
          `pane-samples:greet@1` names a local folder, but a package from npm can name only \
          `npm:` and `git:` sources, whose packages are published, not a folder on its \
          author's computer"
+    );
+}
+
+// The provider choice (#154): Pane's own record of which provider serves
+// each capability, kept across restarts, reloads and updates, forgotten
+// when the chosen provider is uninstalled, with the first provider
+// installed serving until the user chooses and calls falling back to the
+// next provider that can serve while the chosen one cannot.
+
+impl Dirs {
+    /// The record of the chosen providers, beside `installed.json`.
+    fn choices_file(&self) -> PathBuf {
+        self.extensions().join("capability-choices.json")
+    }
+
+    /// Chooses the sample `provider` as the provider of `GREET`, as
+    /// Settings' dropdown does, waiting for the record.
+    fn choose(&self, launcher: &Launcher, provider: &str) {
+        let key = self.sample_identity(provider).key();
+        block_on(launcher.choose_provider(GREET, &key).unwrap());
+        let recorded = fs::read_to_string(self.choices_file()).unwrap();
+        assert!(
+            recorded.contains(&format!("\"{key}\"")),
+            "{provider} is recorded: {recorded}"
+        );
+    }
+}
+
+/// A provider the user has not chosen cannot be recorded, with the reason.
+#[test]
+fn a_provider_that_is_not_one_is_refused() {
+    let dirs = Dirs::new();
+    let launcher = dirs.launcher();
+    install(&launcher, &dirs.sample(PROVIDERS[1].0));
+    let refused = launcher
+        .choose_provider(GREET, &dirs.sample_identity(PROVIDERS[0].0).key())
+        .expect_err("not a provider of the capability");
+    assert_eq!(
+        refused,
+        format!(
+            "`{}` does not provide `{GREET}`: the installed extensions that provide it are \
+             JavaScript greet provider sample",
+            dirs.sample_identity(PROVIDERS[0].0).key()
+        )
+    );
+    let refused = launcher
+        .choose_provider(
+            "pane-samples:farewell@1",
+            &dirs.sample_identity(PROVIDERS[1].0).key(),
+        )
+        .expect_err("no one provides the capability");
+    assert_eq!(
+        refused,
+        format!(
+            "`{}` does not provide `pane-samples:farewell@1`: no installed extension provides \
+             `pane-samples:farewell@1`",
+            dirs.sample_identity(PROVIDERS[1].0).key()
+        )
+    );
+    assert!(!dirs.choices_file().exists());
+}
+
+/// Choosing a provider routes the next call to it, and a later install
+/// changes nothing: the choice is Pane's own record, never extension data,
+/// and nothing is reloaded or restarted for it.
+#[test]
+fn choosing_a_provider_routes_the_next_call_to_it() {
+    let dirs = Dirs::new();
+    let launcher = dirs.launcher();
+    install(&launcher, &dirs.sample(CONSUMERS[0].0));
+    install(&launcher, &dirs.sample(PROVIDERS[1].0));
+    install(&launcher, &dirs.sample(PROVIDERS[2].0));
+    assert_eq!(
+        greet(&launcher, "Greet from Rust"),
+        result("Hello, Pane, from JavaScript")
+    );
+
+    dirs.choose(&launcher, PROVIDERS[2].0);
+    assert_eq!(
+        greet(&launcher, "Greet from Rust"),
+        result("Hello, Pane, from TypeScript")
+    );
+    // A later install changes nothing, choice or not.
+    install(&launcher, &dirs.sample(PROVIDERS[0].0));
+    assert_eq!(
+        greet(&launcher, "Greet from Rust"),
+        result("Hello, Pane, from TypeScript")
+    );
+}
+
+/// The choice is kept across a restart of the launcher on the same data
+/// folder, and across a reload of the chosen provider: a replacement
+/// keeps the package's identity, which the record names.
+#[test]
+fn the_choice_is_kept_across_a_restart_and_a_reload() {
+    let dirs = Dirs::new();
+    let launcher = dirs.launcher();
+    install(&launcher, &dirs.sample(CONSUMERS[0].0));
+    install(&launcher, &dirs.sample(PROVIDERS[1].0));
+    install(&launcher, &dirs.sample(PROVIDERS[2].0));
+    dirs.choose(&launcher, PROVIDERS[2].0);
+
+    // A restart of the launcher, with a runtime of its own.
+    let restarted =
+        Launcher::with_packages(Ok(Runtime::start().unwrap()), vec![], dirs.extensions());
+    assert_eq!(
+        greet(&restarted, "Greet from Rust"),
+        result("Hello, Pane, from TypeScript")
+    );
+
+    // A reload of the chosen provider replaces its code, not its identity.
+    block_on(restarted.reload(&dirs.sample_identity(PROVIDERS[2].0)));
+    assert_eq!(
+        restarted.view().status,
+        Status::Result("Reloaded TypeScript greet provider sample".into())
+    );
+    assert_eq!(
+        greet(&restarted, "Greet from Rust"),
+        result("Hello, Pane, from TypeScript")
+    );
+}
+
+/// While the chosen provider is disabled, calls fall back to the next
+/// available provider in install order, and return to the chosen one when
+/// it is enabled again.
+#[test]
+fn the_choice_falls_back_while_the_chosen_provider_is_disabled() {
+    let dirs = Dirs::new();
+    let launcher = dirs.launcher();
+    install(&launcher, &dirs.sample(CONSUMERS[0].0));
+    install(&launcher, &dirs.sample(PROVIDERS[1].0));
+    install(&launcher, &dirs.sample(PROVIDERS[2].0));
+    install(&launcher, &dirs.sample(PROVIDERS[0].0));
+    dirs.choose(&launcher, PROVIDERS[2].0);
+    assert_eq!(
+        greet(&launcher, "Greet from Rust"),
+        result("Hello, Pane, from TypeScript")
+    );
+
+    block_on(launcher.set_enabled(&dirs.sample_identity(PROVIDERS[2].0), false));
+    assert_eq!(
+        greet(&launcher, "Greet from Rust"),
+        result("Hello, Pane, from JavaScript")
+    );
+    block_on(launcher.set_enabled(&dirs.sample_identity(PROVIDERS[2].0), true));
+    assert_eq!(
+        greet(&launcher, "Greet from Rust"),
+        result("Hello, Pane, from TypeScript")
+    );
+}
+
+/// The providers query answers the chosen provider first, and leaves it
+/// out while it cannot serve.
+#[test]
+fn the_providers_query_answers_the_chosen_provider_first() {
+    let dirs = Dirs::new();
+    let launcher = dirs.launcher();
+    install(&launcher, &dirs.sample(CONSUMERS[0].0));
+    install(&launcher, &dirs.sample(PROVIDERS[1].0));
+    install(&launcher, &dirs.sample(PROVIDERS[2].0));
+    dirs.choose(&launcher, PROVIDERS[2].0);
+
+    open_item(&launcher, "Greet from Rust", "Who provides the greeting");
+    assert_eq!(
+        shown(&launcher),
+        result(&format!(
+            "{GREET} is provided by TypeScript greet provider sample, JavaScript greet provider \
+             sample"
+        ))
+    );
+
+    // The chosen provider cannot serve: it is left out, and the rest stay
+    // in install order.
+    block_on(launcher.set_enabled(&dirs.sample_identity(PROVIDERS[2].0), false));
+    open_item(&launcher, "Greet from Rust", "Who provides the greeting");
+    assert_eq!(
+        shown(&launcher),
+        result(&format!("{GREET} is provided by JavaScript greet provider sample"))
+    );
+}
+
+/// Uninstalling the chosen provider forgets the choice, so calls go to the
+/// default order; uninstalling another provider keeps it.
+#[test]
+fn uninstalling_the_chosen_provider_forgets_the_choice() {
+    let dirs = Dirs::new();
+    let launcher = dirs.launcher();
+    install(&launcher, &dirs.sample(CONSUMERS[0].0));
+    install(&launcher, &dirs.sample(PROVIDERS[1].0));
+    install(&launcher, &dirs.sample(PROVIDERS[2].0));
+    install(&launcher, &dirs.sample(PROVIDERS[0].0));
+    dirs.choose(&launcher, PROVIDERS[2].0);
+
+    // Not the chosen one: the choice stays.
+    block_on(launcher.uninstall(&dirs.sample_identity(PROVIDERS[1].0), SavedData::Delete));
+    assert_eq!(
+        greet(&launcher, "Greet from Rust"),
+        result("Hello, Pane, from TypeScript")
+    );
+
+    // The chosen one: the choice goes with it, and the first provider
+    // installed among the rest serves.
+    block_on(launcher.uninstall(&dirs.sample_identity(PROVIDERS[2].0), SavedData::Delete));
+    assert_eq!(
+        greet(&launcher, "Greet from Rust"),
+        result("Hello, Pane, from Rust")
+    );
+    let recorded = fs::read_to_string(dirs.choices_file()).unwrap();
+    assert!(
+        !recorded.contains("pane-samples:greet"),
+        "the choice is forgotten: {recorded}"
+    );
+}
+
+/// What Settings' Capabilities section reads: only capabilities with two
+/// or more installed providers, their providers and the provider the next
+/// call goes to, their consumers, and the fallback note while the chosen
+/// provider cannot serve.
+#[test]
+fn the_capabilities_listing_shows_two_providers_consumers_and_the_fallback() {
+    let dirs = Dirs::new();
+    let launcher = dirs.launcher();
+    install(&launcher, &dirs.sample(CONSUMERS[1].0));
+    install(&launcher, &dirs.sample(PROVIDERS[1].0));
+    assert!(launcher.capabilities().is_empty());
+
+    install(&launcher, &dirs.sample(PROVIDERS[2].0));
+    let js = dirs.sample_identity(PROVIDERS[1].0).key();
+    let ts = dirs.sample_identity(PROVIDERS[2].0).key();
+    let listed = launcher.capabilities();
+    assert_eq!(listed.len(), 1, "{listed:?}");
+    assert_eq!(
+        listed[0],
+        pane_core::Capability {
+            name: GREET.to_owned(),
+            providers: vec![
+                pane_core::CapabilityProvider {
+                    source: js.clone(),
+                    title: "JavaScript greet provider sample".into(),
+                },
+                pane_core::CapabilityProvider {
+                    source: ts.clone(),
+                    title: "TypeScript greet provider sample".into(),
+                },
+            ],
+            selected: js,
+            consumers: vec!["JavaScript capabilities sample".to_owned()],
+            fallback: None,
+        }
+    );
+
+    // A choice: the next call goes to it.
+    dirs.choose(&launcher, PROVIDERS[2].0);
+    let listed = launcher.capabilities();
+    assert_eq!(listed[0].selected, ts);
+
+    // The chosen provider cannot serve: the note says who serves instead,
+    // and goes when it serves again.
+    block_on(launcher.set_enabled(&dirs.sample_identity(PROVIDERS[2].0), false));
+    let listed = launcher.capabilities();
+    assert_eq!(
+        listed[0].fallback,
+        Some(
+            "TypeScript greet provider sample is disabled; using JavaScript greet provider sample"
+                .into()
+        )
+    );
+    block_on(launcher.set_enabled(&dirs.sample_identity(PROVIDERS[2].0), true));
+    assert_eq!(launcher.capabilities()[0].fallback, None);
+}
+
+/// While the chosen provider is paused, calls fall back to the next
+/// available provider in install order, and return to the chosen one when
+/// it is retried. `b` and `c` both provide the fixture's capability and
+/// answer alike, so who served is told by which instance Pane started.
+#[test]
+fn the_choice_falls_back_while_the_chosen_provider_is_paused() {
+    let dirs = Dirs::new();
+    dirs.fixture("a", COMMAND, &uses(USED));
+    dirs.fixture("b", "", &provides(PROVIDED, ""));
+    dirs.fixture("c", "", &provides(PROVIDED, ""));
+    let launcher = dirs.install_fixtures(&["a", "b", "c"]);
+    block_on(
+        launcher
+            .choose_provider("fixture:greet@1", &dirs.identity("c").key())
+            .unwrap(),
+    );
+    assert_eq!(
+        fixture_run(&launcher, "Call the greet capability"),
+        result(r#"answered: {"greeting":"Hello, Ada","operation":"fixture:greet@1/greet"}"#)
+    );
+    // The chosen provider served: `b`'s instance was never started.
+    let running = block_on(dirs.runtime.running());
+    assert!(!running.contains(&component_of(&launcher, &dirs.identity("b"))), "{running:?}");
+
+    // Pane pauses the chosen provider after it crashes three times.
+    for _ in 0..3 {
+        assert_error_starts(
+            &fixture_run(&launcher, "Call the greet capability's crash"),
+            "crashed: Package c crashed:",
+        );
+    }
+
+    // The call falls back to `b`, the next provider in install order: its
+    // instance starts and the answer comes from it.
+    assert_eq!(
+        fixture_run(&launcher, "Call the greet capability"),
+        result(r#"answered: {"greeting":"Hello, Ada","operation":"fixture:greet@1/greet"}"#)
+    );
+    let running = block_on(dirs.runtime.running());
+    assert!(running.contains(&component_of(&launcher, &dirs.identity("b"))), "{running:?}");
+    let listed = launcher.capabilities();
+    assert_eq!(
+        listed[0].fallback,
+        Some("Package c is paused after an error; using Package b".into())
+    );
+
+    // Retried, the chosen provider serves again, first in the query.
+    block_on(launcher.retry_start(&dirs.identity("c")));
+    assert_eq!(
+        fixture_run(&launcher, "Ask who provides the greet capability"),
+        result("the fixture:greet@1 capability is provided by Package c, Package b")
+    );
+}
+
+/// While the chosen provider waits for what it needs, calls fall back too,
+/// with the note naming what it waits for.
+#[test]
+fn the_choice_falls_back_while_the_chosen_provider_waits() {
+    let dirs = Dirs::new();
+    // `c` provides the capability beside `b` and requires `d`.
+    dirs.fixture("a", COMMAND, &uses(USED));
+    dirs.fixture("b", "", &provides(PROVIDED, ""));
+    let dependency = r#","dependencies": [
+        { "id": "dep", "source": "local:../d",
+          "operations": [{ "id": "echo", "version": 1 }] }
+    ]"#;
+    dirs.fixture("c", "", &format!("{}{}", provides(PROVIDED, ""), dependency));
+    dirs.fixture(
+        "d",
+        "",
+        r#","operations": [{ "id": "echo", "version": 1, "component": "fixture.wasm" }]"#,
+    );
+    let launcher = dirs.install_fixtures(&["a", "b", "c", "d"]);
+    block_on(
+        launcher
+            .choose_provider("fixture:greet@1", &dirs.identity("c").key())
+            .unwrap(),
+    );
+    assert_eq!(
+        fixture_run(&launcher, "Call the greet capability"),
+        result(r#"answered: {"greeting":"Hello, Ada","operation":"fixture:greet@1/greet"}"#)
+    );
+
+    // `d` disabled: `c` waits for it, and the call falls back to `b`, with
+    // the note naming what the chosen provider waits for.
+    block_on(launcher.set_enabled(&dirs.identity("d"), false));
+    assert_eq!(
+        fixture_run(&launcher, "Call the greet capability"),
+        result(r#"answered: {"greeting":"Hello, Ada","operation":"fixture:greet@1/greet"}"#)
+    );
+    let listed = launcher.capabilities();
+    assert_eq!(
+        listed[0].fallback,
+        Some("Package c is waiting for Package d, which is disabled; using Package b".into())
+    );
+}
+
+/// The fixture component of the package with `identity`, where its
+/// instances run from.
+fn component_of(launcher: &Launcher, identity: &PackageIdentity) -> PathBuf {
+    launcher
+        .packages()
+        .into_iter()
+        .find(|package| package.identity == *identity)
+        .expect("the package is installed")
+        .location
+        .join("fixture.wasm")
+}
+
+/// The choice is kept across an update of the chosen provider: an npm
+/// provider of the capability, chosen beside the TypeScript one, updates
+/// by itself to a newer version, and the chosen provider — the same
+/// identity — still serves.
+#[test]
+fn the_choice_is_kept_across_an_update_of_the_chosen_provider() {
+    use npm_registry::Registry;
+
+    let dirs = Dirs::new();
+    let registry = Registry::start();
+    let name = "@pane-samples/greet-provider";
+    let provider = |version: &str| {
+        let pane_json = format!(
+            r#"{{
+                "manifestVersion": 1,
+                "title": "npm greet provider",
+                "version": "{version}",
+                "apiVersion": "0.1",
+                "commands": [
+                    {{ "id": "greet", "title": "npm greet provider",
+                       "component": "sample_greet_js.wasm" }}
+                ],
+                "provides": [
+                    {{ "capability": "pane-samples:greet@1", "component": "sample_greet_js.wasm",
+                       "operations": ["greet"] }}
+                ]
+            }}"#
+        );
+        let package_json = format!(
+            r#"{{ "name": "{name}", "version": "{version}", "private": true,
+                 "license": "Apache-2.0 OR MIT" }}"#
+        );
+        vec![
+            ("package.json", package_json.into_bytes()),
+            ("pane.json", pane_json.into_bytes()),
+            (
+                "sample_greet_js.wasm",
+                fs::read(guest("packages").join("sample-greet-js").join("sample_greet_js.wasm"))
+                    .unwrap(),
+            ),
+        ]
+    };
+    let clock = Arc::new(ManualClock::at(SystemClock.now()));
+    let launcher = Launcher::with_packages(Ok(dirs.runtime.clone()), vec![], dirs.extensions())
+        .with_npm_registry(pane_core::npm::Registry::local(registry.url()).unwrap())
+        .with_clock(clock.clone());
+    install(&launcher, &dirs.sample(CONSUMERS[0].0));
+    install(&launcher, &dirs.sample(PROVIDERS[2].0));
+    registry.publish(name, "0.1.0", npm_registry::pack(&provider("0.1.0")));
+    block_on(launcher.install_npm(name));
+    assert_eq!(
+        launcher.view().status,
+        Status::Result("Installed npm greet provider".into())
+    );
+    // Chosen: the npm provider, beside the TypeScript one.
+    let npm = launcher
+        .packages()
+        .into_iter()
+        .find(|package| package.identity.npm_name() == Some(name))
+        .map(|package| package.identity)
+        .unwrap();
+    block_on(launcher.choose_provider(GREET, &npm.key()).unwrap());
+    assert_eq!(
+        greet(&launcher, "Greet from Rust"),
+        result("Hello, Pane, from JavaScript")
+    );
+
+    // A newer version updates the package by itself, keeping its identity.
+    registry.publish(name, "0.2.0", npm_registry::pack(&provider("0.2.0")));
+    clock.advance(Duration::from_secs(2));
+    assert!(
+        launcher.wait_for_updates(Duration::from_secs(30)),
+        "the updater did not settle"
+    );
+    assert_eq!(
+        launcher.view().status,
+        Status::Result("Updated npm greet provider from npm to 0.2.0".into())
+    );
+    // The choice still routes to it, not to the TypeScript provider.
+    assert_eq!(
+        greet(&launcher, "Greet from Rust"),
+        result("Hello, Pane, from JavaScript")
     );
 }

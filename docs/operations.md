@@ -11,7 +11,9 @@ came with [#42](https://github.com/pane-app/pane/issues/42).
 [Capabilities](#capabilities) — a named set of operations any package may
 provide and another calls by name — came with
 [#153](https://github.com/pane-app/pane/issues/153), following
-[ADR 0041](adr/0041-extensions-compose-through-capabilities-that-pane-brokers.md).
+[ADR 0041](adr/0041-extensions-compose-through-capabilities-that-pane-brokers.md);
+choosing which installed extension provides one came with
+[#154](https://github.com/pane-app/pane/issues/154).
 
 ## Contract
 
@@ -199,8 +201,10 @@ providers: func(capability: string) -> list<provider>;
 ```
 
 - **Routing.** A call is resolved when it is made, against the packages as
-  they are at that moment. It goes to the first provider in install order
-  that can serve it: enabled, not paused, not waiting for what it needs, and
+  they are at that moment. It goes to the first provider in the order Pane
+  calls them that can serve it: the user's chosen provider first, then the
+  rest in install order (see [Choosing a provider](#choosing-a-provider)),
+  each candidate enabled, not paused, not waiting for what it needs, and
   built for this system. A later install changes nothing. The provider is
   started only when it is called, as any target is.
 - **Never itself.** A package never serves its own use: it gets another
@@ -213,17 +217,44 @@ providers: func(capability: string) -> list<provider>;
   chain is refused, and the depth limit applies.
 - **Asking first.** `providers` answers the providers that can serve the
   capability now, each with the `source` a call names it by and its `title`,
-  in the order Pane calls them. The calling package is never among them.
-  With none, the list is empty. The SDKs offer `available(capability)` on
+  in the order Pane calls them: the chosen provider first, then install
+  order. The calling package is never among them. With none, the list is
+  empty. The SDKs offer `available(capability)` on
   top of it, for an optional use.
 
 In Rust, `pane_extension::capabilities::{call, providers, available}`; in
 JavaScript and TypeScript, `@pane-app/extension/capabilities` (or the module
 `"pane:extension/operations@0.1.0"`).
 
-The user's choice of provider in Settings, installing a use's `default`,
-commands waiting for a capability, and calling every provider of a
-`use: "all"` capability are later slices of
+### Choosing a provider
+
+Added for [#154](https://github.com/pane-app/pane/issues/154). Two
+extensions that do the same job can be installed side by side, and the user
+picks which one serves every consumer of the capability in Settings ›
+Extensions, in the page's Capabilities section: each capability with two
+or more installed providers is listed with a dropdown of its providers,
+the extensions that use it, and, while the chosen one cannot serve, who
+serves instead ("<chosen> is disabled; using <other>", or paused, or
+waiting).
+
+- **The choice is Pane's own record** (`capability-choices.json` beside
+  `installed.json`), never extension data, kept across restarts and across
+  a reload or update of the chosen provider, and forgotten when the chosen
+  provider is uninstalled: calls then go to the default order again.
+- **The default, until the user chooses, is the first provider installed**,
+  in the order of the installed record. Installing a second (or third)
+  provider changes nothing, and a capability with one provider needs no
+  choice.
+- **A change applies to the next call**, without reloading or restarting
+  any consumer: each call is resolved when it is made.
+- **While the chosen provider cannot serve** — it is disabled, paused,
+  missing or waiting — calls fall back to the next available provider in
+  the default order, and return to the chosen one when it can serve
+  again. Consumers wait only when no provider can serve, which a later
+  slice of #151 delivers.
+
+Installing a use's `default`, commands waiting for a capability, and
+calling every provider of a `use: "all"` capability are later slices of
 [#151](https://github.com/pane-app/pane/issues/151).
 
 ## Behavior
@@ -322,11 +353,12 @@ commands waiting for a capability, and calling every provider of a
 - Declared [dependencies](dependencies.md) (#42) are shown, checked and
   installed with the caller, but disabling a target does not consider its
   callers yet (#43).
-- Capabilities: the user picks a provider in Settings, Pane installs a
-  use's `default`, commands wait for what they need, and a `use: "all"`
-  capability fans a call out to every provider — later slices of
-  [#151](https://github.com/pane-app/pane/issues/151). Until the user picks,
-  the first provider installed serves.
+- Capabilities: Pane installs a use's `default`, commands wait for what
+  they need, and a `use: "all"` capability fans a call out to every
+  provider — later slices of
+  [#151](https://github.com/pane-app/pane/issues/151). The user's choice of
+  provider in Settings (#154), with the default and the fallback, is
+  delivered.
 - No time limit on waiting: a running operation stops only when a
   generation in its chain ends, or when it computes for 5 seconds without
   finishing (#18, [generations](generations.md#what-stopping-cannot-do-yet)).

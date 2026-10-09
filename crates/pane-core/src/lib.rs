@@ -71,14 +71,15 @@ pub use launch::{LaunchRecord, LaunchSource, LaunchType};
 pub use launcher::clipboard_view;
 pub use launcher::search_files;
 pub use launcher::{
-    AliasOutcome, ApplicationUpdate, BuildFailure, CommandPreferences, CommandRegistration,
-    ComputedAnswer, CustomViewSnapshot, Development, ExtensionMark, ExtensionOperation, FormField,
-    FormView, HotkeyOutcome, ItemAction, ItemActions, Launcher, LauncherView, ListPresentation,
-    MANAGE_EXTENSIONS, OpenSubmenu, OperationKind, PackagePreferences, PinTarget, PreferenceField,
-    PreferencesTarget, Presentation, Question, QuickSlot, ResultAction, ResultActionItem,
-    ResultActions, Row, RowKind, RowPresentation, Screen, Section, SelectedAction, SettingsTarget,
-    SetupHeader, ShortcutCatalog, ShortcutCommand, ShortcutGroup, SlotChange, Status, SubmenuState,
-    Unavailable, UnboundShortcut, UpdateHold, answer_sections, root_sections,
+    AliasOutcome, ApplicationUpdate, BuildFailure, Capability, CapabilityProvider,
+    CommandPreferences, CommandRegistration, ComputedAnswer, CustomViewSnapshot, Development,
+    ExtensionMark, ExtensionOperation, FormField, FormView, HotkeyOutcome, ItemAction, ItemActions,
+    Launcher, LauncherView, ListPresentation, MANAGE_EXTENSIONS, OpenSubmenu, OperationKind,
+    PackagePreferences, PinTarget, PreferenceField, PreferencesTarget, Presentation, Question,
+    QuickSlot, ResultAction, ResultActionItem, ResultActions, Row, RowKind, RowPresentation,
+    Screen, Section, SelectedAction, SettingsTarget, SetupHeader, ShortcutCatalog, ShortcutCommand,
+    ShortcutGroup, SlotChange, Status, SubmenuState, Unavailable, UnboundShortcut, UpdateHold,
+    answer_sections, root_sections,
 };
 pub use links::LinkOpener;
 pub use operations::{MAX_CALL_DEPTH, MAX_OPERATION_JSON};
