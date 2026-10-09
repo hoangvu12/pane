@@ -699,6 +699,16 @@ impl LauncherWindow {
         self.show_until_done(pending, window, cx);
     }
 
+    /// Brings the launcher forward with the package in `folder` shown for
+    /// installation: `pane-ext dev`'s first run of a folder Pane has not
+    /// installed, which the author confirms here (#217).
+    pub fn present_package(&mut self, folder: &Path, window: &mut Window, cx: &mut Context<Self>) {
+        self.unhide(window, cx);
+        window.activate_window();
+        cx.activate(true);
+        self.preview_package(folder, window, cx);
+    }
+
     /// Downloads and shows the npm package `spec` names, as
     /// [`LauncherWindow::preview_package`] shows a folder.
     pub fn preview_npm(&mut self, spec: &str, window: &mut Window, cx: &mut Context<Self>) {

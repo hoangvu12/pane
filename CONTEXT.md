@@ -345,7 +345,7 @@ Pane replacing the managed copy of an eligible installed package with a newer co
 _Avoid_: App update (the application's own, #54–56), forced update
 
 **Development mode**:
-An installed local package whose source folder Pane watches while its author works on it: each save runs the package's documented build command in that folder, staging the components under Pane's data folder, and a build that succeeds reloads the package from there, while one that fails keeps its working code and shows the build's diagnostics. It lasts until the author stops it, the package is disabled or uninstalled, or Pane quits, each of which kills a running build with the processes it started; another installed copy of the package is never affected.
+An installed local package whose source folder Pane watches while its author works on it: each save runs the package's documented build command in that folder, staging the components under Pane's data folder, and a build that succeeds reloads the package from there, while one that fails keeps its working code and shows the build's diagnostics. Under `pane-ext dev` the watching and the builds are `pane-ext`'s, in the author's terminal, and Pane reloads each build it hands over the local channel. It lasts until the author stops it, the package is disabled or uninstalled, or Pane quits, each of which kills a running build with the processes it started; another installed copy of the package is never affected.
 _Avoid_: Watch mode, hot reload, dev copy (a copy is an installation)
 
 **Extension log**:
@@ -355,6 +355,10 @@ _Avoid_: Console, debug output
 **pane-ext**:
 The command-line tool authors use beside the app to create, develop, check and pack an extension package; it builds with the same code as development mode and hands the result to the running Pane. Distinct from `pane`, the application's executable.
 _Avoid_: Pane CLI, `pane` (the application)
+
+**Local channel**:
+The endpoint the running Pane listens on for `pane-ext`, which only the same user can open: a named pipe on Windows, a Unix-domain socket in a folder of the user's own elsewhere. `pane-ext dev` hands its builds over it and receives the package's development status and extension log back; closing it stops the development.
+_Avoid_: IPC, socket (one of its forms), single-instance channel
 
 **Build failure**:
 A development build that did not succeed: nothing is replaced, and the package keeps running its installed code. Distinct from a startup failure, whose replacement was installed.

@@ -6,7 +6,7 @@ use std::sync::Arc;
 use gpui::{App, Bounds, TitlebarOptions, WindowBounds, WindowOptions, prelude::*};
 use pane::LauncherWindow;
 use pane_core::develop::Toolchains;
-use pane_core::{Launcher, Runtime};
+use pane_core::{Launcher, Runtime, local_channel};
 
 /// What `--install` asks to show for installation.
 enum ToPreview {
@@ -249,6 +249,7 @@ fn main() {
         // once the window exists.
         let acquiring = launcher.clone();
         let checking = launcher.clone();
+        let developing = launcher.clone();
         // The window is the reference's launcher panel, at its client size
         // (see `pane::launcher_client_size`). No native title bar is drawn:
         // the panel's own glass chrome is the whole window. Its background
@@ -342,6 +343,30 @@ fn main() {
             }
         })
         .detach();
+        // `pane-ext dev` hands its builds to this Pane over the local
+        // channel (#217), which asks the window to show the install preview
+        // of a folder Pane has not installed. It listens where PANE_CHANNEL
+        // says, if it says, as pane-ext looks there: a second Pane beside an
+        // installed one, and the tests.
+        let endpoint = local_channel::Endpoint::from_env();
+        match endpoint.and_then(|endpoint| local_channel::serve(developing, &endpoint)) {
+            Ok((server, mut previews)) => {
+                cx.spawn(async move |cx| {
+                    // Pane listens for as long as it runs.
+                    let _server = server;
+                    while let Some(folder) = previews.next().await {
+                        let shown = window.update(cx, |launcher, window, cx| {
+                            launcher.present_package(&folder, window, cx)
+                        });
+                        if shown.is_err() {
+                            break;
+                        }
+                    }
+                })
+                .detach();
+            }
+            Err(error) => eprintln!("pane-ext cannot reach this Pane: {error}"),
+        }
         // Acquiring the default extensions goes on in the background: the
         // window, root search and the extension list stay usable, and the
         // status line says what it is doing (the changes channel redraws
