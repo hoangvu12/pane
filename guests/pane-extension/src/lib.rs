@@ -15,8 +15,10 @@
 //! read the preferences its package declares with [`preferences`]. It
 //! may compute results from root search's query with [`root`], run a continuing
 //! service while its package's code may run with [`service`], call
-//! operations other packages publish with [`operations::call`], serve those
-//! its own package publishes with [`publish`], find and open installed
+//! operations other packages publish with [`operations::call`] or a
+//! capability by its name with [`capabilities::call`], serve the operations
+//! its own package publishes and the capabilities it provides with
+//! [`publish`], find and open installed
 //! applications with [`applications`], supply root results ahead of the
 //! query with [`indexed`], run its package's native helpers with
 //! [`helpers`] and the system's own programs with [`programs`], list the
@@ -65,6 +67,79 @@ mod list;
 pub mod system;
 pub use icon::{Accessory, Color, Icon, Mask, Tint, Tone};
 pub use pane::extension::{cache, content, credentials, operations, settings};
+
+/// Calling a capability by name (`pane:extension/operations`, ADR 0041):
+/// a named, versioned set of operations, written `<namespace>:<name>@<major>`
+/// such as `acme:translate@1`, that any installed package may provide and
+/// this one calls without naming the package. The package's `pane.json`
+/// declares each capability it uses, with the operations it calls, under
+/// `uses`; a call to one it does not declare is refused.
+///
+/// [`call`] routes the call through Pane, which picks the provider: the
+/// first one installed that can serve it, never this package itself, and
+/// serves it as a published operation is served, with the operation
+/// qualified by its capability (`acme:translate@1/translate`). [`providers`]
+/// asks which providers can serve a capability now — their source and title
+/// — and [`available`] is the first of them, for an optional use:
+///
+/// ```ignore
+/// use pane_extension::capabilities::{available, call};
+///
+/// let answer = call("acme:translate@1", "translate", input)
+///     .await
+///     .map_err(|error| error.explain())?;
+/// if available("acme:spellcheck@2").is_none() {
+///     // The optional capability has no provider; degrade gracefully.
+/// }
+/// ```
+///
+/// The errors and their kinds are those of [`operations::call`], each
+/// message naming the capability: `not-found` when no installed package
+/// provides it, `disabled` when every provider is disabled, `unavailable`
+/// when every provider is paused, waiting or for another system.
+pub mod capabilities {
+    pub use crate::pane::extension::operations::{CallError, CallErrorKind, Provider};
+
+    /// Calls `operation` of the capability `capability`, such as
+    /// "acme:translate@1", through Pane, and returns its result. Any
+    /// installed package may provide the capability: Pane routes the call
+    /// to the provider that can serve it, and starts it if it is not
+    /// running. `input` and the result are JSON text.
+    ///
+    /// The caller's `pane.json` must declare the capability and the
+    /// operation under `uses`; a call to one it does not declare is
+    /// refused, with the message saying to declare it. On failure the
+    /// future resolves with a [`CallError`] whose message names the
+    /// capability.
+    pub async fn call(
+        capability: &str,
+        operation: &str,
+        input: String,
+    ) -> Result<String, CallError> {
+        crate::pane::extension::operations::call_capability(
+            capability.into(),
+            operation.into(),
+            input,
+        )
+        .await
+    }
+
+    /// The installed packages that provide `capability` and can serve a
+    /// call to it now, in the order Pane calls them: each provider's
+    /// source, as [`operations::call`](crate::operations::call) names it by,
+    /// and its title. This package is never among them, and with no such
+    /// provider the list is empty.
+    pub fn providers(capability: &str) -> Vec<Provider> {
+        crate::pane::extension::operations::providers(capability.into())
+    }
+
+    /// The provider of `capability` that a call reaches, with its source and
+    /// title, or `None` when no provider can serve it now: whether an
+    /// optional capability is worth showing, answered in one call.
+    pub fn available(capability: &str) -> Option<Provider> {
+        providers(capability).into_iter().next()
+    }
+}
 
 /// Pane's launcher window, as the command that runs in it sees it
 /// (`pane:extension/window`): [`window::close`] hides it, choosing what its

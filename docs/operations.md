@@ -8,6 +8,10 @@ extension to reuse another across Rust, JavaScript and TypeScript: one call,
 one JSON input, one JSON result or an explained error. It is not a workflow
 engine; [dependency declarations and installing missing targets](dependencies.md)
 came with [#42](https://github.com/pane-app/pane/issues/42).
+[Capabilities](#capabilities) — a named set of operations any package may
+provide and another calls by name — came with
+[#153](https://github.com/pane-app/pane/issues/153), following
+[ADR 0041](adr/0041-extensions-compose-through-capabilities-that-pane-brokers.md).
 
 ## Contract
 
@@ -97,6 +101,131 @@ gives `<kind>: <message>`. In JavaScript and TypeScript,
 that rejects with an object whose `payload` is `{ kind, message }`
 ([`operations.d.ts`](../guests/js/operations.d.ts)).
 
+## Capabilities
+
+Added for [#153](https://github.com/pane-app/pane/issues/153), following
+[ADR 0041](adr/0041-extensions-compose-through-capabilities-that-pane-brokers.md).
+A **capability** is a second way to address the same calls: a named, versioned
+set of operations, written `<namespace>:<name>@<major>` such as
+`acme:translate@1`, that any installed package may provide and another calls
+by that name, without naming the package that serves it. A consumer that
+wants one particular package still declares a dependency on it; a capability
+is for when any package that does the job will do. The call, its JSON input
+and result, its error kinds, the chain rules and the generation that owns
+each call are those of operations above.
+
+### Names
+
+- `<namespace>:<name>@<major>`. The namespace and the name use lowercase
+  letters, digits and `-`; the major is a positive integer.
+- The namespace is the author's, by convention their npm scope or domain.
+  Pane keeps no registry of namespaces; the `pane` namespace is reserved for
+  Pane's own default extensions.
+- The major version changes when a change breaks consumers. There are no
+  ranges and no negotiation, as with operations' versions. A package may
+  provide several majors of one capability by declaring each.
+
+### Providing
+
+A package declares the capabilities it provides under `provides` in its
+`pane.json`:
+
+```json
+"provides": [
+  { "capability": "acme:translate@1", "component": "translate.wasm",
+    "operations": ["translate", "languages"] }
+]
+```
+
+- `capability`: the capability's name. `component`: the component serving
+  it, which serves through the same `run-operation` export that published
+  operations use. `operations`: the operations the capability is made of.
+  `platforms` (optional): the systems it works on; elsewhere the package
+  does not provide the capability.
+- A capability call reaches the component with the operation **qualified by
+  its capability**: `acme:translate@1/translate`, so one component can tell
+  it from a call by identity to an operation of the same name.
+- A capability's operations are reached only through the capability. A
+  package that also wants them callable by identity publishes them under
+  `operations` too.
+- A package may provide capabilities and no commands, and adds nothing to
+  root search. Installing checks the `published-operations` export for each
+  component that serves a capability, without running guest code, and
+  refuses a malformed name, an operation listed twice, a missing component
+  or one without the export, or the same capability provided twice at one
+  major.
+
+### Using
+
+A package declares the capabilities it uses under `uses` in its
+`pane.json`, each entry naming the capability and the operations it calls:
+
+```json
+"uses": [
+  { "capability": "acme:translate@1", "operations": ["translate"] },
+  { "capability": "acme:spellcheck@2", "operations": ["check"],
+    "optional": true }
+]
+```
+
+- `optional` (default `false`): an optional use is called only when some
+  package provides the capability; a call to one nobody provides answers
+  `not-found` and gates nothing.
+- `use` (optional): `"one"` (the default) or `"all"` — how many providers
+  the package calls. Read and checked; calling every provider comes with a
+  later slice.
+- `default` (optional): a provider source, written as a dependency's source
+  is, for Pane to install when no provider is installed. Read and checked —
+  a package from npm or Git cannot name a `local:` folder — and installed
+  with a later slice.
+- `commands` (optional): the command ids that need the capability; without
+  it, the use belongs to the whole package. Read and checked; commands
+  waiting for a capability come with a later slice.
+- A call to a capability or operation the package does not declare here is
+  `refused`, and the message says to declare it. A repeated capability in
+  `uses` is refused at install, as an empty `commands` list or one naming
+  commands the package does not have is.
+
+### Calling a capability
+
+A guest calls with `pane:extension/operations.call-capability` and asks for
+a capability's providers with `pane:extension/operations.providers`, in the
+same interface as `call`:
+
+```wit
+call-capability: async func(capability: string, operation: string, input: string)
+  -> result<string, call-error>;
+providers: func(capability: string) -> list<provider>;
+```
+
+- **Routing.** A call is resolved when it is made, against the packages as
+  they are at that moment. It goes to the first provider in install order
+  that can serve it: enabled, not paused, not waiting for what it needs, and
+  built for this system. A later install changes nothing. The provider is
+  started only when it is called, as any target is.
+- **Never itself.** A package never serves its own use: it gets another
+  provider. Alone, the call is `not-found`, saying so.
+- **Errors** reuse the kinds of any call, and each message names the
+  capability: `not-found` when no installed package provides it, `disabled`
+  when every provider is disabled, `unavailable` when every provider is
+  paused, waiting or for another system. `failed`, `crashed` and `refused`
+  are as for any call, and the chain rules hold: a provider already in the
+  chain is refused, and the depth limit applies.
+- **Asking first.** `providers` answers the providers that can serve the
+  capability now, each with the `source` a call names it by and its `title`,
+  in the order Pane calls them. The calling package is never among them.
+  With none, the list is empty. The SDKs offer `available(capability)` on
+  top of it, for an optional use.
+
+In Rust, `pane_extension::capabilities::{call, providers, available}`; in
+JavaScript and TypeScript, `@pane-app/extension/capabilities` (or the module
+`"pane:extension/operations@0.1.0"`).
+
+The user's choice of provider in Settings, installing a use's `default`,
+commands waiting for a capability, and calling every provider of a
+`use: "all"` capability are later slices of
+[#151](https://github.com/pane-app/pane/issues/151).
+
 ## Behavior
 
 - **Routing and lazy activation.** Every call goes through the host, which
@@ -161,11 +290,26 @@ that rejects with an object whose `payload` is `{ kind, message }`
   also publish `wait` version 1, which waits ten seconds, and a second item,
   "Wait in another extension", calls it: disabling or reloading either
   package meanwhile stops the call ([generations](generations.md)).
+- Capability samples: a provider of `pane-samples:greet@1` in
+  [Rust](../guests/sample-greet/src/lib.rs),
+  [JavaScript](../guests/sample-greet-js/src/index.js) and
+  [TypeScript](../guests/sample-greet-ts/src/index.ts), each answering with
+  its own language's name, and a consumer in
+  [Rust](../guests/sample-capabilities/src/lib.rs),
+  [JavaScript](../guests/sample-capabilities-js/src/index.js) and
+  [TypeScript](../guests/sample-capabilities-ts/src/index.ts) with a
+  required use of it and an optional use of a capability nobody provides,
+  so every pairing of languages is exercised.
 - [`guests/fixtures/operations`](../guests/fixtures/operations/src/lib.rs):
   a Rust fixture the tests install as several packages to drive every error
   kind, cycles, the depth limit and settings isolation.
+  [`guests/fixtures/capabilities`](../guests/fixtures/capabilities/src/lib.rs):
+  its twin for capabilities, driving the refusals, the error kinds, the
+  chain rules and a package that provides and uses one capability.
 - [`crates/pane-core/tests/operations.rs`](../crates/pane-core/tests/operations.rs)
-  asserts all of it through the launcher's public interface, and the native
+  and
+  [`crates/pane-core/tests/capabilities.rs`](../crates/pane-core/tests/capabilities.rs)
+  assert all of it through the launcher's public interface, and the native
   smoke scripts install the Rust and JavaScript samples and show a
   cross-language answer in the real window.
 
@@ -178,6 +322,11 @@ that rejects with an object whose `payload` is `{ kind, message }`
 - Declared [dependencies](dependencies.md) (#42) are shown, checked and
   installed with the caller, but disabling a target does not consider its
   callers yet (#43).
+- Capabilities: the user picks a provider in Settings, Pane installs a
+  use's `default`, commands wait for what they need, and a `use: "all"`
+  capability fans a call out to every provider — later slices of
+  [#151](https://github.com/pane-app/pane/issues/151). Until the user picks,
+  the first provider installed serves.
 - No time limit on waiting: a running operation stops only when a
   generation in its chain ends, or when it computes for 5 seconds without
   finishing (#18, [generations](generations.md#what-stopping-cannot-do-yet)).

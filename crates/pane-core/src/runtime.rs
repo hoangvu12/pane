@@ -178,7 +178,7 @@ use crate::generation::{End, Fence, Generation, Registration};
 use crate::helpers;
 use crate::helpers::runner::{self, HelperError, HelperErrorKind, Helpers, Running, Spec};
 use crate::launch::{LaunchRecord, LaunchRequest, LaunchSource, LaunchType, Launches};
-use crate::operations::{self, Directory, OperationCall, OperationError, Target};
+use crate::operations::{self, Addressed, Directory, OperationCall, OperationError, Target};
 use crate::packages::EXTENSION_API;
 
 /// Interface-version prefix every imported WASI interface must carry.
@@ -2337,6 +2337,16 @@ impl GuestState {
     pub(crate) fn owner(&self) -> Option<String> {
         self.data.as_ref().map(|data| data.owner().to_owned())
     }
+
+    /// The installed packages as the launcher has them, for host functions
+    /// that answer from them (a capability's providers); a runtime no
+    /// launcher drives answers as with none installed.
+    pub(crate) fn installed(&self) -> operations::Installed {
+        match lock(&self.directory).clone() {
+            Some(directory) => directory(),
+            None => operations::Installed::default(),
+        }
+    }
 }
 
 impl applications::Host for GuestState {
@@ -4124,9 +4134,9 @@ impl Host {
         Ok(())
     }
 
-    /// The installed package and component serving `call`, unless its
-    /// package already serves a call in the chain, through whichever of its
-    /// components.
+    /// The installed package and component serving `call`, by its package
+    /// source or by its capability, unless its package already serves a
+    /// call in the chain, through whichever of its components.
     fn resolve_target(
         &self,
         call: &OperationCall,
@@ -4137,8 +4147,14 @@ impl Host {
             Some(directory) => directory(),
             None => operations::Installed::default(),
         };
-        let target =
-            installed.resolve(&call.caller, &call.source, &call.operation, call.version)?;
+        let target = match &call.addressed {
+            Addressed::Package { source, version } => {
+                installed.resolve(&call.caller, source, &call.operation, *version)?
+            }
+            Addressed::Capability { capability } => {
+                installed.resolve_capability(&call.caller, capability, &call.operation)?
+            }
+        };
         let in_chain = chain.components.iter().any(|component| {
             *component == target.component
                 || installed.package_of(component) == Some(&target.identity)
@@ -4214,7 +4230,10 @@ impl Host {
             self.drop_instance(&target.component);
             return Err(failed(CallError::Cancelled));
         }
-        let (name, input) = (call.operation.clone(), call.input.clone());
+        let (name, input) = (
+            call.addressed.operation_name(&call.operation),
+            call.input.clone(),
+        );
         // A call whose caller gives up on it while it runs is stopped, as
         // a search's call is (the caller is gone; the answer has nowhere
         // to go).
