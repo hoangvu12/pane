@@ -104,6 +104,8 @@ const PREBUILT: &[&str] = &[
     "sample_programs_ts",
     "sample_run_js",
     "sample_run_ts",
+    "sample_system_commands_js",
+    "sample_system_commands_ts",
 ];
 
 fn main() -> ExitCode {
@@ -211,6 +213,7 @@ fn guests() -> Result<(), String> {
                 "files",
                 "clipboard_history",
                 "run",
+                "system_commands",
                 "sample_operations",
                 "sample_dependencies",
                 "sample_query",
@@ -225,6 +228,7 @@ fn guests() -> Result<(), String> {
                 "sample_icons",
                 "sample_programs",
                 "sample_run",
+                "sample_system_commands",
                 "sample_files",
                 "faulty",
                 "folder_files",
@@ -424,7 +428,7 @@ fn git_sample(root: &Path, out: &Path) -> Result<(), String> {
 /// (package folder in `guests/packages`, component) of each sample package,
 /// and of the default extensions (the calculator, applications and
 /// quicklinks).
-const SAMPLE_PACKAGES: [(&str, &str); 63] = [
+const SAMPLE_PACKAGES: [(&str, &str); 67] = [
     ("sample-rust", "sample_rust"),
     ("sample-settings", "sample_settings"),
     ("sample-js", "sample_js"),
@@ -437,6 +441,7 @@ const SAMPLE_PACKAGES: [(&str, &str); 63] = [
     ("files", "files"),
     ("clipboard-history", "clipboard_history"),
     ("run", "run"),
+    ("system-commands", "system_commands"),
     ("sample-operations", "sample_operations"),
     ("sample-operations-js", "sample_operations_js"),
     ("sample-operations-ts", "sample_operations_ts"),
@@ -488,6 +493,9 @@ const SAMPLE_PACKAGES: [(&str, &str); 63] = [
     ("sample-run", "sample_run"),
     ("sample-run-js", "sample_run_js"),
     ("sample-run-ts", "sample_run_ts"),
+    ("sample-system-commands", "sample_system_commands"),
+    ("sample-system-commands-js", "sample_system_commands_js"),
+    ("sample-system-commands-ts", "sample_system_commands_ts"),
 ];
 
 /// Rebuilds `guests/prebuilt/` from the JS/TS sample sources, then refreshes

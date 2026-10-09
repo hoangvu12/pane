@@ -63,6 +63,7 @@ mod quick_slots;
 mod run;
 pub mod search_files;
 mod submenus;
+mod system_commands;
 
 use crate::clipboard::{Capture, ClipboardSystem};
 use crate::dependencies;
@@ -852,6 +853,9 @@ struct State {
     system: Arc<dyn crate::system::System>,
     /// The Run dialog's work the `run` host functions act on (see `run`).
     run: Arc<dyn crate::run::Run>,
+    /// The session and power commands the `system-commands` host
+    /// functions act on (see `system_commands`).
+    system_commands: Arc<dyn crate::system_commands::SystemCommands>,
     /// The answers the user told Pane to remember for confirmations (see
     /// `confirmations`).
     confirmations: Record<confirmations::Confirmations>,
@@ -1515,6 +1519,7 @@ impl Launcher {
             submenus: submenus::Submenus::default(),
             system: crate::system::none(),
             run: crate::run::none(),
+            system_commands: crate::system_commands::none(),
             confirmations,
             confirmation_saves: Arc::default(),
             setup_needed: HashSet::new(),

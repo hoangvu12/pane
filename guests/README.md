@@ -2235,6 +2235,45 @@ beside it. The run samples are a
 [TypeScript](sample-run-ts/src/index.ts) command answering the same; a
 JavaScript or TypeScript command's package.json sets
 `"pane": { "run": true }` to import the interface.
+## Session and power commands
+
+A command may also lock the screen, log the user out, restart, shut down,
+sleep, hibernate, turn the displays off or start the screen saver
+(#255, ADR 0040, `pane:extension/system-commands` in
+[wit/system-commands.wit](../wit/system-commands.wit)). Each function
+answers what it ended in — the state the system is in now, or why nothing
+changed ("Restarting", "Hibernation is not available on this computer:
+there is no hibernation file") — never an error: show the text in a HUD, as
+the System Commands default extension does (it confirms the destructive
+ones first, with "Don't ask again"). The decisions are Pane's: restart and
+shut down force applications closed, a log out does not; sleep turns the
+displays off on a computer that enters Modern Standby when they turn off,
+and suspends any other. Windows implements them today; other systems answer
+that the commands are not available there yet.
+
+```rust
+use pane_extension::feedback::{show_hud, ToastStyle};
+use pane_extension::system_commands::{self, Outcome};
+
+match system_commands::lock_screen() {
+    Outcome::Done(text) => show_hud(&text, ToastStyle::Success),
+    Outcome::Explained(text) => show_hud(&text, ToastStyle::Failure),
+}
+```
+
+```ts
+import { lockScreen } from "@pane-app/extension/system-commands";
+import { showHUD } from "@pane-app/extension/feedback";
+
+const outcome = lockScreen();
+showHUD(outcome.text, outcome.state === "done" ? "success" : "failure");
+```
+
+A JavaScript or TypeScript command imports the interface only if its bundle
+uses it. The samples are a [Rust](sample-system-commands/src/lib.rs), a
+[JavaScript](sample-system-commands-js/src/index.js) and a
+[TypeScript](sample-system-commands-ts/src/index.ts) command, one item per
+function, each saying what it answered.
 
 ## Packaging and installing a local extension
 

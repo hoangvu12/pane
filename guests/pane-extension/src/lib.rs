@@ -23,8 +23,10 @@
 //! Windows' Run dialog runs, sharing its history, with [`run`], list the
 //! files of a folder with [`files`], search as the
 //! user types into its own search field with [`search`], make web
-//! requests with [`http`] and keep clipboard history with
-//! [`clipboard_history`]. It prints and logs to its package's extension log
+//! requests with [`http`], keep clipboard history with
+//! [`clipboard_history`], and lock, log out, restart, shut down, sleep,
+//! hibernate, turn off the displays of or start the screen saver of the
+//! computer with [`system_commands`]. It prints and logs to its package's extension log
 //! with [`info!`], [`warn!`], [`println!`] and the like ([`log`]). The crate
 //! is `no_std` so the component imports only WASI 0.3 interfaces; it supplies
 //! the allocator and a panic handler that logs the panic and traps, which the
@@ -334,6 +336,45 @@ pub mod clipboard_history {
         Capture, Entry, HistoryStatus, clear, copy, delete_items, entries, set_capture,
         set_excluded, set_retention, status, turn_off_and_clear,
     };
+}
+
+/// The session and power commands (`pane:extension/system-commands`):
+/// locking the screen, logging out, restarting, shutting down, sleeping,
+/// hibernating, turning the displays off and starting the screen saver,
+/// which Pane asks the system for (a pure WASI guest cannot). Each answers
+/// what it ended in ([`system_commands::Outcome`]): the state the system
+/// is in now, or why nothing changed — an operation that cannot happen on
+/// this system, or failed, is an answer, never an error and never a reason
+/// to pause the extension. The System Commands default extension shows
+/// the text in a HUD ([`feedback::show_hud`]) and confirms the destructive
+/// ones first ([`feedback::confirm`]), as ADR 0040 records.
+pub mod system_commands {
+    wit_bindgen::generate!({
+        path: "wit",
+        world: "system-commands-user",
+        default_bindings_module: "pane_extension::system_commands",
+    });
+
+    pub use pane::extension::system_commands::{
+        Outcome, hibernate, lock_screen, log_out, restart, shut_down, sleep, start_screen_saver,
+        turn_off_displays,
+    };
+
+    impl Outcome {
+        /// What it says, for a toast or a HUD: the state the system is in
+        /// now, or why nothing changed.
+        pub fn text(&self) -> &str {
+            match self {
+                Outcome::Done(text) | Outcome::Explained(text) => text,
+            }
+        }
+
+        /// Whether the command happened (it did not fail, and nothing was
+        /// explained).
+        pub fn done(&self) -> bool {
+            matches!(self, Outcome::Done(_))
+        }
+    }
 }
 
 /// Native helpers (`pane:extension/helpers`): prebuilt programs the

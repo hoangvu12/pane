@@ -76,6 +76,7 @@ mod services;
 mod stopping;
 mod submenus;
 mod system;
+mod system_commands;
 mod system_icon_adapters;
 mod uninstall;
 mod uninstall_dependents;

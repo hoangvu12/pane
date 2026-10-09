@@ -58,19 +58,23 @@ use crate::zip;
 /// The default extensions whose payloads the artifacts describe, and the
 /// assembled package each is packed from: the default set (#60, the
 /// user's recorded choice — the calculator, applications, quicklinks,
-/// files and clipboard history), the same in every build, plus Run on the
-/// Windows power features' side (ADR 0040, #254), which only the Windows
-/// default set lists. The helper
-/// sample is no default extension (#162): it is installed by hand, with
-/// `pane --install target/guests/packages/sample-helper`. The ids are the
-/// ones Pane's application build acquires (`pane::default_extensions`).
-const DEFAULTS: [(&str, &str); 6] = [
+/// files and clipboard history), the same in every build, joined on
+/// Windows by the Windows power features' default extensions (ADR 0040):
+/// Run (#254) and System Commands (#255), whose commands are
+/// Windows-only: only the Windows build's default set lists them
+/// (`pane::default_extensions`), but every system's artifacts describe
+/// their payloads. The helper sample is no default extension (#162): it
+/// is installed by hand, with `pane --install
+/// target/guests/packages/sample-helper`. The ids are the ones Pane's
+/// application build acquires (`pane::default_extensions`).
+const DEFAULTS: [(&str, &str); 7] = [
     ("calculator", "calculator"),
     ("applications", "applications"),
     ("quicklinks", "quicklinks"),
     ("files", "files"),
     ("clipboard-history", "clipboard-history"),
     ("run", "run"),
+    ("system-commands", "system-commands"),
 ];
 
 /// The pane program's version, as the package names it: this workspace's
@@ -961,7 +965,7 @@ mod tests {
         );
     }
 
-    /// The artifacts describe the default set alone: the five default
+    /// The artifacts describe the default set alone: the six default
     /// extensions, and no sample (#162), whose payload a first setup
     /// would otherwise acquire.
     #[test]
@@ -974,7 +978,8 @@ mod tests {
                 "applications",
                 "quicklinks",
                 "files",
-                "clipboard-history"
+                "clipboard-history",
+                "system-commands"
             ]
         );
         assert!(

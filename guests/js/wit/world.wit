@@ -17,7 +17,10 @@
 // adds it to `js-command`, so a command that makes no web requests does not
 // import it, and Pane does not list it as using the network. Pane's system
 // programs (wit/programs.wit) are added the same way, only for a command
-// whose bundle uses them (itself or through `@pane-app/extension/programs`).
+// whose bundle uses them (itself or through `@pane-app/extension/programs`),
+// and so are the session and power commands (wit/system-commands.wit), only
+// for a command whose bundle uses them (itself or through
+// `@pane-app/extension/system-commands`).
 //
 // A command whose package.json sets `"pane": { ... }` options also exports
 // the interfaces they name: `rootResults` (wit/root-results.wit),

@@ -47,6 +47,7 @@ pub mod run;
 mod runtime;
 mod search;
 pub mod system;
+pub mod system_commands;
 pub mod system_icons;
 mod threads;
 pub mod tray;

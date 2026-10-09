@@ -1,0 +1,66 @@
+{
+  "manifestVersion": 1,
+  "title": "System Commands",
+  "version": "0.1.0",
+  "apiVersion": "0.1",
+  "icon": "icon.svg",
+  "platforms": ["windows"],
+  "commands": [
+    {
+      "id": "lock-screen",
+      "title": "Lock Screen",
+      "subtitle": "Locks the screen; your session stays on",
+      "component": "system_commands.wasm",
+      "mode": "no-view"
+    },
+    {
+      "id": "log-out",
+      "title": "Log Out",
+      "subtitle": "Ends your session, asking first; applications are not forced closed",
+      "component": "system_commands.wasm",
+      "mode": "no-view"
+    },
+    {
+      "id": "restart",
+      "title": "Restart",
+      "subtitle": "Restarts Windows, asking first; applications are forced closed",
+      "component": "system_commands.wasm",
+      "mode": "no-view"
+    },
+    {
+      "id": "shut-down",
+      "title": "Shut Down",
+      "subtitle": "Powers Windows off, asking first; applications are forced closed",
+      "component": "system_commands.wasm",
+      "mode": "no-view"
+    },
+    {
+      "id": "sleep",
+      "title": "Sleep",
+      "subtitle": "Sleeps the computer; a Modern Standby one sleeps by its displays turning off",
+      "component": "system_commands.wasm",
+      "mode": "no-view"
+    },
+    {
+      "id": "hibernate",
+      "title": "Hibernate",
+      "subtitle": "Hibernates the computer, or says that it cannot",
+      "component": "system_commands.wasm",
+      "mode": "no-view"
+    },
+    {
+      "id": "turn-off-displays",
+      "title": "Turn Off Displays",
+      "subtitle": "Turns the displays off",
+      "component": "system_commands.wasm",
+      "mode": "no-view"
+    },
+    {
+      "id": "start-screen-saver",
+      "title": "Start Screen Saver",
+      "subtitle": "Starts the screen saver, or says that none is set",
+      "component": "system_commands.wasm",
+      "mode": "no-view"
+    }
+  ]
+}
