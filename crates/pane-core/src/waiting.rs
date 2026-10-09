@@ -649,9 +649,11 @@ fn fix_of(
             None => {
                 let path = [package.identity.clone(), unmet.identity.clone()];
                 match root_of(packages, able, paused, title_of, &path) {
-                    Some((identity, _, Unmet::Disabled)) => Fix::Enable(identity),
-                    Some((identity, _, Unmet::Paused)) => Fix::Retry(identity),
-                    Some((identity, _, Unmet::NotInstalled)) => Fix::Install(identity),
+                    Some(Root::Package(identity, Unmet::Disabled)) => Fix::Enable(identity),
+                    Some(Root::Package(identity, Unmet::Paused)) => Fix::Retry(identity),
+                    Some(Root::Package(identity, Unmet::NotInstalled)) => Fix::Install(identity),
+                    // The chain ends at a capability: its fix is a provider.
+                    Some(root @ Root::Capability(..)) => root.fix(),
                     None => Fix::Manage,
                 }
             }

@@ -1263,7 +1263,7 @@ fn chosen_of(state: &State, identity: &PackageIdentity, capability: &str) -> boo
     let providers: Vec<&InstalledPackage> = state
         .packages
         .iter()
-        .filter(|package| dependencies::provides_here(package, capability))
+        .filter(|package| dependencies::provides_capability(package, capability))
         .collect();
     // The user's recorded choice, when the package it names is installed.
     if let Some(key) = state.capability_choices.chosen.provider_of(capability)

@@ -1916,7 +1916,7 @@ fn requirements_among(installed: &[InstalledPackage]) -> Vec<Vec<usize>> {
                         .enumerate()
                         .filter(|(_, other)| {
                             other.identity != package.identity
-                                && provides_here(other, &used.capability)
+                                && provides_capability(other, &used.capability)
                         })
                         .map(|(index, _)| index),
                 );
@@ -1946,7 +1946,7 @@ fn index_of(
 /// Whether `package` provides `capability` on this system, as its manifest
 /// declares: it names the capability among `provides` and the entry is for
 /// this system.
-pub(crate) fn provides_here(package: &InstalledPackage, capability: &str) -> bool {
+pub(crate) fn provides_capability(package: &InstalledPackage, capability: &str) -> bool {
     let Ok(manifest) = &package.manifest else {
         return false;
     };
