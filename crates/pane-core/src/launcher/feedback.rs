@@ -173,6 +173,12 @@ impl HostFunctions for Hosted {
             .map_or_else(crate::system::none, |launcher| launcher.system())
     }
 
+    fn run(&self) -> Arc<dyn crate::run::Run> {
+        self.0
+            .upgrade()
+            .map_or_else(crate::run::none, |launcher| launcher.run())
+    }
+
     fn confirm(&self, caller: &Caller, confirmation: GivenConfirmation) -> Asking {
         match self.0.upgrade() {
             Some(launcher) => launcher.ask_to_confirm(caller, confirmation),

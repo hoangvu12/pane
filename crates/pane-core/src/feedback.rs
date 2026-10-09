@@ -420,6 +420,9 @@ pub(crate) trait HostFunctions: Send + Sync {
     /// The system the `system` host functions act on (`wit/system.wit`):
     /// the launcher's ([`crate::Launcher::with_system`]).
     fn system(&self) -> Arc<dyn crate::system::System>;
+    /// The Run dialog's work the `run` host functions act on
+    /// (`wit/run.wit`): the launcher's ([`crate::Launcher::with_run`]).
+    fn run(&self) -> Arc<dyn crate::run::Run>;
     /// `feedback.confirm`: shows `confirmation` (or answers from a
     /// remembered answer, or refuses) at once, and answers what to await.
     fn confirm(&self, caller: &Caller, confirmation: GivenConfirmation) -> Asking;

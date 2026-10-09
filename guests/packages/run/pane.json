@@ -1,0 +1,32 @@
+{
+  "manifestVersion": 1,
+  "title": "Run",
+  "version": "0.1.0",
+  "apiVersion": "0.1",
+  "platforms": ["windows"],
+  "icon": "icon.svg",
+  "commands": [
+    {
+      "id": "run",
+      "title": "Run",
+      "subtitle": "Runs a command line, as Windows' Run dialog does, sharing its history",
+      "component": "run.wasm",
+      "mode": "no-view",
+      "takesQuery": true
+    },
+    {
+      "id": "run-as-administrator",
+      "title": "Run as Administrator",
+      "subtitle": "Runs a command line through Windows' own elevation prompt",
+      "component": "run.wasm",
+      "mode": "no-view",
+      "takesQuery": true
+    },
+    {
+      "id": "run-history",
+      "title": "Run History",
+      "subtitle": "What you ran in Pane and the Run dialog: run it again, or delete it",
+      "component": "run.wasm"
+    }
+  ]
+}

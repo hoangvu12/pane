@@ -2027,7 +2027,7 @@ try {
     if ($process.HasExited) { throw "the installed Pane exited during setup" }
     # The default extensions (#60): all five, in every build; no sample
     # is acquired (#162).
-    foreach ($default in "calculator", "applications", "quicklinks", "files", "clipboard-history") {
+    foreach ($default in "calculator", "applications", "quicklinks", "files", "clipboard-history", "run") {
         Wait-For (Join-Path $extensions "installed.json") ('"default": "' + $default + '"') $true 1200
     }
     Start-Sleep -Seconds 1
@@ -2218,7 +2218,7 @@ $process = $null
 try {
     $process = Start-Pane "stderr-clipboard.log"
     # The default set (#60), acquired at this first start.
-    foreach ($default in "calculator", "applications", "quicklinks", "files", "clipboard-history") {
+    foreach ($default in "calculator", "applications", "quicklinks", "files", "clipboard-history", "run") {
         Wait-For $registry ('"default": "' + $default + '"') $true 1200
     }
     Start-Sleep -Seconds 3   # Clipboard History runs, and the watch with it
@@ -2434,7 +2434,7 @@ try {
     # per payload), and Pane's own check reads the index once more.
     if ($process.HasExited) { throw "the installed Pane exited during setup" }
     # The default set (#60).
-    foreach ($default in "calculator", "applications", "quicklinks", "files", "clipboard-history") {
+    foreach ($default in "calculator", "applications", "quicklinks", "files", "clipboard-history", "run") {
         Wait-For $registry ('"default": "' + $default + '"') $true 1200
     }
     # The check has read the index (its request is the third): the offer

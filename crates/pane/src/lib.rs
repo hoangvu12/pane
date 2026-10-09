@@ -106,15 +106,18 @@ pub const APP_VERSION: &str = match option_env!("PANE_PACKAGE_VERSION") {
 /// [`pane_core::defaults`]): the installer carries none of their payloads.
 /// The default extensions are the calculator, applications, quicklinks,
 /// files and clipboard history ([#60](https://github.com/pane-app/pane/issues/60),
-/// the user's recorded choice), in every build: all five enabled by
+/// the user's recorded choice), in every build: all enabled by
 /// default and each individually disableable, clipboard history recording
-/// what is copied from the first start (#166, ADR 0042). The samples are no
-/// default extension (#162): a contributor installs one by hand with
-/// `pane --install <folder>`. An install that acquired the helper sample
-/// as a default before keeps it as an ordinary installed package, which
-/// the user can uninstall; Pane does not remove it.
+/// what is copied from the first start (#166, ADR 0042). The Windows
+/// default set also lists the Windows power features' default extensions
+/// (ADR 0040): Run runs what the Run dialog runs and shares its history
+/// (#254), Windows-only and enabled by default like the others. The
+/// samples are no default extension (#162): a contributor installs one by
+/// hand with `pane --install <folder>`. An install that acquired the
+/// helper sample as a default before keeps it as an ordinary installed
+/// package, which the user can uninstall; Pane does not remove it.
 pub fn default_extensions() -> Vec<pane_core::DefaultExtension> {
-    vec![
+    let extensions = vec![
         pane_core::DefaultExtension {
             id: "calculator".into(),
             title: "Calculator".into(),
@@ -135,7 +138,22 @@ pub fn default_extensions() -> Vec<pane_core::DefaultExtension> {
             id: pane_core::clipboard_view::CLIPBOARD_HISTORY.into(),
             title: "Clipboard History".into(),
         },
-    ]
+    ];
+    // Only the Windows default set lists the Windows power features'
+    // default extensions (ADR 0040): Run runs what the Run dialog runs
+    // and shares its history (#254). macOS and Linux installs then
+    // acquire no packages that could only explain they are unavailable
+    // there.
+    #[cfg(target_os = "windows")]
+    let extensions = {
+        let mut grown = extensions;
+        grown.push(pane_core::DefaultExtension {
+            id: "run".into(),
+            title: "Run".into(),
+        });
+        grown
+    };
+    extensions
 }
 
 /// Initializes Pane's host settings — the appearance preferences, the
@@ -374,23 +392,32 @@ fn env_dir(name: &str) -> Option<PathBuf> {
 
 #[cfg(test)]
 mod tests {
-    /// The default set is the five default extensions in every build:
-    /// no sample is acquired at first setup (#162).
+    /// The default set is the five default extensions in every build,
+    /// with the Windows power features' on Windows alone (ADR 0040): no
+    /// sample is acquired at first setup (#162).
     #[test]
-    fn the_default_set_is_the_five_default_extensions_without_the_samples() {
+    fn the_default_set_is_the_default_extensions_without_the_samples() {
         let ids: Vec<String> = super::default_extensions()
             .into_iter()
             .map(|extension| extension.id)
             .collect();
-        assert_eq!(
-            ids,
-            [
-                "calculator",
-                "applications",
-                "quicklinks",
-                pane_core::search_files::FILES,
-                pane_core::clipboard_view::CLIPBOARD_HISTORY
-            ]
-        );
+        #[cfg(target_os = "windows")]
+        let expected = [
+            "calculator",
+            "applications",
+            "quicklinks",
+            pane_core::search_files::FILES,
+            pane_core::clipboard_view::CLIPBOARD_HISTORY,
+            "run",
+        ];
+        #[cfg(not(target_os = "windows"))]
+        let expected = [
+            "calculator",
+            "applications",
+            "quicklinks",
+            pane_core::search_files::FILES,
+            pane_core::clipboard_view::CLIPBOARD_HISTORY,
+        ];
+        assert_eq!(ids, expected);
     }
 }

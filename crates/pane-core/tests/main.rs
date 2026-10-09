@@ -63,6 +63,7 @@ mod reload;
 mod repositories;
 mod result_actions;
 mod root_providers;
+mod run;
 mod runtime_cache;
 mod runtime_crash;
 mod runtime_timers;

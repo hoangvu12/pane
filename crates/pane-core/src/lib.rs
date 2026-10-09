@@ -43,6 +43,7 @@ mod platform;
 mod preferences;
 mod programs;
 mod protection;
+pub mod run;
 mod runtime;
 mod search;
 pub mod system;

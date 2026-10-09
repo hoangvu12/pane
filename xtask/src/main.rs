@@ -102,6 +102,8 @@ const PREBUILT: &[&str] = &[
     "sample_icons_ts",
     "sample_programs_js",
     "sample_programs_ts",
+    "sample_run_js",
+    "sample_run_ts",
 ];
 
 fn main() -> ExitCode {
@@ -208,6 +210,7 @@ fn guests() -> Result<(), String> {
                 "quicklinks",
                 "files",
                 "clipboard_history",
+                "run",
                 "sample_operations",
                 "sample_dependencies",
                 "sample_query",
@@ -221,6 +224,7 @@ fn guests() -> Result<(), String> {
                 "sample_helper",
                 "sample_icons",
                 "sample_programs",
+                "sample_run",
                 "sample_files",
                 "faulty",
                 "folder_files",
@@ -420,7 +424,7 @@ fn git_sample(root: &Path, out: &Path) -> Result<(), String> {
 /// (package folder in `guests/packages`, component) of each sample package,
 /// and of the default extensions (the calculator, applications and
 /// quicklinks).
-const SAMPLE_PACKAGES: [(&str, &str); 59] = [
+const SAMPLE_PACKAGES: [(&str, &str); 63] = [
     ("sample-rust", "sample_rust"),
     ("sample-settings", "sample_settings"),
     ("sample-js", "sample_js"),
@@ -432,6 +436,7 @@ const SAMPLE_PACKAGES: [(&str, &str); 59] = [
     ("quicklinks", "quicklinks"),
     ("files", "files"),
     ("clipboard-history", "clipboard_history"),
+    ("run", "run"),
     ("sample-operations", "sample_operations"),
     ("sample-operations-js", "sample_operations_js"),
     ("sample-operations-ts", "sample_operations_ts"),
@@ -480,6 +485,9 @@ const SAMPLE_PACKAGES: [(&str, &str); 59] = [
     ("sample-programs", "sample_programs"),
     ("sample-programs-js", "sample_programs_js"),
     ("sample-programs-ts", "sample_programs_ts"),
+    ("sample-run", "sample_run"),
+    ("sample-run-js", "sample_run_js"),
+    ("sample-run-ts", "sample_run_ts"),
 ];
 
 /// Rebuilds `guests/prebuilt/` from the JS/TS sample sources, then refreshes

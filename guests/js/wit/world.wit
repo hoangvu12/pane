@@ -26,7 +26,9 @@
 // (wit/search.wit) and `service` (wit/service.wit); `files` makes it import the granted folder's listing
 // (wit/files.wit), `fileIndex` the file index Pane keeps (wit/file-index.wit)
 // and `clipboardHistory` the clipboard history Pane keeps
-// for it (wit/clipboard.wit), which no other command imports. The build
+// for it (wit/clipboard.wit), which no other command imports, and `run`
+// what Windows' Run dialog runs, sharing its history (wit/run.wit),
+// Windows only. The build
 // writes a world
 // `js-command` including this one with those exports and imports
 // (tools/componentize-js/pane_js.py).

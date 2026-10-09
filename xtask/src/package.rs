@@ -58,16 +58,19 @@ use crate::zip;
 /// The default extensions whose payloads the artifacts describe, and the
 /// assembled package each is packed from: the default set (#60, the
 /// user's recorded choice — the calculator, applications, quicklinks,
-/// files and clipboard history), the same in every build. The helper
+/// files and clipboard history), the same in every build, plus Run on the
+/// Windows power features' side (ADR 0040, #254), which only the Windows
+/// default set lists. The helper
 /// sample is no default extension (#162): it is installed by hand, with
 /// `pane --install target/guests/packages/sample-helper`. The ids are the
 /// ones Pane's application build acquires (`pane::default_extensions`).
-const DEFAULTS: [(&str, &str); 5] = [
+const DEFAULTS: [(&str, &str); 6] = [
     ("calculator", "calculator"),
     ("applications", "applications"),
     ("quicklinks", "quicklinks"),
     ("files", "files"),
     ("clipboard-history", "clipboard-history"),
+    ("run", "run"),
 ];
 
 /// The pane program's version, as the package names it: this workspace's

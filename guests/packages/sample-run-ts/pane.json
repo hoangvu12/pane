@@ -1,0 +1,30 @@
+{
+  "manifestVersion": 1,
+  "title": "TypeScript run sample",
+  "version": "0.1.0",
+  "apiVersion": "0.1",
+  "commands": [
+    {
+      "id": "run",
+      "title": "TypeScript run sample",
+      "subtitle": "Runs a command line, as Windows' Run dialog does",
+      "component": "sample_run_ts.wasm",
+      "mode": "no-view",
+      "takesQuery": true
+    },
+    {
+      "id": "elevated",
+      "title": "Run elevated",
+      "subtitle": "Runs a command line through Windows' own elevation prompt",
+      "component": "sample_run_ts.wasm",
+      "mode": "no-view",
+      "takesQuery": true
+    },
+    {
+      "id": "history",
+      "title": "Run history",
+      "subtitle": "The Run dialog's history: run an entry again or delete it",
+      "component": "sample_run_ts.wasm"
+    }
+  ]
+}

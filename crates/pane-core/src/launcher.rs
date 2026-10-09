@@ -60,6 +60,7 @@ mod presentation;
 mod programs;
 mod providers;
 mod quick_slots;
+mod run;
 pub mod search_files;
 mod submenus;
 
@@ -849,6 +850,8 @@ struct State {
     submenus: submenus::Submenus,
     /// The system the `system` host functions act on (see `system`).
     system: Arc<dyn crate::system::System>,
+    /// The Run dialog's work the `run` host functions act on (see `run`).
+    run: Arc<dyn crate::run::Run>,
     /// The answers the user told Pane to remember for confirmations (see
     /// `confirmations`).
     confirmations: Record<confirmations::Confirmations>,
@@ -1511,6 +1514,7 @@ impl Launcher {
             subtitle_saves: Arc::default(),
             submenus: submenus::Submenus::default(),
             system: crate::system::none(),
+            run: crate::run::none(),
             confirmations,
             confirmation_saves: Arc::default(),
             setup_needed: HashSet::new(),

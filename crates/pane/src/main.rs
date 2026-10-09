@@ -129,7 +129,11 @@ fn main() {
         .with_link_opener(Arc::new(pane::SystemLinks))
         // What commands copy, open, reveal and recycle reaches the system's
         // own clipboard, handlers, file manager and Recycle Bin (#145).
-        .with_system(pane_core::system::native());
+        .with_system(pane_core::system::native())
+        // What commands run through the Run dialog's work reaches the
+        // shell, Windows' elevation prompt and the Run dialog's own
+        // history (#254).
+        .with_run(pane_core::run::native());
         // That Pane quit unexpectedly last time, told in root search and on
         // the About page; a clean quit removes this run's marker.
         let launcher = match crash_record.clone() {

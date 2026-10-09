@@ -19,7 +19,8 @@
 //! its own package publishes with [`publish`], find and open installed
 //! applications with [`applications`], supply root results ahead of the
 //! query with [`indexed`], run its package's native helpers with
-//! [`helpers`] and the system's own programs with [`programs`], list the
+//! [`helpers`], the system's own programs with [`programs`] and what
+//! Windows' Run dialog runs, sharing its history, with [`run`], list the
 //! files of a folder with [`files`], search as the
 //! user types into its own search field with [`search`], make web
 //! requests with [`http`] and keep clipboard history with
@@ -504,6 +505,7 @@ pub mod service {
 pub mod http;
 pub mod log;
 pub mod programs;
+pub mod run;
 
 /// Logs a line at debug level to the package's extension log, formatted as
 /// [`alloc::format!`] formats (see [`log`]).

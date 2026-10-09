@@ -495,3 +495,7 @@ _Avoid_: Component alone (a package's built WebAssembly component), widget, cust
 **Theme token**:
 A named value of Pane's theme that an extension's UI uses instead of a raw value: a tone, text style, text level, space, radius or icon size. Tokens follow the user's appearance and background image. Raw values (hex colours, pixel sizes) are allowed beside them, and Pane corrects a raw colour's contrast against what it is drawn on.
 _Avoid_: Theme (the user's light or dark choice, part of Appearance), style, CSS variable
+
+**Run history**:
+The command lines the Windows Run dialog (Win+R) keeps in the registry (Explorer's RunMRU format) and Pane's Run default extension shares with it in both directions: what ran in either appears in both, recorded as typed, newest first, at most 26 entries, and deleting an entry removes it from both (ADR 0040).
+_Avoid_: Run's history (as if Pane kept its own), MRU list (the format's value, not the feature), command history

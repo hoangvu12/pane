@@ -2202,6 +2202,40 @@ its bundle uses it. The programs samples are a
 [TypeScript](sample-programs-ts/src/index.ts) command running `pane-echo`
 by its bare name, which must be on the search path.
 
+## Running what the Run dialog runs
+
+`pane_extension::run` (`pane:extension/run`, wit/run.wit) runs a command
+line as Windows' Run dialog (Win+R) reads it — a program by its bare name,
+found on the search path the registry names at the time of the call and in
+App Paths, or by its path, with arguments; a Control Panel applet through
+the Control Panel program; a document, a folder, a network path or a
+`shell:` or `ms-settings:` address — with environment variables expanded.
+An elevated run goes through Windows' own elevation prompt, which the user
+may decline. The history is the Run dialog's own, in the registry, shared
+in both directions: `run` records the command line that ran, `history`
+lists it newest first and `delete-from-history` removes an entry from
+both. Windows only; elsewhere every call answers `not-available`, which is
+not a failure.
+
+```rust
+use pane_extension::run::{self, RunError};
+
+run::run("notepad.exe C:\Notes\todo.txt", false)?;
+run::run("regedit", true)?; // Windows asks first
+let history = run::history()?; // newest first, as typed
+```
+
+A command that takes a query is the natural shape for it: the text typed
+in root search is the command line, sent when the user invokes it through
+its alias or as a fallback. The [Run](run) default extension does exactly
+that (ADR 0040), with "Run as Administrator" and a "Run History" list
+beside it. The run samples are a
+[Rust](sample-run/src/lib.rs), a
+[JavaScript](sample-run-js/src/index.js) and a
+[TypeScript](sample-run-ts/src/index.ts) command answering the same; a
+JavaScript or TypeScript command's package.json sets
+`"pane": { "run": true }` to import the interface.
+
 ## Packaging and installing a local extension
 
 A package is a folder with a `pane.json` manifest at its root and the built

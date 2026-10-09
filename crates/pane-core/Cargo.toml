@@ -78,7 +78,10 @@ png = "0.18"
 # (`RegisterHotKey`), the system search path in the registry, the
 # elevation prompt (`ShellExecuteExW` with `runas`), and the clipboard
 # format listener of clipboard history (a message-only window, the
-# clipboard and its global memory); already in the
+# clipboard and its global memory). What the Run dialog runs (#254)
+# expands `%NAME%` in command lines, reads and writes the RunMRU key of
+# the history it shares with the Run dialog, and looks programs up in
+# App Paths; already in the
 # dependency tree through GPUI CE. The file index (#126) lists folders with
 # their file ids, reads the NTFS change journal without administrator rights
 # (`DeviceIoControl`, the journal's control codes) and runs its threads in
@@ -90,7 +93,7 @@ png = "0.18"
 # for its window's DPI. Local credentials and clipboard history are
 # encrypted on disk with DPAPI for the current user (#130).
 [target.'cfg(windows)'.dependencies]
-windows = { workspace = true, features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_Security", "Win32_Security_Authorization", "Win32_Security_Cryptography", "Win32_Storage_FileSystem", "Win32_Storage_Packaging_Appx", "Win32_System_ApplicationInstallationAndServicing", "Win32_System_Com", "Win32_System_Com_StructuredStorage", "Win32_System_DataExchange", "Win32_System_IO", "Win32_System_Ioctl", "Win32_System_LibraryLoader", "Win32_System_Memory", "Win32_System_ProcessStatus", "Win32_System_Registry", "Win32_System_Threading", "Win32_System_Variant", "Win32_System_WindowsProgramming", "Win32_UI_Accessibility", "Win32_UI_HiDpi", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_Shell", "Win32_UI_Shell_Common", "Win32_UI_Shell_PropertiesSystem", "Win32_UI_WindowsAndMessaging"] }
+windows = { workspace = true, features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_Security", "Win32_Security_Authorization", "Win32_Security_Cryptography", "Win32_Storage_FileSystem", "Win32_Storage_Packaging_Appx", "Win32_System_ApplicationInstallationAndServicing", "Win32_System_Com", "Win32_System_Com_StructuredStorage", "Win32_System_DataExchange", "Win32_System_Environment", "Win32_System_IO", "Win32_System_Ioctl", "Win32_System_LibraryLoader", "Win32_System_Memory", "Win32_System_ProcessStatus", "Win32_System_Registry", "Win32_System_Threading", "Win32_System_Variant", "Win32_System_WindowsProgramming", "Win32_UI_Accessibility", "Win32_UI_HiDpi", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_Shell", "Win32_UI_Shell_Common", "Win32_UI_Shell_PropertiesSystem", "Win32_UI_WindowsAndMessaging"] }
 
 # Global hotkeys on X11 (key grabs on the root window) and the X11
 # clipboard of clipboard history (XFIXES selection events, selection

@@ -322,6 +322,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "run"
+version = "0.1.0"
+dependencies = [
+ "pane-extension",
+]
+
+[[package]]
 name = "sample-actions"
 version = "0.1.0"
 dependencies = [
@@ -400,6 +407,13 @@ dependencies = [
 
 [[package]]
 name = "sample-query"
+version = "0.1.0"
+dependencies = [
+ "pane-extension",
+]
+
+[[package]]
+name = "sample-run"
 version = "0.1.0"
 dependencies = [
  "pane-extension",
