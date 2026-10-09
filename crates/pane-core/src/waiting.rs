@@ -394,14 +394,11 @@ fn unmet_capability(
             Cannot::Waiting
         } else {
             // The package can run here; the capability's own declaration
-            // may still be for another system.
+            // may still be for another system. None: it serves, and the
+            // requirement is met.
             let reason = platform::unavailable(manifest.platforms.as_deref(), "this package")
-                .or_else(|| platform::unavailable(entry.platforms.as_deref(), "this capability"));
-            match reason {
-                Some(reason) => Cannot::Here(reason),
-                // It serves: the requirement is met.
-                None => return None,
-            }
+                .or_else(|| platform::unavailable(entry.platforms.as_deref(), "this capability"))?;
+            Cannot::Here(reason)
         };
         providers.push(Provider {
             identity: other.identity.clone(),
