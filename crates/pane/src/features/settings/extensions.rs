@@ -1418,7 +1418,7 @@ fn requirements_section(
     theme: &Theme,
     cx: &mut Context<SettingsWindow>,
 ) -> Option<AnyElement> {
-    let requirements = details?.requirements;
+    let requirements = &details?.requirements;
     if requirements.is_empty() {
         return None;
     }
