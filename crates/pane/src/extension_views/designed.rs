@@ -130,18 +130,6 @@ impl LauncherWindow {
             .unwrap_or(0)
     }
 
-    /// Test support: the paths of the designed view's focusable buttons.
-    #[doc(hidden)]
-    pub fn designed_paths(&self) -> Vec<String> {
-        self.designed
-            .as_ref()
-            .map(|controls| {
-                let mut paths: Vec<String> = controls.focus.keys().cloned().collect();
-                paths.sort();
-                paths
-            })
-            .unwrap_or_default()
-    }
 
     /// Sends the press of the button with callback id `callback` to the
     /// open designed view, raised on the node with `key`, and redraws when
@@ -395,10 +383,7 @@ fn button_element(
         .into_any_element();
     };
     let label: SharedString = button.label.clone().into();
-    let debug = match focus {
-        Some(_) => format!("designed-button-{}", button.label),
-        None => format!("designed-button-static-{}-{}", path, button.label),
-    };
+    let debug = format!("designed-button-{}", button.label);
     let ring = controls::focus_ring(theme);
     let (fill, edge, ink) = tone(button.tone, theme);
     let hover = hover_fill(button.tone, theme);
@@ -512,21 +497,22 @@ fn shape_of(node: &Node, path: &mut String, shape: &mut Vec<String>) {
         // its children.
         NodeKind::Unknown(_) => match &node.fallback {
             Some(fallback) => shape_of(fallback, path, shape),
-            None => {
-                for (index, child) in node.children.iter().enumerate() {
-                    push(path, child.key.as_deref(), index);
-                    shape_of(child, path, shape);
-                }
-            }
+            None => shape_children(node, path, shape),
         },
-        _ => {
-            for (index, child) in node.children.iter().enumerate() {
-                push(path, child.key.as_deref(), index);
-                shape_of(child, path, shape);
-            }
-        }
+        _ => shape_children(node, path, shape),
     }
     path.truncate(start);
+}
+
+/// The focusable nodes of `node`'s children, each with its own place under
+/// `path`.
+fn shape_children(node: &Node, path: &mut String, shape: &mut Vec<String>) {
+    for (index, child) in node.children.iter().enumerate() {
+        let start = path.len();
+        push(path, child.key.as_deref(), index);
+        shape_of(child, path, shape);
+        path.truncate(start);
+    }
 }
 
 /// A space token, resolved onto Pane's spacing rhythm (the reference's
