@@ -178,6 +178,18 @@ Development is turned on per installed, enabled package, from its **Develop
    memory, never on disk. Lines are cut at 4 KiB, and a package writing
    more than 1,000 lines in a second loses the rest of that second, with a
    note of how many ([printing and logging](../guests/README.md#printing-and-logging)).
+8. **Logs for <title>.** The package's Actions menu in Settings ›
+   Extensions offers **Logs for <title>** beside Stop developing, and so do
+   a failed build's details; it opens the log in the launcher window, which
+   comes forward. Each line shows its local time, its level (errors and
+   warnings in their colours, debug lines muted) and who wrote it: the
+   extension, or Pane, whose lines carry an accent mark. The list follows
+   new lines while it is at its end, the newest selected; scrolling up or
+   moving the selection up stops following, and End, the last line or
+   scrolling back to the end follows again. Enter (or Ctrl+C) copies the
+   selected line and Ctrl+Shift+C every line, as the log file writes them;
+   Ctrl+L clears the lines Pane keeps, not the file; Ctrl+O opens the log
+   file (Command instead of Ctrl on macOS).
 
 Only the developed package is built and reloaded; Pane and every other
 package keep running.

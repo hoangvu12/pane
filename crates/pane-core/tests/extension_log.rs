@@ -11,7 +11,7 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use futures::executor::block_on;
@@ -19,7 +19,9 @@ use pane_core::develop::{Build, BuildJob, BuildOutcome, Builder};
 use pane_core::extension_log::{
     LINE_LIMIT, LINES_PER_SECOND, LogLevel, LogLine, LogSource, LogStream, WINDOW_LINES,
 };
-use pane_core::{Launcher, Limits, PackageIdentity, Runtime, Status};
+use pane_core::{
+    Launcher, Limits, LinkOpener, OperationKind, PackageIdentity, Runtime, Screen, Status,
+};
 use tempfile::TempDir;
 
 #[path = "support/feedback.rs"]
@@ -31,7 +33,7 @@ mod rows;
 
 use feedback::shown;
 use guests::guest;
-use rows::select_title;
+use rows::{manage, select_title, titles};
 
 /// Builds a folder by staging the guest its `source.txt` names, or fails
 /// when that starts with "error".
@@ -66,12 +68,28 @@ impl Build for CopyBuild {
     }
 }
 
+/// Records the files the launcher is asked to open.
+#[derive(Default)]
+struct Opened(Mutex<Vec<PathBuf>>);
+
+impl LinkOpener for Opened {
+    fn open(&self, _url: &str) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn open_file(&self, path: &Path) -> Result<(), String> {
+        self.0.lock().unwrap().push(path.to_path_buf());
+        Ok(())
+    }
+}
+
 struct Pane {
     _sources: TempDir,
     data: TempDir,
     sources: PathBuf,
     runtime: Runtime,
     launcher: Launcher,
+    opened: Arc<Opened>,
 }
 
 impl Pane {
@@ -80,8 +98,10 @@ impl Pane {
         let data = tempfile::tempdir().unwrap();
         let runtime = Runtime::start().unwrap();
         let (changes, _) = pane_core::changes::channel();
+        let opened = Arc::new(Opened::default());
         let launcher =
             Launcher::with_packages(Ok(runtime.clone()), vec![], data.path().join("extensions"))
+                .with_link_opener(opened.clone())
                 .with_development(Arc::new(CopyBuilder), changes);
         Pane {
             sources: sources.path().to_path_buf(),
@@ -89,6 +109,7 @@ impl Pane {
             data,
             runtime,
             launcher,
+            opened,
         }
     }
 
@@ -431,5 +452,86 @@ fn unresponsive_calls_and_pauses_are_logged() {
         ours.iter().any(|(level, text)| *level == LogLevel::Warn
             && text.starts_with("Pane paused the extension: ")),
         "{ours:?}"
+    );
+}
+
+#[test]
+fn a_developed_package_s_logs_screen_is_one_of_its_operations_and_its_build_s_details() {
+    let pane = Pane::new();
+    let (folder, identity) = pane.developing("sample_settings");
+
+    // Settings offers it among the package's operations while it is
+    // developed: "Logs for Dev", which shows its Logs screen, whose lines
+    // are the window's to draw.
+    let logs = pane
+        .launcher
+        .extension_operations()
+        .into_iter()
+        .find(|operation| operation.kind == OperationKind::Logs)
+        .unwrap();
+    assert_eq!(logs.title, "Logs for Dev");
+    assert_eq!(logs.owner, Some(identity.clone()));
+    block_on(pane.launcher.run_extension_operation(&logs));
+    let view = pane.launcher.view();
+    assert!(matches!(&view.screen, Screen::ExtensionLog { identity: shown } if *shown == identity));
+    assert_eq!(view.title, "Logs for Dev");
+    assert!(view.rows.is_empty());
+    assert_eq!(pane.launcher.selected_action().label, "Copy line");
+    // Opened by an operation, it goes back to root search.
+    pane.launcher.back();
+    assert!(matches!(pane.launcher.view().screen, Screen::Root { .. }));
+
+    // A failed build's details offer it beside building again; back from
+    // it is the extension list, at its row.
+    fs::write(folder.join("source.txt"), "error: it does not build").unwrap();
+    wait_until("the failed build", || {
+        pane.launcher
+            .development(&identity)
+            .is_some_and(|development| development.failure.is_some())
+    });
+    manage(&pane.launcher);
+    select_title(&pane.launcher, "Why Dev did not build");
+    block_on(pane.launcher.activate_selected());
+    assert_eq!(titles(&pane.launcher), ["Build Dev again", "Logs for Dev"]);
+    select_title(&pane.launcher, "Logs for Dev");
+    block_on(pane.launcher.activate_selected());
+    assert_eq!(pane.launcher.view().title, "Logs for Dev");
+    pane.launcher.back();
+    let view = pane.launcher.view();
+    assert!(matches!(view.screen, Screen::Extensions { .. }));
+    assert_eq!(
+        view.selected.map(|index| view.rows[index].title.as_str()),
+        Some("Logs for Dev")
+    );
+
+    // Not developed, a package offers none.
+    pane.launcher.stop_developing(&identity);
+    let operations = pane.launcher.extension_operations();
+    assert!(!operations.iter().any(|o| o.kind == OperationKind::Logs));
+}
+
+#[test]
+fn the_log_file_opens_through_pane_and_clearing_the_log_keeps_it() {
+    let pane = Pane::new();
+    let (_, identity) = pane.developing("sample_settings");
+    pane.run("Write to the log");
+    let file = pane.launcher.extension_log_file(&identity).unwrap();
+    assert_eq!(
+        block_on(pane.launcher.open_extension_log_file(&identity)),
+        Ok(format!("Opened {}", file.display()))
+    );
+    assert_eq!(*pane.opened.0.lock().unwrap(), [file.clone()]);
+
+    // Clearing forgets the lines Pane keeps; its log file keeps them.
+    pane.launcher.clear_extension_log(&identity);
+    assert!(pane.log(&identity).is_empty());
+    let kept = fs::read_to_string(&file).unwrap();
+    assert!(kept.contains(" info  stdout [open] an info line\n"), "{kept}");
+
+    // Once it is not developed, there is no log file to open.
+    pane.launcher.stop_developing(&identity);
+    assert_eq!(
+        block_on(pane.launcher.open_extension_log_file(&identity)),
+        Err("Dev has no log file: it is not being developed".into())
     );
 }
