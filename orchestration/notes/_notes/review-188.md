@@ -1,0 +1,30 @@
+# spec/188 review findings to fix (one fix pass)
+
+## #189 (measurement scripts)
+1. measure-linux.sh exits before any phase if target/dist/artifacts/pane-defaults.json is missing; make only the hidden phases (or default-installation) depend on it, so the existing phases still run without artifacts. In CI it inherits the 99.0.0 package smoke-linux.sh builds: make sure the measured Pane is not offered an update during hidden-idle (point the update source at nothing / a same-version feed, as the smokes do where they need no update), or document precisely if it cannot be avoided.
+2. Windows script: setting LOCALAPPDATA to scratch also redirects the ClickOnce store and %LOCALAPPDATA%\Packages watcher, so the hidden number omits the packages watcher's cost — document this in resource-measurements.md. Also: the script should refuse (or warn loudly and stop) when the user's own Pane is running? — at least warn; it must never touch it.
+3. Per-thread keys differ between Linux (15-byte truncated names) and Windows (whole names) — document the mapping in resource-measurements.md, or normalise both to the truncated 15-byte form in summary.json with a note. Choose normalising in proc_tree.py summary so both platforms' summary.json compare.
+
+## #191 (icons)
+4. When a shortcut names an icon location but extraction falls back to the target, the target is not covered by the fingerprint: include the target too whenever extraction may fall back to it.
+5. A batch that extracts nothing no longer rests, so fingerprinting every app (COM start + .lnk load each on Windows; icon theme lookup on Linux) runs without pauses at start. Keep a short rest between fingerprint-only batches too (or yield at low priority) so start-up isn't a busy loop; on Linux, avoid re-reading the icon themes per app (cache the theme lookup per batch).
+
+## #190 (sleeping timers) — no defects; test strengthening
+6. Add `debug_assert!(calls > 0)` (or equivalent) where the in-flight count is decremented with saturating_sub, so a double decrement surfaces in tests.
+7. runtime_timers.rs exercises only Render and Run: extend it to check that search, a schedule, a service cycle and closing a view also count as in flight (the timers are awake during them and asleep after) — at least one of schedule/service and CloseView, using samples the existing suites use.
+8. The race test's "even rounds" only notify a timer already waiting; document in the test that the mutex discipline is what guarantees no lost wake-up and the test is a smoke test (do not claim proof). Optionally add a deterministic seam (a hook between check and wait) — only if small.
+
+## #192 (clipboard history)
+9. Session-end flush missing on Linux (and for signals on macOS): spec says "a write is always flushed on a clean quit and before the process ends through the system's session end". #133's signal handlers (SIGTERM/SIGINT/SIGHUP) only unlink the marker and re-raise (async-signal-safe). Fix: have the handler only write a byte to a self-pipe (or use a dedicated thread blocking on the signals) so a normal thread runs the clean-quit path (`quit_cleanly`: flush the clipboard batch, remove the marker), then restores the default action and re-raises; keep the existing direct unlink as the fallback if the thread does not finish within a short bound. Update docs/clipboard-history.md and the doc that describes the marker (#133) accordingly. If this is too risky to do without compiling, document precisely and leave it — say which in the report.
+10. A failed write is never retried: `write_latest` sets `state.due = None` before writing (history.rs ~1366); on failure re-arm the timer (retry after the batching delay, with backoff) so the batch is not left only in memory. If the expiry thread panicked (`running` stays true), `queue()` never falls back to writing at once: clear `running` when the thread ends (a guard in the thread), so `queue()` falls back.
+11. In the `Err(refusal)` branch of `clipboard_history()`, `Shown::unreadable` builds a new empty Arc per call, so the 1-second watcher's `ptr_eq` always differs and redraws every second while refused: keep one shared empty Arc (cache it) so nothing changes.
+12. Clean-quit launcher test: assert `clipboard_history_writes()` did not change between the copy and `quit_cleanly`, so the test proves the quit flush, not an earlier batch write.
+
+## Standards
+13. HARD (documented rule in docs/agents/ci.md: "When a change alters what a leg runs or how long it takes, update this file with it"): measure-linux.sh in the release matrix's Smoke ubuntu job now adds the hidden phase (60 s + 30 s settle + up to 600 s waiting for defaults) and depends on the smoke having left target/dist/artifacts. Update docs/agents/ci.md and the comment on the ci.yml step.
+14. measure-linux.sh: under `set -e`, `kill "$artifact_server_pid"` aborts if the server already died (use `kill … 2>/dev/null || true`); `export PANE_TEST_FILE_INDEX_HOME=$(...)` hides a failing cd (SC2155: assign then export).
+15. measure-windows.ps1: `Add-Type` fails if re-run in the same session after the C# changed — guard with a type-exists check or a versioned type name.
+16. history.rs `State::change` (~1576) builds `file.images()` (a BTreeSet cloning every owner and digest) twice on every captured copy: compute only whether an image-holding item went (compare the removed items), not the whole set.
+17. `Projected` cache keyed only by (owner, change count) and the count restarts at 0 per HistoryStore: add a store identity (e.g. a per-store generation id or Arc pointer) to the key; drop the cached records when the view closes.
+18. `capture()` pokes the expiry thread twice (queue() and wake.poke()): poke once.
+19. Smells to tidy only if cheap: `Shown` duplicates five fields of ClipboardHistoryView (embed or build the view from it); test helpers `written()`/`kept_on_disk()` duplicated in tests/clipboard.rs and tests/clipboard_view.rs → move into tests/support; `until` helpers duplicated between deadlines tests and runtime_timers.rs.

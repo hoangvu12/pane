@@ -1,0 +1,17 @@
+[
+  { "id": "calculator", "title": "Calculator",
+    "repository": "https://github.com/pane-app/calculator",
+    "tag": "v0.5.0", "commit": "0000000000000000000000000000000000000000" },
+  { "id": "applications", "title": "Applications",
+    "repository": "https://github.com/pane-app/applications",
+    "tag": "v0.5.0", "commit": "0000000000000000000000000000000000000000" },
+  { "id": "quicklinks", "title": "Quicklinks",
+    "repository": "https://github.com/pane-app/quicklinks",
+    "tag": "v0.5.0", "commit": "0000000000000000000000000000000000000000" },
+  { "id": "files", "title": "Files",
+    "repository": "https://github.com/pane-app/files",
+    "tag": "v0.8.0", "commit": "0000000000000000000000000000000000000000" },
+  { "id": "clipboard-history", "title": "Clipboard History",
+    "repository": "https://github.com/pane-app/clipboard-history",
+    "tag": "v0.6.0", "commit": "0000000000000000000000000000000000000000" }
+]

@@ -1,0 +1,1 @@
+{"dependencies":[{"id":34371544,"version_id":3069719,"crate_id":"wast","req":"^258.0.0","optional":false,"default_features":false,"features":["wasm-module"],"target":null,"kind":"normal","downloads":0}]}

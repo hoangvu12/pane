@@ -1,0 +1,864 @@
+diff --git a/crates/pane-core/src/feedback.rs b/crates/pane-core/src/feedback.rs
+index 695fedb1..9e078cfb 100644
+--- a/crates/pane-core/src/feedback.rs
++++ b/crates/pane-core/src/feedback.rs
+@@ -25,6 +25,7 @@ use std::path::PathBuf;
+ use std::sync::Arc;
+ use std::time::Duration;
+ 
++use crate::icons::Icon;
+ use crate::keyboard::Binding;
+ 
+ /// How long a success or failure toast stays before it hides by itself
+@@ -170,18 +171,42 @@ pub struct ShownToast {
+ #[derive(Clone, Debug, PartialEq, Eq)]
+ pub struct Hud {
+     pub title: String,
++    /// More text under the title.
++    pub message: Option<String>,
++    /// An icon before the title, if what shows the HUD gave it one.
++    pub icon: Option<Icon>,
+     pub style: ToastStyle,
+ }
+ 
+ impl Hud {
++    /// A HUD in `style` titled `title`, with no message and no icon.
++    pub fn new(style: ToastStyle, title: impl Into<String>) -> Hud {
++        Hud {
++            title: title.into(),
++            message: None,
++            icon: None,
++            style,
++        }
++    }
++
+     /// How long it stays: [`FAILURE_HUD_DURATION`] for a failure,
+-    /// [`HUD_DURATION`] otherwise.
++    /// [`HUD_DURATION`] otherwise. A HUD that does not hide by itself
++    /// ([`Hud::hides_by_itself`]) is never asked: it stays until it is
++    /// updated or the launcher is active again.
+     pub fn duration(&self) -> Duration {
+         match self.style {
+             ToastStyle::Failure => FAILURE_HUD_DURATION,
+             ToastStyle::Animated | ToastStyle::Success => HUD_DURATION,
+         }
+     }
++
++    /// Whether it hides by itself once its time is up, as
++    /// [`ToastStyle::hides_by_itself`] decides for the toast it may have
++    /// come from: a pending HUD (work in progress) stays until it is
++    /// updated or the launcher is active again.
++    pub fn hides_by_itself(&self) -> bool {
++        self.style.hides_by_itself()
++    }
+ }
+ 
+ /// What the launcher shows the next time it is shown, once a command
+@@ -277,8 +302,8 @@ pub enum ConfirmAnswer {
+ pub trait WindowControl: Send + Sync {
+     /// Hides the launcher window.
+     fn hide(&self);
+-    /// Shows `hud` in a window of its own, for [`Hud::duration`], replacing
+-    /// a HUD still shown.
++    /// Shows `hud` in a window of its own, for [`Hud::duration`] unless it
++    /// is pending ([`Hud::hides_by_itself`]), replacing a HUD still shown.
+     fn show_hud(&self, hud: &Hud);
+     /// A confirmation was asked for, or went unanswered (its call was
+     /// dropped): the window draws [`crate::Launcher::confirmation`] as it
+@@ -431,10 +456,7 @@ mod tests {
+ 
+     #[test]
+     fn a_hud_stays_longer_for_a_failure() {
+-        let hud = |style| Hud {
+-            title: "Done".into(),
+-            style,
+-        };
++        let hud = |style| Hud::new(style, "Done");
+         assert_eq!(
+             hud(ToastStyle::Success).duration(),
+             Duration::from_millis(1200)
+@@ -448,6 +470,9 @@ mod tests {
+ 
+     #[test]
+     fn only_work_in_progress_stays() {
++        assert!(!Hud::new(ToastStyle::Animated, "Working").hides_by_itself());
++        assert!(Hud::new(ToastStyle::Success, "Done").hides_by_itself());
++        assert!(Hud::new(ToastStyle::Failure, "Failed").hides_by_itself());
+         assert!(!ToastStyle::Animated.hides_by_itself());
+         assert!(ToastStyle::Success.hides_by_itself());
+         assert!(ToastStyle::Failure.hides_by_itself());
+@@ -465,10 +490,7 @@ mod tests {
+     fn requests_reach_the_window_in_order() {
+         let (control, mut requests) = channel();
+         control.hide();
+-        control.show_hud(&Hud {
+-            title: "Copied".into(),
+-            style: ToastStyle::Success,
+-        });
++        control.show_hud(&Hud::new(ToastStyle::Success, "Copied"));
+         control.confirmation();
+         drop(control);
+         let received = futures::executor::block_on(async {
+@@ -482,10 +504,7 @@ mod tests {
+             received,
+             [
+                 WindowRequest::Hide,
+-                WindowRequest::Hud(Hud {
+-                    title: "Copied".into(),
+-                    style: ToastStyle::Success
+-                }),
++                WindowRequest::Hud(Hud::new(ToastStyle::Success, "Copied")),
+                 WindowRequest::Confirmation,
+             ]
+         );
+diff --git a/crates/pane-core/src/launcher/clipboard_view.rs b/crates/pane-core/src/launcher/clipboard_view.rs
+index 1f1538ba..a5e5ec63 100644
+--- a/crates/pane-core/src/launcher/clipboard_view.rs
++++ b/crates/pane-core/src/launcher/clipboard_view.rs
+@@ -885,10 +885,7 @@ impl Launcher {
+         if let Some(mut state) = self.lock_if_current(view.reading.epoch) {
+             state.view.status = Status::Idle;
+         }
+-        self.show_hud(Hud {
+-            title: COPIED.into(),
+-            style: ToastStyle::Success,
+-        });
++        self.show_hud(Hud::new(ToastStyle::Success, COPIED));
+         Ok(())
+     }
+ 
+diff --git a/crates/pane-core/src/launcher/feedback.rs b/crates/pane-core/src/launcher/feedback.rs
+index d7b386f2..f5e2e090 100644
+--- a/crates/pane-core/src/launcher/feedback.rs
++++ b/crates/pane-core/src/launcher/feedback.rs
+@@ -686,7 +686,9 @@ fn present(feedback: &mut Feedback) {
+     } else {
+         current.in_footer = false;
+         window.show_hud(&Hud {
+-            title: current.toast.text(),
++            title: current.toast.title.clone(),
++            message: current.toast.message.clone(),
++            icon: None,
+             style: current.toast.style,
+         });
+     }
+@@ -989,10 +991,14 @@ mod tests {
+                 [
+                     WindowRequest::Hud(Hud {
+                         title: "Working".into(),
++                        message: None,
++                        icon: None,
+                         style: ToastStyle::Animated
+                     }),
+                     WindowRequest::Hud(Hud {
+-                        title: "Done: 3 files".into(),
++                        title: "Done".into(),
++                        message: Some("3 files".into()),
++                        icon: None,
+                         style: ToastStyle::Success
+                     }),
+                 ],
+@@ -1056,10 +1062,7 @@ mod tests {
+     #[test]
+     fn a_hud_closes_the_window_first() {
+         let (launcher, window) = launcher();
+-        let hud = Hud {
+-            title: "Copied to Clipboard".into(),
+-            style: ToastStyle::Success,
+-        };
++        let hud = Hud::new(ToastStyle::Success, "Copied to Clipboard");
+         launcher.show_hud(hud.clone());
+         assert_eq!(
+             window.take(),
+diff --git a/crates/pane-core/src/launcher/own_actions.rs b/crates/pane-core/src/launcher/own_actions.rs
+index 0d8303bb..e7707bbb 100644
+--- a/crates/pane-core/src/launcher/own_actions.rs
++++ b/crates/pane-core/src/launcher/own_actions.rs
+@@ -522,10 +522,7 @@ impl Launcher {
+             };
+         }
+         match ended {
+-            Ended::Hud(title) => self.show_hud(Hud {
+-                title,
+-                style: ToastStyle::Success,
+-            }),
++            Ended::Hud(title) => self.show_hud(Hud::new(ToastStyle::Success, title)),
+             Ended::Quiet | Ended::Failed(_) => self.changed(),
+         }
+     }
+@@ -568,10 +565,7 @@ impl Launcher {
+                     if let Some(mut state) = self.lock_if_current(epoch) {
+                         state.view.status = Status::Idle;
+                     }
+-                    self.show_hud(Hud {
+-                        title: PASTE_FALLBACK.into(),
+-                        style: ToastStyle::Success,
+-                    });
++                    self.show_hud(Hud::new(ToastStyle::Success, PASTE_FALLBACK));
+                     return;
+                 }
+                 Err(why) => Some(format!("Could not copy it: {why}")),
+@@ -589,10 +583,7 @@ impl Launcher {
+             state.feedback.presence == WindowPresence::Hidden
+         };
+         match failed {
+-            Some(why) if hidden => self.show_hud(Hud {
+-                title: why,
+-                style: ToastStyle::Failure,
+-            }),
++            Some(why) if hidden => self.show_hud(Hud::new(ToastStyle::Failure, why)),
+             _ => self.changed(),
+         }
+     }
+diff --git a/crates/pane-core/src/runtime/host_functions.rs b/crates/pane-core/src/runtime/host_functions.rs
+index 9ed9aba8..c452e81e 100644
+--- a/crates/pane-core/src/runtime/host_functions.rs
++++ b/crates/pane-core/src/runtime/host_functions.rs
+@@ -171,10 +171,7 @@ impl feedback_host::Host for GuestState {
+         if let Some(host) = self.host_functions() {
+             host.show_hud(
+                 &self.caller(),
+-                Hud {
+-                    title,
+-                    style: style_of(style),
+-                },
++                Hud::new(style_of(style), title),
+             );
+         }
+     }
+diff --git a/crates/pane-core/tests/feedback.rs b/crates/pane-core/tests/feedback.rs
+index 04e0e889..797cac52 100644
+--- a/crates/pane-core/tests/feedback.rs
++++ b/crates/pane-core/tests/feedback.rs
+@@ -289,6 +289,8 @@ fn close_empties_root_search_when_asked(fixture: &Fixture) {
+         requests.get(1),
+         Some(&WindowRequest::Hud(Hud {
+             title: "close: true, pop to root: true, clear search: true".into(),
++            message: None,
++            icon: None,
+             style: ToastStyle::Success,
+         })),
+         "{requests:?}"
+@@ -341,10 +343,7 @@ fn a_hud_closes_the_window_and_stays_its_time(fixture: &Fixture) {
+     let pane = Pane::with(fixture);
+     pane.open(fixture);
+     pane.act("feedback", SHOW_HUD);
+-    let copied = Hud {
+-        title: "Copied to Clipboard".into(),
+-        style: ToastStyle::Success,
+-    };
++    let copied = Hud::new(ToastStyle::Success, "Copied to Clipboard");
+     assert_eq!(
+         pane.window.take(),
+         [WindowRequest::Hide, WindowRequest::Hud(copied.clone())],
+@@ -355,10 +354,7 @@ fn a_hud_closes_the_window_and_stays_its_time(fixture: &Fixture) {
+     assert_eq!(pane.launcher.window_presence(), WindowPresence::Hidden);
+ 
+     pane.act("feedback", SHOW_FAILURE_HUD);
+-    let failed = Hud {
+-        title: "Could not copy".into(),
+-        style: ToastStyle::Failure,
+-    };
++    let failed = Hud::new(ToastStyle::Failure, "Could not copy");
+     // Already hidden: only the HUD.
+     assert_eq!(pane.window.take(), [WindowRequest::Hud(failed.clone())]);
+     assert_eq!(failed.duration(), Duration::from_secs(3));
+@@ -463,10 +459,14 @@ fn while_the_window_is_hidden_or_compact_a_toast_is_a_hud(fixture: &Fixture) {
+             [
+                 Hud {
+                     title: "Uploading…".into(),
++                    message: None,
++                    icon: None,
+                     style: ToastStyle::Animated
+                 },
+                 Hud {
+-                    title: "Uploaded: notes.txt".into(),
++                    title: "Uploaded".into(),
++                    message: Some("notes.txt".into()),
++                    icon: None,
+                     style: ToastStyle::Success
+                 },
+             ],
+diff --git a/crates/pane-core/tests/paste.rs b/crates/pane-core/tests/paste.rs
+index 8d91cca5..b09d16f0 100644
+--- a/crates/pane-core/tests/paste.rs
++++ b/crates/pane-core/tests/paste.rs
+@@ -290,10 +290,10 @@ fn a_failed_paste_is_an_error_not_a_copy(fixture: &Fixture) {
+     );
+     // The window had closed for the paste: the failure is said in a HUD.
+     pane.closed(
+-        &[Hud {
+-            title: format!("The extension reported an error: {why}"),
+-            style: ToastStyle::Failure,
+-        }],
++        &[Hud::new(
++            ToastStyle::Failure,
++            format!("The extension reported an error: {why}"),
++        )],
+         "a failed Paste",
+     );
+ }
+@@ -311,10 +311,7 @@ fn where_paste_is_not_available_paste_copies_and_says_so(fixture: &Fixture) {
+         fixture.title
+     );
+     pane.closed(
+-        &[Hud {
+-            title: PASTE_FALLBACK.into(),
+-            style: ToastStyle::Success,
+-        }],
++        &[Hud::new(ToastStyle::Success, PASTE_FALLBACK)],
+         "Paste where it is not available",
+     );
+ 
+diff --git a/crates/pane-core/tests/quicklinks.rs b/crates/pane-core/tests/quicklinks.rs
+index 30982b63..527ddb2b 100644
+--- a/crates/pane-core/tests/quicklinks.rs
++++ b/crates/pane-core/tests/quicklinks.rs
+@@ -308,10 +308,7 @@ fn closed(started: &Started, hud: Option<&str>, what: &str) {
+         })
+         .collect();
+     let expected: Vec<Hud> = hud
+-        .map(|title| Hud {
+-            title: title.into(),
+-            style: ToastStyle::Success,
+-        })
++        .map(|title| Hud::new(ToastStyle::Success, title))
+         .into_iter()
+         .collect();
+     assert_eq!(huds, expected, "{what}");
+diff --git a/crates/pane-core/tests/system.rs b/crates/pane-core/tests/system.rs
+index 10566762..d15f2d19 100644
+--- a/crates/pane-core/tests/system.rs
++++ b/crates/pane-core/tests/system.rs
+@@ -247,10 +247,7 @@ impl Pane {
+                 _ => None,
+             })
+             .collect();
+-        let expected = hud.map(|title| Hud {
+-            title: title.into(),
+-            style: ToastStyle::Success,
+-        });
++        let expected = hud.map(|title| Hud::new(ToastStyle::Success, title));
+         assert_eq!(huds, expected.iter().collect::<Vec<_>>(), "{what}");
+         assert_eq!(self.launcher.window_presence(), WindowPresence::Hidden);
+         assert_eq!(self.launcher.view().screen, Screen::Command, "{what}");
+diff --git a/crates/pane/src/app.rs b/crates/pane/src/app.rs
+index 3dcd3e96..82f52b69 100644
+--- a/crates/pane/src/app.rs
++++ b/crates/pane/src/app.rs
+@@ -234,6 +234,11 @@ impl LauncherWindow {
+         // answered as not confirmed (#146).
+         cx.observe_window_activation(window, |this, window, cx| {
+             let active = window.is_window_active();
++            // A pending HUD's work is done once the launcher is active
++            // again (#250).
++            if active {
++                this.close_pending_hud(cx);
++            }
+             // A window that just showed itself for a confirmation may still
+             // hear of the deactivation its own hiding caused (#146).
+             let counts = this.confirmation_sees_activation(active);
+@@ -417,10 +422,7 @@ impl LauncherWindow {
+     #[doc(hidden)]
+     pub fn show_smoke_hud(&mut self, title: String, window: &mut Window, cx: &mut Context<Self>) {
+         self.window_requested(WindowRequest::Hide, window, cx);
+-        let hud = pane_core::Hud {
+-            title,
+-            style: pane_core::ToastStyle::Failure,
+-        };
++        let hud = pane_core::Hud::new(pane_core::ToastStyle::Failure, title);
+         self.window_requested(WindowRequest::Hud(hud), window, cx);
+     }
+ 
+@@ -849,6 +851,8 @@ impl LauncherWindow {
+     /// visible window, opened on the display the placement resolves.
+     pub(crate) fn unhide(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+         self.launcher.set_window_presence(WindowPresence::Shown);
++        // A pending HUD is over once the launcher is active again (#250).
++        self.close_pending_hud(cx);
+         if self.presence.show() {
+             window.set_visible(true);
+             // The pointer is wherever it is now: the next event records it.
+diff --git a/crates/pane/src/features/hud.rs b/crates/pane/src/features/hud.rs
+index 6c0fbd48..a49b3d82 100644
+--- a/crates/pane/src/features/hud.rs
++++ b/crates/pane/src/features/hud.rs
+@@ -1,21 +1,42 @@
+-//! The HUD (#141, ADR 0037): a short message in a small window of its own,
+-//! which a command shows once it has acted ("Copied to Clipboard"), and
+-//! which a toast becomes while the launcher is hidden or collapsed.
++//! The HUD (#141, ADR 0037): a short message in a small window of its
++//! own, which a command shows once it has acted ("Copied to Clipboard"),
++//! and which a toast becomes while the launcher is hidden or collapsed.
+ //!
+ //! The launcher closes itself first (`pane_core::Launcher` hides it
+ //! through the window seam), then the launcher window opens the HUD's
+ //! window: a pop-up that never takes the focus, over other applications,
+-//! near the bottom centre of the display the launcher was on, and, where
+-//! the system allows, click-through (`crate::make_click_through`). It
+-//! stays for `Hud::duration` — 1.2 seconds, or 3 for a failure (ADR
+-//! 0035) — and a new HUD replaces one still shown. On macOS and Linux the
+-//! same window is used where the system allows a window that does not
+-//! activate; Wayland places it as it places any window, so there it reads
+-//! as a toast-like message (the specification's fallback). How it looks
+-//! is refined by "Launcher polish" (#123).
++//! click-through where the system allows (`crate::make_click_through`),
++//! on the display the launcher last showed on — centred horizontally,
++//! its bottom edge 150 logical pixels above that display's bottom, its
++//! height 46 logical pixels, 56 with a message, its width what its
++//! content needs, at most 500 ("Launcher polish", #123). It draws an
++//! optional icon, a one-line title and an optional one-line message in
++//! Pane's popover material and type.
++//!
++//! A default or success HUD shows for 1.2 seconds, a failure for 3
++//! (ADR 0035), then fades out over about a second — no fade under
++//! reduced motion, which closes it at once. A pending HUD (work in
++//! progress) stays until it is updated, which replaces it as any newer
++//! HUD does, or until the launcher is active again. One at a time: a new
++//! HUD replaces the one shown.
++//!
++//! The HUD's text is announced as the launcher's announcer is (#132): a
++//! hidden live region in the window's own accessibility tree, which
++//! Windows announces through UI Automation — a live region's change is
++//! raised for an unfocused window too, so a screen reader hears a
++//! confirmation from a hidden launcher.
++//!
++//! On macOS and Linux the same window is used where the system allows a
++//! window that does not activate. Wayland places it as it places any
++//! window, a client cannot put it where the specification has it, so
++//! there it reads as a toast-like message (the specification's fallback;
++//! see docs/platforms/linux.md).
++
++use std::time::{Duration, Instant};
+ 
++use gpui::accesskit::Live;
+ use gpui::{
+-    App, Bounds, Context, IntoElement, Pixels, Render, Size, TitlebarOptions, Window,
++    App, Bounds, Context, IntoElement, Pixels, Render, Role, Size, TitlebarOptions, Window,
+     WindowBackgroundAppearance, WindowBounds, WindowHandle, WindowKind, WindowOptions, div, point,
+     prelude::*, px, size,
+ };
+@@ -23,30 +44,76 @@ use pane_core::Hud;
+ 
+ use crate::app::LauncherWindow;
+ 
+-/// How far above the display's bottom edge the HUD sits, as a share of
+-/// the display's height.
+-const ABOVE_BOTTOM: f32 = 0.12;
++/// How far above the display's bottom edge the HUD's bottom edge sits,
++/// in logical pixels.
++const ABOVE_BOTTOM: f32 = 150.;
++
++/// The HUD's height, in logical pixels: 46, or 56 with a message.
++const HEIGHT: (f32, f32) = (46., 56.);
++
++/// The narrowest and the widest the HUD is, in logical pixels: its width
++/// follows its content between them.
++const WIDTH: (f32, f32) = (160., 500.);
++
++/// How long the HUD fades out over, once its time is up: about a second.
++const FADE: Duration = Duration::from_secs(1);
++
++/// How wide the HUD's text is estimated per character, for its width.
++const CHAR: f32 = 7.5;
++
++/// The HUD's fixed width, in logical pixels: the padding of its content
++/// and the dot that says its style.
++const CHROME: f32 = 56.;
++
++/// The gap between the HUD's dot, icon, title and message, in logical
++/// pixels.
++const GAP: f32 = 8.;
++
++/// The HUD's icon's size, in logical pixels.
++const ICON: f32 = 18.;
+ 
+ /// The HUD's window's title: never drawn, it names the window to the
+ /// system (the native smoke, scripts/smoke-windows-hud.ps1, finds it by
+ /// it).
+ pub(crate) const TITLE: &str = "Pane HUD";
+ 
+-/// The HUD's height, in logical pixels.
+-const HEIGHT: f32 = 44.;
+-
+-/// The narrowest and the widest the HUD is, in logical pixels.
+-const WIDTH: (f32, f32) = (160., 560.);
+-
+-/// The HUD's window's view: its message, in its style.
++/// The HUD's window's view: its icon, title and message, in its style.
+ pub(crate) struct HudView {
+     hud: Hud,
++    /// When the fade out began, if it has: the view draws fainter the
++    /// further it runs, and is closed once it has.
++    fading: Option<Instant>,
+ }
+ 
+ impl Render for HudView {
+-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
++    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+         let theme = crate::settings::visuals(cx).theme;
+-        let (_, dot) = super::toast::style_look(self.hud.style, &theme);
++        let (style, dot) = super::toast::style_look(self.hud.style, &theme);
++        let icon = self
++            .hud
++            .icon
++            .as_ref()
++            .map(|icon| super::icons::drawn(icon, &theme));
++        let title = self.hud.title.clone();
++        let message = self.hud.message.clone();
++        // The fade out: one frame is drawn as each of its moments is
++        // reached, until the window is closed at its end.
++        let opacity = match self.fading {
++            Some(start) => {
++                let elapsed = cx.background_executor().now().saturating_duration_since(start);
++                if elapsed < FADE {
++                    window.request_animation_frame();
++                }
++                (1. - elapsed.as_secs_f32() / FADE.as_secs_f32()).clamp(0., 1.)
++            }
++            None => 1.,
++        };
++        let height = if message.is_some() {
++            HEIGHT.1
++        } else {
++            HEIGHT.0
++        };
++        let text = announced(&self.hud);
+         div()
+             .id("hud")
+             .debug_selector(|| "hud".into())
+@@ -54,26 +121,75 @@ impl Render for HudView {
+             .flex()
+             .items_center()
+             .justify_center()
+-            .gap_2()
+-            .px_4()
+-            .rounded(px(HEIGHT / 2.))
++            .gap(px(GAP))
++            .rounded(px(height / 2.))
+             .bg(theme.popover_solid)
+             .border_1()
+             .border_color(theme.popover_edge)
+             .font_family(theme.typography.family.clone())
+             .text_size(theme.typography.footer_size)
+             .text_color(theme.text_title)
+-            .child(div().flex_none().size(px(8.)).rounded_full().bg(dot))
++            .opacity(opacity)
++            .child(
++                div()
++                    .debug_selector(move || style.into())
++                    .flex_none()
++                    .size(px(super::toast::DOT))
++                    .rounded_full()
++                    .bg(dot),
++            )
++            .when_some(icon, |hud, icon| {
++                hud.child(crate::ui::extension_icon::draw(
++                    &icon,
++                    crate::ui::extension_icon::IconSize::small(px(ICON)),
++                    "hud-icon",
++                    "hud",
++                    &theme,
++                ))
++            })
+             .child(
+                 div()
+                     .debug_selector(|| "hud-title".into())
+                     .min_w(px(0.))
+                     .truncate()
+-                    .child(self.hud.title.clone()),
++                    .child(title),
++            )
++            .when_some(message, |hud, message| {
++                hud.child(
++                    div()
++                        .debug_selector(|| "hud-message".into())
++                        .min_w(px(0.))
++                        .truncate()
++                        .text_color(theme.text_muted)
++                        .child(message),
++                )
++            })
++            // The live region the HUD's text is announced through: hidden,
++            // as the launcher's announcer is (#132).
++            .child(
++                div()
++                    .id("hud-announcer")
++                    .absolute()
++                    .w(px(0.))
++                    .h(px(0.))
++                    .role(Role::Label)
++                    .aria_live(Live::Polite)
++                    .aria_live_atomic(true)
++                    .when(!text.is_empty(), |node| {
++                        node.aria_label(text.clone()).aria_value(text)
++                    }),
+             )
+     }
+ }
+ 
++/// What the HUD announces: its title, with its message after it.
++fn announced(hud: &Hud) -> String {
++    match &hud.message {
++        Some(message) if !message.trim().is_empty() => format!("{}: {message}", hud.title),
++        _ => hud.title.clone(),
++    }
++}
++
+ /// The HUD's window, while one is open.
+ #[derive(Default)]
+ pub(crate) struct HudWindow {
+@@ -83,33 +199,51 @@ pub(crate) struct HudWindow {
+     shown: u64,
+     /// What the open HUD says, for tests.
+     title: Option<String>,
++    /// Whether the open HUD is pending: it stays until it is updated or
++    /// the launcher is active again.
++    pending: bool,
+ }
+ 
+ /// Where the HUD of `size` goes on the display whose bounds are
+-/// `display`: centred, near the bottom.
++/// `display`: centred, its bottom edge 150 logical pixels above the
++/// display's bottom.
+ pub(crate) fn placed(display: Bounds<Pixels>, size: Size<Pixels>) -> Bounds<Pixels> {
+     let x = display.origin.x + (display.size.width - size.width) / 2.;
+-    let y =
+-        display.origin.y + display.size.height - size.height - display.size.height * ABOVE_BOTTOM;
++    let y = display.origin.y + display.size.height - size.height - px(ABOVE_BOTTOM);
+     Bounds {
+         origin: point(x, y),
+         size,
+     }
+ }
+ 
+-/// The HUD's size for `title`: wide enough for its text, within
+-/// [`WIDTH`].
+-fn size_for(title: &str) -> Size<Pixels> {
+-    let width = (title.chars().count() as f32 * 7.5 + 64.).clamp(WIDTH.0, WIDTH.1);
+-    size(px(width), px(HEIGHT))
++/// The HUD's size for `hud`: as wide as its widest line, within
++/// [`WIDTH`], 46 logical pixels tall — 56 with a message.
++fn size_for(hud: &Hud) -> Size<Pixels> {
++    let line = |text: &str| text.chars().count() as f32 * CHAR;
++    let mut width = CHROME + line(&hud.title);
++    if let Some(message) = &hud.message {
++        width = width.max(CHROME + line(message));
++    }
++    if hud.icon.is_some() {
++        width += ICON + GAP;
++    }
++    let height = if hud.message.is_some() {
++        HEIGHT.1
++    } else {
++        HEIGHT.0
++    };
++    size(px(width.clamp(WIDTH.0, WIDTH.1)), px(height))
+ }
+ 
+ impl LauncherWindow {
+     /// Shows `hud` in its own window on the display the launcher was on,
+-    /// replacing the HUD still shown, and closes it after its duration.
++    /// replacing the HUD still shown, and closes it after its duration —
++    /// fading out over [`FADE`], or at once under reduced motion — unless
++    /// it is pending, in which case it stays until it is updated or the
++    /// launcher is active again.
+     pub(crate) fn show_hud(&mut self, hud: Hud, window: &mut Window, cx: &mut Context<Self>) {
+         self.close_hud(cx);
+-        let size = size_for(&hud.title);
++        let size = size_for(&hud);
+         let display = window.display(cx);
+         let bounds = match &display {
+             Some(display) => placed(display.bounds(), size),
+@@ -135,11 +269,12 @@ impl LauncherWindow {
+             window_background: WindowBackgroundAppearance::Transparent,
+             ..WindowOptions::default()
+         };
++        let pending = !hud.hides_by_itself();
+         let duration = hud.duration();
+         let title = hud.title.clone();
+         let opened = cx.open_window(options, |window, cx| {
+             crate::make_click_through(window);
+-            cx.new(|_| HudView { hud })
++            cx.new(|_| HudView { hud, fading: None })
+         });
+         let handle = match opened {
+             Ok(handle) => handle,
+@@ -151,9 +286,31 @@ impl LauncherWindow {
+         self.hud.shown += 1;
+         self.hud.window = Some(handle);
+         self.hud.title = Some(title);
++        self.hud.pending = pending;
++        if pending {
++            return;
++        }
+         let shown = self.hud.shown;
++        let reduced = cx.reduce_motion();
+         cx.spawn(async move |this, cx| {
+             cx.background_executor().timer(duration).await;
++            let fading = this
++                .update(cx, |this, cx| {
++                    if this.hud.shown != shown {
++                        return false;
++                    }
++                    if reduced {
++                        this.close_hud(cx);
++                        return false;
++                    }
++                    this.fade_hud(cx);
++                    true
++                })
++                .unwrap_or(false);
++            if !fading {
++                return;
++            }
++            cx.background_executor().timer(FADE).await;
+             this.update(cx, |this, cx| {
+                 if this.hud.shown == shown {
+                     this.close_hud(cx);
+@@ -164,9 +321,21 @@ impl LauncherWindow {
+         .detach();
+     }
+ 
++    /// Begins the HUD's fade out, if one shows.
++    fn fade_hud(&mut self, cx: &mut App) {
++        let Some(handle) = self.hud.window.clone() else {
++            return;
++        };
++        let _ = handle.update(cx, |view, _, cx| {
++            view.fading = Some(cx.background_executor().now());
++            cx.notify();
++        });
++    }
++
+     /// Closes the HUD's window, if one is open.
+     pub(crate) fn close_hud(&mut self, cx: &mut App) {
+         self.hud.title = None;
++        self.hud.pending = false;
+         if let Some(handle) = self.hud.window.take() {
+             handle
+                 .update(cx, |_, window, _| window.remove_window())
+@@ -174,6 +343,14 @@ impl LauncherWindow {
+         }
+     }
+ 
++    /// Closes the HUD's window if the HUD is a pending one: work in
++    /// progress is over once the launcher is active again.
++    pub(crate) fn close_pending_hud(&mut self, cx: &mut App) {
++        if self.hud.pending {
++            self.close_hud(cx);
++        }
++    }
++
+     /// Test support: what the HUD's window shows while it is open; `None`
+     /// while no HUD shows. Test and debug builds only.
+     #[cfg(any(test, debug_assertions))]
+@@ -181,29 +358,86 @@ impl LauncherWindow {
+     pub fn hud(&self) -> Option<String> {
+         self.hud.title.clone()
+     }
++
++    /// Test support: the HUD's window, while one shows, to read what it
++    /// draws and announces as the launcher window's own is read. Test and
++    /// debug builds only.
++    #[cfg(any(test, debug_assertions))]
++    #[doc(hidden)]
++    pub fn hud_window(&self) -> Option<gpui::AnyWindowHandle> {
++        self.hud
++            .window
++            .as_ref()
++            .map(|handle| gpui::AnyWindowHandle::from(handle.clone()))
++    }
+ }
+ 
+ #[cfg(test)]
+ mod tests {
+     use super::*;
++    use pane_core::ToastStyle;
+ 
+     #[test]
+-    fn the_hud_sits_centred_near_the_bottom_of_its_display() {
++    fn the_hud_sits_centred_150_pixels_above_the_bottom_of_its_display() {
+         let display = Bounds {
+             origin: point(px(1920.), px(0.)),
+             size: size(px(1000.), px(800.)),
+         };
+-        let hud = placed(display, size(px(200.), px(44.)));
++        let hud = placed(display, size(px(200.), px(46.)));
+         assert_eq!(hud.origin.x, px(1920. + 400.));
+-        assert_eq!(hud.origin.y, px(800. - 44. - 96.));
+-        assert_eq!(hud.size, size(px(200.), px(44.)));
++        assert_eq!(hud.origin.y, px(800. - 46. - 150.));
++        assert_eq!(hud.size, size(px(200.), px(46.)));
+     }
+ 
+     #[test]
+-    fn a_hud_is_as_wide_as_its_title_within_bounds() {
+-        assert_eq!(size_for("Hi").width, px(WIDTH.0));
+-        assert_eq!(size_for(&"x".repeat(500)).width, px(WIDTH.1));
+-        let copied = size_for("Copied to Clipboard").width;
+-        assert!(copied > px(WIDTH.0) && copied < px(WIDTH.1), "{copied:?}");
++    fn a_hud_is_content_sized_within_its_bounds() {
++        assert_eq!(size_for(&Hud::new(ToastStyle::Success, "Hi")).height, px(HEIGHT.0));
++        assert_eq!(size_for(&Hud::new(ToastStyle::Success, "Hi")).width, px(WIDTH.0));
++        let copied = size_for(&Hud::new(ToastStyle::Success, "Copied to Clipboard"));
++        assert!(copied.width > px(WIDTH.0) && copied.width < px(WIDTH.1), "{copied:?}");
++        assert_eq!(
++            size_for(&Hud::new(ToastStyle::Success, "x".repeat(500))).width,
++            px(WIDTH.1)
++        );
++
++        // A message makes a second line: taller, and as wide as the
++        // widest of the two lines, not the two together.
++        let explained = Hud {
++            message: Some("the clipboard was full".into()),
++            ..Hud::new(ToastStyle::Success, "Copied to Clipboard")
++        };
++        assert_eq!(size_for(&explained).height, px(HEIGHT.1));
++        assert_eq!(
++            size_for(&explained).width,
++            px(CHROME + "the clipboard was full".chars().count() as f32 * CHAR)
++        );
++
++        // An icon takes its own room beside the text.
++        let icon = Hud {
++            icon: Some(pane_core::Icon::new(pane_core::IconSource::Builtin {
++                name: "clipboard".into(),
++                filled: false,
++            })),
++            ..Hud::new(ToastStyle::Success, "Copied")
++        };
++        assert_eq!(
++            size_for(&icon).width,
++            size_for(&Hud::new(ToastStyle::Success, "Copied")).width + px(ICON + GAP)
++        );
++    }
++
++    #[test]
++    fn the_huds_text_reads_as_its_title_and_message() {
++        assert_eq!(announced(&Hud::new(ToastStyle::Success, "Copied")), "Copied");
++        let explained = Hud {
++            message: Some("the server said no".into()),
++            ..Hud::new(ToastStyle::Failure, "Upload failed")
++        };
++        assert_eq!(announced(&explained), "Upload failed: the server said no");
++        let blank = Hud {
++            message: Some("   ".into()),
++            ..Hud::new(ToastStyle::Failure, "Upload failed")
++        };
++        assert_eq!(announced(&blank), "Upload failed");
+     }
+ }
+diff --git a/crates/pane/src/features/toast.rs b/crates/pane/src/features/toast.rs
+index 5e59b4f7..1a46f6ea 100644
+--- a/crates/pane/src/features/toast.rs
++++ b/crates/pane/src/features/toast.rs
+@@ -46,7 +46,7 @@ actions!(toast, [FocusToast, PressToastAction, LeaveToast]);
+ const BUTTON_CONTEXT: &str = "ToastButton";
+ 
+ /// The dot that says a toast's style, in px.
+-const DOT: f32 = 8.;
++pub(crate) const DOT: f32 = 8.;
+ 
+ /// Registers the toast key in the launcher, and a toast action's button's
+ /// activation keys while it is focused.

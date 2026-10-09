@@ -1,0 +1,253 @@
+diff --git a/crates/pane-core/src/check.rs b/crates/pane-core/src/check.rs
+index 2083a646..ab9c0101 100644
+--- a/crates/pane-core/src/check.rs
++++ b/crates/pane-core/src/check.rs
+@@ -163,7 +163,8 @@ fn check_helper_files(manifest: &Manifest, folder: &Path, report: &mut CheckRepo
+             // targets are the author's to ship: warnings, because `cargo
+             // xtask guests` assembles Pane's own sample packages with only
+             // the current system's helper file.
+-            let problem = if *target == pane_target::Target::current() {
++            let current = pane_target::Target::current().is_some_and(|current| current == *target);
++            let problem = if current {
+                 let error = PackageError::Helper {
+                     helper: helper.id.clone(),
+                     target: *target,
+@@ -189,7 +190,7 @@ fn check_helper_files(manifest: &Manifest, folder: &Path, report: &mut CheckRepo
+                     ),
+                 }
+             };
+-            if *target == pane_target::Target::current() {
++            if current {
+                 report.errors.push(problem);
+             } else {
+                 report.warnings.push(problem);
+@@ -224,9 +225,7 @@ fn lint(manifest: &Manifest, folder: &Path, report: &mut CheckReport) {
+                 message: format!(
+                     "the required preference `{}` has no default, so Pane shows its Setup \
+                      screen, but the package has no {} beside {} to show on it",
+-                    preference.name,
+-                    HELP_FILE,
+-                    MANIFEST_FILE
++                    preference.name, HELP_FILE, MANIFEST_FILE
+                 ),
+             });
+         }
+@@ -327,8 +326,8 @@ fn lint_icon(icon: Option<&Icon>, folder: &Path, report: &mut CheckReport) {
+ /// and last word: the usual English convention, as Pane's own titles are
+ /// written.
+ const SMALL_WORDS: [&str; 16] = [
+-    "a", "an", "and", "as", "at", "but", "by", "for", "in", "nor", "of", "on", "or", "the",
+-    "to", "with",
++    "a", "an", "and", "as", "at", "but", "by", "for", "in", "nor", "of", "on", "or", "the", "to",
++    "with",
+ ];
+ 
+ /// `title` in Title Case, as the lint rule reads it: each word starts with
+@@ -343,7 +342,9 @@ fn title_case(title: &str) -> String {
+         .map(|(at, word)| {
+             let first = at == 0;
+             let last = at + 1 == words.len();
+-            let small = SMALL_WORDS.iter().any(|small| small.eq_ignore_ascii_case(word));
++            let small = SMALL_WORDS
++                .iter()
++                .any(|small| small.eq_ignore_ascii_case(word));
+             if !first && !last && small {
+                 return word.to_lowercase();
+             }
+diff --git a/crates/pane-core/src/schema.rs b/crates/pane-core/src/schema.rs
+index a7381bc7..c3e9eb21 100644
+--- a/crates/pane-core/src/schema.rs
++++ b/crates/pane-core/src/schema.rs
+@@ -17,8 +17,8 @@
+ use schemars::{JsonSchema, Schema, SchemaGenerator, json_schema};
+ use serde_json::Value;
+ 
+-use crate::{MAX_ARGUMENTS, MAX_KEYWORDS};
+ use crate::packages::{MANIFEST_FILE, MANIFEST_VERSION, ManifestJson};
++use crate::{MAX_ARGUMENTS, MAX_KEYWORDS};
+ 
+ /// The committed JSON Schema for `pane.json`, as text: every field a
+ /// `pane.json` may hold, each with its description, and the manifest
+@@ -55,10 +55,7 @@ pub fn manifest_schema() -> String {
+     // deserializing (`packages` reads it first, so a newer format is
+     // explained rather than misread), so no type carries it: the schema
+     // states it directly, at the version this Pane reads.
+-    if let Some(properties) = object
+-        .get_mut("properties")
+-        .and_then(Value::as_object_mut)
+-    {
++    if let Some(properties) = object.get_mut("properties").and_then(Value::as_object_mut) {
+         properties.insert(
+             MANIFEST_VERSION_KEY.into(),
+             json_schema!({
+@@ -324,9 +321,6 @@ fn nullable(schema: Schema) -> Schema {
+ mod tests {
+     use super::*;
+ 
+-    /// Where the committed schema lives, beside the SDK that ships it.
+-    const COMMITTED: &str = "../../../guests/js/schema/pane.schema.json";
+-
+     /// The committed schema is the generated one: the file this test
+     /// compares is what `cargo xtask schema --write` writes, so a schema
+     /// and the types that generate it cannot drift apart. Regenerate with
+@@ -335,7 +329,8 @@ mod tests {
+     fn the_committed_schema_is_the_generated_one() {
+         // The file is committed with LF endings and checked out with
+         // whatever this system uses; the generated schema is one text.
+-        let committed = include_str!(COMMITTED).replace("\r\n", "\n");
++        let committed =
++            include_str!("../../../guests/js/schema/pane.schema.json").replace("\r\n", "\n");
+         assert_eq!(
+             committed,
+             manifest_schema(),
+@@ -349,7 +344,10 @@ mod tests {
+     fn platforms_match() {
+         use crate::platform::Platform;
+         let values = enum_values::<PlatformId>();
+-        let expected: Vec<String> = Platform::ALL.iter().map(Platform::id).collect();
++        let expected: Vec<String> = Platform::ALL
++            .iter()
++            .map(|platform| platform.id().to_owned())
++            .collect();
+         assert_eq!(values, expected);
+     }
+ 
+@@ -358,7 +356,10 @@ mod tests {
+     fn preference_types_match() {
+         use crate::preferences::PreferenceKind;
+         let values = enum_values::<PreferenceType>();
+-        let expected: Vec<String> = PreferenceKind::ALL.iter().map(|kind| kind.id()).collect();
++        let expected: Vec<String> = PreferenceKind::ALL
++            .iter()
++            .map(|kind| kind.id().to_owned())
++            .collect();
+         assert_eq!(values, expected);
+     }
+ 
+diff --git a/crates/pane-ext/src/check.rs b/crates/pane-ext/src/check.rs
+index 82deb989..63bdaa01 100644
+--- a/crates/pane-ext/src/check.rs
++++ b/crates/pane-ext/src/check.rs
+@@ -53,7 +53,9 @@ pub(crate) fn run(folder: Option<PathBuf>, json: bool, deny_warnings: bool) -> E
+             // Only warnings failed it, and only because they were asked to.
+             let count = report.warnings.len();
+             let plural = if count == 1 { "" } else { "s" };
+-            eprintln!("pane-ext: {count} warning{plural} failed the check, as --deny-warnings asks");
++            eprintln!(
++                "pane-ext: {count} warning{plural} failed the check, as --deny-warnings asks"
++            );
+             ExitCode::FAILURE
+         }
+         (true, false) => {
+@@ -122,8 +124,8 @@ fn json_report(folder: &Path, report: &CheckReport, eslint: &Eslint) -> String {
+             "note": eslint.note(),
+         },
+     });
+-    let mut text = serde_json::to_string_pretty(&document)
+-        .expect("a report of strings is always writable");
++    let mut text =
++        serde_json::to_string_pretty(&document).expect("a report of strings is always writable");
+     text.push('\n');
+     text
+ }
+diff --git a/crates/pane-ext/tests/check.rs b/crates/pane-ext/tests/check.rs
+index dd272795..11c84bc1 100644
+--- a/crates/pane-ext/tests/check.rs
++++ b/crates/pane-ext/tests/check.rs
+@@ -115,13 +115,12 @@ fn a_valid_sample_package_passes() {
+ 
+ #[test]
+ fn an_invalid_manifest_fails_with_panes_message() {
+-    let repeated = manifest(r#""#
+-        .replace(
+-            r#""commands": ["#,
+-            r#""commands": [
++    let repeated = manifest("").replace(
++        r#""commands": ["#,
++        r#""commands": [
+     { "id": "hello", "title": "Say hello", "component": "hello.wasm" },
+ "#,
+-        ));
++    );
+     let keywords = format!(
+         r#"{{ "manifestVersion": 1, "title": "Hello", "apiVersion": "0.1", "keywords": {}, "commands": [{{ "id": "hello", "title": "Say hello", "component": "hello.wasm" }}] }}"#,
+         format!("{:?}", vec!["word"; 21])
+@@ -173,7 +172,11 @@ fn the_same_invalid_package_is_refused_alike_by_pane_and_pane_ext_check() {
+   ]
+ }"#;
+     let cases: [(&str, String, &str); 4] = [
+-        ("unknown mode", manifest(r#", "mode": "sometimes""#), "sample_rust"),
++        (
++            "unknown mode",
++            manifest(r#", "mode": "sometimes""#),
++            "sample_rust",
++        ),
+         ("source-only package", source_only.to_owned(), "sample_rust"),
+         ("older api shape", manifest(""), "old_api"),
+         ("wasi 0.2 component", manifest(""), "mixed_p2"),
+@@ -271,11 +274,11 @@ fn every_lint_rule_has_a_fixture_that_triggers_it() {
+ /// A 1×1 transparent PNG, to name an icon smaller than a published
+ /// extension's.
+ const TINY_PNG: &[u8] = &[
+-    0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44,
+-    0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1F,
+-    0x15, 0xC4, 0x89, 0x00, 0x00, 0x00, 0x0A, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9C, 0x63, 0x00,
+-    0x01, 0x00, 0x00, 0x05, 0x00, 0x01, 0x0D, 0x0A, 0x2D, 0xB4, 0x00, 0x00, 0x00, 0x00, 0x49,
+-    0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
++    0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
++    0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1F, 0x15, 0xC4,
++    0x89, 0x00, 0x00, 0x00, 0x0A, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9C, 0x63, 0x00, 0x01, 0x00, 0x00,
++    0x05, 0x00, 0x01, 0x0D, 0x0A, 0x2D, 0xB4, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE,
++    0x42, 0x60, 0x82,
+ ];
+ 
+ #[test]
+@@ -322,7 +325,9 @@ fn the_json_report_is_stable() {
+     assert_eq!(report["ok"], serde_json::json!(true));
+     assert_eq!(report["errors"], serde_json::json!([]));
+     assert!(
+-        report["warnings"].as_array().is_some_and(|list| !list.is_empty()),
++        report["warnings"]
++            .as_array()
++            .is_some_and(|list| !list.is_empty()),
+         "{report}"
+     );
+     assert_eq!(
+diff --git a/crates/pane/tests/settings.rs b/crates/pane/tests/settings.rs
+index 83b4c21e..a56cb7ec 100644
+--- a/crates/pane/tests/settings.rs
++++ b/crates/pane/tests/settings.rs
+@@ -1838,11 +1838,15 @@ fn the_extensions_group_lists_each_package_with_its_description(cx: &mut TestApp
+     // under its source, cut like it (#224); the description itself is on
+     // the extension's page.
+     assert!(
+-        settings_cx.debug_bounds("extension-item-Described sample").is_some(),
++        settings_cx
++            .debug_bounds("extension-item-Described sample")
++            .is_some(),
+         "the extension is listed"
+     );
+     assert!(
+-        settings_cx.debug_bounds("extension-item-description").is_some(),
++        settings_cx
++            .debug_bounds("extension-item-description")
++            .is_some(),
+         "its description is drawn"
+     );
+ }
+diff --git a/xtask/src/main.rs b/xtask/src/main.rs
+index 34ff5385..0fab31a4 100644
+--- a/xtask/src/main.rs
++++ b/xtask/src/main.rs
+@@ -575,7 +575,10 @@ fn schema(write: bool) -> Result<(), String> {
+             .map_err(|error| format!("read {} failed: {error}", path.display()))?
+             .replace("\r\n", "\n");
+         if committed == generated {
+-            println!("{} matches what Pane's manifest types generate", path.display());
++            println!(
++                "{} matches what Pane's manifest types generate",
++                path.display()
++            );
+             return Ok(());
+         }
+         return Err(format!(

@@ -1,0 +1,13 @@
+Landed on `main` in PR #271 (merge commit `2ae9e598`) as `e4b6bf0f424d2ae34d1056147c11f97b40467b2c`, with the review fixes in `c8737999` (announcement wording, held-list behaviour, message-before-selection ordering).
+
+Results, per acceptance criterion (window tests with real key events reading GPUI's accessibility tree, `crates/pane/tests/announcements.rs` plus the updated `window.rs`, `settings.rs`, `virtual_lists.rs`; all green in the verify run [37881048674](https://github.com/pane-app/pane/actions/runs/37881048674), whose only red is the macOS pasteboard flake #231):
+
+- The query field keeps accessibility focus while arrowing; no row or computed answer reports focus — checked across root search, a command's list, the actions panel, the footer menu, Clipboard History and Search Files (`active_descendant_focus` is null, focus is the field).
+- Every row carries position in set and set size alongside role, label, description and selected state — checked for every root `ListBoxOption` and added to the actions panel and footer menu rows.
+- After Down, the announcer is a polite live region whose name and value are "`<title>`, `<i>` of `<n>`" — tested; one limit: GPUI CE's `debug_a11y_tree_json` does not serialise `live`/`live_atomic`, so politeness is set in code and asserted only by the tree's name and value.
+- ", unavailable" and "Fallbacks: " prefixes; fast arrowing leaves only the last text; typing that keeps the top result changes nothing and a changed one updates once after settling; "No results"; a command's name and count on open — all tested (fake clock, `advance_clock`).
+- A selection Pane changes announces nothing unless the selected row changed — the window test drives `Launcher::select`; the same-row-moves case is a unit test in `announcer.rs`.
+- A toast shown with a selection change is announced first, and the footer's strip keeps its status role — the announcer speaks the footer's message (status messages take the same path as toasts), then the selection after a lead.
+- `docs/root-search.md` and the decision index updated (G2's remaining condition is now the native screen-reader run, not a GPUI change).
+
+Deliberately left open (the criterion's own words: not a merge gate): native runs with Narrator, NVDA, VoiceOver and Orca. The window tests do not establish what a screen reader speaks; that evidence belongs to the release-validation pass (#84). Two more limits are recorded in the module doc: the AccessKit adapter set Pane pins (Windows 0.33, macOS 0.26, AT-SPI 0.19) was read from their sources, not heard, and the same text said twice is not re-announced.

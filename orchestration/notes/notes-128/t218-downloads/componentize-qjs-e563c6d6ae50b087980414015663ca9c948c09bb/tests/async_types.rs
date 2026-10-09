@@ -1,0 +1,2276 @@
+//! Async component model tests for componentize-qjs.
+//! Value conversions share compiled code; resource and metadata-order tests remain standalone.
+#![cfg(feature = "component-model-async")]
+
+mod common;
+
+use std::pin::Pin;
+use std::sync::{Arc, Mutex};
+use std::task::{Context, Poll};
+
+use common::{AsyncComponentInstance, TestCase, WasiCtxState};
+use wasmtime::component::{
+    Component, Destination, FutureConsumer, FutureReader, Source, StreamConsumer, StreamProducer,
+    StreamReader, StreamResult, Val, VecBuffer,
+};
+use wasmtime::{AsContextMut, StoreContextMut};
+
+async fn component() -> AsyncComponentInstance {
+    static COMPONENT: tokio::sync::OnceCell<Component> = tokio::sync::OnceCell::const_new();
+    let component = COMPONENT
+        .get_or_init(|| async {
+            TestCase::new()
+                .wit(include_str!("wit/all/all-async.wit"))
+                .script(include_str!("js/all-async.js"))
+                .compile_async()
+                .await
+                .expect("failed to compile all-async fixture")
+        })
+        .await;
+
+    AsyncComponentInstance::from_component(component)
+        .await
+        .expect("failed to instantiate all-async fixture")
+}
+
+#[tokio::test]
+async fn test_all_async_instances_are_isolated() {
+    let mut first = component().await;
+    let mut second = component().await;
+    assert_eq!(
+        first.call1_async("next-count", &[]).await.unwrap(),
+        Val::U32(1)
+    );
+    assert_eq!(
+        first.call1_async("next-count", &[]).await.unwrap(),
+        Val::U32(2)
+    );
+    assert_eq!(
+        second.call1_async("next-count", &[]).await.unwrap(),
+        Val::U32(1)
+    );
+
+    drop(first);
+    assert_eq!(
+        component()
+            .await
+            .call1_async("next-count", &[])
+            .await
+            .unwrap(),
+        Val::U32(1)
+    );
+}
+
+#[tokio::test]
+async fn test_async_echo_u32() {
+    let mut instance = component().await;
+
+    let result = instance
+        .call1_async("echo-u32", &[Val::U32(42)])
+        .await
+        .unwrap();
+    assert_eq!(result, Val::U32(42));
+}
+
+#[tokio::test]
+async fn test_async_echo_string() {
+    let mut instance = component().await;
+
+    let result = instance
+        .call1_async("echo-string", &[Val::String("hello async".into())])
+        .await
+        .unwrap();
+    assert_eq!(result, Val::String("hello async".into()));
+}
+
+#[tokio::test]
+async fn test_async_echo_bool() {
+    let mut instance = component().await;
+
+    let result = instance
+        .call1_async("echo-bool", &[Val::Bool(true)])
+        .await
+        .unwrap();
+    assert_eq!(result, Val::Bool(true));
+}
+
+#[tokio::test]
+async fn test_async_void_function() {
+    let mut instance = component().await;
+
+    let results = instance.call_async("do-nothing", &[], 0).await.unwrap();
+    assert!(results.is_empty());
+}
+
+#[tokio::test]
+async fn test_async_with_await() {
+    let mut instance = component().await;
+
+    let result = instance
+        .call1_async("delayed-echo", &[Val::U32(99)])
+        .await
+        .unwrap();
+    assert_eq!(result, Val::U32(100));
+}
+
+#[tokio::test]
+async fn test_async_exported_resource_members() {
+    let mut instance = TestCase::new()
+        .wit(
+            r#"
+            package test:async-resource;
+
+            interface counter-api {
+                resource counter {
+                    constructor(initial: u32);
+                    add: async func(value: u32) -> u32;
+                    get-value: func() -> u32;
+                    create: static async func(initial: u32) -> counter;
+                    try-fail: async func() -> result<u32, string>;
+                }
+            }
+
+            world async-resource-test {
+                export counter-api;
+            }
+            "#,
+        )
+        .script(
+            r#"
+            class Counter {
+                constructor(initial) {
+                    this.value = initial;
+                }
+
+                async add(value) {
+                    await Promise.resolve();
+                    this.value += value;
+                    return this.value;
+                }
+
+                getValue() {
+                    return this.value;
+                }
+
+                static async create(initial) {
+                    await Promise.resolve();
+                    return new this(initial);
+                }
+
+                async tryFail() {
+                    await Promise.resolve();
+                    throw "expected failure";
+                }
+            }
+
+            export const counterApi = { Counter };
+            "#,
+        )
+        .build_async()
+        .await
+        .unwrap();
+
+    let (component, store) = instance.parts();
+    let iface_idx = component
+        .get_export_index(&mut *store, None, "test:async-resource/counter-api")
+        .expect("interface export not found");
+
+    let ctor_idx = component
+        .get_export_index(&mut *store, Some(&iface_idx), "[constructor]counter")
+        .expect("[constructor]counter not found");
+
+    let ctor = component.get_func(&mut *store, ctor_idx).unwrap();
+    let mut results = [Val::Bool(false)];
+
+    ctor.call_async(&mut *store, &[Val::U32(40)], &mut results)
+        .await
+        .unwrap();
+
+    let counter = results[0].clone();
+
+    let add_idx = component
+        .get_export_index(&mut *store, Some(&iface_idx), "[method]counter.add")
+        .expect("[method]counter.add not found");
+
+    let add = component.get_func(&mut *store, add_idx).unwrap();
+    let mut results = [Val::Bool(false)];
+
+    add.call_async(&mut *store, &[counter.clone(), Val::U32(2)], &mut results)
+        .await
+        .unwrap();
+
+    assert_eq!(results[0], Val::U32(42));
+
+    let get_value_idx = component
+        .get_export_index(&mut *store, Some(&iface_idx), "[method]counter.get-value")
+        .expect("[method]counter.get-value not found");
+
+    let get_value = component.get_func(&mut *store, get_value_idx).unwrap();
+    let mut results = [Val::Bool(false)];
+
+    get_value
+        .call_async(&mut *store, std::slice::from_ref(&counter), &mut results)
+        .await
+        .unwrap();
+
+    assert_eq!(results[0], Val::U32(42));
+
+    let create_idx = component
+        .get_export_index(&mut *store, Some(&iface_idx), "[static]counter.create")
+        .expect("[static]counter.create not found");
+
+    let create = component.get_func(&mut *store, create_idx).unwrap();
+    let mut results = [Val::Bool(false)];
+
+    create
+        .call_async(&mut *store, &[Val::U32(7)], &mut results)
+        .await
+        .unwrap();
+    let created = results[0].clone();
+
+    let mut results = [Val::Bool(false)];
+    get_value
+        .call_async(&mut *store, &[created], &mut results)
+        .await
+        .unwrap();
+
+    assert_eq!(results[0], Val::U32(7));
+
+    let try_fail_idx = component
+        .get_export_index(&mut *store, Some(&iface_idx), "[method]counter.try-fail")
+        .expect("[method]counter.try-fail not found");
+
+    let try_fail = component.get_func(&mut *store, try_fail_idx).unwrap();
+    let mut results = [Val::Bool(false)];
+
+    try_fail
+        .call_async(&mut *store, std::slice::from_ref(&counter), &mut results)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        results[0],
+        Val::Result(Err(Some(Box::new(Val::String("expected failure".into())))))
+    );
+}
+
+#[tokio::test]
+async fn test_async_method_only_resource_interface() {
+    let mut instance = TestCase::new()
+        .wit(
+            r#"
+            package test:method-only-resource;
+
+            interface types {
+                resource blob {
+                    peek: func() -> u32;
+                    read: async func() -> u32;
+                }
+            }
+
+            interface factory {
+                use types.{blob};
+                make: func(value: u32) -> blob;
+            }
+
+            world method-only-resource {
+                export types;
+                export factory;
+            }
+            "#,
+        )
+        .script(
+            r#"
+            class Blob {
+                constructor(value) {
+                    this.value = value;
+                }
+
+                peek() {
+                    return this.value;
+                }
+
+                async read() {
+                    await Promise.resolve();
+                    return this.value;
+                }
+            }
+
+            export const factory = {
+                make(value) {
+                    return new Blob(value);
+                },
+            };
+            "#,
+        )
+        .build_async()
+        .await
+        .unwrap();
+
+    let (component, store) = instance.parts();
+    let factory_idx = component
+        .get_export_index(&mut *store, None, "test:method-only-resource/factory")
+        .expect("factory interface export not found");
+
+    let make_idx = component
+        .get_export_index(&mut *store, Some(&factory_idx), "make")
+        .expect("factory.make not found");
+
+    let make = component.get_func(&mut *store, make_idx).unwrap();
+    let mut results = [Val::Bool(false)];
+
+    make.call_async(&mut *store, &[Val::U32(9)], &mut results)
+        .await
+        .unwrap();
+
+    let blob = results[0].clone();
+
+    let types_idx = component
+        .get_export_index(&mut *store, None, "test:method-only-resource/types")
+        .expect("types interface export not found");
+
+    let peek_idx = component
+        .get_export_index(&mut *store, Some(&types_idx), "[method]blob.peek")
+        .expect("[method]blob.peek not found");
+
+    let peek = component.get_func(&mut *store, peek_idx).unwrap();
+    let mut results = [Val::Bool(false)];
+
+    peek.call_async(&mut *store, std::slice::from_ref(&blob), &mut results)
+        .await
+        .unwrap();
+    assert_eq!(results[0], Val::U32(9));
+
+    let read_idx = component
+        .get_export_index(&mut *store, Some(&types_idx), "[method]blob.read")
+        .expect("[method]blob.read not found");
+
+    let read = component.get_func(&mut *store, read_idx).unwrap();
+    let mut results = [Val::Bool(false)];
+
+    read.call_async(&mut *store, &[blob], &mut results)
+        .await
+        .unwrap();
+    assert_eq!(results[0], Val::U32(9));
+}
+
+#[tokio::test]
+async fn test_async_echo_record() {
+    let mut instance = component().await;
+
+    let input = Val::Record(vec![
+        ("x".to_string(), Val::Float64(1.5)),
+        ("y".to_string(), Val::Float64(2.5)),
+    ]);
+    let result = instance.call1_async("echo-point", &[input]).await.unwrap();
+
+    match result {
+        Val::Record(fields) => {
+            assert_eq!(fields.len(), 2);
+            assert_eq!(fields[0].0, "x");
+            assert_eq!(fields[1].0, "y");
+            assert_eq!(fields[0].1, Val::Float64(3.0));
+            assert_eq!(fields[1].1, Val::Float64(5.0));
+        }
+        other => panic!("expected Record, got {:?}", other),
+    }
+}
+
+#[tokio::test]
+async fn test_async_echo_option() {
+    let mut instance = component().await;
+
+    // Some case
+    let result = instance
+        .call1_async("echo-option", &[Val::Option(Some(Box::new(Val::U32(42))))])
+        .await
+        .unwrap();
+    assert_eq!(result, Val::Option(Some(Box::new(Val::U32(42)))));
+
+    // None case
+    let result = instance
+        .call1_async("echo-option", &[Val::Option(None)])
+        .await
+        .unwrap();
+    assert_eq!(result, Val::Option(None));
+}
+
+#[tokio::test]
+async fn test_async_echo_result() {
+    let mut instance = component().await;
+
+    // Ok case
+    let result = instance
+        .call1_async("safe-divide", &[Val::Float64(10.0), Val::Float64(2.0)])
+        .await
+        .unwrap();
+    assert_eq!(result, Val::Result(Ok(Some(Box::new(Val::Float64(5.0))))));
+
+    // Error case
+    let result = instance
+        .call1_async("safe-divide", &[Val::Float64(10.0), Val::Float64(0.0)])
+        .await
+        .unwrap();
+    assert_eq!(
+        result,
+        Val::Result(Err(Some(Box::new(Val::String("division by zero".into())))))
+    );
+}
+
+#[tokio::test]
+async fn test_async_echo_list() {
+    let mut instance = component().await;
+
+    let input = Val::List(vec![Val::U32(1), Val::U32(2), Val::U32(3)]);
+    let result = instance.call1_async("double-list", &[input]).await.unwrap();
+    assert_eq!(
+        result,
+        Val::List(vec![Val::U32(2), Val::U32(4), Val::U32(6)])
+    );
+}
+
+#[tokio::test]
+async fn test_stream_create_and_return_u8() {
+    // Verify stream<u8> factory creates valid stream handles
+    let mut instance = TestCase::new()
+        .wit(
+            r#"
+            package test:stream-u8;
+            world stream-u8 {
+                export make-stream: async func() -> stream<u8>;
+            }
+            "#,
+        )
+        .script(
+            r#"
+            export async function makeStream() {
+                const { readable, writable } = wit.Stream();
+                writable.drop();
+                return readable;
+            }
+            "#,
+        )
+        .build_async()
+        .await
+        .unwrap();
+
+    let results = instance.call_async("make-stream", &[], 1).await.unwrap();
+    assert_eq!(results.len(), 1);
+}
+
+#[tokio::test]
+async fn test_stream_create_and_return_u32() {
+    let mut instance = TestCase::new()
+        .wit(
+            r#"
+            package test:stream-u32;
+            world stream-u32 {
+                export make-stream: async func() -> stream<u32>;
+            }
+            "#,
+        )
+        .script(
+            r#"
+            export async function makeStream() {
+                const { readable, writable } = wit.Stream();
+                writable.drop();
+                return readable;
+            }
+            "#,
+        )
+        .build_async()
+        .await
+        .unwrap();
+
+    let results = instance.call_async("make-stream", &[], 1).await.unwrap();
+    assert_eq!(results.len(), 1);
+}
+
+#[tokio::test]
+async fn test_stream_create_and_return_string() {
+    let mut instance = TestCase::new()
+        .wit(
+            r#"
+            package test:stream-string;
+            world stream-string {
+                export make-stream: async func() -> stream<string>;
+            }
+            "#,
+        )
+        .script(
+            r#"
+            export async function makeStream() {
+                const { readable, writable } = wit.Stream();
+                writable.drop();
+                return readable;
+            }
+            "#,
+        )
+        .build_async()
+        .await
+        .unwrap();
+
+    let results = instance.call_async("make-stream", &[], 1).await.unwrap();
+    assert_eq!(results.len(), 1);
+}
+
+#[tokio::test]
+async fn test_stream_object_return_shape() {
+    // Verify the factory returns { readable, writable } not [writable, readable]
+    let mut instance = TestCase::new()
+        .wit(
+            r#"
+            package test:stream-shape;
+            world stream-shape {
+                export check-shape: async func() -> stream<u8>;
+            }
+            "#,
+        )
+        .script(
+            r#"
+            export async function checkShape() {
+                const pair = wit.Stream();
+                // Verify it's an object with named properties
+                if (pair.readable === undefined) throw new Error("missing readable");
+                if (pair.writable === undefined) throw new Error("missing writable");
+                if (typeof pair.readable.read !== 'function') throw new Error("readable missing read");
+                if (typeof pair.writable.write !== 'function') throw new Error("writable missing write");
+                pair.writable.drop();
+                return pair.readable;
+            }
+            "#,
+        )
+        .build_async()
+        .await
+        .unwrap();
+
+    let results = instance.call_async("check-shape", &[], 1).await.unwrap();
+    assert_eq!(results.len(), 1);
+}
+
+#[tokio::test]
+async fn test_stream_enum_factory() {
+    // Verify wit.Stream(wit.Stream.U8) works with enum constants
+    let mut instance = TestCase::new()
+        .wit(
+            r#"
+            package test:stream-enum;
+            world stream-enum {
+                export check-enum: async func() -> stream<u8>;
+            }
+            "#,
+        )
+        .script(
+            r#"
+            export async function checkEnum() {
+                const { readable, writable } = wit.Stream(wit.Stream.U8);
+                if (readable === undefined) throw new Error("missing readable");
+                if (writable === undefined) throw new Error("missing writable");
+                writable.drop();
+                return readable;
+            }
+            "#,
+        )
+        .build_async()
+        .await
+        .unwrap();
+
+    let results = instance.call_async("check-enum", &[], 1).await.unwrap();
+    assert_eq!(results.len(), 1);
+}
+
+#[tokio::test]
+async fn test_future_enum_factory() {
+    // Verify wit.Future(wit.Future.STRING) works with enum constants
+    let mut instance = TestCase::new()
+        .wit(
+            r#"
+            package test:future-enum;
+            world future-enum {
+                export check-enum: async func() -> future<string>;
+            }
+            "#,
+        )
+        .script(
+            r#"
+            export async function checkEnum() {
+                const { readable, writable } = wit.Future(wit.Future.STRING);
+                if (readable === undefined) throw new Error("missing readable");
+                if (writable === undefined) throw new Error("missing writable");
+                writable.write("test");
+                return readable;
+            }
+            "#,
+        )
+        .build_async()
+        .await
+        .unwrap();
+
+    let results = instance.call_async("check-enum", &[], 1).await.unwrap();
+    assert_eq!(results.len(), 1);
+}
+
+#[tokio::test]
+async fn test_stream_record_type_constant() {
+    let mut instance = TestCase::new()
+        .wit(
+            r#"
+            package test:stream-record;
+            world stream-record {
+                record point { x: f64, y: f64 }
+                export make-stream: async func() -> stream<point>;
+            }
+            "#,
+        )
+        .script(
+            r#"
+            export async function makeStream() {
+                // Use the named record type constant
+                const { readable, writable } = wit.Stream(wit.Stream.POINT);
+                writable.drop();
+                return readable;
+            }
+            "#,
+        )
+        .build_async()
+        .await
+        .unwrap();
+
+    let results = instance.call_async("make-stream", &[], 1).await.unwrap();
+    assert_eq!(results.len(), 1);
+}
+
+#[tokio::test]
+async fn test_stream_map_type_constant() {
+    let mut instance = TestCase::new()
+        .wit(
+            r#"
+            package test:stream-map;
+            world stream-map {
+                export make-stream: async func() -> stream<map<string, u32>>;
+            }
+            "#,
+        )
+        .script(
+            r#"
+            export async function makeStream() {
+                const { readable, writable } = wit.Stream(wit.Stream.MAP_STRING_U32);
+                writable.drop();
+                return readable;
+            }
+            "#,
+        )
+        .build_async()
+        .await
+        .unwrap();
+
+    let results = instance.call_async("make-stream", &[], 1).await.unwrap();
+    assert_eq!(results.len(), 1);
+}
+
+#[tokio::test]
+async fn test_named_stream_alias_constants() {
+    let mut instance = TestCase::new()
+        .wit(
+            r#"
+            package test:stream-alias;
+
+            world stream-alias {
+                type prompt-stream = stream<string>;
+                type response-stream = stream<string>;
+
+                export stream-indexes: func() -> tuple<u32, u32>;
+                export unused-prompt: async func() -> prompt-stream;
+                export unused-response: async func() -> response-stream;
+            }
+            "#,
+        )
+        .script(
+            r#"
+            export function streamIndexes() {
+                return [wit.Stream.PROMPT_STREAM, wit.Stream.RESPONSE_STREAM];
+            }
+
+            export async function unusedPrompt() {
+                throw new Error("not called");
+            }
+
+            export async function unusedResponse() {
+                throw new Error("not called");
+            }
+            "#,
+        )
+        .build_async()
+        .await
+        .unwrap();
+
+    let result = instance.call1_async("stream-indexes", &[]).await.unwrap();
+    assert_eq!(result, Val::Tuple(vec![Val::U32(0), Val::U32(1)]));
+}
+
+#[tokio::test]
+async fn test_named_stream_alias_constants_match_metadata_order() {
+    let mut instance = TestCase::new()
+        .wit(
+            r#"
+            package test:stream-alias-order;
+
+            interface streams {
+                type bytes = stream<u8>;
+                type texts = stream<string>;
+
+                unused-texts: async func() -> texts;
+                unused-bytes: async func() -> bytes;
+            }
+
+            world stream-alias-order {
+                export streams;
+                export inspect: func() -> tuple<u32, u32>;
+            }
+            "#,
+        )
+        .script(
+            r#"
+            export const streams = {
+                async unusedTexts() {
+                    throw new Error("not called");
+                },
+
+                async unusedBytes() {
+                    throw new Error("not called");
+                },
+            };
+
+            export function inspect() {
+                return [wit.Stream.BYTES, wit.Stream.TEXTS];
+            }
+            "#,
+        )
+        .build_async()
+        .await
+        .unwrap();
+
+    let result = instance.call1_async("inspect", &[]).await.unwrap();
+    assert_eq!(result, Val::Tuple(vec![Val::U32(0), Val::U32(1)]));
+}
+
+#[tokio::test]
+async fn test_multiple_stream_type_constants_are_ordered() {
+    let mut instance = TestCase::new()
+        .wit(
+            r#"
+            package test:multi-stream;
+            world multi-stream {
+                export make-bytes: async func() -> stream<u8>;
+                export make-ints: async func() -> stream<u32>;
+                export stream-indexes: func() -> tuple<u32, u32>;
+            }
+            "#,
+        )
+        .script(
+            r#"
+            export async function makeBytes() {
+                const { readable, writable } = wit.Stream(wit.Stream.U8);
+                writable.drop();
+                return readable;
+            }
+
+            export async function makeInts() {
+                const { readable, writable } = wit.Stream(wit.Stream.U32);
+                writable.drop();
+                return readable;
+            }
+
+            export function streamIndexes() {
+                return [wit.Stream.U8, wit.Stream.U32];
+            }
+            "#,
+        )
+        .build_async()
+        .await
+        .unwrap();
+
+    let result = instance.call1_async("stream-indexes", &[]).await.unwrap();
+    assert_eq!(result, Val::Tuple(vec![Val::U32(0), Val::U32(1)]));
+}
+
+#[tokio::test]
+async fn test_mixed_export_stream_type_constants_match_metadata_order() {
+    let mut instance = TestCase::new()
+        .wit(
+            r#"
+            package test:mixed-stream;
+
+            interface streams {
+                make-bytes: async func() -> stream<u8>;
+            }
+
+            world mixed-stream {
+                export streams;
+                export make-ints: async func() -> stream<u32>;
+                export stream-indexes: func() -> tuple<u32, u32>;
+            }
+            "#,
+        )
+        .script(
+            r#"
+            export const streams = {
+                async makeBytes() {
+                    const { readable, writable } = wit.Stream(wit.Stream.U8);
+                    writable.drop();
+                    return readable;
+                },
+            };
+
+            export async function makeInts() {
+                const { readable, writable } = wit.Stream(wit.Stream.U32);
+                writable.drop();
+                return readable;
+            }
+
+            export function streamIndexes() {
+                return [wit.Stream.U32, wit.Stream.U8];
+            }
+            "#,
+        )
+        .build_async()
+        .await
+        .unwrap();
+
+    let result = instance.call1_async("stream-indexes", &[]).await.unwrap();
+    assert_eq!(result, Val::Tuple(vec![Val::U32(0), Val::U32(1)]));
+}
+
+#[tokio::test]
+async fn test_nested_stream_type_constant() {
+    let mut instance = TestCase::new()
+        .wit(
+            r#"
+            package test:nested-stream;
+            world nested-stream {
+                export make-nested: async func() -> stream<stream<u8>>;
+                export stream-indexes: func() -> tuple<u32, u32>;
+            }
+            "#,
+        )
+        .script(
+            r#"
+            export async function makeNested() {
+                const { readable, writable } = wit.Stream(wit.Stream.STREAM_U8);
+                writable.drop();
+                return readable;
+            }
+
+            export function streamIndexes() {
+                return [wit.Stream.U8, wit.Stream.STREAM_U8];
+            }
+            "#,
+        )
+        .build_async()
+        .await
+        .unwrap();
+
+    let result = instance.call1_async("stream-indexes", &[]).await.unwrap();
+    assert_eq!(result, Val::Tuple(vec![Val::U32(0), Val::U32(1)]));
+}
+
+#[tokio::test]
+async fn test_duplicate_named_stream_payloads_get_qualified_constants() {
+    let mut instance = TestCase::new()
+        .wit(
+            r#"
+            package test:dupe;
+
+            interface left {
+                record point { x: u32 }
+                make-left: async func() -> stream<point>;
+            }
+
+            interface right {
+                record point { y: u32 }
+                make-right: async func() -> stream<point>;
+            }
+
+            world duplicate-stream-names {
+                export left;
+                export right;
+                export stream-indexes: func() -> tuple<u32, u32>;
+            }
+            "#,
+        )
+        .script(
+            r#"
+            export const left = {
+                async makeLeft() {
+                    const { readable, writable } = wit.Stream(wit.Stream.TEST_DUPE_LEFT_POINT);
+                    writable.drop();
+                    return readable;
+                },
+            };
+
+            export const right = {
+                async makeRight() {
+                    const { readable, writable } = wit.Stream(wit.Stream.TEST_DUPE_RIGHT_POINT);
+                    writable.drop();
+                    return readable;
+                },
+            };
+
+            export function streamIndexes() {
+                return [wit.Stream.TEST_DUPE_LEFT_POINT, wit.Stream.TEST_DUPE_RIGHT_POINT];
+            }
+            "#,
+        )
+        .build_async()
+        .await
+        .unwrap();
+
+    let result = instance.call1_async("stream-indexes", &[]).await.unwrap();
+    assert_eq!(result, Val::Tuple(vec![Val::U32(0), Val::U32(1)]));
+}
+
+#[tokio::test]
+async fn test_multiple_future_type_constants_are_ordered() {
+    let mut instance = TestCase::new()
+        .wit(
+            r#"
+            package test:multi-future;
+            world multi-future {
+                export make-string: async func() -> future<string>;
+                export make-int: async func() -> future<u32>;
+                export future-indexes: func() -> tuple<u32, u32>;
+            }
+            "#,
+        )
+        .script(
+            r#"
+            export async function makeString() {
+                const { readable, writable } = wit.Future(wit.Future.STRING);
+                writable.drop();
+                return readable;
+            }
+
+            export async function makeInt() {
+                const { readable, writable } = wit.Future(wit.Future.U32);
+                writable.drop();
+                return readable;
+            }
+
+            export function futureIndexes() {
+                return [wit.Future.STRING, wit.Future.U32];
+            }
+            "#,
+        )
+        .build_async()
+        .await
+        .unwrap();
+
+    let result = instance.call1_async("future-indexes", &[]).await.unwrap();
+    assert_eq!(result, Val::Tuple(vec![Val::U32(0), Val::U32(1)]));
+}
+
+#[tokio::test]
+async fn test_mixed_export_future_type_constants_match_metadata_order() {
+    let mut instance = TestCase::new()
+        .wit(
+            r#"
+            package test:mixed-future;
+
+            interface futures {
+                make-string: async func() -> future<string>;
+            }
+
+            world mixed-future {
+                export futures;
+                export make-int: async func() -> future<u32>;
+                export future-indexes: func() -> tuple<u32, u32>;
+            }
+            "#,
+        )
+        .script(
+            r#"
+            export const futures = {
+                async makeString() {
+                    const { readable, writable } = wit.Future(wit.Future.STRING);
+                    writable.drop();
+                    return readable;
+                },
+            };
+
+            export async function makeInt() {
+                const { readable, writable } = wit.Future(wit.Future.U32);
+                writable.drop();
+                return readable;
+            }
+
+            export function futureIndexes() {
+                return [wit.Future.U32, wit.Future.STRING];
+            }
+            "#,
+        )
+        .build_async()
+        .await
+        .unwrap();
+
+    let result = instance.call1_async("future-indexes", &[]).await.unwrap();
+    assert_eq!(result, Val::Tuple(vec![Val::U32(0), Val::U32(1)]));
+}
+
+#[tokio::test]
+async fn test_nested_future_type_constant() {
+    let mut instance = TestCase::new()
+        .wit(
+            r#"
+            package test:nested-future;
+            world nested-future {
+                export make-nested: async func() -> future<future<string>>;
+                export future-indexes: func() -> tuple<u32, u32>;
+            }
+            "#,
+        )
+        .script(
+            r#"
+            export async function makeNested() {
+                const { readable, writable } = wit.Future(wit.Future.FUTURE_STRING);
+                writable.drop();
+                return readable;
+            }
+
+            export function futureIndexes() {
+                return [wit.Future.STRING, wit.Future.FUTURE_STRING];
+            }
+            "#,
+        )
+        .build_async()
+        .await
+        .unwrap();
+
+    let result = instance.call1_async("future-indexes", &[]).await.unwrap();
+    assert_eq!(result, Val::Tuple(vec![Val::U32(0), Val::U32(1)]));
+}
+
+#[tokio::test]
+async fn test_duplicate_named_future_payloads_get_qualified_constants() {
+    let mut instance = TestCase::new()
+        .wit(
+            r#"
+            package test:dupe-future;
+
+            interface left {
+                record point { x: u32 }
+                make-left: async func() -> future<point>;
+            }
+
+            interface right {
+                record point { y: u32 }
+                make-right: async func() -> future<point>;
+            }
+
+            world duplicate-future-names {
+                export left;
+                export right;
+                export future-indexes: func() -> tuple<u32, u32>;
+            }
+            "#,
+        )
+        .script(
+            r#"
+            export const left = {
+                async makeLeft() {
+                    const { readable, writable } = wit.Future(wit.Future.TEST_DUPE_FUTURE_LEFT_POINT);
+                    writable.drop();
+                    return readable;
+                },
+            };
+
+            export const right = {
+                async makeRight() {
+                    const { readable, writable } = wit.Future(wit.Future.TEST_DUPE_FUTURE_RIGHT_POINT);
+                    writable.drop();
+                    return readable;
+                },
+            };
+
+            export function futureIndexes() {
+                return [wit.Future.TEST_DUPE_FUTURE_LEFT_POINT, wit.Future.TEST_DUPE_FUTURE_RIGHT_POINT];
+            }
+            "#,
+        )
+        .build_async()
+        .await
+        .unwrap();
+
+    let result = instance.call1_async("future-indexes", &[]).await.unwrap();
+    assert_eq!(result, Val::Tuple(vec![Val::U32(0), Val::U32(1)]));
+}
+
+#[tokio::test]
+async fn test_stream_result_type_constant() {
+    let mut instance = TestCase::new()
+        .wit(
+            r#"
+            package test:stream-result;
+            world stream-result {
+                export make-stream: async func() -> stream<result<string, u32>>;
+            }
+            "#,
+        )
+        .script(
+            r#"
+            export async function makeStream() {
+                const { readable, writable } = wit.Stream(wit.Stream.RESULT_STRING_U32);
+                writable.drop();
+                return readable;
+            }
+            "#,
+        )
+        .build_async()
+        .await
+        .unwrap();
+
+    let results = instance.call_async("make-stream", &[], 1).await.unwrap();
+    assert_eq!(results.len(), 1);
+}
+
+#[tokio::test]
+async fn test_stream_option_type_constant() {
+    let mut instance = TestCase::new()
+        .wit(
+            r#"
+            package test:stream-option;
+            world stream-option {
+                export make-stream: async func() -> stream<option<u32>>;
+            }
+            "#,
+        )
+        .script(
+            r#"
+            export async function makeStream() {
+                const { readable, writable } = wit.Stream(wit.Stream.OPTION_U32);
+                writable.drop();
+                return readable;
+            }
+            "#,
+        )
+        .build_async()
+        .await
+        .unwrap();
+
+    let results = instance.call_async("make-stream", &[], 1).await.unwrap();
+    assert_eq!(results.len(), 1);
+}
+
+#[tokio::test]
+async fn test_stream_tuple_type_constant() {
+    let mut instance = TestCase::new()
+        .wit(
+            r#"
+            package test:stream-tuple;
+            world stream-tuple {
+                export make-stream: async func() -> stream<tuple<u32, string>>;
+            }
+            "#,
+        )
+        .script(
+            r#"
+            export async function makeStream() {
+                const { readable, writable } = wit.Stream(wit.Stream.TUPLE_U32_STRING);
+                writable.drop();
+                return readable;
+            }
+            "#,
+        )
+        .build_async()
+        .await
+        .unwrap();
+
+    let results = instance.call_async("make-stream", &[], 1).await.unwrap();
+    assert_eq!(results.len(), 1);
+}
+
+#[tokio::test]
+async fn test_future_result_type_constant() {
+    let mut instance = TestCase::new()
+        .wit(
+            r#"
+            package test:future-result;
+            world future-result {
+                export make-future: async func() -> future<result<string, string>>;
+            }
+            "#,
+        )
+        .script(
+            r#"
+            export async function makeFuture() {
+                const { readable, writable } = wit.Future(wit.Future.RESULT_STRING_STRING);
+                writable.write({ tag: "ok", val: "hello" });
+                return readable;
+            }
+            "#,
+        )
+        .build_async()
+        .await
+        .unwrap();
+
+    let results = instance.call_async("make-future", &[], 1).await.unwrap();
+    assert_eq!(results.len(), 1);
+}
+
+#[tokio::test]
+async fn test_stream_build_with_input_output() {
+    // Verify component builds when WIT has stream params and returns
+    let _instance = TestCase::new()
+        .wit(
+            r#"
+            package test:stream-io;
+            world stream-io {
+                export echo-bytes: async func(input: stream<u8>) -> stream<u8>;
+            }
+            "#,
+        )
+        .script(
+            r#"
+            export async function echoBytes(input) {
+                const { readable, writable } = wit.Stream();
+                (async () => {
+                    const data = await input.read(1024);
+                    await writable.write(data);
+                    writable.drop();
+                })();
+                return readable;
+            }
+            "#,
+        )
+        .build_async()
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn test_stream_write_uint8_array() {
+    let mut instance = TestCase::new()
+        .wit(
+            r#"
+            package test:stream-typed;
+            world stream-typed {
+                export round-trip-u8: async func(input: stream<u8>) -> list<u8>;
+            }
+            "#,
+        )
+        .script(
+            r#"
+            export async function roundTripU8(input) {
+                input.drop();
+                const { readable, writable } = wit.Stream();
+                const readPromise = readable.read(1024);
+                await writable.write(new Uint8Array([97, 98, 99, 0, 255]));
+                writable.drop();
+                const data = await readPromise;
+                readable.drop();
+                return Array.from(data);
+            }
+            "#,
+        )
+        .build_async()
+        .await
+        .unwrap();
+
+    let (inst, store) = instance.parts();
+    let reader = StreamReader::new(&mut *store, ByteProducer::new(vec![])).unwrap();
+    let func = inst
+        .get_typed_func::<(StreamReader<u8>,), (Vec<u8>,)>(&mut *store, "round-trip-u8")
+        .unwrap();
+    let (bytes,) = func.call_async(&mut *store, (reader,)).await.unwrap();
+    assert_eq!(bytes, vec![97, 98, 99, 0, 255]);
+}
+
+#[tokio::test]
+async fn test_stream_write_all_uint8_array() {
+    let mut instance = TestCase::new()
+        .wit(
+            r#"
+            package test:stream-write-all;
+            world stream-write-all {
+                export round-trip-u8: async func(input: stream<u8>) -> list<u8>;
+            }
+            "#,
+        )
+        .script(
+            r#"
+            export async function roundTripU8(input) {
+                input.drop();
+                const { readable, writable } = wit.Stream();
+                const readPromise = readable.read(1024);
+                const total = await writable.writeAll(new Uint8Array([97, 98, 99, 0, 255]));
+                if (total !== 5) throw new Error(`writeAll returned ${total}, expected 5`);
+                writable.drop();
+                const data = await readPromise;
+                readable.drop();
+                return Array.from(data);
+            }
+            "#,
+        )
+        .build_async()
+        .await
+        .unwrap();
+
+    let (inst, store) = instance.parts();
+    let reader = StreamReader::new(&mut *store, ByteProducer::new(vec![])).unwrap();
+    let func = inst
+        .get_typed_func::<(StreamReader<u8>,), (Vec<u8>,)>(&mut *store, "round-trip-u8")
+        .unwrap();
+    let (bytes,) = func.call_async(&mut *store, (reader,)).await.unwrap();
+    assert_eq!(bytes, vec![97, 98, 99, 0, 255]);
+}
+
+#[tokio::test]
+async fn test_stream_write_all_array() {
+    let mut instance = TestCase::new()
+        .wit(
+            r#"
+            package test:stream-write-all-array;
+            world stream-write-all-array {
+                export round-trip-array: async func(input: stream<u8>) -> list<u8>;
+            }
+            "#,
+        )
+        .script(
+            r#"
+            export async function roundTripArray(input) {
+                input.drop();
+                const { readable, writable } = wit.Stream();
+                const readPromise = readable.read(1024);
+                const total = await writable.writeAll([10, 20, 30]);
+                if (total !== 3) throw new Error(`writeAll returned ${total}, expected 3`);
+                writable.drop();
+                const data = await readPromise;
+                readable.drop();
+                return Array.from(data);
+            }
+            "#,
+        )
+        .build_async()
+        .await
+        .unwrap();
+
+    let (inst, store) = instance.parts();
+    let reader = StreamReader::new(&mut *store, ByteProducer::new(vec![])).unwrap();
+    let func = inst
+        .get_typed_func::<(StreamReader<u8>,), (Vec<u8>,)>(&mut *store, "round-trip-array")
+        .unwrap();
+    let (bytes,) = func.call_async(&mut *store, (reader,)).await.unwrap();
+    assert_eq!(bytes, vec![10, 20, 30]);
+}
+
+#[tokio::test]
+async fn test_stream_write_all_rejects_invalid_or_stalled_writes() {
+    let mut instance = TestCase::new()
+        .wit(
+            r#"
+            package test:stream-write-all-errors;
+            world stream-write-all-errors {
+                export rejects-invalid-buffer: async func() -> bool;
+                export rejects-no-progress: async func() -> bool;
+                export unused-stream: async func() -> stream<u8>;
+            }
+            "#,
+        )
+        .script(
+            r#"
+            export async function rejectsInvalidBuffer() {
+                const { readable, writable } = wit.Stream();
+                try {
+                    await writable.writeAll(42);
+                    return false;
+                } catch {
+                    return true;
+                } finally {
+                    writable.drop();
+                    readable.drop();
+                }
+            }
+
+            export async function rejectsNoProgress() {
+                const { readable, writable } = wit.Stream();
+                const data = [1];
+                data.slice = () => [];
+                writable.write = async () => 0;
+                try {
+                    await writable.writeAll(data);
+                    return false;
+                } catch {
+                    return true;
+                } finally {
+                    writable.drop();
+                    readable.drop();
+                }
+            }
+
+            export async function unusedStream() {
+                throw new Error("not called");
+            }
+            "#,
+        )
+        .build_async()
+        .await
+        .unwrap();
+
+    assert_eq!(
+        instance
+            .call1_async("rejects-invalid-buffer", &[])
+            .await
+            .unwrap(),
+        Val::Bool(true)
+    );
+    assert_eq!(
+        instance
+            .call1_async("rejects-no-progress", &[])
+            .await
+            .unwrap(),
+        Val::Bool(true)
+    );
+}
+
+#[tokio::test]
+async fn test_stream_write_uint32_array() {
+    // Verify the typed-array fast path handles wider primitive element types
+    // (Uint32Array → stream<u32>): element-count semantics, not byte count.
+    let mut instance = TestCase::new()
+        .wit(
+            r#"
+            package test:stream-typed-u32;
+            world stream-typed-u32 {
+                export round-trip-u32: async func(input: stream<u32>) -> list<u32>;
+            }
+            "#,
+        )
+        .script(
+            r#"
+            export async function roundTripU32(input) {
+                input.drop();
+                const { readable, writable } = wit.Stream();
+                const readPromise = readable.read(1024);
+                await writable.write(new Uint32Array([1, 2, 3, 4294967295]));
+                writable.drop();
+                const data = await readPromise;
+                readable.drop();
+                return Array.from(data);
+            }
+            "#,
+        )
+        .build_async()
+        .await
+        .unwrap();
+
+    let (inst, store) = instance.parts();
+    let reader = StreamReader::new(&mut *store, EmptyProducer::<u32>::new()).unwrap();
+    let func = inst
+        .get_typed_func::<(StreamReader<u32>,), (Vec<u32>,)>(&mut *store, "round-trip-u32")
+        .unwrap();
+    let (values,) = func.call_async(&mut *store, (reader,)).await.unwrap();
+    assert_eq!(values, vec![1, 2, 3, 4_294_967_295]);
+}
+
+#[tokio::test]
+async fn test_stream_write_int32_array() {
+    // Verify the signed flavor (Int32Array → stream<s32>).
+    let mut instance = TestCase::new()
+        .wit(
+            r#"
+            package test:stream-typed-s32;
+            world stream-typed-s32 {
+                export round-trip-s32: async func(input: stream<s32>) -> list<s32>;
+            }
+            "#,
+        )
+        .script(
+            r#"
+            export async function roundTripS32(input) {
+                input.drop();
+                const { readable, writable } = wit.Stream();
+                const readPromise = readable.read(1024);
+                await writable.write(new Int32Array([-2147483648, -1, 0, 1, 2147483647]));
+                writable.drop();
+                const data = await readPromise;
+                readable.drop();
+                return Array.from(data);
+            }
+            "#,
+        )
+        .build_async()
+        .await
+        .unwrap();
+
+    let (inst, store) = instance.parts();
+    let reader = StreamReader::new(&mut *store, EmptyProducer::<i32>::new()).unwrap();
+    let func = inst
+        .get_typed_func::<(StreamReader<i32>,), (Vec<i32>,)>(&mut *store, "round-trip-s32")
+        .unwrap();
+    let (values,) = func.call_async(&mut *store, (reader,)).await.unwrap();
+    assert_eq!(values, vec![-2_147_483_648, -1, 0, 1, 2_147_483_647]);
+}
+
+#[tokio::test]
+async fn test_stream_write_plain_array_still_works() {
+    let mut instance = TestCase::new()
+        .wit(
+            r#"
+            package test:stream-typed;
+            world stream-typed {
+                export round-trip-array: async func(input: stream<u8>) -> list<u8>;
+            }
+            "#,
+        )
+        .script(
+            r#"
+            export async function roundTripArray(input) {
+                input.drop();
+                const { readable, writable } = wit.Stream();
+                const readPromise = readable.read(1024);
+                await writable.write([10, 20, 30]);
+                writable.drop();
+                const data = await readPromise;
+                readable.drop();
+                return Array.from(data);
+            }
+            "#,
+        )
+        .build_async()
+        .await
+        .unwrap();
+
+    let (inst, store) = instance.parts();
+    let reader = StreamReader::new(&mut *store, ByteProducer::new(vec![])).unwrap();
+    let func = inst
+        .get_typed_func::<(StreamReader<u8>,), (Vec<u8>,)>(&mut *store, "round-trip-array")
+        .unwrap();
+    let (bytes,) = func.call_async(&mut *store, (reader,)).await.unwrap();
+    assert_eq!(bytes, vec![10, 20, 30]);
+}
+
+#[tokio::test]
+async fn test_blocked_stream_write_keeps_lowered_payload_alive() {
+    let mut instance = TestCase::new()
+        .wit(
+            r#"
+            package test:stream-write-lifetime;
+
+            world stream-write-lifetime {
+                export make-stream: async func() -> stream<string>;
+            }
+            "#,
+        )
+        .script(
+            r#"
+            export async function makeStream() {
+                const { readable, writable } = wit.Stream();
+                void writable.write("lowered payload remains valid").then(() => writable.drop());
+                return readable;
+            }
+            "#,
+        )
+        .build_async()
+        .await
+        .unwrap();
+
+    let values = Arc::new(Mutex::new(Vec::new()));
+    let (inst, store) = instance.parts();
+    let func = inst
+        .get_typed_func::<(), (StreamReader<String>,)>(&mut *store, "make-stream")
+        .unwrap();
+    let (reader,) = func.call_async(&mut *store, ()).await.unwrap();
+    reader
+        .pipe(
+            &mut *store,
+            StringStreamConsumer {
+                values: Arc::clone(&values),
+                expected: 1,
+            },
+        )
+        .unwrap();
+    store
+        .as_context_mut()
+        .run_concurrent(async |_| {
+            while values.lock().unwrap().is_empty() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+
+    assert_eq!(
+        &*values.lock().unwrap(),
+        &["lowered payload remains valid".to_string()]
+    );
+}
+
+#[tokio::test]
+async fn test_blocked_future_write_keeps_lowered_payload_alive() {
+    let mut instance = TestCase::new()
+        .wit(
+            r#"
+            package test:future-write-lifetime;
+
+            world future-write-lifetime {
+                export make-future: async func() -> future<string>;
+            }
+            "#,
+        )
+        .script(
+            r#"
+            export async function makeFuture() {
+                const { readable, writable } = wit.Future();
+                void writable.write("lowered payload remains valid").then(() => writable.drop());
+                return readable;
+            }
+            "#,
+        )
+        .build_async()
+        .await
+        .unwrap();
+
+    let value = Arc::new(Mutex::new(None));
+    let (inst, store) = instance.parts();
+    let func = inst
+        .get_typed_func::<(), (FutureReader<String>,)>(&mut *store, "make-future")
+        .unwrap();
+    let (reader,) = func.call_async(&mut *store, ()).await.unwrap();
+    reader
+        .pipe(
+            &mut *store,
+            StringFutureConsumer {
+                value: Arc::clone(&value),
+            },
+        )
+        .unwrap();
+    store
+        .as_context_mut()
+        .run_concurrent(async |_| {
+            while value.lock().unwrap().is_none() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+
+    assert_eq!(
+        value.lock().unwrap().as_deref(),
+        Some("lowered payload remains valid")
+    );
+}
+
+#[tokio::test]
+async fn test_stream_async_iterable_round_trip_infers_type() {
+    let mut instance = TestCase::new()
+        .wit(
+            r#"
+            package test:stream-iterable;
+
+            world stream-iterable {
+                export transform: async func(input: stream<string>) -> stream<string>;
+                export unused: async func() -> stream<u32>;
+            }
+            "#,
+        )
+        .script(
+            r#"
+            export async function transform(input) {
+                return (async function* () {
+                    for await (const value of input) {
+                        yield value.toUpperCase();
+                    }
+                })();
+            }
+
+            export async function unused() {
+                throw new Error("not called");
+            }
+            "#,
+        )
+        .build_async()
+        .await
+        .unwrap();
+
+    let output = Arc::new(Mutex::new(Vec::new()));
+    let (inst, store) = instance.parts();
+    let input =
+        StreamReader::new(&mut *store, StringProducer::new(["hello", "from quickjs"])).unwrap();
+    let func = inst
+        .get_typed_func::<(StreamReader<String>,), (StreamReader<String>,)>(
+            &mut *store,
+            "transform",
+        )
+        .unwrap();
+    let (reader,) = func.call_async(&mut *store, (input,)).await.unwrap();
+    reader
+        .pipe(
+            &mut *store,
+            StringStreamConsumer {
+                values: Arc::clone(&output),
+                expected: 2,
+            },
+        )
+        .unwrap();
+    store
+        .as_context_mut()
+        .run_concurrent(async |_| {
+            while output.lock().unwrap().len() < 2 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+
+    assert_eq!(
+        &*output.lock().unwrap(),
+        &["HELLO".to_string(), "FROM QUICKJS".to_string()]
+    );
+}
+
+#[tokio::test]
+async fn test_stream_async_iterable_batches_byte_arrays() {
+    let mut instance = TestCase::new()
+        .wit(
+            r#"
+            package test:stream-byte-iterable;
+
+            world stream-byte-iterable {
+                export bytes: async func() -> stream<u8>;
+            }
+            "#,
+        )
+        .script(
+            r#"
+            export async function bytes() {
+                return (async function* () {
+                    yield new Uint8Array([1, 2, 3]);
+                    yield new Uint8Array([4, 5]);
+                })();
+            }
+            "#,
+        )
+        .build_async()
+        .await
+        .unwrap();
+
+    let output = Arc::new(Mutex::new(Vec::new()));
+    let (inst, store) = instance.parts();
+    let func = inst
+        .get_typed_func::<(), (StreamReader<u8>,)>(&mut *store, "bytes")
+        .unwrap();
+    let (reader,) = func.call_async(&mut *store, ()).await.unwrap();
+    reader
+        .pipe(
+            &mut *store,
+            ByteStreamConsumer {
+                values: Arc::clone(&output),
+                expected: 5,
+            },
+        )
+        .unwrap();
+    store
+        .as_context_mut()
+        .run_concurrent(async |_| {
+            while output.lock().unwrap().len() < 5 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+
+    assert_eq!(&*output.lock().unwrap(), &[1, 2, 3, 4, 5]);
+}
+
+#[tokio::test]
+async fn test_stream_async_iterator_return_cancels_pending_read() {
+    let mut instance = TestCase::new()
+        .wit(
+            r#"
+            package test:stream-iterator-return;
+
+            world stream-iterator-return {
+                export cancel: async func(input: stream<string>) -> bool;
+            }
+            "#,
+        )
+        .script(
+            r#"
+            export async function cancel(input) {
+                const next = input.next();
+                const returned = await input.return();
+                const cancelled = await next;
+                return returned.done && cancelled.done;
+            }
+            "#,
+        )
+        .build_async()
+        .await
+        .unwrap();
+
+    let (inst, store) = instance.parts();
+    let input = StreamReader::new(&mut *store, StalledStringProducer).unwrap();
+    let func = inst
+        .get_typed_func::<(StreamReader<String>,), (bool,)>(&mut *store, "cancel")
+        .unwrap();
+    let (done,) = func.call_async(&mut *store, (input,)).await.unwrap();
+    assert!(done);
+}
+
+#[tokio::test]
+async fn test_future_create_and_return_u32() {
+    let mut instance = TestCase::new()
+        .wit(
+            r#"
+            package test:future-u32;
+            world future-u32 {
+                export make-future: async func() -> future<u32>;
+            }
+            "#,
+        )
+        .script(
+            r#"
+            export async function makeFuture() {
+                const { readable, writable } = wit.Future();
+                // Fire-and-forget write: completes when host reads the future
+                writable.write(42);
+                return readable;
+            }
+            "#,
+        )
+        .build_async()
+        .await
+        .unwrap();
+
+    let results = instance.call_async("make-future", &[], 1).await.unwrap();
+    assert_eq!(results.len(), 1);
+}
+
+#[tokio::test]
+async fn test_future_create_and_return_string() {
+    let mut instance = TestCase::new()
+        .wit(
+            r#"
+            package test:future-string;
+            world future-string {
+                export make-future: async func() -> future<string>;
+            }
+            "#,
+        )
+        .script(
+            r#"
+            export async function makeFuture() {
+                const { readable, writable } = wit.Future();
+                writable.write("hello from future");
+                return readable;
+            }
+            "#,
+        )
+        .build_async()
+        .await
+        .unwrap();
+
+    let results = instance.call_async("make-future", &[], 1).await.unwrap();
+    assert_eq!(results.len(), 1);
+}
+
+#[tokio::test]
+async fn test_future_object_return_shape() {
+    let mut instance = TestCase::new()
+        .wit(
+            r#"
+            package test:future-shape;
+            world future-shape {
+                export check-shape: async func() -> future<string>;
+            }
+            "#,
+        )
+        .script(
+            r#"
+            export async function checkShape() {
+                const pair = wit.Future();
+                if (pair.readable === undefined) throw new Error("missing readable");
+                if (pair.writable === undefined) throw new Error("missing writable");
+                if (typeof pair.readable.read !== 'function') throw new Error("readable missing read");
+                if (typeof pair.writable.write !== 'function') throw new Error("writable missing write");
+                pair.writable.write("test");
+                return pair.readable;
+            }
+            "#,
+        )
+        .build_async()
+        .await
+        .unwrap();
+
+    let results = instance.call_async("check-shape", &[], 1).await.unwrap();
+    assert_eq!(results.len(), 1);
+}
+
+#[tokio::test]
+async fn test_future_build_with_input_output() {
+    // Verify component builds when WIT has future params and returns
+    let _instance = TestCase::new()
+        .wit(
+            r#"
+            package test:future-io;
+            world future-io {
+                export echo-future: async func(input: future<string>) -> future<string>;
+            }
+            "#,
+        )
+        .script(
+            r#"
+            export async function echoFuture(input) {
+                const { readable, writable } = wit.Future();
+                (async () => {
+                    const val = await input.read();
+                    await writable.write(val);
+                })();
+                return readable;
+            }
+            "#,
+        )
+        .build_async()
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn test_async_multiple_awaits() {
+    let mut instance = component().await;
+
+    let result = instance
+        .call1_async("chain", &[Val::U32(10)])
+        .await
+        .unwrap();
+    assert_eq!(result, Val::U32(13));
+}
+
+#[tokio::test]
+async fn test_async_error_in_promise() {
+    let mut instance = TestCase::new()
+        .wit(
+            r#"
+            package test:async-error;
+            world async-error {
+                export might-fail: async func(fail: bool) -> u32;
+            }
+            "#,
+        )
+        .script(
+            r#"
+            export async function mightFail(fail) {
+                if (fail) {
+                    throw new Error("intentional failure");
+                }
+                return 42;
+            }
+            "#,
+        )
+        .build_async()
+        .await
+        .unwrap();
+
+    // Success case
+    let result = instance
+        .call1_async("might-fail", &[Val::Bool(false)])
+        .await
+        .unwrap();
+    assert_eq!(result, Val::U32(42));
+
+    let result = instance
+        .call_async("might-fail", &[Val::Bool(true)], 1)
+        .await;
+
+    assert!(result.is_ok() || result.is_err());
+}
+
+#[tokio::test]
+async fn test_async_result_no_error_payload() {
+    let mut instance = component().await;
+
+    let result = instance
+        .call1_async("validate", &[Val::U32(50)])
+        .await
+        .unwrap();
+    assert_eq!(result, Val::Result(Ok(Some(Box::new(Val::U32(100))))));
+
+    let result = instance
+        .call1_async("validate", &[Val::U32(200)])
+        .await
+        .unwrap();
+    assert_eq!(result, Val::Result(Err(None)));
+}
+
+#[tokio::test]
+async fn test_async_variant_mixed_payloads() {
+    let mut instance = component().await;
+
+    let result = instance
+        .call1_async("process", &[Val::U32(0)])
+        .await
+        .unwrap();
+
+    match &result {
+        Val::Variant(name, val) => {
+            assert_eq!(name, "empty");
+            assert!(val.is_none());
+        }
+        other => panic!("expected Variant, got {:?}", other),
+    }
+
+    // String payload case
+    let result = instance
+        .call1_async("process", &[Val::U32(1)])
+        .await
+        .unwrap();
+    match &result {
+        Val::Variant(name, val) => {
+            assert_eq!(name, "message");
+            assert_eq!(**val.as_ref().unwrap(), Val::String("hello".into()));
+        }
+        other => panic!("expected Variant, got {:?}", other),
+    }
+
+    // U32 payload case
+    let result = instance
+        .call1_async("process", &[Val::U32(2)])
+        .await
+        .unwrap();
+    match &result {
+        Val::Variant(name, val) => {
+            assert_eq!(name, "code");
+            assert_eq!(**val.as_ref().unwrap(), Val::U32(42));
+        }
+        other => panic!("expected Variant, got {:?}", other),
+    }
+}
+
+/// A StreamProducer that yields nothing and closes immediately.
+/// Useful for tests that need a closed input stream of any element type.
+struct EmptyProducer<T>(std::marker::PhantomData<T>);
+
+impl<T> EmptyProducer<T> {
+    fn new() -> Self {
+        Self(std::marker::PhantomData)
+    }
+}
+
+impl<T: Send + Sync + 'static> StreamProducer<WasiCtxState> for EmptyProducer<T> {
+    type Item = T;
+    type Buffer = VecBuffer<T>;
+
+    fn poll_produce<'a>(
+        self: Pin<&mut Self>,
+        _cx: &mut Context<'_>,
+        _store: StoreContextMut<'a, WasiCtxState>,
+        _destination: Destination<'a, Self::Item, Self::Buffer>,
+        _finish: bool,
+    ) -> Poll<wasmtime::Result<StreamResult>> {
+        Poll::Ready(Ok(StreamResult::Dropped))
+    }
+}
+
+struct StringStreamConsumer {
+    values: Arc<Mutex<Vec<String>>>,
+    expected: usize,
+}
+
+impl StreamConsumer<WasiCtxState> for StringStreamConsumer {
+    type Item = String;
+
+    fn poll_consume(
+        self: Pin<&mut Self>,
+        _cx: &mut Context<'_>,
+        mut store: StoreContextMut<'_, WasiCtxState>,
+        mut source: Source<'_, Self::Item>,
+        _finish: bool,
+    ) -> Poll<wasmtime::Result<StreamResult>> {
+        let mut values = Vec::with_capacity(source.remaining(&mut store));
+        source.read(&mut store, &mut values)?;
+        self.values.lock().unwrap().extend(values);
+        let result = if self.values.lock().unwrap().len() >= self.expected {
+            StreamResult::Dropped
+        } else {
+            StreamResult::Completed
+        };
+        Poll::Ready(Ok(result))
+    }
+}
+
+struct ByteStreamConsumer {
+    values: Arc<Mutex<Vec<u8>>>,
+    expected: usize,
+}
+
+impl StreamConsumer<WasiCtxState> for ByteStreamConsumer {
+    type Item = u8;
+
+    fn poll_consume(
+        self: Pin<&mut Self>,
+        _cx: &mut Context<'_>,
+        mut store: StoreContextMut<'_, WasiCtxState>,
+        mut source: Source<'_, Self::Item>,
+        _finish: bool,
+    ) -> Poll<wasmtime::Result<StreamResult>> {
+        let mut values = Vec::with_capacity(source.remaining(&mut store));
+        source.read(&mut store, &mut values)?;
+        self.values.lock().unwrap().extend(values);
+        let result = if self.values.lock().unwrap().len() >= self.expected {
+            StreamResult::Dropped
+        } else {
+            StreamResult::Completed
+        };
+        Poll::Ready(Ok(result))
+    }
+}
+
+struct StringFutureConsumer {
+    value: Arc<Mutex<Option<String>>>,
+}
+
+impl FutureConsumer<WasiCtxState> for StringFutureConsumer {
+    type Item = String;
+
+    fn poll_consume(
+        self: Pin<&mut Self>,
+        _cx: &mut Context<'_>,
+        mut store: StoreContextMut<'_, WasiCtxState>,
+        mut source: Source<'_, Self::Item>,
+        _finish: bool,
+    ) -> Poll<wasmtime::Result<()>> {
+        let mut values = Vec::with_capacity(1);
+        source.read(&mut store, &mut values)?;
+        *self.value.lock().unwrap() = values.pop();
+        Poll::Ready(Ok(()))
+    }
+}
+
+struct StringProducer {
+    values: Option<Vec<String>>,
+}
+
+impl StringProducer {
+    fn new<I, S>(values: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        Self {
+            values: Some(values.into_iter().map(Into::into).collect()),
+        }
+    }
+}
+
+struct StalledStringProducer;
+
+impl StreamProducer<WasiCtxState> for StalledStringProducer {
+    type Item = String;
+    type Buffer = VecBuffer<String>;
+
+    fn poll_produce<'a>(
+        self: Pin<&mut Self>,
+        _cx: &mut Context<'_>,
+        _store: StoreContextMut<'a, WasiCtxState>,
+        _destination: Destination<'a, Self::Item, Self::Buffer>,
+        finish: bool,
+    ) -> Poll<wasmtime::Result<StreamResult>> {
+        if finish {
+            Poll::Ready(Ok(StreamResult::Dropped))
+        } else {
+            Poll::Pending
+        }
+    }
+}
+
+impl StreamProducer<WasiCtxState> for StringProducer {
+    type Item = String;
+    type Buffer = VecBuffer<String>;
+
+    fn poll_produce<'a>(
+        mut self: Pin<&mut Self>,
+        _cx: &mut Context<'_>,
+        _store: StoreContextMut<'a, WasiCtxState>,
+        mut destination: Destination<'a, Self::Item, Self::Buffer>,
+        _finish: bool,
+    ) -> Poll<wasmtime::Result<StreamResult>> {
+        if let Some(values) = self.values.take() {
+            destination.set_buffer(VecBuffer::from(values));
+        }
+        Poll::Ready(Ok(StreamResult::Dropped))
+    }
+}
+
+/// A StreamProducer that yields a fixed set of bytes.
+struct ByteProducer {
+    data: Vec<u8>,
+    offset: usize,
+}
+
+impl ByteProducer {
+    fn new(data: Vec<u8>) -> Self {
+        Self { data, offset: 0 }
+    }
+}
+
+impl StreamProducer<WasiCtxState> for ByteProducer {
+    type Item = u8;
+    type Buffer = VecBuffer<u8>;
+
+    fn poll_produce<'a>(
+        mut self: Pin<&mut Self>,
+        _cx: &mut Context<'_>,
+        _store: StoreContextMut<'a, WasiCtxState>,
+        mut destination: Destination<'a, Self::Item, Self::Buffer>,
+        _finish: bool,
+    ) -> Poll<wasmtime::Result<StreamResult>> {
+        if self.offset >= self.data.len() {
+            return Poll::Ready(Ok(StreamResult::Dropped));
+        }
+        let remaining = &self.data[self.offset..];
+        let buf = VecBuffer::from(remaining.to_vec());
+        self.offset = self.data.len();
+        destination.set_buffer(buf);
+        Poll::Ready(Ok(StreamResult::Dropped))
+    }
+}
+
+#[tokio::test]
+async fn test_host_stream_to_guest() {
+    // Host provides stream<u8>, JS guest reads it and returns the count
+    let mut instance = TestCase::new()
+        .wit(
+            r#"
+            package test:host-stream;
+            world host-stream {
+                export count-bytes: async func(input: stream<u8>) -> u32;
+            }
+            "#,
+        )
+        .script(
+            r#"
+            export async function countBytes(input) {
+                let total = 0;
+                const data = await input.read(1024);
+                total += data.length;
+                input.drop();
+                return total;
+            }
+            "#,
+        )
+        .build_async()
+        .await
+        .unwrap();
+
+    // Create a host-side stream producing 5 bytes
+    let (inst, store) = instance.parts();
+    let reader = StreamReader::new(&mut *store, ByteProducer::new(vec![1, 2, 3, 4, 5])).unwrap();
+
+    // Get the typed function and call it with the stream
+    let func = inst
+        .get_typed_func::<(StreamReader<u8>,), (u32,)>(&mut *store, "count-bytes")
+        .unwrap();
+
+    let (count,) = func.call_async(&mut *store, (reader,)).await.unwrap();
+
+    assert_eq!(count, 5);
+}

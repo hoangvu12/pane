@@ -1,0 +1,9 @@
+Recording the user's decisions for this specification, made 2026-11-05 when approving the work (they override the spec where they differ; the tickets below implement them):
+
+1. **The repositories.** The five default extensions move to their own public repositories in the `pane-app` organization — `pane-app/calculator`, `pane-app/applications`, `pane-app/quicklinks`, `pane-app/files`, `pane-app/clipboard-history` — created now, with the sources moved and their initial releases tagged.
+2. **Install right after the app, all five, no screen.** Pane installs the defaults at first setup, fetching the pinned commits with its own Git client (ADR 0021) and installing all five. They are not bundled with the app. There is no onboarding UI yet, so the spec's first-setup picker (stories 2–3) is deferred to its own ticket and is not part of this milestone; disabling a default remains the opt-out.
+3. **The artifact source never deployed.** `downloads.pane.sh` was never deployed, and the repositories with their pinned commits become the only default-install path: the artifact source's default-extension machinery is removed entirely; the artifact source remains for Pane's own application updates only.
+
+On coordination with #128: the five defaults are Rust extensions, so their repositories build against the `pane-extension` crate, not the npm packages #219 ships — no in-flight #128 ticket blocks this milestone. Until the crate is published to crates.io (a person's step; a prerequisite issue is filed under #128), the repositories' CI patches `pane-extension` to Pane's checkout at a pinned commit, and a follow-up ticket switches them to the published crate.
+
+#269 (default-extension updates from their repositories' release tags) unblocks when this lands; its needs — the installed record keeping the repository, tag, commit and pinned state, and the loopback-served repositories in tests — are kept in the acquisition ticket.

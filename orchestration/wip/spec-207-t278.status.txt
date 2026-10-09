@@ -1,0 +1,28 @@
+ M CONTEXT.md
+ M crates/pane-core/src/application_update.rs
+ M crates/pane-core/src/defaults.rs
+ M crates/pane-core/src/git.rs
+ M crates/pane-core/src/launcher.rs
+ M crates/pane-core/src/launcher/acquire.rs
+ M crates/pane-core/src/launcher/application_update.rs
+ M crates/pane-core/src/packages.rs
+ M crates/pane-core/tests/application_update.rs
+ M crates/pane-core/tests/clipboard_view.rs
+ M crates/pane-core/tests/installer.rs
+ M crates/pane-core/tests/search_files.rs
+ M crates/pane-core/tests/support/artifacts.rs
+ M crates/pane-core/tests/support/repo_server.rs
+ M crates/pane/src/lib.rs
+ M crates/pane/src/main.rs
+ M crates/pane/tests/search_files.rs
+ M crates/pane/tests/window.rs
+ M docs/agents/ci.md
+ M scripts/check_git_record.py
+ M scripts/measure-linux.sh
+ M scripts/repository_server.py
+ M scripts/smoke-linux.sh
+ M scripts/smoke-macos.sh
+ M scripts/smoke-windows.ps1
+ M xtask/src/package.rs
+?? crates/pane-core/tests/support/defaults.rs
+?? crates/pane/defaults.json

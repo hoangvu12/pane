@@ -1,0 +1,17 @@
+ M crates/pane/src/app.rs
+ M crates/pane/src/app/frame_motion.rs
+ M crates/pane/src/features/actions_panel.rs
+ M crates/pane/src/features/clipboard_history.rs
+ M crates/pane/src/features/confirmation.rs
+ M crates/pane/src/features/extension_log.rs
+ M crates/pane/src/features/footer_menu.rs
+ M crates/pane/src/features/root_search/mod.rs
+ M crates/pane/src/features/search_files.rs
+ M crates/pane/src/features/toast.rs
+ M crates/pane/src/ui/footer.rs
+ M crates/pane/src/ui/motion.rs
+ M crates/pane/src/ui/result_layouts.rs
+ M crates/pane/src/ui/result_row.rs
+ M crates/pane/src/ui/split_view.rs
+ M crates/pane/src/ui/theme.rs
+?? crates/pane/src/app/hover_wash.rs

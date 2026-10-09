@@ -1,0 +1,4 @@
+NEW wasmtime-wizer 49.0.1 (via manifest) license=Apache-2.0 WITH LLVM-exception rust=1.96.0
+!! cannot resolve wit-dylib 0.258 (via manifest)
+!! cannot resolve wasm-compose 0.258 (via manifest)
+NEW castaway 0.2.4 (via compact_str 0.9.1) license=MIT rust=None

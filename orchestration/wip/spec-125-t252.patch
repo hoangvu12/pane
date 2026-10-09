@@ -1,0 +1,295 @@
+diff --git a/crates/pane-core/src/hotkeys.rs b/crates/pane-core/src/hotkeys.rs
+index bad8359b..0e0529c4 100644
+--- a/crates/pane-core/src/hotkeys.rs
++++ b/crates/pane-core/src/hotkeys.rs
+@@ -7,6 +7,10 @@
+ //! with one adapter per system, chosen by [`native`]:
+ //!
+ //! - Windows: `RegisterHotKey` on a thread of Pane's own ([`windows`]);
++//!   where Windows refuses the registration — another application or
++//!   Windows itself has the chord — the binding is recognized through
++//!   Pane's own low-level keyboard hook instead ([`windows_hook`],
++//!   ADR 0039), so a refused shortcut is never an error;
+ //! - macOS: Carbon's `RegisterEventHotKey`, through the `global-hotkey`
+ //!   crate, which needs no Accessibility permission ([`macos`]);
+ //! - Linux on X11: a passive key grab on the root window (`XGrabKey`)
+@@ -29,16 +33,30 @@ mod x11;
+ #[cfg(target_os = "linux")]
+ pub use x11::X11Hotkeys;
+ 
++mod recognizer;
+ #[cfg(target_os = "windows")]
+ mod windows;
+ #[cfg(target_os = "windows")]
+ pub use windows::WindowsHotkeys;
++#[cfg(target_os = "windows")]
++mod windows_hook;
+ 
+ #[cfg(target_os = "macos")]
+ mod macos;
+ #[cfg(target_os = "macos")]
+ pub use macos::MacHotkeys;
+ 
++pub use recognizer::{
++    Chord, Injected, KeyEvent, Outcome, Recognizer, ALT, CTRL, MODIFIER_CODES, SHIFT, SUPER,
++};
++
++/// The tag Pane puts in the extra information of every key it injects
++/// itself (`dwExtraInfo`), "PANE" as four bytes, so Pane's own keyboard
++/// hook passes its injections through without ever taking one for the
++/// user's press. A tag another tool leaves is not Pane's, and a key that
++/// is not injected carries none.
++pub const INJECTED_TAG: usize = 0x50414E45;
++
+ /// The keys a hotkey can end with.
+ const FUNCTION_KEYS: u8 = 12;
+ 
+@@ -70,6 +88,22 @@ impl Shortcut {
+             _ => key == "space" || (1..=FUNCTION_KEYS).any(|number| key == format!("f{number}")),
+         };
+         if !supported {
++            // The one combination no program can intercept, refused with
++            // that reason rather than the key-set rule, which would blame
++            // the key instead (ADR 0039; Windows, where the security
++            // screen is). The extended key set (#260) is what names keys
++            // such as Delete generally.
++            if key == "delete"
++                && control
++                && alt
++                && !shift
++                && !super_key
++                && Platform::current() == Some(Platform::Windows)
++            {
++                return Err(
++                    "Ctrl+Alt+Delete is reserved: no program can intercept it".into(),
++                );
++            }
+             return Err(format!(
+                 "Pane cannot use {} in a hotkey: end it with a letter, a digit, F1 to F12 or Space",
+                 key_name(&key)
+@@ -166,7 +200,11 @@ impl Shortcut {
+ 
+     /// Why Pane does not bind this shortcut on this system, if it does not:
+     /// it has no Ctrl, Alt or Super (Command) key, so it would take over
+-    /// typing, or the system or other applications use it.
++    /// typing, or the system or other applications use it. On Windows a
++    /// chord the system keeps is bound through Pane's own keyboard hook
++    /// instead (ADR 0039), so only what no program can intercept is
++    /// refused there, and what the system does with the rest is
++    /// [`Shortcut::system_uses`] instead.
+     pub fn refusal(&self) -> Option<String> {
+         if !(self.control || self.alt || self.super_key) {
+             let modifiers = match Platform::current() {
+@@ -186,6 +224,19 @@ impl Shortcut {
+             .or_else(|| self.editing_refusal())
+     }
+ 
++    /// What the system does with this shortcut's keys on its own, for a
++    /// chord Pane recognizes through its own keyboard hook because the
++    /// system keeps the registration (ADR 0039): what the binding's row
++    /// says beside the hook that dispatches it. `None` where the system
++    /// does not keep them — and everywhere but Windows, where a chord
++    /// the system keeps is refused instead (see [`Shortcut::refusal`]).
++    pub fn system_uses(&self) -> Option<&'static str> {
++        kept(Platform::current())
++            .iter()
++            .find(|(id, _)| Shortcut::parse(id).is_ok_and(|kept| kept == *self))
++            .map(|(_, uses)| *uses)
++    }
++
+     /// Ctrl (Command on macOS) with only a letter or digit: every
+     /// application uses those for its own commands, such as copying.
+     fn editing_refusal(&self) -> Option<String> {
+@@ -205,16 +256,12 @@ impl Shortcut {
+     }
+ }
+ 
+-/// Shortcuts the system keeps for itself, each with why, on `platform`.
++/// Shortcuts the system keeps for itself that no program can intercept,
++/// each with why, on `platform`.
+ fn reserved(platform: Option<Platform>) -> &'static [(&'static str, &'static str)] {
+     match platform {
+         Some(Platform::Windows) => &[
+-            ("alt+f4", "Windows closes the active window with it"),
+-            ("super+l", "Windows locks the computer with it"),
+-            ("super+d", "Windows shows the desktop with it"),
+-            ("super+e", "Windows opens File Explorer with it"),
+-            ("super+r", "Windows opens Run with it"),
+-            ("alt+space", "Windows opens the window menu with it"),
++            ("super+l", "Windows locks the computer with it, and no program can intercept it"),
+         ],
+         Some(Platform::Macos) => &[
+             ("super+space", "macOS opens Spotlight with it"),
+@@ -244,6 +291,25 @@ fn reserved(platform: Option<Platform>) -> &'static [(&'static str, &'static str
+     }
+ }
+ 
++/// Shortcuts the system keeps while a program could still recognize
++/// them, each with what the system does with the keys: on Windows, where
++/// Pane's own keyboard hook recognizes the chord beside the system's use
++/// of it (ADR 0039). A binding's row says both. Elsewhere nothing is
++/// listed: a chord the system keeps is refused (see [`reserved`]), since
++/// the registration is the only way.
++fn kept(platform: Option<Platform>) -> &'static [(&'static str, &'static str)] {
++    match platform {
++        Some(Platform::Windows) => &[
++            ("alt+f4", "Windows closes the active window with it"),
++            ("super+d", "Windows shows the desktop with it"),
++            ("super+e", "Windows opens File Explorer with it"),
++            ("super+r", "Windows opens Run with it"),
++            ("alt+space", "Windows opens the window menu with it"),
++        ],
++        _ => &[],
++    }
++}
++
+ /// People's name for `key`: `P`, `5`, `F5`, `Space`.
+ fn key_name(key: &str) -> String {
+     match key {
+@@ -295,6 +361,50 @@ impl fmt::Display for HotkeyError {
+     }
+ }
+ 
++/// How a binding's presses reach Pane (ADR 0039): through the system's
++/// own registration, or — where the system refused the registration —
++/// through Pane's own low-level keyboard hook. The Settings pages show
++/// what follows from it on the binding's row ([`HotkeyRoute::notes`]);
++/// the Keyboard page (#259) builds its view of Pane's hotkey health on
++/// the routes the launcher exposes.
++#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
++pub enum HotkeyRoute {
++    /// The system's registration reports the press: `RegisterHotKey` on
++    /// Windows, Carbon on macOS, `XGrabKey` on X11.
++    Registered,
++    /// Pane's own low-level keyboard hook recognizes the binding, as on
++    /// Windows where the registration was refused (another application
++    /// or Windows itself has the chord) — a refused registration is not
++    /// an error: the binding works.
++    Hook,
++}
++
++/// What a hook-dispatched binding cannot do, as its row says: Windows
++/// does not deliver the keys an elevated application holds to the
++/// keyboard hook of a normal process, so the binding does nothing while
++/// one is in front. Static here — no elevation is detected in this
++/// slice; #259's Keyboard page and #261's game mode build on the data
++/// this constant stands in for.
++pub const HOOK_ELEVATED_LIMIT: &str =
++    "It does nothing while an application running as administrator is in front";
++
++impl HotkeyRoute {
++    /// What a row shows beside a binding dispatched this way: the route,
++    /// what the system does with the shortcut's keys where it keeps them
++    /// ([`Shortcut::system_uses`]), and the elevated-foreground limit.
++    /// Nothing for a registered binding — the ordinary case, which says
++    /// nothing of itself.
++    pub fn notes(self, shortcut: &Shortcut) -> Vec<&'static str> {
++        if self != HotkeyRoute::Hook {
++            return Vec::new();
++        }
++        let mut notes = vec!["Dispatched through Pane's keyboard hook"];
++        notes.extend(shortcut.system_uses());
++        notes.push(HOOK_ELEVATED_LIMIT);
++        notes
++    }
++}
++
+ /// Registers shortcuts with the system, so that pressing one is reported
+ /// even while another application has focus. Presses go to the
+ /// [`PressSender`] the adapter was made with.
+@@ -309,8 +419,12 @@ pub trait Hotkeys: Send + Sync + 'static {
+     /// `None` when they can.
+     fn unavailable(&self) -> Option<String>;
+ 
+-    /// Registers `shortcut` system-wide.
+-    fn register(&self, shortcut: &Shortcut) -> Result<(), HotkeyError>;
++    /// Registers `shortcut` system-wide, answering how its presses reach
++    /// Pane ([`HotkeyRoute`]): the system's registration where it accepts
++    /// the binding, or — on Windows, where the system refuses it because
++    /// another application or Windows itself has the chord — Pane's own
++    /// keyboard hook (ADR 0039), so a refused chord is not an error.
++    fn register(&self, shortcut: &Shortcut) -> Result<HotkeyRoute, HotkeyError>;
+ 
+     /// Releases `shortcut`, registered earlier, so that other applications
+     /// may use it and it is no longer reported.
+@@ -415,7 +529,7 @@ impl Hotkeys for Unavailable {
+         Some(self.0.clone())
+     }
+ 
+-    fn register(&self, _shortcut: &Shortcut) -> Result<(), HotkeyError> {
++    fn register(&self, _shortcut: &Shortcut) -> Result<HotkeyRoute, HotkeyError> {
+         Err(HotkeyError::Refused(self.0.clone()))
+     }
+ 
+diff --git a/crates/pane-core/src/hotkeys/macos.rs b/crates/pane-core/src/hotkeys/macos.rs
+index f6b0fb65..48c36e0a 100644
+--- a/crates/pane-core/src/hotkeys/macos.rs
++++ b/crates/pane-core/src/hotkeys/macos.rs
+@@ -12,7 +12,7 @@ use std::sync::{Arc, Mutex, OnceLock};
+ use global_hotkey::hotkey::{Code, HotKey, Modifiers};
+ use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState};
+ 
+-use super::{HotkeyError, Hotkeys, PressSender, Shortcut};
++use super::{HotkeyError, HotkeyRoute, Hotkeys, PressSender, Shortcut};
+ 
+ /// Where presses go and which shortcut each registered id is. Carbon's
+ /// handler is installed once per process.
+@@ -164,7 +164,7 @@ impl Hotkeys for MacHotkeys {
+         None
+     }
+ 
+-    fn register(&self, shortcut: &Shortcut) -> Result<(), HotkeyError> {
++    fn register(&self, shortcut: &Shortcut) -> Result<HotkeyRoute, HotkeyError> {
+         let hot_key = hot_key(shortcut)
+             .ok_or_else(|| HotkeyError::Refused(format!("{shortcut} has no macOS key")))?;
+         let mut registered = self
+@@ -173,12 +173,12 @@ impl Hotkeys for MacHotkeys {
+             .lock()
+             .unwrap_or_else(|p| p.into_inner());
+         if registered.contains_key(&hot_key.id()) {
+-            return Ok(());
++            return Ok(HotkeyRoute::Registered);
+         }
+         match self.manager.register(hot_key) {
+             Ok(()) => {
+                 registered.insert(hot_key.id(), shortcut.clone());
+-                Ok(())
++                Ok(HotkeyRoute::Registered)
+             }
+             Err(global_hotkey::Error::AlreadyRegistered(_)) => Err(HotkeyError::Taken),
+             Err(error) => Err(HotkeyError::Refused(error.to_string())),
+diff --git a/crates/pane-core/src/hotkeys/x11.rs b/crates/pane-core/src/hotkeys/x11.rs
+index 52a995dd..bcca8594 100644
+--- a/crates/pane-core/src/hotkeys/x11.rs
++++ b/crates/pane-core/src/hotkeys/x11.rs
+@@ -29,7 +29,7 @@ use x11rb::protocol::xproto::{
+ use x11rb::protocol::{ErrorKind, Event};
+ use x11rb::rust_connection::RustConnection;
+ 
+-use super::{HotkeyError, Hotkeys, PressSender, Shortcut};
++use super::{HotkeyError, HotkeyRoute, Hotkeys, PressSender, Shortcut};
+ 
+ /// XK_Num_Lock and XK_Scroll_Lock.
+ const NUM_LOCK: u32 = 0xff7f;
+@@ -355,10 +355,10 @@ impl Hotkeys for X11Hotkeys {
+         None
+     }
+ 
+-    fn register(&self, shortcut: &Shortcut) -> Result<(), HotkeyError> {
++    fn register(&self, shortcut: &Shortcut) -> Result<HotkeyRoute, HotkeyError> {
+         let mut shared = self.shared();
+         if shared.grabs.contains_key(shortcut) {
+-            return Ok(());
++            return Ok(HotkeyRoute::Registered);
+         }
+         let (keycode, modifiers) = shared.keymap.grab_for(shortcut)?;
+         let variants = shared.keymap.lock_variants();
+@@ -372,7 +372,7 @@ impl Hotkeys for X11Hotkeys {
+                 held: false,
+             },
+         );
+-        Ok(())
++        Ok(HotkeyRoute::Registered)
+     }
+ 
+     fn unregister(&self, shortcut: &Shortcut) {

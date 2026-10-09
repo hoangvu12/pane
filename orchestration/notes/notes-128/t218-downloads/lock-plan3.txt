@@ -1,0 +1,48 @@
+NEW wasmtime-wizer 49.0.1 (via manifest) license=Apache-2.0 WITH LLVM-exception rust=1.96.0
+!! cannot resolve wit-dylib 0.258 (via manifest)
+!! cannot resolve wasm-compose 0.258 (via manifest)
+NEW castaway 0.2.4 (via compact_str 0.9.1) license=MIT rust=None
+!! cannot resolve diesel_derives ~2.3.0 (via diesel 2.3.14)
+NEW downcast-rs 2.0.2 (via diesel 2.3.14) license=MIT OR Apache-2.0 rust=1.56
+NEW bigdecimal 0.4.11 (via diesel 2.3.14) license=MIT/Apache-2.0 rust=None
+NEW rustc-std-workspace-core 1.0.1 (via compiler_builtins 0.1.160) license=MIT/Apache-2.0 rust=None
+NEW compiler_builtins 0.1.160 (via wasi 0.9.0+wasi-snapshot-preview1) license=MIT AND Apache-2.0 WITH LLVM-exception AND (MIT OR Apache-2.0) rust=None
+NEW rustc-std-workspace-alloc 1.0.1 (via wasi 0.9.0+wasi-snapshot-preview1) license=MIT/Apache-2.0 rust=None
+NEW wasi 0.9.0+wasi-snapshot-preview1 (via getrandom 0.1.16) license=Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT rust=None
+NEW discard 1.0.4 (via stdweb 0.4.20) license=MIT rust=None
+NEW semver-parser 0.7.0 (via semver 0.9.0) license=MIT/Apache-2.0 rust=None
+NEW semver 0.9.0 (via rustc_version 0.2.3) license=MIT/Apache-2.0 rust=None
+NEW rustc_version 0.2.3 (via stdweb 0.4.20) license=MIT/Apache-2.0 rust=None
+!! cannot resolve stdweb-derive = 0.5.3 (via stdweb 0.4.20)
+!! cannot resolve stdweb-internal-macros = 0.2.9 (via stdweb 0.4.20)
+NEW stdweb-internal-runtime 0.1.5 (via stdweb 0.4.20) license=MIT/Apache-2.0 rust=None
+NEW futures-core-preview 0.3.0-alpha.1 (via futures-channel-preview 0.3.0-alpha.1) license=MIT/Apache-2.0 rust=None
+NEW futures-channel-preview 0.3.0-alpha.1 (via stdweb 0.4.20) license=MIT/Apache-2.0 rust=None
+NEW iovec 0.1.4 (via futures-io-preview 0.3.0-alpha.1) license=MIT/Apache-2.0 rust=None
+NEW futures-io-preview 0.3.0-alpha.1 (via futures-util-preview 0.3.0-alpha.1) license=MIT/Apache-2.0 rust=None
+NEW futures-sink-preview 0.3.0-alpha.1 (via futures-util-preview 0.3.0-alpha.1) license=MIT/Apache-2.0 rust=None
+NEW futures-util-preview 0.3.0-alpha.1 (via futures-executor-preview 0.3.0-alpha.1) license=MIT/Apache-2.0 rust=None
+NEW futures-executor-preview 0.3.0-alpha.1 (via stdweb 0.4.20) license=MIT/Apache-2.0 rust=None
+NEW stdweb 0.4.20 (via getrandom 0.1.16) license=MIT/Apache-2.0 rust=None
+NEW getrandom 0.1.16 (via redox_users 0.3.5) license=MIT OR Apache-2.0 rust=None
+NEW redox_syscall 0.1.57 (via redox_users 0.3.5) license=MIT rust=None
+NEW base64 0.13.1 (via rust-argon2 0.8.3) license=MIT/Apache-2.0 rust=None
+NEW arrayvec 0.5.2 (via blake2b_simd 0.5.11) license=MIT/Apache-2.0 rust=None
+NEW constant_time_eq 0.1.5 (via blake2b_simd 0.5.11) license=CC0-1.0 rust=None
+NEW blake2b_simd 0.5.11 (via rust-argon2 0.8.3) license=MIT rust=None
+NEW quote 0.3.15 (via serde_derive 0.9.15) license=MIT/Apache-2.0 rust=None
+!! cannot resolve serde_codegen_internals = 0.14.2 (via serde_derive 0.9.15)
+NEW synom 0.11.3 (via syn 0.11.11) license=MIT/Apache-2.0 rust=None
+NEW syn 0.11.11 (via serde_derive 0.9.15) license=MIT/Apache-2.0 rust=None
+NEW serde_derive 0.9.15 (via serde 0.9.15) license=MIT/Apache-2.0 rust=None
+NEW serde 0.9.15 (via rust-argon2 0.8.3) license=MIT/Apache-2.0 rust=None
+NEW rust-argon2 0.8.3 (via redox_users 0.3.5) license=MIT/Apache-2.0 rust=None
+NEW redox_users 0.3.5 (via dirs 1.0.5) license=MIT rust=None
+NEW dirs 1.0.5 (via term 0.5.2) license=MIT OR Apache-2.0 rust=None
+NEW term 0.5.2 (via clippy 0.0.302) license=MIT/Apache-2.0 rust=None
+NEW clippy 0.0.302 (via ipnetwork 0.12.8) license=MIT/Apache-2.0 rust=None
+!! cannot resolve clippy 0.* (via serde 0.8.23)
+NEW serde 0.8.23 (via ipnetwork 0.12.8) license=MIT/Apache-2.0 rust=None
+!! cannot resolve serde_codegen = 0.8.23 (via serde_derive 0.8.23)
+NEW serde_derive 0.8.23 (via ipnetwork 0.12.8) license=MIT/Apache-2.0 rust=None
+NEW ipnetwork 0.12.8 (via diesel 2.3.14) license=Apache-2.0 rust=None

@@ -1,0 +1,1723 @@
+diff --git a/crates/pane-core/src/launcher.rs b/crates/pane-core/src/launcher.rs
+index b85ac152..40feda24 100644
+--- a/crates/pane-core/src/launcher.rs
++++ b/crates/pane-core/src/launcher.rs
+@@ -73,14 +73,14 @@ use crate::launch::{LaunchRecord, LaunchSource};
+ use crate::links::{LinkOpener, NoOpener};
+ use crate::operations::Installed;
+ use crate::packages::{
+-    InstalledPackage, PackageError, PackageIdentity, RetainedData, SavedData, SourcePackage, Store,
+-    paused_reason,
++    CommandMode, InstalledPackage, PackageError, PackageIdentity, RetainedData, SavedData,
++    SourcePackage, Store, paused_reason,
+ };
+ use crate::platform;
+ use crate::runtime::{
+-    CallError, CustomViewInfo, CustomViewRole, FieldKind, FieldValue, Form, Frame, Item, Point,
+-    ResultListing, RootAction, RootResult as ComputedResult, Runtime, ScreenForm, View, ViewEvent,
+-    ViewId, WeakRuntime,
++    CallError, CustomViewInfo, CustomViewRole, DesignedEvent, DesignedView, FieldKind, FieldValue,
++    Form, Frame, Item, Point, ResultListing, RootAction, RootResult as ComputedResult, Runtime,
++    ScreenForm, View, ViewEvent, ViewId, WeakRuntime,
+ };
+ use crate::search::{self, Keys, Query};
+ 
+@@ -183,6 +183,10 @@ pub struct CommandRegistration {
+     /// Whether the command searches as the user types into its own search
+     /// field once it is open (`"search": true`); root search never asks it.
+     pub search: bool,
++    /// What the command does when it is launched (`"mode"` in its package
++    /// manifest, ADR 0037): a designed command (`"designed"`) opens a
++    /// designed view rather than its list.
++    pub mode: CommandMode,
+ }
+ 
+ impl CommandRegistration {
+@@ -219,6 +223,9 @@ pub enum Screen {
+     /// A custom view opened from an item of the command's list view. It has
+     /// no rows.
+     CustomView(CustomViewSnapshot),
++    /// A designed view opened as the command's own screen: the tree of UI
++    /// components its extension last answered with. It has no rows.
++    Designed(DesignedSnapshot),
+     /// What an installed package that uses the network did on it this
+     /// session (the addresses it tried to reach), as lines of information
+     /// under the title. It has no rows.
+@@ -490,6 +497,16 @@ pub struct CustomViewSnapshot {
+     pub frame: Frame,
+ }
+ 
++/// An open designed view, as the user last saw it: the view's last good
++/// tree, and which render it came from (the one a `press` names).
++#[derive(Clone, Debug, PartialEq, Eq)]
++pub struct DesignedSnapshot {
++    /// Which opened view this is: a view opened again has another id.
++    pub id: ViewId,
++    /// The tree it last answered with, and the render that named it.
++    pub view: DesignedView,
++}
++
+ /// A snapshot of what the launcher shows.
+ #[derive(Clone, Debug, PartialEq, Eq)]
+ pub struct LauncherView {
+@@ -570,6 +587,15 @@ impl LauncherView {
+             _ => None,
+         }
+     }
++
++    /// The open designed view, on the designed view screen: its tree and
++    /// the render it came from.
++    pub fn designed_view(&self) -> Option<&DesignedView> {
++        match &self.screen {
++            Screen::Designed(view) => Some(&view.view),
++            _ => None,
++        }
++    }
+ }
+ 
+ impl Screen {
+@@ -739,6 +765,8 @@ struct State {
+     actions_return: Option<actions::Return>,
+     /// The custom view on screen, if one is open.
+     custom_view: Option<OpenCustomView>,
++    /// The designed view on screen, if one is open.
++    designed: Option<OpenDesignedView>,
+     /// The open command's items' icons, tooltips and accessories, by item
+     /// id (see `looks`).
+     looks: looks::Looks,
+@@ -1019,6 +1047,19 @@ enum FormPurpose {
+     Arguments(Box<argument_form::Asking>),
+ }
+ 
++/// What the launcher keeps about the open designed view besides its
++/// snapshot: which events have been sent to it, and which one's answer is
++/// on screen, so a late answer never replaces a newer tree.
++struct OpenDesignedView {
++    /// Which opened view this is ([`DesignedSnapshot::id`]).
++    id: ViewId,
++    /// How many events have been sent to the view, counting this one.
++    sent: u64,
++    /// The number of the event whose answer is on screen; answers to older
++    /// ones are stale.
++    shown: u64,
++}
++
+ /// What the launcher keeps about the open custom view besides its snapshot.
+ struct OpenCustomView {
+     /// The view in the runtime; closed when the view leaves the screen.
+@@ -1303,12 +1344,17 @@ struct Opening {
+     /// Its id in its package manifest, sent with each of its searches and
+     /// to its run entry point.
+     command: String,
++    /// Its title, which names the screen it opens.
++    title: String,
+     /// Whether it searches as the user types into its own search field
+     /// ([`CommandRegistration::search`]).
+     search: bool,
+     /// Whether it is a no-view command, which runs instead of opening a
+     /// screen.
+     no_view: bool,
++    /// Whether it is a designed command, which opens a designed view (a
++    /// tree of UI components) instead of its list.
++    designed: bool,
+     /// How it is launched.
+     launch: LaunchRecord,
+     /// The text its own search field opens with, for a command that
+@@ -1323,8 +1369,10 @@ impl Opening {
+         Opening {
+             component: command.component.clone(),
+             command: command.manifest_id().to_owned(),
++            title: command.title.clone(),
+             search: command.search,
+             no_view,
++            designed: command.mode == CommandMode::Designed,
+             launch: LaunchRecord::by_user(source),
+             initial_search: None,
+         }
+@@ -1461,6 +1509,7 @@ impl Launcher {
+             launch: LaunchRecord::default(),
+             searching: None,
+             form: None,
++            designed: None,
+             actions_return: None,
+             custom_view: None,
+             looks: looks::Looks::default(),
+@@ -4107,6 +4156,7 @@ impl Launcher {
+     /// the runtime, and replies for the old screen are discarded.
+     fn leave_command(&self, state: &mut State) {
+         self.close_custom_view(state);
++        self.close_designed_view(state);
+         // Its search in progress, if any, is stopped.
+         state.searching = None;
+         state.open = None;
+@@ -4126,6 +4176,121 @@ impl Launcher {
+         Some(open.return_to)
+     }
+ 
++    /// Closes the open designed view, if one is open, leaving the command
++    /// to the caller.
++    fn close_designed_view(&self, state: &mut State) {
++        let Some(open) = state.designed.take() else {
++            return;
++        };
++        if let Ok(runtime) = self.runtime() {
++            runtime.close_view(open.id);
++        }
++    }
++
++    /// Sends the user's press of the callback `callback` — named by the
++    /// node `key` of the shown tree, of the render the tree came from — to
++    /// the open designed view. Await the returned future to show the tree
++    /// it answers with, or the error that keeps the last one. Events are
++    /// delivered one at a time, in the order of these calls; an answer
++    /// that arrives after the user left the screen is dropped.
++    pub fn press_designed_view(
++        &self,
++        callback: u32,
++        key: &str,
++    ) -> impl Future<Output = ()> + Send + 'static {
++        let mut state = self.lock();
++        let epoch = state.screen_epoch;
++        // Sent now, so the view handles presses in the order of these calls
++        // whenever the returned futures are awaited.
++        let sent = self.send_to_designed(&mut state, callback, key);
++        drop(state);
++        let launcher = self.clone();
++        async move {
++            let Some((number, reply)) = sent else {
++                return;
++            };
++            let result = reply.await;
++            launcher.show_designed_answer(epoch, number, result);
++        }
++    }
++
++    /// Sends the press to the open designed view, if one is open, counting
++    /// it: `(its number, the reply to await)`.
++    fn send_to_designed(
++        &self,
++        state: &mut State,
++        callback: u32,
++        key: &str,
++    ) -> Option<(u64, impl Future<Output = Result<DesignedView, CallError>> + Send)> {
++        let open = state.designed.as_mut()?;
++        let runtime = self.runtime().ok()?;
++        // The render whose tree the press was raised on: the one on screen.
++        let render = match &state.view.screen {
++            Screen::Designed(shown) => shown.view.render,
++            _ => open.shown,
++        };
++        let number = open.sent;
++        open.sent += 1;
++        let reply = runtime.designed_view_event(
++            open.id,
++            DesignedEvent {
++                render,
++                key: key.to_owned(),
++                callback,
++            },
++        );
++        Some((number, reply))
++    }
++
++    /// Shows the open designed view's answer to its event number `number`:
++    /// a tree replaces the one on screen, and an error keeps it — the view
++    /// stays open either way, unless the answer says the view itself is
++    /// gone, which leaves the command for root search.
++    fn show_designed_answer(&self, epoch: u64, number: u64, result: Result<DesignedView, CallError>) {
++        let Some(mut state) = self.lock_if_current(epoch) else {
++            return;
++        };
++        let state = &mut *state;
++        let Some(open) = state.designed.as_mut() else {
++            return;
++        };
++        match result {
++            // An answer to an event older than the one on screen is stale.
++            Ok(_) | Err(CallError::Guest(_)) | Err(CallError::Unreadable(_))
++                if number <= open.shown => {}
++            Ok(view) => {
++                open.shown = number;
++                let id = open.id;
++                let Screen::Designed(shown) = &mut state.view.screen else {
++                    unreachable!("a designed view is open");
++                };
++                if shown.id == id {
++                    shown.view = view;
++                }
++                state.view.status = Status::Idle;
++            }
++            // The view refused the press or answered a tree Pane could not
++            // read: it keeps its last good tree.
++            Err(error @ CallError::Guest(_)) | Err(error @ CallError::Unreadable(_)) => {
++                open.shown = number;
++                state.view.status = Status::Error(error.to_string());
++            }
++            // The guest instance, and the view with it, is gone: leave the
++            // command, as a broken command screen does.
++            Err(error) => {
++                self.leave_designed_command(state, Status::Error(error.to_string()));
++            }
++        }
++    }
++
++    /// Leaves the open designed view's command for root search with
++    /// `status`, closing the view.
++    fn leave_designed_command(&self, state: &mut State, status: Status) {
++        self.close_designed_view(state);
++        self.show_root(state, None);
++        state.view.status = status;
++    }
++
+     /// Opens `url` with the link opener, off the calling thread, and reports
+     /// the outcome while the screen is the one it was opened from.
+     async fn open_url(&self, epoch: u64, url: String) {
+diff --git a/crates/pane-core/src/launcher/launching.rs b/crates/pane-core/src/launcher/launching.rs
+index 672e9352..f5a652af 100644
+--- a/crates/pane-core/src/launcher/launching.rs
++++ b/crates/pane-core/src/launcher/launching.rs
+@@ -121,8 +121,9 @@ impl Launcher {
+     }
+ 
+     /// Launches `opening` with nothing more to ask: a no-view command runs
+-    /// ([`Launcher::run_no_view`]), a view command opens its screen
+-    /// ([`Launcher::open_command`]).
++    /// ([`Launcher::run_no_view`]), a designed command opens its designed
++    /// view ([`Launcher::open_designed_command`]), and a view command opens
++    /// its list ([`Launcher::open_command`]).
+     pub(super) async fn launch_ready(
+         &self,
+         epoch: u64,
+@@ -131,6 +132,8 @@ impl Launcher {
+     ) {
+         if opening.no_view {
+             self.run_no_view(epoch, opening, data).await
++        } else if opening.designed {
++            self.open_designed_command(epoch, opening, data).await
+         } else {
+             self.open_command(epoch, opening, data).await
+         }
+diff --git a/crates/pane-core/src/packages.rs b/crates/pane-core/src/packages.rs
+index c6db1b43..263fa52b 100644
+--- a/crates/pane-core/src/packages.rs
++++ b/crates/pane-core/src/packages.rs
+@@ -493,6 +493,11 @@ pub enum CommandMode {
+     /// `"no-view"`: launching it calls its run entry point (`run`) and
+     /// opens no screen.
+     NoView,
++    /// `"designed"`: launching it opens a designed view (ADR 0036), a
++    /// screen the extension describes as a tree of UI components Pane
++    /// renders (`view`'s resource and its tree, docs/designed-tree.md),
++    /// instead of its list.
++    Designed,
+     /// `"provider"`: a root provider (#164), a command whose only job is
+     /// to answer root search through its `rootResults` or
+     /// `indexedResults`, such as the calculator. It is never launched: it
+@@ -1120,6 +1125,11 @@ fn parse_schedule(
+     let item = match (mode, schedule.item) {
+         // Refused before, by `check_provider`.
+         (CommandMode::Provider, _) => None,
++        (CommandMode::Designed, _) => {
++            return Err(invalid(format!(
++                "the schedule of command `{id}` cannot run a designed view command: it opens a                  tree of UI components with no items and no run entry point of its own; remove                  `schedule`"
++            )));
++        }
+         (CommandMode::NoView, None) => None,
+         (CommandMode::NoView, Some(_)) => {
+             return Err(invalid(format!(
+@@ -1975,6 +1985,7 @@ impl InstalledPackage {
+                     component: self.location.join(&command.component),
+                     takes_query: command.accepts_fallback_text(),
+                     search: command.search,
++                    mode: command.mode,
+                 };
+                 let unavailable = package.clone().or_else(|| {
+                     platform::unavailable(command.platforms.as_deref(), "this command")
+diff --git a/crates/pane-core/src/runtime.rs b/crates/pane-core/src/runtime.rs
+index a77b3356..3676f10f 100644
+--- a/crates/pane-core/src/runtime.rs
++++ b/crates/pane-core/src/runtime.rs
+@@ -57,6 +57,7 @@ mod host_functions;
+ mod memory;
+ mod supervisor;
+ mod system_functions;
++mod designed;
+ mod tree;
+ 
+ use deadlines::Doing;
+@@ -78,6 +79,10 @@ pub(crate) use supervisor::CRASH_WINDOW;
+ use supervisor::{NotSent, Shared};
+ pub use supervisor::{RuntimeFailure, RuntimeStatus};
+ pub(crate) use tree::read_shortcut;
++pub use designed::{
++    Align, Button, Justify, Layout, Node, NodeKind, Padding, Space, Text, TextLevel, TextStyle,
++    Tone, COMPONENT_SET, MAX_DEPTH, MAX_NODES, MAX_TEXT_CHARS, MAX_TREE_BYTES,
++};
+ pub use tree::{Accessory, AccessoryContent, ItemLook, MAX_ACCESSORIES};
+ pub use tree::{
+     Action, ActionKind, ActionStyle, ActionSubmenu, Answer, Item, ScreenForm, SubmenuEntries,
+@@ -527,6 +532,46 @@ impl ViewId {
+     }
+ }
+ 
++/// A designed view as its last good render answered it: the tree it drew,
++/// which render it came from, and the refresh that render asked for.
++#[derive(Clone, Debug, PartialEq, Eq)]
++pub struct DesignedView {
++    /// The tree the render answered, parsed with its limits.
++    pub tree: designed::DesignedTree,
++    /// The number of the render that answered it: the number its context
++    /// gave, and the one a `press` names when a callback of this tree runs.
++    pub render: u64,
++    /// The milliseconds after which the view asked to be rendered again
++    /// (#236). Recorded here, and not acted on until that ticket: the
++    /// first slice of #121 renders a view only when the user presses.
++    pub refresh_after_ms: Option<u32>,
++}
++
++/// The user's input to a designed view, as the launcher delivers it: a
++/// `press` of a callback the shown tree named.
++#[derive(Clone, Debug, PartialEq, Eq)]
++pub struct DesignedEvent {
++    /// The render whose tree named the callback: the shown one's
++    /// [`DesignedView::render`].
++    pub render: u64,
++    /// The key of the node whose callback it was; empty when the node had
++    /// none.
++    pub key: String,
++    /// The callback id the tree named.
++    pub callback: u32,
++}
++
++/// The render context of a designed view, as its JSON text: the number of
++/// the render being asked, and the version of the UI component set Pane
++/// renders. The context grows without WIT changes (ADR 0036), so later
++/// fields (the appearance, a selected key, a canvas's space) join here.
++fn render_context(render: u64) -> String {
++    format!(
++        "{{\"render\":{render},\"ui\":\"{}.{}\"}}",
++        COMPONENT_SET.0, COMPONENT_SET.1
++    )
++}
++
+ /// A form an item opens, as produced by the guest.
+ #[derive(Clone, Debug, PartialEq, Eq)]
+ pub struct Form {
+@@ -846,6 +891,18 @@ enum Request {
+         data: Option<PackageData>,
+         reply: oneshot::Sender<Result<(ViewId, Frame), CallError>>,
+     },
++    OpenDesignedView {
++        component: PathBuf,
++        command: String,
++        launch: LaunchRecord,
++        data: Option<PackageData>,
++        reply: oneshot::Sender<Result<(ViewId, DesignedView), CallError>>,
++    },
++    DesignedViewEvent {
++        view: ViewId,
++        event: DesignedEvent,
++        reply: oneshot::Sender<Result<DesignedView, CallError>>,
++    },
+     ViewEvent {
+         view: ViewId,
+         event: ViewEvent,
+@@ -888,7 +945,8 @@ impl Request {
+             | Request::RunItem { component, .. }
+             | Request::Search { component, .. }
+             | Request::SubmitForm { component, .. }
+-            | Request::OpenView { component, .. } => Some(component),
++            | Request::OpenView { component, .. }
++            | Request::OpenDesignedView { component, .. } => Some(component),
+             _ => None,
+         }
+     }
+@@ -1539,6 +1597,51 @@ impl Runtime {
+         .await
+     }
+ 
++    /// Opens the designed view of `command` (its manifest id) in
++    /// `component`, launched as `launch` says, and draws its first tree.
++    /// The view stays open, holding its state in the guest, until
++    /// [`Runtime::close_view`] or until its instance stops. The command
++    /// reads and saves `data`.
++    pub(crate) async fn open_designed_view(
++        &self,
++        component: &Path,
++        command: &str,
++        launch: &LaunchRecord,
++        data: Option<PackageData>,
++    ) -> Result<(ViewId, DesignedView), CallError> {
++        let (reply, response) = oneshot::channel();
++        self.call(
++            Request::OpenDesignedView {
++                component: component.to_path_buf(),
++                command: command.to_owned(),
++                launch: launch.clone(),
++                data,
++                reply,
++            },
++            response,
++        )
++        .await
++    }
++
++    /// Has the open designed view `view` handle `event` — a `press` of a
++    /// callback its shown tree named — then draws it again. A view that
++    /// has closed answers [`CallError::ViewClosed`].
++    ///
++    /// The event is sent when this is called, not when the returned future
++    /// is first polled: events are handled one at a time, in the order of
++    /// these calls.
++    pub fn designed_view_event(
++        &self,
++        view: ViewId,
++        event: DesignedEvent,
++    ) -> impl Future<Output = Result<DesignedView, CallError>> + Send + 'static {
++        let (reply, response) = oneshot::channel();
++        self.call(
++            Request::DesignedViewEvent { view, event, reply },
++            response,
++        )
++    }
++
+     /// Has the open custom view `view` handle `event`, then draws it again.
+     /// A view that has closed answers [`CallError::ViewClosed`].
+     ///
+@@ -1561,7 +1664,8 @@ impl Runtime {
+         let _ = self.send(Request::CloseView { view });
+     }
+ 
+-    /// How many custom views are open in guest instances, counting the
++    /// How many custom and designed views are open in guest instances,
++    /// counting the
+     /// requests sent before this call. A diagnostic for tests and logs, not
+     /// part of how the launcher decides anything: it tracks its own open
+     /// view.
+@@ -2536,15 +2640,18 @@ struct Instance {
+     _undo: Option<Registration>,
+ }
+ 
+-/// A custom view open in a guest instance.
++/// A custom or designed view open in a guest instance.
+ #[derive(Clone)]
+ struct LiveView {
+     /// The component whose instance holds the view.
+     component: PathBuf,
+-    /// The guest's `custom-view` resource.
++    /// The guest's `custom-view` or `view` resource.
+     resource: ResourceAny,
+     /// The instance holding it ([`Instance::serial`]).
+     serial: u64,
++    /// A designed view's render counter: how many renders have been asked,
++    /// which the next one's context names. `None` for a custom view.
++    designed: Option<Cell<u64>>,
+ }
+ 
+ /// The engine and the host interfaces guests link against, shared by the
+@@ -2833,6 +2940,11 @@ impl Code {
+             &cx,
+         )?;
+         check::<(String,), (Result<ResourceAny, String>,)>("open-view", func("open-view")?, &cx)?;
++        check::<(String, launching::LaunchRecord), (Result<ResourceAny, String>,)>(
++            "open-designed-view",
++            func("open-designed-view")?,
++            &cx,
++        )?;
+         let render = "[method]custom-view.render";
+         check::<(ResourceAny,), (command::Frame,)>(render, func(render)?, &cx)?;
+         let handle_event = "[method]custom-view.handle-event";
+@@ -2840,6 +2952,18 @@ impl Code {
+             handle_event,
+             func(handle_event)?,
+             &cx,
++        )?;
++        let designed_render = "[method]view.render";
++        check::<(ResourceAny, String), (Result<command::Rendered, String>,)>(
++            designed_render,
++            func(designed_render)?,
++            &cx,
++        )?;
++        let designed_handle_event = "[method]view.handle-event";
++        check::<(ResourceAny, command::UiEvent), (Result<command::Outcome, String>,)>(
++            designed_handle_event,
++            func(designed_handle_event)?,
++            &cx,
+         )
+     }
+ 
+@@ -3106,6 +3230,27 @@ impl Host {
+             } => Box::pin(async move {
+                 let _ = reply.send(self.open_view(&component, item_id, data).await);
+             }),
++            Request::OpenDesignedView {
++                component,
++                command,
++                launch,
++                data,
++                reply,
++            } => Box::pin(async move {
++                let _ = reply.send(self.open_designed_view(&component, &command, launch, data).await);
++            }),
++            Request::DesignedViewEvent { view, event, reply } => {
++                // The view as it is now: an event sent before the view was
++                // closed is still handled, before the view is dropped.
++                let open = self.views.borrow().get(&view).cloned();
++                let Some(open) = open else {
++                    let _ = reply.send(Err(CallError::ViewClosed));
++                    return;
++                };
++                Box::pin(async move {
++                    let _ = reply.send(self.designed_view_event(open, event).await);
++                })
++            }
+             Request::ViewEvent { view, event, reply } => {
+                 // The view as it is now: an event sent before the view was
+                 // closed is still handled, before the view is dropped.
+@@ -3523,6 +3668,7 @@ impl Host {
+             component: path.to_path_buf(),
+             resource,
+             serial,
++            designed: None,
+         };
+         self.views.borrow_mut().insert(view, open.clone());
+         match self.render(&open, &chain).await {
+@@ -3537,6 +3683,145 @@ impl Host {
+         }
+     }
+ 
++    /// Opens the designed view of `command` in `path` (its manifest id),
++    /// launched as `launch` says, and asks for its first tree: the view
++    /// resource is registered, its `render` called once, and a first tree
++    /// that fails closes the view again, as a custom view's first drawing
++    /// does. The launch record is passed to the guest as `launch`.
++    async fn open_designed_view(
++        &self,
++        path: &Path,
++        command: &str,
++        launch: LaunchRecord,
++        data: Option<PackageData>,
++    ) -> Result<(ViewId, DesignedView), CallError> {
++        let chain = self.chain();
++        let _turn = self.turn_for(path, &chain).await?;
++        self.instance(path, data).await?;
++        self.note_command(path, Some(command));
++        let launch = launch_record(&launch, Some(command));
++        let result = self
++            .run_guest(path, &chain, async |instance| {
++                instance
++                    .store
++                    .data_mut()
++                    .set_call(CallFor::in_window(Some(command.to_owned())));
++                let interface = instance.bindings.pane_extension_command();
++                instance
++                    .store
++                    .run_concurrent(async |store| {
++                        interface
++                            .call_open_designed_view(store, command.to_owned(), launch)
++                            .await
++                    })
++                    .await
++            })
++            .await?;
++        let resource = self.settle(path, result, CallError::Guest)?;
++        // Its instance was forgotten while it opened: the view went with it.
++        let serial = self.serial(path).ok_or(CallError::ViewClosed)?;
++        let view = ViewId {
++            thread: self.number,
++            id: self.next_view.fetch_add(1, Ordering::Relaxed),
++        };
++        let open = LiveView {
++            component: path.to_path_buf(),
++            resource,
++            serial,
++            designed: Some(Cell::new(0)),
++        };
++        self.views.borrow_mut().insert(view, open.clone());
++        match self.render_designed(&open, &chain, 0).await {
++            Ok(snapshot) => Ok((view, snapshot)),
++            Err(error) => {
++                let closed = self.views.borrow_mut().remove(&view);
++                if let Some(open) = closed {
++                    self.drop_view(&open).await;
++                }
++                Err(error)
++            }
++        }
++    }
++
++    /// Delivers `event` to the open designed view `open` and asks for its
++    /// next tree. An error the view answers either call with keeps the
++    /// last good tree: the caller's snapshot, which stays as it was.
++    async fn designed_view_event(
++        &self,
++        open: LiveView,
++        event: DesignedEvent,
++    ) -> Result<DesignedView, CallError> {
++        let chain = self.chain();
++        let path = open.component.clone();
++        let _turn = self.turn_for(&path, &chain).await?;
++        self.live(&open)?;
++        let event = command::UiEvent {
++            render: event.render,
++            key: event.key,
++            callback: event.callback,
++            // A `press` has no details yet; later events (#238) carry them.
++            payload: "{}".into(),
++        };
++        let resource = open.resource;
++        let result = self
++            .run_guest(&path, &chain, async |instance| {
++                instance.store.data_mut().set_call(CallFor::in_window(None));
++                let view = instance.bindings.pane_extension_command().view();
++                instance
++                    .store
++                    .run_concurrent(async |store| {
++                        view.call_handle_event(store, resource, event).await
++                    })
++                    .await
++            })
++            .await?;
++        let outcome = self.settle(&path, result, CallError::Guest)?;
++        // The navigation fields are inert until #239: whatever a view
++        // answers there is ignored, its handles dropped with the record.
++        drop(outcome);
++        let render = open.designed.as_ref().map(Cell::get).unwrap_or_default();
++        self.render_designed(&open, &chain, render).await
++    }
++
++    /// Asks the open designed view `open` to draw, in its instance's turn,
++    /// as the render numbered `render`'s context asks: the tree it answers
++    /// becomes the view's snapshot, and an answer over a limit or of a
++    /// version Pane does not render is the extension's error, which keeps
++    /// the last good tree. The counter moves on whatever the answer is: a
++    /// failed render is still a render the guest was asked for.
++    async fn render_designed(
++        &self,
++        open: &LiveView,
++        chain: &Chain,
++        render: u64,
++    ) -> Result<DesignedView, CallError> {
++        self.live(open)?;
++        if let Some(next) = &open.designed {
++            next.set(render + 1);
++        }
++        let (path, resource) = (&open.component, open.resource);
++        let context = render_context(render);
++        let result = self
++            .run_guest(path, chain, async |instance| {
++                let view = instance.bindings.pane_extension_command().view();
++                instance
++                    .store
++                    .run_concurrent(async |store| view.call_render(store, resource, context).await)
++                    .await
++            })
++            .await?;
++        let rendered = self.settle(path, result, CallError::Guest)?;
++        let snapshot = designed::DesignedTree::read(&rendered.tree).map_err(|error| match error {
++            designed::ReadError::OverLimit(problem) => CallError::Guest(problem),
++            designed::ReadError::Unreadable(problem) => CallError::Unreadable(problem),
++        })?;
++        Ok(DesignedView {
++            tree: snapshot,
++            render,
++            refresh_after_ms: rendered.refresh_after_ms,
++        })
++    }
++
+     async fn view_event(&self, open: LiveView, event: ViewEvent) -> Result<Frame, CallError> {
+         let chain = self.chain();
+         let path = open.component.clone();
+diff --git a/crates/pane-core/src/runtime/designed.rs b/crates/pane-core/src/runtime/designed.rs
+new file mode 100644
+index 00000000..2880edcf
+--- /dev/null
++++ b/crates/pane-core/src/runtime/designed.rs
+@@ -0,0 +1,785 @@
++//! What a designed view renders, as its `view.render` answers it: a JSON
++//! document naming the version of the UI component set it uses, and a root
++//! node (`docs/designed-tree.md`, ADR 0036's envelope for the tree #121
++//! introduces). Reading it here keeps the JSON at the edge of the runtime:
++//! the launcher sees only the typed [`DesignedTree`], and the window draws
++//! from it without meeting JSON at all.
++//!
++//! Reading is strict in the document's shape and lenient exactly where
++//! versioning asks for it. A property Pane does not know is ignored; a
++//! node whose type Pane does not know, or whose `requires` it does not
++//! meet, draws the `fallback` the author gave, else its children; a
++//! document of Pane's major version and any minor is read for what Pane
++//! understands of it. A document that is not JSON, lacks a field Pane
++//! needs (`version`, `root`, a node's `type`, a text's `text`, a button's
++//! `label`) or gives one of the wrong type is unreadable, which the runtime
++//! answers as [`super::CallError::Unreadable`]: the extension's failure,
++//! never a crash, so it does not count towards pausing the package. A
++//! document over one of the limits (`MAX_NODES`, `MAX_DEPTH`,
++//! `MAX_TREE_BYTES`, `MAX_TEXT_CHARS`), or of another major version, is
++//! the extension's error: the view keeps its last good tree either way.
++
++use serde::Deserialize;
++use serde_json::{Map, Value};
++
++/// The version of the UI component set this Pane renders: major 1, minor 0.
++/// A document of this major and any minor is read (unknown fields and nodes
++/// degrading); a document of another major is refused naming both versions.
++pub const COMPONENT_SET: (u64, u64) = (1, 0);
++
++/// The most nodes one document may hold, counting `fallback` subtrees.
++pub const MAX_NODES: usize = 10_000;
++/// How deep one document may be, counting its root.
++pub const MAX_DEPTH: usize = 64;
++/// The most bytes of JSON one document may be.
++pub const MAX_TREE_BYTES: usize = 4 * 1024 * 1024;
++/// The most characters one text node may hold.
++pub const MAX_TEXT_CHARS: usize = 64 * 1024;
++
++/// A designed view's tree: its root node. The version it named is checked
++/// while reading; a tree that was read is of a version Pane renders.
++#[derive(Clone, Debug, PartialEq, Eq)]
++pub struct DesignedTree {
++    pub root: Node,
++}
++
++/// One node of a designed view's tree: a layout primitive or UI component,
++/// or a type this Pane does not know (drawn by its `fallback`, else its
++/// children). Every node may carry a `key` (the stable identity Pane keeps
++/// node state under, #238), a `name` assistive technology reads it by, a
++/// `requires` minimum minor version, and a `fallback` subtree.
++#[derive(Clone, Debug, PartialEq, Eq)]
++pub struct Node {
++    pub kind: NodeKind,
++    /// The node's key, unique among its siblings; `None` for a static node.
++    pub key: Option<String>,
++    /// The name assistive technology reads the node by, when the node's own
++    /// content does not name it (a column's or row's).
++    pub name: Option<String>,
++    /// The minimum minor version of the UI component set this node needs.
++    pub requires: Option<u64>,
++    /// Drawn instead of this node when Pane does not know it.
++    pub fallback: Option<Box<Node>>,
++    pub children: Vec<Node>,
++}
++
++/// What a node is.
++#[derive(Clone, Debug, PartialEq, Eq)]
++pub enum NodeKind {
++    Column(Layout),
++    Row(Layout),
++    Text(Text),
++    Button(Button),
++    /// A node whose type Pane does not know: its `fallback` and children
++    /// decide what is drawn.
++    Unknown(String),
++}
++
++/// What a `column` or `row` says about its layout.
++#[derive(Clone, Debug, Default, PartialEq, Eq)]
++pub struct Layout {
++    /// The gap between its children.
++    pub gap: Option<Space>,
++    /// The padding inside it.
++    pub padding: Padding,
++    /// How children are laid out along the cross axis.
++    pub align: Option<Align>,
++    /// How children share the main axis.
++    pub justify: Option<Justify>,
++    /// Whether children wrap onto further lines.
++    pub wrap: bool,
++}
++
++/// The padding inside a node, per side: `{"x": "m", "y": "s"}` names the
++/// sides, `{"top": ..., "right": ..., "bottom": ..., "left": ...}` each
++/// one, and a bare token all four.
++#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
++pub struct Padding {
++    pub top: Option<Space>,
++    pub right: Option<Space>,
++    pub bottom: Option<Space>,
++    pub left: Option<Space>,
++}
++
++/// One text node: what it says, in which style and level.
++#[derive(Clone, Debug, PartialEq, Eq)]
++pub struct Text {
++    pub content: String,
++    pub style: Option<TextStyle>,
++    pub level: Option<TextLevel>,
++}
++
++/// One button: its label, its tone, and the callback a `press` of it runs.
++#[derive(Clone, Debug, Default, PartialEq, Eq)]
++pub struct Button {
++    pub label: String,
++    pub tone: Option<Tone>,
++    /// The callback id the tree named; `None` for a button that cannot be
++    /// pressed.
++    pub on_press: Option<u32>,
++}
++
++/// A space token: the named distances of the UI component set, mapped onto
++/// Pane's theme by the window.
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++pub enum Space {
++    Xs,
++    S,
++    M,
++    L,
++    Xl,
++    Xxl,
++}
++
++/// How a container's children are laid out along its cross axis.
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++pub enum Align {
++    Start,
++    Center,
++    End,
++    Stretch,
++    Baseline,
++}
++
++/// How a container's children share its main axis.
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++pub enum Justify {
++    Start,
++    Center,
++    End,
++    SpaceBetween,
++    SpaceAround,
++}
++
++/// The style of a text node: its size, weight and family.
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++pub enum TextStyle {
++    Heading,
++    Title,
++    Body,
++    Caption,
++    Mono,
++    SmallMono,
++}
++
++/// The level of a text node: its colour, through the alpha of the text
++/// colour, as ADR 0035's own levels are.
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++pub enum TextLevel {
++    Primary,
++    Secondary,
++    Tertiary,
++    Quaternary,
++}
++
++/// The tone of a button.
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++pub enum Tone {
++    Default,
++    Secondary,
++    Ghost,
++    Accent,
++    Destructive,
++}
++
++impl DesignedTree {
++    /// The tree `document` describes, or why Pane cannot read it: an
++    /// over-limit tree, or a document of another major version, is the
++    /// extension's error; a document Pane cannot read says why.
++    pub fn read(document: &str) -> Result<DesignedTree, ReadError> {
++        if document.len() > MAX_TREE_BYTES {
++            return Err(ReadError::OverLimit(format!(
++                "the view's tree is {} bytes; at most {MAX_TREE_BYTES} are read",
++                document.len()
++            )));
++        }
++        let wire: WireDocument = serde_json::from_str(document)
++            .map_err(|error| ReadError::Unreadable(format!("its tree: {error}")))?;
++        let (major, minor) = version(&wire.version)
++            .ok_or_else(|| ReadError::Unreadable("its tree names no version".into()))?;
++        if major != COMPONENT_SET.0 {
++            return Err(ReadError::OverLimit(format!(
++                "its tree uses UI component set {major}.{minor}; this Pane renders {}.{}",
++                COMPONENT_SET.0, COMPONENT_SET.1
++            )));
++        }
++        let mut nodes = 0;
++        let root = node(wire.root, 1, &mut nodes)?;
++        Ok(DesignedTree { root })
++    }
++}
++
++/// Why a tree could not be read: `OverLimit` is the extension's error (the
++/// view keeps its last good tree), `Unreadable` the failure Pane reports as
++/// its own reading of what the extension answered.
++#[derive(Clone, Debug, PartialEq, Eq)]
++pub enum ReadError {
++    OverLimit(String),
++    Unreadable(String),
++}
++
++impl ReadError {
++    /// The error's message.
++    pub fn message(&self) -> &str {
++        match self {
++            ReadError::OverLimit(message) | ReadError::Unreadable(message) => message,
++        }
++    }
++}
++
++/// `text`, a version like `"1.0"`, as (major, minor).
++fn version(text: &str) -> Option<(u64, u64)> {
++    let (major, minor) = text.split_once('.')?;
++    Some((major.parse().ok()?, minor.parse().ok()?))
++}
++
++/// The document's root: its version and its root node.
++#[derive(Deserialize)]
++struct WireDocument {
++    version: String,
++    root: WireNode,
++}
++
++/// A node as the tree gives it: its type, its common fields, and whatever
++/// else it says, for its own kind to read.
++#[derive(Deserialize)]
++struct WireNode {
++    #[serde(rename = "type")]
++    kind: String,
++    #[serde(default)]
++    key: Option<String>,
++    #[serde(default)]
++    name: Option<String>,
++    #[serde(default)]
++    requires: Option<u64>,
++    #[serde(default)]
++    fallback: Option<WireNode>,
++    #[serde(default)]
++    children: Option<Vec<Value>>,
++    #[serde(flatten)]
++    rest: Map<String, Value>,
++}
++
++/// The node `wire` describes at `depth`, counting it in `nodes`, or why it
++/// cannot be read.
++fn node(wire: WireNode, depth: usize, nodes: &mut usize) -> Result<Node, ReadError> {
++    *nodes += 1;
++    if *nodes > MAX_NODES {
++        return Err(ReadError::OverLimit(format!(
++            "the view has {nodes} nodes; at most {MAX_NODES} are drawn"
++        )));
++    }
++    if depth > MAX_DEPTH {
++        return Err(ReadError::OverLimit(format!(
++            "the view's tree is {depth} levels deep; at most {MAX_DEPTH} are drawn"
++        )));
++    }
++    // A node whose `requires` this Pane does not meet is one it does not
++    // know: it asks for a later minor version than the one Pane renders,
++    // and degrades as an unknown node does.
++    let meets = wire.requires.is_none_or(|required| required <= COMPONENT_SET.1);
++    let unknown = !matches!(wire.kind.as_str(), "column" | "row" | "text" | "button") || !meets;
++    let kind = if unknown {
++        NodeKind::Unknown(wire.kind.clone())
++    } else {
++        match wire.kind.as_str() {
++            "column" => NodeKind::Column(layout(&wire)?),
++            "row" => NodeKind::Row(layout(&wire)?),
++            "text" => NodeKind::Text(text(&wire)?),
++            "button" => NodeKind::Button(button(&wire)?),
++            _ => unreachable!("the kinds above name every one that is not unknown"),
++        }
++    };
++    let children = wire
++        .children
++        .unwrap_or_default()
++        .into_iter()
++        .map(|child| {
++            serde_json::from_value::<WireNode>(child)
++                .map_err(|error| ReadError::Unreadable(format!("its tree: {error}")))
++                .and_then(|child| node(child, depth + 1, nodes))
++        })
++        .collect::<Result<Vec<Node>, ReadError>>()?;
++    let fallback = wire
++        .fallback
++        .map(|fallback| node(fallback, depth + 1, nodes).map(Box::new))
++        .transpose()?;
++    Ok(Node {
++        kind,
++        key: wire.key,
++        name: wire.name,
++        requires: wire.requires,
++        fallback,
++        children,
++    })
++}
++
++/// The layout a column or row's other properties give it: `gap`, `padding`,
++/// `align`, `justify` and `wrap`. A property of the wrong type is
++/// unreadable; a token this version does not know is left out, as a newer
++/// minor version may add one.
++fn layout(wire: &WireNode) -> Result<Layout, ReadError> {
++    let over = |message: String| ReadError::Unreadable(message);
++    let rest = &wire.rest;
++    Ok(Layout {
++        gap: token(rest.get("gap"), "gap", space)?,
++        padding: padding(rest.get("padding")).map_err(over)?,
++        align: token(rest.get("align"), "align", align)?,
++        justify: token(rest.get("justify"), "justify", justify)?,
++        wrap: match rest.get("wrap") {
++            None | Some(Value::Null) => false,
++            Some(Value::Bool(wrap)) => *wrap,
++            Some(_) => return Err(over("its wrap is not a boolean".into())),
++        },
++    })
++}
++
++/// The text a text node's other properties give it: its `text`, `style` and
++/// `level`.
++fn text(wire: &WireNode) -> Result<Text, ReadError> {
++    let over = |message: String| ReadError::Unreadable(message);
++    let rest = &wire.rest;
++    let content = match rest.get("text") {
++        Some(Value::String(content)) => content.clone(),
++        Some(_) => return Err(over("its text is not a string".into())),
++        None => return Err(over("a text node has no text".into())),
++    };
++    if content.chars().count() > MAX_TEXT_CHARS {
++        return Err(ReadError::OverLimit(format!(
++            "a text of the view has {} characters; at most {MAX_TEXT_CHARS} are drawn",
++            content.chars().count()
++        )));
++    }
++    Ok(Text {
++        content,
++        style: token(rest.get("style"), "style", text_style)?,
++        level: token(rest.get("level"), "level", text_level)?,
++    })
++}
++
++/// The button a button node's other properties give it: its `label`,
++/// `tone` and `onPress`.
++fn button(wire: &WireNode) -> Result<Button, ReadError> {
++    let over = |message: String| ReadError::Unreadable(message);
++    let rest = &wire.rest;
++    let label = match rest.get("label") {
++        Some(Value::String(label)) => label.clone(),
++        Some(_) => return Err(over("its label is not a string".into())),
++        None => return Err(over("a button node has no label".into())),
++    };
++    let on_press = match rest.get("onPress") {
++        None | Some(Value::Null) => None,
++        Some(Value::Number(id)) => Some(
++            id.as_u64()
++                .filter(|id| *id <= u32::MAX as u64)
++                .ok_or_else(|| over("its onPress is not a callback id".into()))? as u32,
++        ),
++        Some(_) => return Err(over("its onPress is not a callback id".into())),
++    };
++    Ok(Button {
++        label,
++        tone: token(rest.get("tone"), "tone", tone)?,
++        on_press,
++    })
++}
++
++/// A token property, as the tree gives it: `Err` when the value is not of
++/// the property's type, `None` when it names a token this version does not
++/// know. `read` maps the token's name to it.
++fn token<T>(
++    value: Option<&Value>,
++    name: &str,
++    read: fn(&str) -> Option<T>,
++) -> Result<Option<T>, ReadError> {
++    let Some(value) = value else {
++        return Ok(None);
++    };
++    let Value::String(token) = value else {
++        return Err(ReadError::Unreadable(format!(
++            "its {name} is not one of its names"
++        )));
++    };
++    Ok(read(token))
++}
++
++/// A padding: a bare token for all four sides, or `{x, y}` or
++/// `{top, right, bottom, left}` naming some of them. `Err` when the tree
++/// gives something that is not one of these.
++fn padding(value: Option<&Value>) -> Result<Padding, String> {
++    let side = |fields: &Map<String, Value>, name: &str| {
++        match fields.get(name) {
++            None | Some(Value::Null) => Ok(None),
++            Some(value) => space_of(value)
++                .map(Some)
++                .ok_or_else(|| format!("its padding's {name} is not a space token")),
++        }
++    };
++    match value {
++        None | Some(Value::Null) => Ok(Padding::default()),
++        Some(value) => space_of(value)
++            .map(|all| Padding {
++                top: Some(all),
++                right: Some(all),
++                bottom: Some(all),
++                left: Some(all),
++            })
++            .or_else(|| match value {
++                Value::Object(fields) => Some({
++                    let mut padding = Padding {
++                        top: side(fields, "top")?,
++                        right: side(fields, "right")?,
++                        bottom: side(fields, "bottom")?,
++                        left: side(fields, "left")?,
++                    };
++                    let x = side(fields, "x")?;
++                    let y = side(fields, "y")?;
++                    padding.left = padding.left.or(x);
++                    padding.right = padding.right.or(x);
++                    padding.top = padding.top.or(y);
++                    padding.bottom = padding.bottom.or(y);
++                    padding
++                }),
++                _ => None,
++            })
++            .ok_or_else(|| "its padding is not a space token or an object".into()),
++    }
++}
++
++/// A space token, as the tree gives it: a string naming it, else nothing.
++fn space_of(value: &Value) -> Option<Space> {
++    let Value::String(token) = value else {
++        return None;
++    };
++    space(token)
++}
++
++/// A space token by its name in the tree.
++fn space(name: &str) -> Option<Space> {
++    match name {
++        "xs" => Some(Space::Xs),
++        "s" => Some(Space::S),
++        "m" => Some(Space::M),
++        "l" => Some(Space::L),
++        "xl" => Some(Space::Xl),
++        "xxl" => Some(Space::Xxl),
++        _ => None,
++    }
++}
++
++fn align(name: &str) -> Option<Align> {
++    match name {
++        "start" => Some(Align::Start),
++        "center" => Some(Align::Center),
++        "end" => Some(Align::End),
++        "stretch" => Some(Align::Stretch),
++        "baseline" => Some(Align::Baseline),
++        _ => None,
++    }
++}
++
++fn justify(name: &str) -> Option<Justify> {
++    match name {
++        "start" => Some(Justify::Start),
++        "center" => Some(Justify::Center),
++        "end" => Some(Justify::End),
++        "space-between" => Some(Justify::SpaceBetween),
++        "space-around" => Some(Justify::SpaceAround),
++        _ => None,
++    }
++}
++
++fn text_style(name: &str) -> Option<TextStyle> {
++    match name {
++        "heading" => Some(TextStyle::Heading),
++        "title" => Some(TextStyle::Title),
++        "body" => Some(TextStyle::Body),
++        "caption" => Some(TextStyle::Caption),
++        "mono" => Some(TextStyle::Mono),
++        "small-mono" => Some(TextStyle::SmallMono),
++        _ => None,
++    }
++}
++
++fn text_level(name: &str) -> Option<TextLevel> {
++    match name {
++        "primary" => Some(TextLevel::Primary),
++        "secondary" => Some(TextLevel::Secondary),
++        "tertiary" => Some(TextLevel::Tertiary),
++        "quaternary" => Some(TextLevel::Quaternary),
++        _ => None,
++    }
++}
++
++fn tone(name: &str) -> Option<Tone> {
++    match name {
++        "default" => Some(Tone::Default),
++        "secondary" => Some(Tone::Secondary),
++        "ghost" => Some(Tone::Ghost),
++        "accent" => Some(Tone::Accent),
++        "destructive" => Some(Tone::Destructive),
++        _ => None,
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    /// A minimal document with the given JSON for its root.
++    fn tree(root: &str) -> Result<DesignedTree, ReadError> {
++        DesignedTree::read(&format!(r#"{{"version":"1.0","root":{root}}}"#))
++    }
++
++    #[test]
++    fn a_column_reads_with_its_layout_and_children() {
++        let tree = tree(
++            r#"{"type":"column","key":"main","gap":"m","padding":{"x":"l","y":"s"},
++                "align":"center","justify":"space-between",
++                "children":[
++                    {"type":"text","text":"Count: 3","style":"title","level":"secondary"},
++                    {"type":"row","gap":"xs","wrap":true,"children":[
++                        {"type":"button","label":"Up","onPress":7},
++                        {"type":"button","label":"Down","tone":"destructive","onPress":8}
++                    ]}
++                ]}"#,
++        )
++        .unwrap();
++
++        let NodeKind::Column(layout) = &tree.root.kind else {
++            panic!("a column: {:?}", tree.root);
++        };
++        assert_eq!(tree.root.key.as_deref(), Some("main"));
++        assert_eq!(layout.gap, Some(Space::M));
++        assert_eq!(layout.padding.left, Some(Space::L));
++        assert_eq!(layout.padding.top, Some(Space::S));
++        assert_eq!(layout.align, Some(Align::Center));
++        assert_eq!(layout.justify, Some(Justify::SpaceBetween));
++        assert!(!layout.wrap);
++        let NodeKind::Text(text) = &tree.root.children[0].kind else {
++            panic!("a text: {:?}", tree.root.children[0]);
++        };
++        assert_eq!(text.content, "Count: 3");
++        assert_eq!(text.style, Some(TextStyle::Title));
++        assert_eq!(text.level, Some(TextLevel::Secondary));
++        let row = &tree.root.children[1];
++        let NodeKind::Row(row_layout) = &row.kind else {
++            panic!("a row: {row:?}");
++        };
++        assert!(row_layout.wrap);
++        let NodeKind::Button(up) = &row.children[0].kind else {
++            panic!("a button: {:?}", row.children[0]);
++        };
++        assert_eq!(up.label, "Up");
++        assert_eq!(up.on_press, Some(7));
++        assert_eq!(up.tone, None);
++        let NodeKind::Button(down) = &row.children[1].kind else {
++            panic!("a button: {:?}", row.children[1]);
++        };
++        assert_eq!(down.tone, Some(Tone::Destructive));
++    }
++
++    #[test]
++    fn padding_reads_a_bare_token_and_each_side() {
++        let read = |root: &str| {
++            tree(root)
++                .map(|tree| match tree.root.kind {
++                    NodeKind::Column(layout) => layout.padding,
++                    _ => panic!("a column"),
++                })
++                .map_err(|error| error.message().to_owned())
++        };
++        assert_eq!(
++            read(r#"{"type":"column","padding":"m"}"#).unwrap(),
++            Padding {
++                top: Some(Space::M),
++                right: Some(Space::M),
++                bottom: Some(Space::M),
++                left: Some(Space::M),
++            }
++        );
++        assert_eq!(
++            read(r#"{"type":"column","padding":{"top":"xs","bottom":"l"}}"#).unwrap(),
++            Padding {
++                top: Some(Space::Xs),
++                bottom: Some(Space::L),
++                ..Padding::default()
++            }
++        );
++        assert_eq!(read(r#"{"type":"column"}"#).unwrap(), Padding::default());
++        assert_eq!(
++            read(r#"{"type":"column","padding":5}"#).unwrap_err(),
++            "its padding is not a space token or an object"
++        );
++        assert_eq!(
++            read(r#"{"type":"column","padding":{"x":"huge"}}"#).unwrap_err(),
++            "its padding's x is not a space token"
++        );
++    }
++
++    #[test]
++    fn unknown_nodes_fall_back_or_draw_their_children() {
++        let tree = tree(
++            r#"{"type":"stack","children":[
++                {"type":"marquee","fallback":{"type":"text","text":"Buy now"}},
++                {"type":"marquee","children":[{"type":"text","text":"Hi"}]},
++                {"type":"video","requires":9}
++            ]}"#,
++        )
++        .unwrap();
++
++        // An unknown node with a fallback draws it; without one its
++        // children; one whose `requires` Pane does not meet is unknown too,
++        // and with no fallback and no children draws nothing.
++        assert!(matches!(&tree.root.kind, NodeKind::Unknown(name) if name == "stack"));
++        assert!(matches!(
++            &tree.root.children[0].fallback.map(|fallback| fallback.kind.clone()),
++            Some(NodeKind::Text(_))
++        ));
++        assert!(matches!(
++            &tree.root.children[1].children[0].kind,
++            NodeKind::Text(_)
++        ));
++        let video = &tree.root.children[2];
++        assert!(matches!(video.kind, NodeKind::Unknown(_)));
++        assert!(video.fallback.is_none());
++        assert!(video.children.is_empty());
++    }
++
++    #[test]
++    fn a_newer_minor_reads_and_another_major_is_refused() {
++        // A newer minor: read for what Pane understands.
++        let newer = DesignedTree::read(
++            r#"{"version":"1.9","extra":true,"root":{"type":"column","novelty":{},
++                "children":[{"type":"text","text":"Hi","sparkle":true}]}}"#,
++        )
++        .unwrap();
++        assert!(matches!(newer.root.kind, NodeKind::Column(_)));
++
++        // Another major: refused, naming both versions.
++        let error = DesignedTree::read(r#"{"version":"2.0","root":{"type":"column"}}"#)
++            .unwrap_err()
++            .message()
++            .to_owned();
++        assert_eq!(
++            error,
++            "its tree uses UI component set 2.0; this Pane renders 1.0"
++        );
++
++        // A version Pane cannot read.
++        let error = DesignedTree::read(r#"{"version":"one","root":{"type":"column"}}"#)
++            .unwrap_err()
++            .message()
++            .to_owned();
++        assert!(error.contains("version"), "{error}");
++    }
++
++    #[test]
++    fn trees_over_a_limit_say_what_the_limit_is() {
++        let over = |root: &str| tree(root).unwrap_err().message().to_owned();
++        // Depth: 64 levels are drawn, 65 are not.
++        let nest = |levels: usize| {
++            let inner = r#"{"type":"text","text":"a"}"#;
++            (0..levels).fold(inner.to_owned(), |nested, _| {
++                format!(r#"{{"type":"column","children":[{nested}]}}"#)
++            })
++        };
++        assert!(
++            tree(&nest(MAX_DEPTH - 1)).is_ok(),
++            "a tree 64 levels deep is drawn"
++        );
++        let error = over(&nest(MAX_DEPTH));
++        assert!(
++            error.contains("65 levels deep; at most 64 are drawn"),
++            "{error}"
++        );
++        // Text: one node with too much in it.
++        let long = format!(r#"{{"type":"text","text":"{}"}}"#, "a".repeat(MAX_TEXT_CHARS + 1));
++        assert!(
++            over(&long)
++                .contains(&format!("characters; at most {MAX_TEXT_CHARS} are drawn")),
++            "{}",
++            over(&long)
++        );
++        // Nodes: one more than the ceiling.
++        let many = vec![r#"{"type":"text","text":"a"}"#; MAX_NODES + 1].join(",");
++        let many = format!(r#"{{"type":"column","children":[{many}]}}"#);
++        assert!(
++            over(&many).contains("10001 nodes; at most 10000 are drawn"),
++            "{}",
++            over(&many)
++        );
++    }
++
++    #[test]
++    fn a_tree_pane_cannot_read_says_why() {
++        let error = |document: &str| {
++            DesignedTree::read(document)
++                .unwrap_err()
++                .message()
++                .to_owned()
++        };
++        for (document, why) in [
++            ("not json", "its tree:"),
++            (r#"{"root":{}}"#, "missing field `version`"),
++            (r#"{"version":"1.0"}"#, "missing field `root`"),
++            (r#"{"version":"1.0","root":{}}"#, "missing field `type`"),
++            (
++                r#"{"version":"1.0","root":{"type":"text"}}"#,
++                "a text node has no text",
++            ),
++            (
++                r#"{"version":"1.0","root":{"type":"text","text":5}}"#,
++                "its text is not a string",
++            ),
++            (
++                r#"{"version":"1.0","root":{"type":"button"}}"#,
++                "a button node has no label",
++            ),
++            (
++                r#"{"version":"1.0","root":{"type":"button","label":"Up","onPress":"up"}}"#,
++                "its onPress is not a callback id",
++            ),
++            (
++                r#"{"version":"1.0","root":{"type":"column","gap":12}}"#,
++                "its gap is not one of its names",
++            ),
++            (
++                r#"{"version":"1.0","root":{"type":"column","wrap":"yes"}}"#,
++                "its wrap is not a boolean",
++            ),
++            (
++                r#"{"version":"1.0","root":{"type":"column","children":"none"}}"#,
++                "invalid type",
++            ),
++        ] {
++            let message = error(document);
++            assert!(message.contains(why), "{document}: {message}");
++        }
++    }
++
++    #[test]
++    fn an_unknown_token_or_property_is_left_out() {
++        // A token a newer minor added, or a property Pane does not know: the
++        // field is treated as absent, never the tree unreadable.
++        let tree = tree(
++            r#"{"type":"column","gap":"huge","align":"diag","tooltip":"Later",
++                "children":[{"type":"text","text":"Hi","style":"fancy","level":"dim"},
++                    {"type":"button","label":"Go","tone":"neon","onPress":1}]}"#,
++        )
++        .unwrap();
++        let NodeKind::Column(layout) = tree.root.kind else {
++            panic!("a column");
++        };
++        assert_eq!(layout.gap, None);
++        assert_eq!(layout.align, None);
++        let NodeKind::Text(text) = tree.root.children[0].kind else {
++            panic!("a text");
++        };
++        assert_eq!(text.style, None);
++        assert_eq!(text.level, None);
++        let NodeKind::Button(button) = tree.root.children[1].kind else {
++            panic!("a button");
++        };
++        assert_eq!(button.tone, None);
++    }
++}
+diff --git a/guests/pane-extension/wit/extension.wit b/guests/pane-extension/wit/extension.wit
+index 1e8b92b7..34ca5310 100644
+--- a/guests/pane-extension/wit/extension.wit
++++ b/guests/pane-extension/wit/extension.wit
+@@ -5,11 +5,13 @@
+ // 0036's envelope: `render` and `handle-event`, see docs/list-tree.md),
+ // forms with a text field and a choice, the operating systems an item's
+ // action supports, and custom views the extension draws from rectangles and
+-// text; and the run entry point of a command that opens no screen (ADR
+-// 0037). Both receive the command's launch record (wit/commands.wit), and
+-// every command may close the window and show toasts and HUDs
+-// (wit/feedback.wit), and use the clipboard, open things, reveal and
+-// recycle them (wit/system.wit). This
++// text; a designed view the extension describes as a tree of UI components
++// Pane renders (ADR 0036's `view` resource, docs/designed-tree.md, also
++// carried as versioned JSON); and the run entry point of a command that
++// opens no screen (ADR 0037). Both receive the command's launch record
++// (wit/commands.wit), and every command may close the window and show
++// toasts and HUDs (wit/feedback.wit), and use the clipboard, open things,
++// reveal and recycle them (wit/system.wit). This
+ // is not the full Pane SDK: the SDKs (`pane-extension`, `@pane-app/extension`) hide
+ // the JSON and the callback ids.
+ package pane:extension@0.1.0;
+@@ -214,6 +216,77 @@ interface command {
+   /// user as the result; an error is shown next to its field.
+   submit-form: async func(item-id: string, values: list<field-value>) -> result<string, form-error>;
+ 
++  /// What `view.render` answers: the view's tree, and when Pane should
++  /// ask for it again. `tree` is a JSON document naming the version of the
++  /// UI component set it uses (`{"version": "1.0", "root": ...}`, see
++  /// docs/designed-tree.md): a new UI component or property needs no WIT
++  /// change, a node Pane does not know draws the fallback the author gave
++  /// or its children, and a document of another major version is refused
++  /// naming both versions. `refresh-after-ms` asks Pane to call `render`
++  /// again after that many milliseconds, clamped to a floor of 100 ms and a
++  /// ceiling of 24 hours (#236); `none` asks for no refresh. An `Err` from
++  /// either `view` method, or a tree over Pane's limits, is the
++  /// extension's error; the view keeps its last good tree and stays open.
++  record rendered {
++    tree: string,
++    refresh-after-ms: option<u32>,
++  }
++
++  /// The user's input to a designed view, as Pane delivers it: which render
++  /// named the callback (`render`, the number the render context gave,
++  /// starting at 0 — the drawing the user saw), the `key` of the node whose
++  /// callback it was, the callback `id` the tree named, and the event's
++  /// details as a JSON object, `{}` for now. Events of one view are
++  /// delivered one at a time, in order, and Pane calls `render` after each.
++  record ui-event {
++    render: u64,
++    key: string,
++    callback: u32,
++    payload: string,
++  }
++
++  /// What a designed view's event handling answers. The navigation is
++  /// inert until the navigation stack lands (#239): Pane ignores every
++  /// field, and an extension that sets none changes nothing.
++  record outcome {
++    /// Push a new view onto the current one (#239).
++    push: option<view>,
++    /// Replace the current view with this one (#239).
++    replace: option<view>,
++    /// Pop the current view, with an optional result string (#239).
++    pop: option<string>,
++  }
++
++  /// A designed view the user has open: a screen the extension describes
++  /// as a tree of UI components Pane renders (ADR 0036). The extension
++  /// keeps the view's state in it; Pane drops the resource when the view
++  /// leaves the screen, and never uses it again. `context` is JSON too
++  /// (`{"render": 0, "ui": "1.0"}`: the render sequence number, and the
++  /// UI component set version Pane supports), so it can grow without WIT
++  /// changes.
++  resource view {
++    /// Draws the view: its tree, and when to ask again. Pane calls it
++    /// when the view opens and after each event it handled. An error is
++    /// shown to the user; the view keeps its last good tree.
++    render: async func(context: string) -> result<rendered, string>;
++
++    /// Handles the user's input: a `press` of a callback the tree named.
++    /// Pane then calls `render` and shows the result. The answer's
++    /// navigation fields are inert until #239. An error is shown to the
++    /// user; the view keeps its last good tree.
++    handle-event: async func(event: ui-event) -> result<outcome, string>;
++  }
++
++  /// Open the designed view of the command `command` (its id in
++  /// `pane.json`, a command whose entry says `"mode": "designed"`),
++  /// launched as `launch` says. Each call opens a new view with its own
++  /// state, whose first `render` Pane asks for at once. A component that
++  /// serves no designed command answers with an error; Pane never calls it
++  /// then. Not `open-view`, which opens the custom view an item's tree
++  /// named: the two stay apart until the custom view becomes a canvas node
++  /// (#242).
++  open-designed-view: async func(command: string, launch: launch-record) -> result<view, string>;
++
+   /// Open the custom view of the item with `item-id`. Each call opens a new
+   /// view with its own state.
+   open-view: async func(item-id: string) -> result<custom-view, string>;
+diff --git a/wit/extension.wit b/wit/extension.wit
+index 1e8b92b7..34ca5310 100644
+--- a/wit/extension.wit
++++ b/wit/extension.wit
+@@ -5,11 +5,13 @@
+ // 0036's envelope: `render` and `handle-event`, see docs/list-tree.md),
+ // forms with a text field and a choice, the operating systems an item's
+ // action supports, and custom views the extension draws from rectangles and
+-// text; and the run entry point of a command that opens no screen (ADR
+-// 0037). Both receive the command's launch record (wit/commands.wit), and
+-// every command may close the window and show toasts and HUDs
+-// (wit/feedback.wit), and use the clipboard, open things, reveal and
+-// recycle them (wit/system.wit). This
++// text; a designed view the extension describes as a tree of UI components
++// Pane renders (ADR 0036's `view` resource, docs/designed-tree.md, also
++// carried as versioned JSON); and the run entry point of a command that
++// opens no screen (ADR 0037). Both receive the command's launch record
++// (wit/commands.wit), and every command may close the window and show
++// toasts and HUDs (wit/feedback.wit), and use the clipboard, open things,
++// reveal and recycle them (wit/system.wit). This
+ // is not the full Pane SDK: the SDKs (`pane-extension`, `@pane-app/extension`) hide
+ // the JSON and the callback ids.
+ package pane:extension@0.1.0;
+@@ -214,6 +216,77 @@ interface command {
+   /// user as the result; an error is shown next to its field.
+   submit-form: async func(item-id: string, values: list<field-value>) -> result<string, form-error>;
+ 
++  /// What `view.render` answers: the view's tree, and when Pane should
++  /// ask for it again. `tree` is a JSON document naming the version of the
++  /// UI component set it uses (`{"version": "1.0", "root": ...}`, see
++  /// docs/designed-tree.md): a new UI component or property needs no WIT
++  /// change, a node Pane does not know draws the fallback the author gave
++  /// or its children, and a document of another major version is refused
++  /// naming both versions. `refresh-after-ms` asks Pane to call `render`
++  /// again after that many milliseconds, clamped to a floor of 100 ms and a
++  /// ceiling of 24 hours (#236); `none` asks for no refresh. An `Err` from
++  /// either `view` method, or a tree over Pane's limits, is the
++  /// extension's error; the view keeps its last good tree and stays open.
++  record rendered {
++    tree: string,
++    refresh-after-ms: option<u32>,
++  }
++
++  /// The user's input to a designed view, as Pane delivers it: which render
++  /// named the callback (`render`, the number the render context gave,
++  /// starting at 0 — the drawing the user saw), the `key` of the node whose
++  /// callback it was, the callback `id` the tree named, and the event's
++  /// details as a JSON object, `{}` for now. Events of one view are
++  /// delivered one at a time, in order, and Pane calls `render` after each.
++  record ui-event {
++    render: u64,
++    key: string,
++    callback: u32,
++    payload: string,
++  }
++
++  /// What a designed view's event handling answers. The navigation is
++  /// inert until the navigation stack lands (#239): Pane ignores every
++  /// field, and an extension that sets none changes nothing.
++  record outcome {
++    /// Push a new view onto the current one (#239).
++    push: option<view>,
++    /// Replace the current view with this one (#239).
++    replace: option<view>,
++    /// Pop the current view, with an optional result string (#239).
++    pop: option<string>,
++  }
++
++  /// A designed view the user has open: a screen the extension describes
++  /// as a tree of UI components Pane renders (ADR 0036). The extension
++  /// keeps the view's state in it; Pane drops the resource when the view
++  /// leaves the screen, and never uses it again. `context` is JSON too
++  /// (`{"render": 0, "ui": "1.0"}`: the render sequence number, and the
++  /// UI component set version Pane supports), so it can grow without WIT
++  /// changes.
++  resource view {
++    /// Draws the view: its tree, and when to ask again. Pane calls it
++    /// when the view opens and after each event it handled. An error is
++    /// shown to the user; the view keeps its last good tree.
++    render: async func(context: string) -> result<rendered, string>;
++
++    /// Handles the user's input: a `press` of a callback the tree named.
++    /// Pane then calls `render` and shows the result. The answer's
++    /// navigation fields are inert until #239. An error is shown to the
++    /// user; the view keeps its last good tree.
++    handle-event: async func(event: ui-event) -> result<outcome, string>;
++  }
++
++  /// Open the designed view of the command `command` (its id in
++  /// `pane.json`, a command whose entry says `"mode": "designed"`),
++  /// launched as `launch` says. Each call opens a new view with its own
++  /// state, whose first `render` Pane asks for at once. A component that
++  /// serves no designed command answers with an error; Pane never calls it
++  /// then. Not `open-view`, which opens the custom view an item's tree
++  /// named: the two stay apart until the custom view becomes a canvas node
++  /// (#242).
++  open-designed-view: async func(command: string, launch: launch-record) -> result<view, string>;
++
+   /// Open the custom view of the item with `item-id`. Each call opens a new
+   /// view with its own state.
+   open-view: async func(item-id: string) -> result<custom-view, string>;

@@ -1,0 +1,10 @@
+Landed on `main` in PR #273 (merge commit `d5534f45`) as `4c4c39b7d15f25b2efea12c1314d95295b38aba1`, with the review fixes in `047ef515` (the short-word stop and the candidates cap as targeted unit tests).
+
+Results, per acceptance criterion:
+
+- The brute-force reference test — `store::tests::search_answers_as_a_brute_force_reference_across_segments_memory_and_tombstones` — runs 39 queries (prefixes, inside-word fragments, misses including `abcd` against `abcxbcd`, accents, case, several words, whole names and paths) at five limits over four states: one segment; five segments plus a memory table with carried and unflushed tombstones; after reopening (log replay); after `compact`. The same entries come back in the same order as the model, and the fragment path is asserted to return exactly what the kept full scan returns, for every query word, tag and source. It ran green in the Windows and Linux shards of [37889559123](https://github.com/pane-app/pane/actions/runs/37889559123).
+- The format version is bumped to 2 and an old-version index is rebuilt, never read (`another_format_version_is_rebuilt_never_read` now covers version 1 and a newer one, and checks the old files are gone).
+- `docs/files.md`'s "The file index" describes the fragment index (trigram lists, the fragment table, the term offsets), the tombstone prefixes, the key filter and the new segment layout.
+- CI: quick tier ([37888447203](https://github.com/pane-app/pane/actions/runs/37888447203)) and verify run ([37889559123](https://github.com/pane-app/pane/actions/runs/37889559123)) green on every leg, including the macOS check compiling the platform code.
+
+The unticked row is the 10 ms p95 on the 450,000-entry tree on the user's machine: no numbers were taken (the ticket says to ask first; the machine is also used for games). The size estimate from the report stands at about 88–101 B per entry (42–48 MB for a home-sized index, under the 61.8 MB target) and the benchmark's disk row will confirm it when it runs.

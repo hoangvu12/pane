@@ -1,0 +1,220 @@
+243	OPEN	ready-for-agent,implementation		Let a view push a re-render the moment its data arrives (flagged)
+242	OPEN	ready-for-agent,implementation		Draw on a canvas node, and move the colour picker and every custom view onto it
+241	OPEN	ready-for-agent,implementation		Rebuild Form on the tree with the full field set, and move every sample and extension off the typed form
+240	OPEN	ready-for-agent,implementation		Build List's additions, Detail with Markdown and Grid on the tree
+239	OPEN	ready-for-agent,implementation		Push, replace and pop views on a navigation stack
+238	OPEN	ready-for-agent,implementation		Keep focus, typing, selection and scroll across re-renders by key, with partially controlled inputs
+237	OPEN	ready-for-agent,implementation		Give extension views the full layout primitives, Pane's shared UI components, tokens and raw values, icons and images
+236	OPEN	ready-for-agent,implementation		Re-render a view after some milliseconds, with interval and loading helpers in both SDKs
+235	OPEN	ready-for-agent,implementation		Draw extension views as a tree of rows, columns, text and buttons, written in JSX or a Rust builder
+231	OPEN	needs-triage		macOS runners stopped reporting a file copied by another program to the pasteboard
+228	CLOSED	ready-for-agent,implementation	hoangvu12	Put Stop responding back in its place in the Rust settings sample, which the smokes count to
+227	CLOSED	ready-for-agent,implementation	hoangvu12	Fix the Actions-header test of the default icons on Windows and macOS
+225	OPEN	ready-for-agent,implementation		Add pane-ext pack
+224	OPEN	ready-for-agent,implementation		Generate the pane.json schema and add pane-ext check
+223	OPEN	ready-for-agent,implementation		Prepare the pane-app/extension-template repository
+222	OPEN	ready-for-agent,implementation		Add Create Extension and Import Extension to Pane
+221	OPEN	ready-for-agent,implementation		Add the templates, pane-ext new and npm create @pane-app
+220	CLOSED	ready-for-agent,implementation		Make the SDKs publishable as pane-extension and @pane-app/extension
+219	OPEN	ready-for-agent,implementation		Ship pane-ext as @pane-app/cli with per-platform npm packages, and retire pane_js.py
+218	OPEN	ready-for-agent,implementation		Build JS/TS packages in the shared build crate with the prebuilt componentizer
+217	OPEN	ready-for-agent,implementation		Add pane-ext dev and the local channel to the running Pane
+216	CLOSED	ready-for-agent,implementation	hoangvu12	Move development mode's build into a shared build crate
+215	CLOSED	ready-for-agent,implementation	hoangvu12	Build the patched componentizer in CI for Windows, macOS and Linux on x64 and arm64
+214	OPEN	ready-for-agent,implementation		Show an error overlay with the stack trace when a developed extension crashes
+213	CLOSED	ready-for-agent,implementation		Show a developed extension's log on a "Logs for <title>" screen
+212	CLOSED	ready-for-agent,implementation	hoangvu12	Capture extension logs from guests and Pane, with bounds, a development log file and an in-memory window
+208	OPEN	needs-triage,specification		Extension API versions: a new version for every breaking change, and the previous one kept for a release
+207	OPEN	needs-triage,specification		Official extensions: move the defaults into pane-app repositories and install the commits each release pins
+206	OPEN	ready-for-agent,implementation		Recall recent queries with Up on an empty query
+205	OPEN	ready-for-agent,implementation		Show inline argument fields after the query, and jump into them with an alias and a space
+204	OPEN	ready-for-agent,implementation		List a typed folder's entries in root search and browse them with Tab and Shift+Tab
+203	OPEN	ready-for-agent,implementation		Hold Enter, Tab, Ctrl+K, Ctrl+digit and action shortcuts until the current query's list is published
+202	OPEN	ready-for-agent,implementation		Stop paying a guest instance per keystroke, a full re-rank per answer and an applications list per show in root search
+201	OPEN	ready-for-agent,implementation		Publish a query's list when its providers answered or 200 ms passed, and merge late answers without flicker
+200	OPEN	ready-for-agent,implementation		Let the user reset what root search learned, per result and for all, and turn learning off
+199	OPEN	ready-for-agent,implementation		Learn from what the user chooses: frecency and learned queries in ranking, and the blank query ordered by frecency
+198	OPEN	needs-triage,specification		Collections: install one, some or all of the extensions a Git repository lists
+197	OPEN	ready-for-agent,implementation		Rank root search with Raycast's comparator, find results by keywords and other names, and tell same-named rows apart
+196	OPEN	ready-for-agent,implementation		Answer colours, date and time words, and percentages in the calculator
+195	OPEN	ready-for-agent,implementation		Understand typed web addresses and paths, and let commands appear only for them
+194	OPEN	ready-for-agent,implementation		Select the first fallback when nothing else matches
+193	OPEN	ready-for-agent,implementation		Match root search fuzzily and without accents, with a Search sensitivity setting and highlights
+192	OPEN	ready-for-agent,implementation		Share clipboard history with its view instead of cloning it per frame, and batch its writes
+191	OPEN	ready-for-agent,implementation		Extract an application's icon again only when its source changed or the picture is a week old
+190	OPEN	ready-for-agent,implementation		Let the runtime's epoch ticker and watchdog sleep while no guest call runs
+189	OPEN	ready-for-agent,implementation		Measure Pane's cost while hidden and count wake-ups per thread, on Linux and Windows
+188	OPEN	ready-for-agent,specification		Idle cost: nothing runs while Pane is hidden and quiet, and nothing is redone that did not change
+187	OPEN	ready-for-agent,implementation		Catch up 10,000 changes within 1 s: build the folder-id table once, and merge segments in tiers off the coordinator thread
+186	OPEN	ready-for-agent,implementation		Re-index a changed file within 10 ms by keeping the ignore rules between batches
+185	OPEN	ready-for-agent,implementation		Answer file queries within 10 ms at the 95th percentile, through an index of word fragments and cheaper currency checks
+184	OPEN	ready-for-agent,implementation		Leave network and removable roots out on Windows and macOS, and count churn only for paths the index admits
+183	OPEN	ready-for-agent,implementation		Measure misses, typed-out prefixes and a multi-segment index in the file-index benchmark, and guard it in CI
+182	OPEN	ready-for-agent,implementation		Describe the Open Pane hotkey and Settings' Shortcuts page in the hotkeys document and the decision index
+177	CLOSED	ready-for-agent,implementation		Make Search Files work like Raycast's: no folder to choose, a type dropdown, Recently Used, and a detail pane with preview and metadata
+176	CLOSED	ready-for-agent,implementation		Add the File search settings page and the index's safety valves
+175	CLOSED	ready-for-agent,implementation		Index the home folder, keep it current on every system, and show file rows in root search through a file-index host interface
+174	CLOSED	ready-for-agent,implementation		Build and measure the file index's walker and engine on every system, and decide between minidex and Pane's own
+173	CLOSED	ready-for-agent,implementation		Find applications from Desktop shortcuts, taskbar pins, URL and ClickOnce shortcuts on Windows
+172	CLOSED	ready-for-agent,implementation		Show each application's own icon, bare, from a host icon cache on every system
+171	CLOSED	ready-for-agent,implementation		Keep the application list current by watching for installs and removals on every system
+170	CLOSED	ready-for-agent,implementation		Show applications under their localized names, find them by program name and keywords, and tell same-name applications apart
+169	CLOSED	ready-for-agent,implementation		Give applications a stable identity on every system, carrying old ids over
+168	CLOSED	ready-for-agent,implementation		Manage extensions in Settings, one page per extension, and remove the launcher's Manage extensions screen
+167	CLOSED	ready-for-agent,implementation		Keep copied images and files in clipboard history
+166	CLOSED	ready-for-agent,implementation		Record clipboard history from the first start, with a type dropdown, day groups and the Information detail instead of the badge and tabs
+165	CLOSED	ready-for-agent,implementation		Virtualize every list Pane draws and bound the per-keystroke work behind long lists
+164	CLOSED	ready-for-agent,implementation		Give commands that only answer root search no row of their own, and make Calculator and Applications such providers
+163	CLOSED	ready-for-agent,implementation		Give the default extensions their own coloured tile icons
+162	CLOSED	ready-for-agent,implementation		Take the samples out of root search and the default set, and drop the heading line above extension views
+161	CLOSED	ready-for-agent,specification		Default extensions like Raycast: their own icons, no rows for root providers, fast lists, Search Files and Clipboard History as Raycast has them, and extensions managed in Settings
+159	OPEN	ready-for-agent,implementation		Hand a package's state to its new code on Reload, Update and development-mode reload, and reopen the screen that was open for every package
+158	OPEN	ready-for-agent,implementation		Let extensions register root items, timers, folder watchers and providers at run time, undone when dropped or when the generation ends, with an opt-in activation entry point
+157	OPEN	ready-for-agent,implementation		Show each extension's missing or broken requirements, what it provides and the cycles it is part of in Manage extensions
+156	OPEN	ready-for-agent,implementation		Make commands wait while no provider can serve a required capability, and fan calls out to every provider where the use says so
+155	OPEN	ready-for-agent,implementation		Show capabilities in the install preview, install a consumer's default provider, and let the user disable a required dependency alone
+154	OPEN	ready-for-agent,implementation		Choose which extension provides a capability in Settings, defaulting to the first installed and falling back while the chosen one cannot serve
+153	OPEN	ready-for-agent,implementation		Let packages provide and use named capabilities, and route each call to a capability through Pane
+152	OPEN	ready-for-agent,implementation		Let commands wait while a required dependency is disabled, paused or missing, and come back by themselves when it returns
+151	OPEN	ready-for-agent,specification		Capabilities between extensions: providers Pane brokers, commands that wait for what they need, owned registrations and state kept across a reload
+150	CLOSED	ready-for-agent,implementation	hoangvu12	Make Search Files own the search field with file actions, and give Clipboard History and Calculator real actions
+149	CLOSED	ready-for-agent,implementation	hoangvu12	Rework Quicklinks into Search, Create, Import and Export commands, with real actions, any target and indexed results
+148	CLOSED	ready-for-agent,implementation	hoangvu12	Declare paste, the front application and selected text as host functions, with copying as paste's fallback until #125
+147	CLOSED	ready-for-agent,implementation	hoangvu12	Let extensions run system programs, end everything a run started with its call, and run elevated on Windows
+146	CLOSED	ready-for-agent,implementation	hoangvu12	Ask the user to confirm, remember "Don't ask again", and reset it from the extension's card
+145	CLOSED	ready-for-agent,implementation	hoangvu12	Let a command copy, read the clipboard, open anything, reveal and recycle, with standard actions that close the window
+144	CLOSED	ready-for-agent,implementation	hoangvu12	Ask for a command's typed arguments before it runs, with a form for missing required ones until inline fields exist
+143	CLOSED	ready-for-agent,implementation	hoangvu12	Declare preferences in pane.json, set up a command before its first run, and edit them on the extension's card
+142	CLOSED	ready-for-agent,implementation	hoangvu12	Show web images and system file and application icons in rows, downloaded and cached by Pane
+141	CLOSED	ready-for-agent,implementation	hoangvu12	Let a command close the window, pop to root and show a HUD or an updatable toast with actions
+140	CLOSED	ready-for-agent,implementation	hoangvu12	Open submenus in the Actions panel, given at once or asked for when opened, and search within them
+139	CLOSED	ready-for-agent,implementation	hoangvu12	Give rows, packages and commands icons, and give rows accessories and tooltips
+138	CLOSED	ready-for-agent,implementation	hoangvu12	Run a no-view command on Enter, and hand every command its launch record
+137	CLOSED	ready-for-agent,implementation	hoangvu12	Give each item several actions, run by Enter, Ctrl+Enter, their own shortcuts and the Actions panel
+136	CLOSED	ready-for-agent,implementation	hoangvu12	Serve other extensions' calls while one call waits on the user, a program, a helper or the network
+135	CLOSED	ready-for-agent,implementation	hoangvu12	Carry a command's List view through ADR 0036's typed envelope as a versioned JSON tree, with nothing visible changing
+134	CLOSED	ready-for-agent,implementation	hoangvu12	Cap each guest's memory at 128 MiB and say so when a guest runs out of it
+133	OPEN	ready-for-agent,implementation		Keep a local, redacted log and tell the user at the next start when Pane quit unexpectedly
+132	OPEN	ready-for-agent,implementation		Announce the selected row through a live region while focus stays in the query field
+131	OPEN	ready-for-agent,implementation		Bring the tray icon back after Explorer restarts, keep its identity, and match it to the taskbar's theme
+130	OPEN	ready-for-agent,implementation		Protect local credentials and clipboard history on disk with DPAPI on Windows
+129	OPEN	ready-for-agent,specification		Quick fixes: protected credentials, a tray icon that survives Explorer, screen-reader announcements, a correct hotkeys document, and a local crash record
+128	OPEN	ready-for-agent,specification		Making extensions easier to build: author logs, Create Extension in Pane, the `pane-ext` CLI with published SDKs, templates, a manifest schema, utilities and diagnostics
+127	OPEN	ready-for-agent,specification		Extension updates: update default extensions, check on demand, and report grouped results
+126	OPEN	ready-for-agent,specification		Instant file search: Pane indexes the home folder and keeps the index current on Windows, macOS and Linux
+125	OPEN	ready-for-agent,specification		Windows power features: hotkeys that never fail, paste and selected text, Switch Windows, system commands and Run
+124	CLOSED	ready-for-agent,specification		Applications done properly: stable identity, real names and icons, live updates and more sources
+123	OPEN	ready-for-agent,specification		Launcher polish: Raycast's selection, icons, loading and feedback timing, and keyboard extras within the accepted UI
+122	OPEN	ready-for-agent,specification		Root search like Raycast: fuzzy matching, learning from choices, inline arguments and typed-query understanding
+121	OPEN	ready-for-agent,specification		Extension UI you can design: a UI component tree Pane renders, written with a GPUI-like builder or JSX, with List, Detail, Grid and Form built on it
+120	CLOSED	ready-for-agent,specification		Extension commands like Raycast: actions, host functions, icons, preferences, arguments and no-view commands
+117	OPEN	ready-for-human		A long invoke chord overflows the narrow launcher's footer on macOS
+111	CLOSED	ready-for-agent,implementation		Give the host settings one commit path and one rollback for applied side effects, without changing behaviour
+110	CLOSED	ready-for-agent,implementation		Separate window presence and frame motion from LauncherWindow without changing behaviour
+109	CLOSED	ready-for-agent,implementation		Bring the glossary, port notes and notice review in line with the redesign
+108	OPEN	ready-for-human,implementation		Run the redesign's visible real-window checks on Windows
+107	CLOSED	ready-for-agent,implementation		Re-record the Windows UI evidence for the redesign on the current head
+106	CLOSED	ready-for-agent,implementation		Cover the redesign's new launcher and keyboard settings with window tests
+105	OPEN	ready-for-agent,specification		Record the Raycast-style launcher and Settings redesign
+104	OPEN	ready-for-human,implementation		Follow the reduced-motion preference on macOS and Linux
+103	CLOSED	ready-for-agent,implementation	hoangvu12	Accept the integrated Windows UI with component-by-component evidence
+102	CLOSED	ready-for-agent,implementation	hoangvu12	Port supported text clipboard history into the split view
+101	CLOSED	ready-for-agent,implementation	hoangvu12	Port pinned home composition with five persistent quick slots
+100	CLOSED	ready-for-agent,prerequisite		Record the approved UI scope and presentation data contracts
+99	CLOSED	ready-for-agent,implementation	hoangvu12	Apply shared controls to remaining Settings and host screens
+98	CLOSED	ready-for-agent,implementation	hoangvu12	Port Appearance controls and live preview for supported settings
+97	CLOSED	ready-for-agent,implementation	hoangvu12	Port Settings window, sidebar and page composition
+96	CLOSED	ready-for-agent,implementation	hoangvu12	Port no-results and computed-result layouts using existing data
+95	CLOSED	ready-for-agent,implementation	hoangvu12	Port the launcher footer and contextual Actions panel
+94	CLOSED	ready-for-agent,implementation	hoangvu12	Port rich result rows and exact pointer/keyboard selection
+93	CLOSED	ready-for-agent,implementation	hoangvu12	Match type, icon tiles and Windows keycaps in real controls
+92	CLOSED	ready-for-agent,implementation	hoangvu12	Match the launcher frame and prove Windows material treatment
+91	CLOSED	ready-for-agent,implementation	hoangvu12	Establish the Windows reference/native comparison workbench
+90	CLOSED	ready-for-agent,specification		Port Pane's Windows UI faithfully from the authored reference
+88	CLOSED	ready-for-agent,implementation		Polish popup, hover and press micro-transitions
+87	CLOSED	ready-for-agent,implementation		Add subtle Settings section and group transitions
+86	CLOSED	ready-for-agent,implementation	hoangvu12	Add subtle command open and back transitions with shared motion policy
+85	CLOSED	ready-for-agent,implementation		Add a Pane-styled searchable select to Settings
+84	CLOSED	ready-for-agent,release-validation		Verify the integrated settings and shortcut experience
+83	CLOSED	ready-for-agent,implementation		Search Settings and jump to matching controls
+82	CLOSED	ready-for-agent,implementation		Expose updates and diagnostics in About
+81	CLOSED	ready-for-agent,implementation		Manage extensions through Settings
+80	CLOSED	ready-for-agent,implementation		Configure launch at login
+79	CLOSED	ready-for-agent,implementation		Control Pane through the tray or menu bar
+78	CLOSED	ready-for-agent,implementation		Configure launcher placement and reopening
+77	CLOSED	ready-for-agent,implementation		Rebind supported in-app navigation actions
+76	CLOSED	ready-for-agent,implementation		Edit command global hotkeys in Shortcuts
+75	CLOSED	ready-for-agent,implementation		Browse commands and edit aliases in Shortcuts
+74	CLOSED	ready-for-agent,implementation		Record the global Open Pane hotkey
+73	CLOSED	ready-for-agent,implementation		Change and persist appearance from Settings
+72	CLOSED	ready-for-agent,implementation	hoangvu12	Open an independent Settings window
+71	CLOSED	ready-for-agent,implementation	hoangvu12	Replace footer hints with the selected primary action
+70	CLOSED	ready-for-agent,specification		Settings and shortcuts: command footer, independent Settings window, and global Pane hotkey
+68	OPEN	ready-for-agent,release-validation		Verify the combined cross-platform launcher build and publish its support evidence
+67	OPEN	ready-for-agent,implementation		Deliver an intentional Linux opaque launcher and verify native interaction
+66	OPEN	ready-for-agent,implementation		Deliver macOS launcher vibrancy using the relevant Zui material fix
+65	CLOSED	ready-for-agent,implementation	hoangvu12	Make Windows launcher glass visibly blur the desktop and remain usable when suppressed
+64	CLOSED	ready-for-agent,implementation	hoangvu12	Deliver the dark and light launcher with shared visuals and usable narrow layouts
+63	CLOSED	ready-for-agent,implementation	hoangvu12	Build Pane reproducibly against a GPUI CE fork with corrected Windows transparency
+62	CLOSED	ready-for-agent,implementation	hoangvu12	Preserve the UI proof and organize launcher presentation without changing behavior
+61	OPEN	ready-for-agent,specification		Launcher UI: shared dark/light visuals and cross-platform native materials
+60	CLOSED	ready-for-agent,implementation	hoangvu12	The release's default extensions are the calculator, applications, quicklinks, files and clipboard history
+59	CLOSED	ready-for-agent,implementation	hoangvu12	Automatic extension updates never run in the real application (the updater's launcher weak dies at with_development)
+58	CLOSED	ready-for-agent,implementation	hoangvu12	A confirmation screen stops answering input after a long flow
+57	CLOSED	release-validation		Validate Pane release candidates on supported platforms
+56	CLOSED	ready-for-agent,implementation		Install a Pane application update by user choice on Linux
+55	CLOSED	ready-for-agent,implementation		Install a Pane application update by user choice on macOS
+54	CLOSED	ready-for-agent,implementation		Install a Pane application update by user choice on Windows
+53	CLOSED	ready-for-agent,implementation		Install Pane and acquire its calculator on Linux
+52	CLOSED	ready-for-agent,implementation		Install Pane and acquire its calculator on macOS
+51	CLOSED	ready-for-agent,implementation		Install Pane and acquire its calculator on Windows
+50	CLOSED	ready-for-agent,implementation	hoangvu12	Update a tracked Git extension without changing its identity
+49	CLOSED	ready-for-agent,implementation		Update an eligible npm extension at a safe activation boundary
+48	CLOSED	ready-for-agent,implementation		Run a continuing extension service and stop it on disable
+47	CLOSED	ready-for-agent,implementation		Run a scheduled extension task and stop it on disable
+46	CLOSED	ready-for-agent,implementation		Install and run a Git-distributed component package
+45	CLOSED	ready-for-agent,implementation		Install and run an npm-distributed component package
+44	CLOSED	ready-for-agent,implementation		Uninstall required dependents together or cancel
+43	CLOSED	ready-for-agent,implementation		Disable required dependents together or cancel
+42	CLOSED	ready-for-agent,implementation		Install missing required dependencies with a local extension
+41	CLOSED	ready-for-agent,implementation		Delete retained data after its extension is uninstalled
+40	CLOSED	ready-for-agent,implementation		Uninstall an extension with an explicit saved-data choice
+39	CLOSED	ready-for-agent,implementation		Clear an extension's cache without deleting saved data
+38	CLOSED	ready-for-agent,implementation		Capture opt-in clipboard history on Linux
+37	CLOSED	ready-for-agent,implementation		Capture opt-in clipboard history on macOS
+36	CLOSED	ready-for-agent,implementation		Expire and delete saved clipboard history
+35	CLOSED	ready-for-agent,implementation		Capture opt-in clipboard history on Windows
+34	CLOSED	ready-for-agent,implementation		Open an extension command with a global hotkey on Linux
+33	CLOSED	ready-for-agent,implementation		Open an extension command with a global hotkey on macOS
+32	CLOSED	ready-for-agent,implementation		Open an extension command with a global hotkey on Windows
+31	CLOSED	ready-for-agent,implementation		Invoke a command through an alias or explicit fallback
+30	CLOSED	ready-for-agent,implementation		Search an online service inside its command
+29	CLOSED	ready-for-agent,implementation		Find and open a file within a selected folder
+28	CLOSED	ready-for-agent,implementation		Create and invoke a persistent URL quicklink
+27	CLOSED	ready-for-agent,implementation		Show a calculator result in root search
+26	CLOSED	ready-for-agent,implementation		Launch a Linux application from root search
+25	CLOSED	ready-for-agent,implementation		Launch a macOS application from root search
+24	CLOSED	ready-for-agent,implementation		Launch a Windows application from root search
+23	CLOSED	ready-for-agent,implementation		Find and invoke installed commands through root search
+22	CLOSED	ready-for-agent,implementation		Call an explicit operation in another extension
+21	CLOSED	ready-for-agent,implementation		Choose a color in an extension-owned interactive view
+20	CLOSED	ready-for-agent,implementation		Submit and validate a native form from an extension
+19	CLOSED	ready-for-agent,implementation		Explain an unavailable extension action without hiding working actions
+18	CLOSED	ready-for-agent,implementation		Recover through the UI when a guest stops responding
+17	CLOSED	ready-for-agent,implementation		Keep recovery controls usable after a runtime crash
+16	CLOSED	ready-for-agent,implementation		Pause an attributable broken extension and offer Retry
+15	CLOSED	ready-for-agent,implementation		Run and stop a packaged native helper
+14	CLOSED	ready-for-agent,implementation		Discard late guest results after reload or disable
+13	CLOSED	ready-for-agent,implementation		Reload JS and TS extensions after saving valid source
+12	CLOSED	ready-for-agent,implementation		Reload a Rust extension after saving valid source
+11	CLOSED	ready-for-agent,implementation		Reload one extension without restarting Pane
+10	CLOSED	ready-for-agent,implementation		Disable an extension and retain its settings after restart
+9	CLOSED	ready-for-agent,implementation		Install and run a local extension package
+8	CLOSED	ready-for-agent,implementation		Build and run the sample command natively on Linux
+7	CLOSED	ready-for-agent,implementation		Build and run the sample command natively on macOS
+6	CLOSED	ready-for-agent,implementation		Run JS and TS versions of the native sample command
+5	CLOSED	ready-for-agent,implementation		Run one Rust command in Pane's native window
+4	CLOSED	ready-for-agent,prerequisite		Establish per-platform resource and latency targets
+3	CLOSED	ready-for-agent,prerequisite		Resolve licensing terms and distribution notices
+2	CLOSED	ready-for-agent,prerequisite		Validate the JS/TS WASI 0.3 backend and toolchain
+1	CLOSED	ready-for-agent,specification		Pane: extensible desktop launcher specification

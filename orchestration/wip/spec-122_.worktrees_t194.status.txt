@@ -1,0 +1,7 @@
+ M crates/pane-core/src/launcher.rs
+ M crates/pane-core/src/launcher/aliases.rs
+ M crates/pane-core/tests/aliases.rs
+ M crates/pane-core/tests/arguments.rs
+ M crates/pane-core/tests/no_view.rs
+ M crates/pane/src/features/announcer.rs
+ M crates/pane/src/features/root_search/layouts.rs

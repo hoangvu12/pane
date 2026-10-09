@@ -1,0 +1,12 @@
+ M crates/pane-core/src/feedback.rs
+ M crates/pane-core/src/launcher/clipboard_view.rs
+ M crates/pane-core/src/launcher/feedback.rs
+ M crates/pane-core/src/launcher/own_actions.rs
+ M crates/pane-core/src/runtime/host_functions.rs
+ M crates/pane-core/tests/feedback.rs
+ M crates/pane-core/tests/paste.rs
+ M crates/pane-core/tests/quicklinks.rs
+ M crates/pane-core/tests/system.rs
+ M crates/pane/src/app.rs
+ M crates/pane/src/features/hud.rs
+ M crates/pane/src/features/toast.rs

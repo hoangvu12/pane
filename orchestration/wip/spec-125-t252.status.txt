@@ -1,0 +1,4 @@
+ M crates/pane-core/src/hotkeys.rs
+ M crates/pane-core/src/hotkeys/macos.rs
+ M crates/pane-core/src/hotkeys/x11.rs
+?? crates/pane-core/src/hotkeys/recognizer.rs

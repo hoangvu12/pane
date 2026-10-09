@@ -1,0 +1,207 @@
+diff --git a/crates/pane-core/src/launcher.rs b/crates/pane-core/src/launcher.rs
+index d01d0af6..c9417fb6 100644
+--- a/crates/pane-core/src/launcher.rs
++++ b/crates/pane-core/src/launcher.rs
+@@ -103,6 +103,7 @@ mod shortcuts;
+ mod subtitles;
+ mod system;
+ mod uninstall;
++mod update_results;
+ mod updates;
+ 
+ use acquire::{Acquisitions, Defaults};
+@@ -136,6 +137,7 @@ pub use setup::{
+ };
+ pub use shortcuts::{ShortcutCatalog, ShortcutCommand, ShortcutGroup};
+ pub use submenus::{OpenSubmenu, SubmenuState};
++pub use update_results::{UpdateGroup, UpdateResult, UpdateResults};
+ pub use updates::UpdateHold;
+ 
+ /// The id of the root row that installs a package from a local folder.
+@@ -220,6 +222,12 @@ pub enum Screen {
+     /// The installed packages, each enabled or disabled, with lines of
+     /// information under the title.
+     Extensions { details: Vec<String> },
++    /// The update results: what the last pass of the automatic updates
++    /// came to, grouped as Updated, Skipped and Failed (empty groups
++    /// hidden), each row opening its extension's page in Settings, with
++    /// `query` typed into its search field filtering the rows (#256; see
++    /// `update_results`).
++    UpdateResults { query: String },
+     /// A custom view opened from an item of the command's list view. It has
+     /// no rows.
+     CustomView(CustomViewSnapshot),
+@@ -276,12 +284,15 @@ pub enum Screen {
+ 
+ /// Where in Pane's Settings window a root row is handled (see
+ /// [`Launcher::selected_settings_target`]).
+-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++#[derive(Clone, Debug, PartialEq, Eq)]
+ pub enum SettingsTarget {
+     /// The Settings window, wherever it is.
+     Settings,
+     /// Its extensions: "Manage Extensions".
+     Extensions,
++    /// The page of the installed extension whose identity key this is: the
++    /// update results' rows (#256).
++    Extension(String),
+     /// Its install flow from a folder.
+     InstallFromFolder,
+     /// Its install flow from npm.
+@@ -535,9 +546,9 @@ impl LauncherView {
+         }
+     }
+ 
+-    /// The text of the search field on screen: root search's query, or the
+-    /// search of an open command that searches as the user types; `None` on
+-    /// screens without one.
++    /// The text of the search field on screen: root search's query, the
++    /// search of an open command that searches as the user types, or the
++    /// update results view's filter; `None` on screens without one.
+     pub fn search_field(&self) -> Option<&str> {
+         self.screen.search_field()
+     }
+@@ -577,12 +588,14 @@ impl LauncherView {
+ }
+ 
+ impl Screen {
+-    /// The text of this screen's search field: root search's query, or the
+-    /// search of an open command that searches as the user types; `None`
+-    /// on a screen without one.
++    /// The text of this screen's search field: root search's query, the
++    /// search of an open command that searches as the user types, or the
++    /// update results view's filter; `None` on a screen without one.
+     pub fn search_field(&self) -> Option<&str> {
+         match self {
+-            Screen::Root { query } | Screen::CommandSearch { query } => Some(query),
++            Screen::Root { query }
++            | Screen::CommandSearch { query }
++            | Screen::UpdateResults { query } => Some(query),
+             _ => None,
+         }
+     }
+@@ -826,6 +839,10 @@ struct State {
+     /// eligible package updates in the background, and which packages the
+     /// user turned it off for.
+     update_controls: updates::UpdateControls,
++    /// The update results (see `update_results`): the latest pass's, kept
++    /// across restarts until a pass that changed or failed something
++    /// replaces them, and which of their failures has been announced.
++    update_results: update_results::Kept,
+     /// Pane's own keys in force, which no action shortcut takes (see
+     /// `item_actions`).
+     pane_keys: PaneKeys,
+@@ -1191,6 +1208,15 @@ enum Entry {
+     /// Turn automatic updates of every eligible package (with `None`), or
+     /// of this installed package, on or off (extension list).
+     ToggleUpdates(Option<PackageIdentity>),
++    /// One row of the update results view: the extension the result is
++    /// about, by its identity key, and which group it is in (#256).
++    /// Activating it opens the extension's page in Settings, which the
++    /// window does (see [`Launcher::selected_settings_target`]).
++    UpdateResult {
++        /// The extension's identity key ([`PackageIdentity::key`]).
++        key: String,
++        group: update_results::UpdateGroup,
++    },
+     /// Disable this installed package and the packages that require it,
+     /// which the confirmation showed (confirmation).
+     DisableAll(PackageIdentity, Vec<PackageIdentity>),
+@@ -1433,6 +1459,10 @@ impl Launcher {
+             .as_ref()
+             .and_then(|installation| updates::UpdateControls::open(&installation.dir))
+             .unwrap_or_default();
++        let update_results = installation
++            .as_ref()
++            .and_then(|installation| update_results::Kept::open(&installation.dir))
++            .unwrap_or_default();
+         let logs = runtime.as_ref().map(Runtime::logs).unwrap_or_default();
+         let developing = Arc::new(Developing::new(None, None, logs));
+         // A web image, a system icon or an application's icon that loaded
+@@ -1503,6 +1533,7 @@ impl Launcher {
+             launches: Arc::default(),
+             runtime_slow: None,
+             update_controls,
++            update_results,
+             pane_keys: PaneKeys::default(),
+             reported_unbound: Vec::new(),
+             open_command: None,
+@@ -2012,6 +2043,15 @@ impl Launcher {
+     /// asked then, and the opened command never is from root search.
+     pub fn set_query(&self, query: &str) -> impl Future<Output = ()> + Send + 'static {
+         let mut state = self.lock();
++        // The update results view's own search: filtering its rows, which
++        // needs no call and nothing awaited (#256).
++        let in_results = match &state.view.screen {
++            Screen::UpdateResults { query: current } if current != query => {
++                self.search_results_view(&mut state, query);
++                true
++            }
++            _ => false,
++        };
+         let in_command = match &state.view.screen {
+             Screen::CommandSearch { query: current } if current != query => {
+                 self.search_in_command(&mut state, query)
+@@ -2038,6 +2078,9 @@ impl Launcher {
+         drop(state);
+         let launcher = self.clone();
+         async move {
++            if in_results {
++                return;
++            }
+             if let Some(searching) = in_command {
+                 searching.await;
+             }
+@@ -2482,6 +2525,8 @@ impl Launcher {
+         match entry {
+             Entry::Settings => Some(SettingsTarget::Settings),
+             Entry::Manage => Some(SettingsTarget::Extensions),
++            // The update results' row: the extension's own page (#256).
++            Entry::UpdateResult { key, .. } => Some(SettingsTarget::Extension(key.clone())),
+             Entry::InstallFromFolder => Some(SettingsTarget::InstallFromFolder),
+             Entry::AskNpm => Some(SettingsTarget::InstallFromNpm),
+             Entry::AskGit => Some(SettingsTarget::InstallFromGit),
+@@ -2569,10 +2614,16 @@ impl Launcher {
+             Screen::CommandSearch { query } if !query.is_empty() => {
+                 self.clear_search_in_command(&mut state);
+             }
++            // Escape clears the results view's search before leaving it,
++            // as it clears root search's query (#256).
++            Screen::UpdateResults { query } if !query.is_empty() => {
++                self.search_results_view(&mut state, "");
++            }
+             Screen::Command
+             | Screen::CommandSearch { .. }
+             | Screen::Package { .. }
+-            | Screen::Extensions { .. } => self.show_root(&mut state, None),
++            | Screen::Extensions { .. }
++            | Screen::UpdateResults { .. } => self.show_root(&mut state, None),
+             Screen::Root { query } => {
+                 if !query.is_empty() {
+                     self.search(&mut state, "");
+@@ -2904,8 +2955,13 @@ impl Launcher {
+                 self.show_git_form(state);
+                 Pending::Nothing
+             }
+-            // The window acts on these, not the launcher.
+-            Entry::InstallFromFolder | Entry::ChooseFolder(_) | Entry::Settings => Pending::Nothing,
++            // The window acts on these, not the launcher: the Settings
++            // rows open the Settings window, and the update results' row
++            // its extension's page in it (#256).
++            Entry::InstallFromFolder
++            | Entry::ChooseFolder(_)
++            | Entry::Settings
++            | Entry::UpdateResult { .. } => Pending::Nothing,
+             Entry::Open(opening) => {
+                 if opening.no_view {
+                     Launcher::begin_run(state);
+@@ -3368,6 +3424,9 @@ impl Launcher {
+         match &state.view.screen {
+             Screen::Root { .. } => self.refresh_root(state),
+             Screen::Extensions { .. } => self.refresh_extensions(state),
++            // A pass replaced the results, or one of their rows became a
++            // failure: the view lists what the record holds now (#256).
++            Screen::UpdateResults { .. } => self.refresh_results_view(state),
+             Screen::Command
+             | Screen::CommandSearch { .. }
+             | Screen::Package { .. }

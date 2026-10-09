@@ -1,0 +1,93 @@
+[workspace]
+members = ["crates/core", "crates/runtime", "napi"]
+default-members = [".", "napi"]
+resolver = "2"
+
+[workspace.package]
+version = "0.4.5"
+edition = "2024"
+rust-version = "1.94"
+license = "Apache-2.0"
+repository = "https://github.com/andreiltd/componentize-qjs"
+homepage = "https://github.com/andreiltd/componentize-qjs"
+
+[workspace.dependencies]
+componentize-qjs = { path = "crates/core", version = "0.4.5", default-features = false }
+componentize-qjs-cli = { path = ".", version = "0.4.5", default-features = false }
+anyhow = "1.0"
+clap = { version = "4", features = ["derive"] }
+tokio = { version = "1", default-features = false, features = ["rt", "macros"] }
+wasmtime = { version = "47", features = ["component-model", "async"] }
+wasmtime-wasi = { version = "47", default-features = false, features = ["p2", "p3"] }
+wit-parser = "0.258"
+
+[package]
+name = "componentize-qjs-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "CLI for converting JavaScript to WebAssembly components using QuickJS"
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme = "README.md"
+
+[package.metadata.binstall]
+pkg-url = "{ repo }/releases/download/v{ version }/componentize-qjs-v{ version }-{ target }.{ archive-format }"
+bin-dir = "componentize-qjs-v{ version }-{ target }/{ bin }{ binary-ext }"
+pkg-fmt = "tgz"
+
+[package.metadata.binstall.overrides.x86_64-pc-windows-msvc]
+pkg-fmt = "zip"
+
+[package.metadata.binstall.overrides.aarch64-pc-windows-msvc]
+pkg-fmt = "zip"
+
+[lib]
+name = "componentize_qjs_cli"
+path = "src/lib.rs"
+
+[[bin]]
+name = "componentize-qjs"
+path = "src/main.rs"
+doc = false
+
+[dependencies]
+componentize-qjs.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+tokio.workspace = true
+oxc_minifier = "0.147.0"
+oxc_allocator = "0.147.0"
+oxc_codegen = "0.147.0"
+oxc_parser = "0.147.0"
+oxc_span = "0.147.0"
+
+[features]
+default = ["component-model-async"]
+opt-size = ["componentize-qjs/opt-size"]
+component-model-async = ["componentize-qjs/component-model-async"]
+
+[dev-dependencies]
+assert_cmd = "2.0"
+predicates = "3.1"
+quickcheck = "1"
+tempfile = "3.13"
+wasmtime.workspace = true
+wasmtime-wasi.workspace = true
+wit-parser.workspace = true
+
+[profile.release]
+lto = true
+
+[profile.dev]
+debug = "line-tables-only"
+incremental = false
+
+[profile.test]
+debug = "line-tables-only"
+incremental = false
+opt-level = 3
+
+[profile.test.package.componentize-qjs-cli]
+opt-level = 1

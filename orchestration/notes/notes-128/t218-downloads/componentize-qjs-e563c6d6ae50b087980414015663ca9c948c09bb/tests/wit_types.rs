@@ -1,0 +1,1761 @@
+//! WIT type integration tests for componentize-qjs
+//! Value conversions share compiled code; world-specific regressions remain standalone.
+mod common;
+
+use std::sync::OnceLock;
+
+use wasmtime::component::{Component, Val};
+
+use common::{ComponentInstance, TestCase};
+
+fn component() -> ComponentInstance {
+    static COMPONENT: OnceLock<Component> = OnceLock::new();
+    let component = COMPONENT.get_or_init(|| {
+        TestCase::new()
+            .wit(include_str!("wit/all/all.wit"))
+            .script(include_str!("js/all.js"))
+            .compile()
+            .expect("failed to compile all fixture")
+    });
+
+    ComponentInstance::from_component(component).expect("failed to instantiate all fixture")
+}
+
+#[test]
+fn test_all_instances_are_isolated() {
+    let mut first = component();
+    let mut second = component();
+    assert_eq!(first.call1("next-count", &[]), Val::U32(1));
+    assert_eq!(first.call1("next-count", &[]), Val::U32(2));
+    assert_eq!(second.call1("next-count", &[]), Val::U32(1));
+
+    drop(first);
+    assert_eq!(component().call1("next-count", &[]), Val::U32(1));
+}
+
+#[cfg(not(feature = "component-model-async"))]
+#[test]
+fn test_sync_runtime_does_not_require_component_model_async() {
+    TestCase::new()
+        .wit(
+            r#"
+            package test:sync-only;
+            world sync-only {
+                export add: func(a: u32, b: u32) -> u32;
+            }
+        "#,
+        )
+        .script("export function add(a, b) { return a + b; }")
+        .expect_call("add", vec![Val::U32(2), Val::U32(3)], Val::U32(5))
+        .build()
+        .unwrap()
+        .run();
+}
+
+#[test]
+fn test_hello_world() {
+    component()
+        .expect_call("greet", vec![], Val::String("Hello, World!".into()))
+        .expect_call("add", vec![Val::U32(2), Val::U32(3)], Val::U32(5))
+        .run();
+}
+
+#[test]
+fn test_export_only_interface_is_not_importable() {
+    let result = TestCase::new()
+        .wit(
+            r#"
+            package test:exports;
+
+            interface exported {
+                enum color { red, blue }
+                ping: func() -> bool;
+            }
+
+            world exports-only {
+                export exported;
+            }
+        "#,
+        )
+        .script(
+            r#"
+            import { Color } from "test:exports/exported";
+
+            export const exported = {
+                ping() {
+                    return true;
+                },
+            };
+        "#,
+        )
+        .build();
+
+    let Err(err) = result else {
+        panic!("export-only WIT interface should not resolve as an import module");
+    };
+    assert!(
+        format!("{err:#}").contains("Failed to declare JavaScript module"),
+        "unexpected error: {err:#}"
+    );
+}
+
+#[test]
+fn test_numeric_types() {
+    component()
+        .expect_call("add-u32", vec![Val::U32(100), Val::U32(200)], Val::U32(300))
+        .expect_call("add-s32", vec![Val::S32(-10), Val::S32(5)], Val::S32(-5))
+        .expect_call(
+            "add-f64",
+            vec![Val::Float64(1.5), Val::Float64(2.5)],
+            Val::Float64(4.0),
+        )
+        .expect_call("negate", vec![Val::Bool(true)], Val::Bool(false))
+        .run();
+}
+
+#[test]
+fn test_record_type() {
+    let point = |x: f64, y: f64| {
+        Val::Record(vec![
+            ("x".into(), Val::Float64(x)),
+            ("y".into(), Val::Float64(y)),
+        ])
+    };
+
+    component()
+        .expect_call(
+            "add-points",
+            vec![point(1.0, 2.0), point(3.0, 4.0)],
+            point(4.0, 6.0),
+        )
+        .run();
+}
+
+#[test]
+fn test_list_type() {
+    component()
+        .expect_call(
+            "sum-list",
+            vec![Val::List(vec![
+                Val::U32(1),
+                Val::U32(2),
+                Val::U32(3),
+                Val::U32(4),
+                Val::U32(5),
+            ])],
+            Val::U32(15),
+        )
+        .run();
+}
+
+#[test]
+fn test_map_type() {
+    component()
+        .expect_call(
+            "scale-map",
+            vec![Val::Map(vec![
+                (Val::String("one".into()), Val::U32(2)),
+                (Val::String("three".into()), Val::U32(4)),
+            ])],
+            Val::Map(vec![
+                (Val::String("ONE".into()), Val::U32(4)),
+                (Val::String("THREE".into()), Val::U32(8)),
+            ]),
+        )
+        .expect_call(
+            "sum-map",
+            vec![Val::Map(vec![
+                (
+                    Val::String("values".into()),
+                    Val::List(vec![Val::U32(1), Val::U32(2), Val::U32(3)]),
+                ),
+                (Val::String("empty".into()), Val::List(vec![])),
+            ])],
+            Val::Map(vec![
+                (Val::String("values".into()), Val::U32(6)),
+                (Val::String("empty".into()), Val::U32(0)),
+            ]),
+        )
+        .expect_call("empty-map", vec![], Val::Map(vec![]))
+        .run();
+}
+
+#[test]
+fn test_typed_array_list_return() {
+    component()
+        .expect_call(
+            "bytes",
+            vec![],
+            Val::List(vec![Val::U8(0), Val::U8(1), Val::U8(127), Val::U8(255)]),
+        )
+        .expect_call("empty", vec![], Val::List(vec![]))
+        .run();
+}
+
+#[test]
+fn test_option_type() {
+    component()
+        .expect_call(
+            "maybe-double",
+            vec![Val::Option(Some(Box::new(Val::U32(5))))],
+            Val::Option(Some(Box::new(Val::U32(10)))),
+        )
+        .expect_call("maybe-double", vec![Val::Option(None)], Val::Option(None))
+        .run();
+}
+
+#[test]
+fn test_result_type() {
+    component()
+        .expect_call(
+            "safe-div",
+            vec![Val::U32(10), Val::U32(2)],
+            Val::Result(Ok(Some(Box::new(Val::U32(5))))),
+        )
+        .expect_call(
+            "safe-div",
+            vec![Val::U32(10), Val::U32(0)],
+            Val::Result(Err(Some(Box::new(Val::String("division by zero".into()))))),
+        )
+        .run();
+}
+
+#[test]
+fn test_stub_wasi() {
+    TestCase::new()
+        .wit(
+            r#"
+            package test:hello;
+            world hello {
+                export greet: func(name: string) -> string;
+                export add: func(a: u32, b: u32) -> u32;
+            }
+        "#,
+        )
+        .script(
+            r#"
+            export function greet(name) { return "Hello, " + name + "!"; }
+            export function add(a, b) { return a + b; }
+        "#,
+        )
+        .stub_wasi()
+        .expect_call(
+            "greet",
+            vec![Val::String("World".into())],
+            Val::String("Hello, World!".into()),
+        )
+        .expect_call("add", vec![Val::U32(2), Val::U32(3)], Val::U32(5))
+        .build()
+        .unwrap()
+        .run();
+}
+
+#[test]
+fn test_all_integer_types() {
+    component()
+        .expect_call("add-u8", vec![Val::U8(200), Val::U8(55)], Val::U8(255))
+        .expect_call("add-s8", vec![Val::S8(-100), Val::S8(50)], Val::S8(-50))
+        .expect_call(
+            "add-u16",
+            vec![Val::U16(60000), Val::U16(5535)],
+            Val::U16(65535),
+        )
+        .expect_call(
+            "add-s16",
+            vec![Val::S16(-30000), Val::S16(10000)],
+            Val::S16(-20000),
+        )
+        .expect_call(
+            "add-u64",
+            vec![Val::U64(1_000_000_000), Val::U64(2_000_000_000)],
+            Val::U64(3_000_000_000),
+        )
+        .expect_call(
+            "add-s64",
+            vec![Val::S64(-1_000_000_000), Val::S64(500_000_000)],
+            Val::S64(-500_000_000),
+        )
+        .run();
+}
+
+#[test]
+fn test_float_types() {
+    component()
+        .expect_call(
+            "add-f32",
+            vec![Val::Float32(1.5), Val::Float32(2.5)],
+            Val::Float32(4.0),
+        )
+        .expect_call(
+            "add-f64",
+            vec![Val::Float64(1.5), Val::Float64(2.5)],
+            Val::Float64(4.0),
+        )
+        .run();
+}
+
+#[test]
+fn test_string_operations() {
+    component()
+        .expect_call(
+            "take-string",
+            vec![Val::String("hello".into())],
+            Val::U32(5),
+        )
+        .expect_call("return-string", vec![], Val::String("hello from js".into()))
+        .expect_call(
+            "concat-strings",
+            vec![Val::String("foo".into()), Val::String("bar".into())],
+            Val::String("foobar".into()),
+        )
+        .run();
+}
+
+#[test]
+fn test_char_type() {
+    component()
+        .expect_call("take-char", vec![Val::Char('A')], Val::U32(65))
+        .expect_call("return-char", vec![], Val::Char('A'))
+        .run();
+}
+
+#[test]
+fn test_result_throw_error_compatibility() {
+    const WIT: &str = r#"
+            package test:result-errors;
+            world result-errors {
+                type string-err = string;
+                export inline-string-error: func() -> result<_, string>;
+                export alias-string-error: func() -> result<_, string-err>;
+                export payload-error: func() -> result<_, u32>;
+                export plain-error-traps: func() -> result<_, u32>;
+            }
+        "#;
+    const SCRIPT: &str = r#"
+            export function inlineStringError() {
+                throw new Error("inline string error");
+            }
+
+            export function aliasStringError() {
+                throw new Error("alias string error");
+            }
+
+            export function payloadError() {
+                const error = new Error("ignored");
+                error.payload = 7;
+                throw error;
+            }
+
+            export function plainErrorTraps() {
+                throw new Error("not a u32 payload");
+            }
+        "#;
+
+    let build = || TestCase::new().wit(WIT).script(SCRIPT).build().unwrap();
+
+    let mut inst = build();
+    assert_eq!(
+        inst.call1("inline-string-error", &[]),
+        Val::Result(Err(Some(Box::new(Val::String(
+            "inline string error".into()
+        )))))
+    );
+    assert_eq!(
+        inst.call1("alias-string-error", &[]),
+        Val::Result(Err(Some(Box::new(Val::String(
+            "alias string error".into()
+        )))))
+    );
+    assert_eq!(
+        inst.call1("payload-error", &[]),
+        Val::Result(Err(Some(Box::new(Val::U32(7)))))
+    );
+
+    let mut inst = build();
+    let (instance, store) = inst.parts();
+    let func = instance
+        .get_func(&mut *store, "plain-error-traps")
+        .expect("plain-error-traps export not found");
+    let mut results = [Val::Bool(false)];
+    func.call(&mut *store, &[], &mut results)
+        .expect_err("ordinary Error should trap for non-string result errors");
+}
+
+#[test]
+fn test_enum_type() {
+    // Enums are represented as their case-name strings in JS
+    component()
+        .expect_call(
+            "identify-color",
+            vec![Val::Enum("red".into())],
+            Val::String("is red".into()),
+        )
+        .expect_call(
+            "identify-color",
+            vec![Val::Enum("blue".into())],
+            Val::String("is blue".into()),
+        )
+        .expect_call("favorite-color", vec![], Val::Enum("green".into()))
+        .run();
+}
+
+#[test]
+fn test_variant_type() {
+    // Variants are { tag: case-name, val } objects in JS
+    component()
+        .expect_call(
+            "describe-shape",
+            vec![Val::Variant(
+                "circle".into(),
+                Some(Box::new(Val::Float64(3.5))),
+            )],
+            Val::String("circle with radius 3.5".into()),
+        )
+        .expect_call(
+            "describe-shape",
+            vec![Val::Variant("none".into(), None)],
+            Val::String("no shape".into()),
+        )
+        .expect_call(
+            "make-circle",
+            vec![Val::Float64(2.0)],
+            Val::Variant("circle".into(), Some(Box::new(Val::Float64(2.0)))),
+        )
+        .run();
+}
+
+#[test]
+fn test_flag_type() {
+    // Flags are represented as { name: boolean } objects in JS
+    component()
+        .expect_call(
+            "check-read",
+            vec![Val::Flags(vec!["read".into(), "write".into()])],
+            Val::Bool(true),
+        )
+        .expect_call(
+            "check-read",
+            vec![Val::Flags(vec!["execute".into()])],
+            Val::Bool(false),
+        )
+        .expect_call(
+            "read-write",
+            vec![],
+            Val::Flags(vec!["read".into(), "write".into()]),
+        )
+        .run();
+}
+
+#[test]
+fn test_tuple_return() {
+    component()
+        .expect_call(
+            "swap",
+            vec![Val::U32(1), Val::U32(2)],
+            Val::Tuple(vec![Val::U32(2), Val::U32(1)]),
+        )
+        .run();
+}
+
+#[test]
+fn test_many_arguments() {
+    let params: Vec<Val> = (1..=10).map(Val::U32).collect();
+
+    component()
+        .expect_call("sum-ten", params, Val::U32(55))
+        .run();
+}
+
+#[test]
+fn test_no_arg_functions() {
+    component()
+        .expect_call("get-answer", vec![], Val::U32(42))
+        .expect_call("get-message", vec![], Val::String("hello".into()))
+        .expect_call("get-flag", vec![], Val::Bool(true))
+        .run();
+}
+
+#[test]
+fn test_nested_lists() {
+    let nested = Val::List(vec![
+        Val::List(vec![Val::U32(1), Val::U32(2)]),
+        Val::List(vec![Val::U32(3), Val::U32(4)]),
+        Val::List(vec![Val::U32(5)]),
+    ]);
+    let expected = Val::List(vec![
+        Val::U32(1),
+        Val::U32(2),
+        Val::U32(3),
+        Val::U32(4),
+        Val::U32(5),
+    ]);
+
+    component()
+        .expect_call("flatten", vec![nested], expected)
+        .run();
+}
+
+#[test]
+fn test_complex_record() {
+    let alice = Val::Record(vec![
+        ("name".into(), Val::String("Alice".into())),
+        ("age".into(), Val::U32(30)),
+        ("active".into(), Val::Bool(true)),
+    ]);
+    let bob = Val::Record(vec![
+        ("name".into(), Val::String("Bob".into())),
+        ("age".into(), Val::U32(25)),
+        ("active".into(), Val::Bool(true)),
+    ]);
+
+    component()
+        .expect_call(
+            "greet-person",
+            vec![alice],
+            Val::String("Hello Alice, age 30, active: true".into()),
+        )
+        .expect_call(
+            "make-person",
+            vec![Val::String("Bob".into()), Val::U32(25)],
+            bob,
+        )
+        .run();
+}
+
+#[test]
+fn test_list_of_strings() {
+    component()
+        .expect_call(
+            "join-strings",
+            vec![
+                Val::List(vec![
+                    Val::String("a".into()),
+                    Val::String("b".into()),
+                    Val::String("c".into()),
+                ]),
+                Val::String("-".into()),
+            ],
+            Val::String("a-b-c".into()),
+        )
+        .expect_call(
+            "count-strings",
+            vec![Val::List(vec![
+                Val::String("one".into()),
+                Val::String("two".into()),
+                Val::String("three".into()),
+            ])],
+            Val::U32(3),
+        )
+        .run();
+}
+
+#[test]
+fn test_empty_world() {
+    for script in ["// empty module\n", "await Promise.resolve();"] {
+        TestCase::new()
+            .wit(
+                r#"
+                package test:empty;
+                world empty {}
+            "#,
+            )
+            .script(script)
+            .build()
+            .unwrap();
+    }
+}
+
+#[test]
+fn test_empty_world_initialization_error() {
+    for script in [
+        "throw new Error('empty-world initialization failed');",
+        "await Promise.reject(new Error('empty-world initialization failed'));",
+    ] {
+        let Err(err) = TestCase::new()
+            .wit(
+                r#"
+                package test:empty;
+                world empty {}
+            "#,
+            )
+            .script(script)
+            .build()
+        else {
+            panic!("module initialization should fail");
+        };
+
+        let message = format!("{err:#}");
+        assert!(
+            message.contains("empty-world initialization failed"),
+            "{message}"
+        );
+    }
+}
+
+#[test]
+fn test_naming_conventions() {
+    // WIT kebab-case becomes camelCase in JS
+    let rec = Val::Record(vec![
+        ("first-name".into(), Val::String("John".into())),
+        ("last-name".into(), Val::String("Doe".into())),
+    ]);
+
+    TestCase::new()
+        .wit(
+            r#"
+            package test:conventions;
+            world conventions {
+                record my-record { first-name: string, last-name: string }
+                export get-full-name: func(r: my-record) -> string;
+            }
+        "#,
+        )
+        .script(r#"export function getFullName(r) { return r.firstName + " " + r.lastName; }"#)
+        .expect_call("get-full-name", vec![rec], Val::String("John Doe".into()))
+        .build()
+        .unwrap()
+        .run();
+}
+
+#[test]
+fn test_repeated_calls() {
+    let mut inst = component();
+
+    for _ in 0..5 {
+        assert_eq!(inst.call1("hello", &[]), Val::String("hello".into()));
+    }
+}
+
+#[test]
+fn test_deeply_nested_lists() {
+    // 3 levels: list<list<list<u32>>>
+    let input = Val::List(vec![
+        Val::List(vec![
+            Val::List(vec![Val::U32(1), Val::U32(2)]),
+            Val::List(vec![Val::U32(3)]),
+        ]),
+        Val::List(vec![Val::List(vec![Val::U32(4), Val::U32(5), Val::U32(6)])]),
+    ]);
+
+    component()
+        .expect_call(
+            "deep-flatten",
+            vec![input],
+            Val::List(vec![
+                Val::U32(1),
+                Val::U32(2),
+                Val::U32(3),
+                Val::U32(4),
+                Val::U32(5),
+                Val::U32(6),
+            ]),
+        )
+        .run();
+}
+
+#[test]
+fn test_nested_option() {
+    // option<option<u32>> is wrapped as { tag: "some"|"none", val } so that
+    // none, some(none), and some(some(v)) stay distinct.
+    TestCase::new()
+        .wit(
+            r#"
+            package test:nested-option;
+            world nested-option {
+                export unwrap-nested: func(val: option<option<u32>>) -> u32;
+                export identity: func(val: option<option<u32>>) -> option<option<u32>>;
+            }
+        "#,
+        )
+        .script(
+            r#"
+            export function unwrapNested(val) {
+                if (val.tag === "none") return 0;
+                if (val.val === null || val.val === undefined) return 0;
+                return val.val;
+            }
+            export function identity(val) { return val; }
+        "#,
+        )
+        .stub_wasi()
+        .expect_call(
+            "unwrap-nested",
+            vec![Val::Option(Some(Box::new(Val::Option(Some(Box::new(
+                Val::U32(42),
+            ))))))],
+            Val::U32(42),
+        )
+        .expect_call("unwrap-nested", vec![Val::Option(None)], Val::U32(0))
+        .expect_call(
+            "unwrap-nested",
+            vec![Val::Option(Some(Box::new(Val::Option(None))))],
+            Val::U32(0),
+        )
+        // identity must round-trip all three distinct cases unchanged.
+        .expect_call("identity", vec![Val::Option(None)], Val::Option(None))
+        .expect_call(
+            "identity",
+            vec![Val::Option(Some(Box::new(Val::Option(None))))],
+            Val::Option(Some(Box::new(Val::Option(None)))),
+        )
+        .expect_call(
+            "identity",
+            vec![Val::Option(Some(Box::new(Val::Option(Some(Box::new(
+                Val::U32(7),
+            ))))))],
+            Val::Option(Some(Box::new(Val::Option(Some(Box::new(Val::U32(7))))))),
+        )
+        .build()
+        .unwrap()
+        .run();
+}
+
+#[test]
+fn test_malformed_tagged_values_trap() {
+    let mut instance = TestCase::new()
+        .wit(
+            r#"
+            package test:malformed-tags;
+            world malformed-tags {
+                type nested-option = option<option<u32>>;
+                type unit-result = result;
+
+                export bad-option-tag: func() -> nested-option;
+                export throwing-option-payload: func() -> nested-option;
+                export bad-result-tag: func() -> option<unit-result>;
+            }
+        "#,
+        )
+        .script(
+            r#"
+            export function badOptionTag() {
+                return { tag: "invalid" };
+            }
+
+            export function throwingOptionPayload() {
+                const value = { tag: "some" };
+                Object.defineProperty(value, "val", {
+                    get() { throw new Error("payload getter failed"); },
+                });
+                return value;
+            }
+
+            export function badResultTag() {
+                return { tag: "invalid" };
+            }
+        "#,
+        )
+        .build()
+        .unwrap();
+
+    for name in [
+        "bad-option-tag",
+        "throwing-option-payload",
+        "bad-result-tag",
+    ] {
+        let (inner, store) = instance.parts();
+        let func = inner
+            .get_func(&mut *store, name)
+            .unwrap_or_else(|| panic!("{name} export not found"));
+        let mut results = [Val::Bool(false)];
+        let result = func.call(&mut *store, &[], &mut results);
+        assert!(result.is_err(), "{name} should trap");
+    }
+}
+
+#[test]
+fn test_list_of_records() {
+    let people = Val::List(vec![
+        Val::Record(vec![
+            ("name".into(), Val::String("Alice".into())),
+            ("score".into(), Val::U32(90)),
+        ]),
+        Val::Record(vec![
+            ("name".into(), Val::String("Bob".into())),
+            ("score".into(), Val::U32(85)),
+        ]),
+    ]);
+
+    TestCase::new()
+        .wit(
+            r#"
+            package test:list-records;
+            world list-records {
+                record player { name: string, score: u32 }
+                export total-score: func(players: list<player>) -> u32;
+                export top-player: func(players: list<player>) -> string;
+            }
+        "#,
+        )
+        .script(
+            r#"
+            export function totalScore(players) {
+                return players.reduce((sum, p) => sum + p.score, 0);
+            }
+            export function topPlayer(players) {
+                let best = players[0];
+                for (const p of players) {
+                    if (p.score > best.score) best = p;
+                }
+                return best.name;
+            }
+        "#,
+        )
+        .expect_call("total-score", vec![people.clone()], Val::U32(175))
+        .expect_call("top-player", vec![people], Val::String("Alice".into()))
+        .build()
+        .unwrap()
+        .run();
+}
+
+#[test]
+fn test_list_of_variants() {
+    // list<variant> round-trip
+    TestCase::new()
+        .wit(
+            r#"
+            package test:list-variants;
+            world list-variants {
+                variant item { text(string), number(u32), empty }
+                export count-texts: func(items: list<item>) -> u32;
+            }
+        "#,
+        )
+        .script(
+            r#"
+            export function countTexts(items) {
+                let count = 0;
+                for (const item of items) {
+                    if (item.tag === "text") count++;
+                }
+                return count;
+            }
+        "#,
+        )
+        .expect_call(
+            "count-texts",
+            vec![Val::List(vec![
+                Val::Variant("text".into(), Some(Box::new(Val::String("hello".into())))),
+                Val::Variant("number".into(), Some(Box::new(Val::U32(42)))),
+                Val::Variant("text".into(), Some(Box::new(Val::String("world".into())))),
+                Val::Variant("empty".into(), None),
+            ])],
+            Val::U32(2),
+        )
+        .build()
+        .unwrap()
+        .run();
+}
+
+#[test]
+fn test_record_with_nested_fields() {
+    // Record containing option, list, and result fields
+    TestCase::new()
+        .wit(
+            r#"
+            package test:nested-record;
+            world nested-record {
+                record config {
+                    name: string,
+                    tags: list<string>,
+                    max-retries: option<u32>,
+                }
+                export describe-config: func(c: config) -> string;
+                export make-config: func(name: string) -> config;
+            }
+        "#,
+        )
+        .script(
+            r#"
+            export function describeConfig(c) {
+                let s = c.name + ": tags=" + c.tags.join(",");
+                if (c.maxRetries !== null && c.maxRetries !== undefined) {
+                    s += " retries=" + c.maxRetries;
+                }
+                return s;
+            }
+            export function makeConfig(name) {
+                return { name: name, tags: ["default"], maxRetries: 3 };
+            }
+        "#,
+        )
+        .expect_call(
+            "describe-config",
+            vec![Val::Record(vec![
+                ("name".into(), Val::String("test".into())),
+                (
+                    "tags".into(),
+                    Val::List(vec![Val::String("a".into()), Val::String("b".into())]),
+                ),
+                (
+                    "max-retries".into(),
+                    Val::Option(Some(Box::new(Val::U32(5)))),
+                ),
+            ])],
+            Val::String("test: tags=a,b retries=5".into()),
+        )
+        .expect_call(
+            "make-config",
+            vec![Val::String("prod".into())],
+            Val::Record(vec![
+                ("name".into(), Val::String("prod".into())),
+                (
+                    "tags".into(),
+                    Val::List(vec![Val::String("default".into())]),
+                ),
+                (
+                    "max-retries".into(),
+                    Val::Option(Some(Box::new(Val::U32(3)))),
+                ),
+            ]),
+        )
+        .build()
+        .unwrap()
+        .run();
+}
+
+#[test]
+fn test_option_of_result() {
+    TestCase::new()
+        .wit(
+            r#"
+            package test:option-result;
+            world option-result {
+                export process: func(val: option<result<u32, string>>) -> string;
+            }
+        "#,
+        )
+        .script(
+            r#"
+            export function process(val) {
+                if (val === null || val === undefined) return "none";
+                if (val.tag === "ok") return "ok:" + val.val;
+                return "err:" + val.val;
+            }
+        "#,
+        )
+        .stub_wasi()
+        .expect_call(
+            "process",
+            vec![Val::Option(Some(Box::new(Val::Result(Ok(Some(
+                Box::new(Val::U32(42)),
+            ))))))],
+            Val::String("ok:42".into()),
+        )
+        .expect_call(
+            "process",
+            vec![Val::Option(Some(Box::new(Val::Result(Err(Some(
+                Box::new(Val::String("fail".into())),
+            ))))))],
+            Val::String("err:fail".into()),
+        )
+        .expect_call(
+            "process",
+            vec![Val::Option(None)],
+            Val::String("none".into()),
+        )
+        .build()
+        .unwrap()
+        .run();
+}
+
+#[test]
+fn test_result_of_option() {
+    TestCase::new()
+        .wit(
+            r#"
+            package test:result-option;
+            world result-option {
+                export maybe-lookup: func(key: string) -> result<option<u32>, string>;
+            }
+        "#,
+        )
+        .script(
+            r#"
+            export function maybeLookup(key) {
+                if (key === "found") return 42;
+                if (key === "missing") return null;
+                throw "invalid key";
+            }
+        "#,
+        )
+        .stub_wasi()
+        .expect_call(
+            "maybe-lookup",
+            vec![Val::String("found".into())],
+            Val::Result(Ok(Some(Box::new(Val::Option(Some(Box::new(Val::U32(
+                42,
+            )))))))),
+        )
+        .expect_call(
+            "maybe-lookup",
+            vec![Val::String("missing".into())],
+            Val::Result(Ok(Some(Box::new(Val::Option(None))))),
+        )
+        .expect_call(
+            "maybe-lookup",
+            vec![Val::String("error".into())],
+            Val::Result(Err(Some(Box::new(Val::String("invalid key".into()))))),
+        )
+        .build()
+        .unwrap()
+        .run();
+}
+
+#[test]
+fn test_empty_list() {
+    TestCase::new()
+        .wit(
+            r#"
+            package test:empty-list;
+            world empty-list {
+                export count: func(items: list<u32>) -> u32;
+                export make-empty: func() -> list<u32>;
+            }
+        "#,
+        )
+        .script(
+            r#"
+            export function count(items) { return items.length; }
+            export function makeEmpty() { return []; }
+        "#,
+        )
+        .stub_wasi()
+        .expect_call("count", vec![Val::List(vec![])], Val::U32(0))
+        .expect_call("make-empty", vec![], Val::List(vec![]))
+        .build()
+        .unwrap()
+        .run();
+}
+
+#[test]
+fn test_import_export_chain() {
+    let mut inst = TestCase::new()
+        .wit(
+            r#"
+            package test:chain;
+            world chain {
+                export process: func(val: u32) -> u32;
+            }
+        "#,
+        )
+        .script(
+            r#"
+            export function process(val) {
+                return val + 11;
+            }
+        "#,
+        )
+        .stub_wasi()
+        .expect_call("process", vec![Val::U32(5)], Val::U32(16))
+        .build()
+        .unwrap();
+
+    inst.run();
+}
+
+#[test]
+fn test_multiple_return_results() {
+    // Test result types with no error payload
+    TestCase::new()
+        .wit(
+            r#"
+            package test:result-void;
+            world result-void {
+                export try-op: func(succeed: bool) -> result<u32>;
+            }
+        "#,
+        )
+        .script(
+            r#"
+            export function tryOp(succeed) {
+                if (succeed) return 42;
+                throw undefined;
+            }
+        "#,
+        )
+        .stub_wasi()
+        .expect_call(
+            "try-op",
+            vec![Val::Bool(true)],
+            Val::Result(Ok(Some(Box::new(Val::U32(42))))),
+        )
+        .expect_call("try-op", vec![Val::Bool(false)], Val::Result(Err(None)))
+        .build()
+        .unwrap()
+        .run();
+}
+
+#[test]
+fn test_variant_with_multiple_payload_types() {
+    // Variant with different payload types including string and none
+    TestCase::new()
+        .wit(
+            r#"
+            package test:multi-variant;
+            world multi-variant {
+                variant value { integer(s32), text(string), flag(bool), nothing }
+                export stringify: func(v: value) -> string;
+                export make-text: func(s: string) -> value;
+                export make-nothing: func() -> value;
+            }
+        "#,
+        )
+        .script(
+            r#"
+            export function stringify(v) {
+                if (v.tag === "integer") return "int:" + v.val;
+                if (v.tag === "text") return "text:" + v.val;
+                if (v.tag === "flag") return "flag:" + v.val;
+                return "nothing";
+            }
+            export function makeText(s) { return { tag: "text", val: s }; }
+            export function makeNothing() { return { tag: "nothing" }; }
+        "#,
+        )
+        .stub_wasi()
+        .expect_call(
+            "stringify",
+            vec![Val::Variant(
+                "integer".into(),
+                Some(Box::new(Val::S32(-42))),
+            )],
+            Val::String("int:-42".into()),
+        )
+        .expect_call(
+            "stringify",
+            vec![Val::Variant(
+                "text".into(),
+                Some(Box::new(Val::String("hello".into()))),
+            )],
+            Val::String("text:hello".into()),
+        )
+        .expect_call(
+            "stringify",
+            vec![Val::Variant("nothing".into(), None)],
+            Val::String("nothing".into()),
+        )
+        .expect_call(
+            "make-text",
+            vec![Val::String("world".into())],
+            Val::Variant("text".into(), Some(Box::new(Val::String("world".into())))),
+        )
+        .expect_call("make-nothing", vec![], Val::Variant("nothing".into(), None))
+        .build()
+        .unwrap()
+        .run();
+}
+
+#[test]
+fn test_tuple_of_mixed_types() {
+    TestCase::new()
+        .wit(
+            r#"
+            package test:mixed-tuple;
+            world mixed-tuple {
+                export first: func(t: tuple<string, u32, bool>) -> string;
+                export make-tuple: func() -> tuple<string, u32, bool>;
+            }
+        "#,
+        )
+        .script(
+            r#"
+            export function first(t) { return t[0]; }
+            export function makeTuple() { return ["hello", 42, true]; }
+        "#,
+        )
+        .stub_wasi()
+        .expect_call(
+            "first",
+            vec![Val::Tuple(vec![
+                Val::String("test".into()),
+                Val::U32(99),
+                Val::Bool(false),
+            ])],
+            Val::String("test".into()),
+        )
+        .expect_call(
+            "make-tuple",
+            vec![],
+            Val::Tuple(vec![
+                Val::String("hello".into()),
+                Val::U32(42),
+                Val::Bool(true),
+            ]),
+        )
+        .build()
+        .unwrap()
+        .run();
+}
+
+#[test]
+fn test_many_params_echo() {
+    // Matching compjs's echo_many — 8 diverse params
+    TestCase::new()
+        .wit(
+            r#"
+            package test:many-echo;
+            world many-echo {
+                export echo-many: func(
+                    a: bool, b: u8, c: s16, d: u32,
+                    e: s64, f: f32, g: f64, h: string
+                ) -> string;
+            }
+        "#,
+        )
+        .script(
+            r#"
+            export function echoMany(a, b, c, d, e, f, g, h) {
+                return [a, b, c, d, e, f.toFixed(1), g.toFixed(1), h].join(",");
+            }
+        "#,
+        )
+        .stub_wasi()
+        .expect_call(
+            "echo-many",
+            vec![
+                Val::Bool(true),
+                Val::U8(255),
+                Val::S16(-100),
+                Val::U32(1000),
+                Val::S64(-9999),
+                Val::Float32(std::f32::consts::PI),
+                Val::Float64(std::f64::consts::E),
+                Val::String("end".into()),
+            ],
+            Val::String("true,255,-100,1000,-9999,3.1,2.7,end".into()),
+        )
+        .build()
+        .unwrap()
+        .run();
+}
+
+#[test]
+fn test_list_of_options() {
+    TestCase::new()
+        .wit(
+            r#"
+            package test:list-options;
+            world list-options {
+                export count-some: func(items: list<option<u32>>) -> u32;
+            }
+        "#,
+        )
+        .script(
+            r#"
+            export function countSome(items) {
+                let count = 0;
+                for (const item of items) {
+                    if (item !== null && item !== undefined) count++;
+                }
+                return count;
+            }
+        "#,
+        )
+        .stub_wasi()
+        .expect_call(
+            "count-some",
+            vec![Val::List(vec![
+                Val::Option(Some(Box::new(Val::U32(1)))),
+                Val::Option(None),
+                Val::Option(Some(Box::new(Val::U32(3)))),
+                Val::Option(None),
+                Val::Option(Some(Box::new(Val::U32(5)))),
+            ])],
+            Val::U32(3),
+        )
+        .build()
+        .unwrap()
+        .run();
+}
+
+#[test]
+fn test_list_of_tuples() {
+    TestCase::new()
+        .wit(
+            r#"
+            package test:list-tuples;
+            world list-tuples {
+                export sum-pairs: func(pairs: list<tuple<u32, u32>>) -> u32;
+            }
+        "#,
+        )
+        .script(
+            r#"
+            export function sumPairs(pairs) {
+                return pairs.reduce((sum, p) => sum + p[0] + p[1], 0);
+            }
+        "#,
+        )
+        .stub_wasi()
+        .expect_call(
+            "sum-pairs",
+            vec![Val::List(vec![
+                Val::Tuple(vec![Val::U32(1), Val::U32(2)]),
+                Val::Tuple(vec![Val::U32(3), Val::U32(4)]),
+                Val::Tuple(vec![Val::U32(5), Val::U32(6)]),
+            ])],
+            Val::U32(21),
+        )
+        .build()
+        .unwrap()
+        .run();
+}
+
+#[test]
+fn test_result_of_result() {
+    // Nested result types
+    TestCase::new()
+        .wit(
+            r#"
+            package test:nested-result;
+            world nested-result {
+                export try-nested: func(level: u32) -> result<result<u32, string>, string>;
+            }
+        "#,
+        )
+        .script(
+            r#"
+            export function tryNested(level) {
+                if (level === 0) throw "outer error";
+                if (level === 1) return { tag: "err", val: "inner error" };
+                return { tag: "ok", val: level * 10 };
+            }
+        "#,
+        )
+        .stub_wasi()
+        .expect_call(
+            "try-nested",
+            vec![Val::U32(0)],
+            Val::Result(Err(Some(Box::new(Val::String("outer error".into()))))),
+        )
+        .expect_call(
+            "try-nested",
+            vec![Val::U32(1)],
+            Val::Result(Ok(Some(Box::new(Val::Result(Err(Some(Box::new(
+                Val::String("inner error".into()),
+            )))))))),
+        )
+        .expect_call(
+            "try-nested",
+            vec![Val::U32(2)],
+            Val::Result(Ok(Some(Box::new(Val::Result(Ok(Some(Box::new(
+                Val::U32(20),
+            )))))))),
+        )
+        .build()
+        .unwrap()
+        .run();
+}
+
+#[test]
+fn test_signed_integer_boundaries() {
+    TestCase::new()
+        .wit(
+            r#"
+            package test:signed-bounds;
+            world signed-bounds {
+                export echo-s32: func(v: s32) -> s32;
+                export echo-s64: func(v: s64) -> s64;
+            }
+        "#,
+        )
+        .script(
+            r#"
+            export function echoS32(v) { return v; }
+            export function echoS64(v) { return v; }
+        "#,
+        )
+        .stub_wasi()
+        .expect_call("echo-s32", vec![Val::S32(-1)], Val::S32(-1))
+        .expect_call("echo-s32", vec![Val::S32(i32::MIN)], Val::S32(i32::MIN))
+        .expect_call("echo-s32", vec![Val::S32(i32::MAX)], Val::S32(i32::MAX))
+        .expect_call("echo-s64", vec![Val::S64(-1)], Val::S64(-1))
+        .build()
+        .unwrap()
+        .run();
+}
+
+#[test]
+fn test_echo_lists_of_each_primitive() {
+    // list<bool>, list<u8>, list<s32>, list<f64> — matching compjs echo_lists_* tests
+    TestCase::new()
+        .wit(
+            r#"
+            package test:prim-lists;
+            world prim-lists {
+                export echo-bools: func(v: list<bool>) -> list<bool>;
+                export echo-u8s: func(v: list<u8>) -> list<u8>;
+                export echo-f64s: func(v: list<f64>) -> list<f64>;
+            }
+        "#,
+        )
+        .script(
+            r#"
+            export function echoBools(v) { return v; }
+            export function echoU8s(v) { return v; }
+            export function echoF64s(v) { return v; }
+        "#,
+        )
+        .stub_wasi()
+        .expect_call(
+            "echo-bools",
+            vec![Val::List(vec![
+                Val::Bool(true),
+                Val::Bool(false),
+                Val::Bool(true),
+            ])],
+            Val::List(vec![Val::Bool(true), Val::Bool(false), Val::Bool(true)]),
+        )
+        .expect_call(
+            "echo-u8s",
+            vec![Val::List(vec![Val::U8(0), Val::U8(127), Val::U8(255)])],
+            Val::List(vec![Val::U8(0), Val::U8(127), Val::U8(255)]),
+        )
+        .expect_call(
+            "echo-f64s",
+            vec![Val::List(vec![
+                Val::Float64(1.0),
+                Val::Float64(-0.5),
+                Val::Float64(f64::MAX),
+            ])],
+            Val::List(vec![
+                Val::Float64(1.0),
+                Val::Float64(-0.5),
+                Val::Float64(f64::MAX),
+            ]),
+        )
+        .build()
+        .unwrap()
+        .run();
+}
+
+#[test]
+fn test_exported_resource() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let wit_path = dir.path().join("test.wit");
+    std::fs::write(
+        &wit_path,
+        r#"
+        package test:res;
+
+        interface counter-api {
+            variant update {
+                add(u32),
+                reset,
+            }
+
+            resource counter {
+                constructor(initial: u32);
+                increment: func();
+                add: func(value: u32);
+                apply: func(update: update);
+                get-value: func() -> u32;
+            }
+        }
+
+        world resource-test {
+            export counter-api;
+        }
+    "#,
+    )
+    .unwrap();
+
+    let opts = componentize_qjs::ComponentizeOpts {
+        wit_path: &wit_path,
+        js_source: r#"
+            class Counter {
+                constructor(initial) { this.value = initial; }
+                increment() { this.value++; }
+                add(value) { this.value += value; }
+                apply(update) {
+                    if (update.tag === "add") this.value += update.val;
+                    if (update.tag === "reset") this.value = 0;
+                }
+                getValue() { return this.value; }
+            }
+            export const counterApi = { Counter };
+        "#,
+        js_path: None,
+        module_root: None,
+        world_name: None,
+        stub_wasi: true,
+        disable_gc: false,
+        runtime: componentize_qjs::Runtime::Default,
+    };
+
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+
+    let wasm = rt.block_on(componentize_qjs::componentize(&opts)).unwrap();
+
+    // Component builds successfully with resource types
+    let engine = common::engine();
+    let component = wasmtime::component::Component::new(engine, &wasm).unwrap();
+
+    // Instantiate and call resource methods through the interface
+    let mut wasi_builder = wasmtime_wasi::WasiCtxBuilder::new();
+    let wasi = wasi_builder.build();
+    let table = wasmtime::component::ResourceTable::new();
+    let mut store = wasmtime::Store::new(engine, common::WasiCtxState { wasi, table });
+
+    let mut linker = wasmtime::component::Linker::new(engine);
+    wasmtime_wasi::p2::add_to_linker_sync(&mut linker).unwrap();
+    let instance = linker.instantiate(&mut store, &component).unwrap();
+
+    // Navigate into the exported interface
+    let iface_idx = instance
+        .get_export_index(&mut store, None, "test:res/counter-api")
+        .expect("interface export not found");
+
+    // Get constructor
+    let ctor_idx = instance
+        .get_export_index(&mut store, Some(&iface_idx), "[constructor]counter")
+        .expect("[constructor]counter not found");
+    let ctor = instance.get_func(&mut store, ctor_idx).unwrap();
+
+    // Call constructor(42)
+    let mut results = [Val::Bool(false)];
+    ctor.call(&mut store, &[Val::U32(42)], &mut results)
+        .unwrap();
+    let counter = results[0].clone();
+
+    // Get get-value method
+    let get_val_idx = instance
+        .get_export_index(&mut store, Some(&iface_idx), "[method]counter.get-value")
+        .expect("[method]counter.get-value not found");
+    let get_val = instance.get_func(&mut store, get_val_idx).unwrap();
+
+    // Call get-value(counter) => 42
+    let mut results = [Val::Bool(false)];
+    get_val
+        .call(&mut store, std::slice::from_ref(&counter), &mut results)
+        .unwrap();
+    assert_eq!(results[0], Val::U32(42), "initial value should be 42");
+
+    // Get increment method
+    let inc_idx = instance
+        .get_export_index(&mut store, Some(&iface_idx), "[method]counter.increment")
+        .expect("[method]counter.increment not found");
+    let inc = instance.get_func(&mut store, inc_idx).unwrap();
+
+    // Call increment(counter)
+    inc.call(&mut store, std::slice::from_ref(&counter), &mut [])
+        .unwrap();
+
+    // Verify value is now 43
+    let mut results = [Val::Bool(false)];
+    get_val
+        .call(&mut store, std::slice::from_ref(&counter), &mut results)
+        .unwrap();
+
+    assert_eq!(
+        results[0],
+        Val::U32(43),
+        "value should be 43 after increment"
+    );
+
+    // Resource receiver is the first lowered argument; scalar and variant
+    // parameters follow it and must remain regular JavaScript arguments.
+    let add_idx = instance
+        .get_export_index(&mut store, Some(&iface_idx), "[method]counter.add")
+        .expect("[method]counter.add not found");
+    let add = instance.get_func(&mut store, add_idx).unwrap();
+    add.call(&mut store, &[counter.clone(), Val::U32(2)], &mut [])
+        .unwrap();
+
+    let apply_idx = instance
+        .get_export_index(&mut store, Some(&iface_idx), "[method]counter.apply")
+        .expect("[method]counter.apply not found");
+    let apply = instance.get_func(&mut store, apply_idx).unwrap();
+    apply
+        .call(
+            &mut store,
+            &[
+                counter.clone(),
+                Val::Variant("add".into(), Some(Box::new(Val::U32(3)))),
+            ],
+            &mut [],
+        )
+        .unwrap();
+
+    let mut results = [Val::Bool(false)];
+    get_val
+        .call(&mut store, std::slice::from_ref(&counter), &mut results)
+        .unwrap();
+    assert_eq!(results[0], Val::U32(48));
+}
+
+#[test]
+fn test_static_resource_method_in_interface() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let wit_path = dir.path().join("test.wit");
+    std::fs::write(
+        &wit_path,
+        r#"
+        package test:static-bug;
+
+        interface widget-api {
+            resource widget {
+                constructor(name: string);
+                get-name: func() -> string;
+                create-default: static func() -> widget;
+            }
+        }
+
+        world static-test {
+            export widget-api;
+        }
+        "#,
+    )
+    .unwrap();
+
+    let opts = componentize_qjs::ComponentizeOpts {
+        wit_path: &wit_path,
+        js_source: r#"
+            class Widget {
+                constructor(name) { this.name = name; }
+                getName() { return this.name; }
+                static createDefault() { return new this("default"); }
+            }
+            export const widgetApi = { Widget };
+        "#,
+        js_path: None,
+        module_root: None,
+        world_name: None,
+        stub_wasi: true,
+        disable_gc: false,
+        runtime: componentize_qjs::Runtime::Default,
+    };
+
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+
+    let wasm = rt.block_on(componentize_qjs::componentize(&opts)).unwrap();
+
+    let engine = common::engine();
+    let component = wasmtime::component::Component::new(engine, &wasm).unwrap();
+
+    let mut wasi_builder = wasmtime_wasi::WasiCtxBuilder::new();
+    let wasi = wasi_builder.build();
+    let table = wasmtime::component::ResourceTable::new();
+    let mut store = wasmtime::Store::new(engine, common::WasiCtxState { wasi, table });
+
+    let mut linker = wasmtime::component::Linker::new(engine);
+    wasmtime_wasi::p2::add_to_linker_sync(&mut linker).unwrap();
+    let instance = linker.instantiate(&mut store, &component).unwrap();
+
+    let iface_idx = instance
+        .get_export_index(&mut store, None, "test:static-bug/widget-api")
+        .expect("interface export not found");
+
+    // Call the static method — this should work but panics because
+    // the runtime looks for "createDefault" in globals instead of the
+    // interface object.
+    let static_idx = instance
+        .get_export_index(
+            &mut store,
+            Some(&iface_idx),
+            "[static]widget.create-default",
+        )
+        .expect("[static]widget.create-default not found");
+    let static_fn = instance.get_func(&mut store, static_idx).unwrap();
+
+    let mut results = [Val::Bool(false)];
+    static_fn.call(&mut store, &[], &mut results).unwrap();
+
+    // If we got here, we have a resource handle. Verify it works.
+    let get_name_idx = instance
+        .get_export_index(&mut store, Some(&iface_idx), "[method]widget.get-name")
+        .expect("[method]widget.get-name not found");
+    let get_name = instance.get_func(&mut store, get_name_idx).unwrap();
+
+    let mut name_results = [Val::Bool(false)];
+    get_name
+        .call(&mut store, &results, &mut name_results)
+        .unwrap();
+    assert_eq!(
+        name_results[0],
+        Val::String("default".into()),
+        "static factory should produce widget with name 'default'"
+    );
+}
+
+#[tokio::test]
+async fn test_async_export_rejection_propagates() {
+    let mut instance = TestCase::new()
+        .wit(
+            r#"
+            package test:async-reject;
+            world async-reject {
+                export will-throw: async func();
+            }
+            "#,
+        )
+        .script(
+            r#"
+            export async function willThrow() {
+                throw new Error("this should not be silently swallowed");
+            }
+            "#,
+        )
+        .build_async()
+        .await
+        .unwrap();
+
+    // The host calls a void async export that throws. The rejection should
+    // propagate as an error, not be silently swallowed.
+    let result = instance.call_async("will-throw", &[], 0).await;
+    assert!(
+        result.is_err(),
+        "async export that throws should return an error, not Ok"
+    );
+}
+
+#[test]
+fn test_root_level_flags() {
+    let result = TestCase::new()
+        .wit(
+            r#"
+            package test:root-flags;
+            world root-flags {
+                flags permissions {
+                    read,
+                    write,
+                    execute,
+                }
+                export check: func(p: permissions) -> string;
+            }
+            "#,
+        )
+        .script(
+            r#"
+            export function check(p) {
+                const parts = [];
+                if (p.read) parts.push("read");
+                if (p.write) parts.push("write");
+                if (p.execute) parts.push("execute");
+                return parts.join(",");
+            }
+            "#,
+        )
+        .stub_wasi()
+        .build();
+
+    let mut instance = result.expect(
+        "componentization should succeed for world-level flags — \
+         world-level flags must round-trip as { name: boolean } objects",
+    );
+
+    let flags_val = Val::Flags(vec!["read".into(), "execute".into()]);
+    let ret = instance.call1("check", &[flags_val]);
+    assert_eq!(
+        ret,
+        Val::String("read,execute".into()),
+        "root-level flags should round-trip through the component"
+    );
+}

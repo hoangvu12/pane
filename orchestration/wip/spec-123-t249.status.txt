@@ -1,0 +1,7 @@
+ M crates/pane-core/src/keyboard.rs
+ M crates/pane-core/src/launcher/feedback.rs
+ M crates/pane/src/app.rs
+ M crates/pane/src/features/actions_panel.rs
+ M crates/pane/src/features/announcer.rs
+ M crates/pane/src/features/search_files.rs
+ M crates/pane/src/features/toast.rs

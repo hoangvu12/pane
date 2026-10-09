@@ -1,0 +1,702 @@
+diff --git a/crates/pane-build/src/session.rs b/crates/pane-build/src/session.rs
+index 7fb7a31e..eb9b539f 100644
+--- a/crates/pane-build/src/session.rs
++++ b/crates/pane-build/src/session.rs
+@@ -354,7 +354,9 @@ fn lock(report: &Mutex<Development>) -> MutexGuard<'_, Development> {
+ /// Copies the components named by `from`'s `pane.json` from `from` to the
+ /// same paths in `to`, replacing each file rather than writing through it
+ /// (a Rust build's component is a hard link into `target`). Returns their
+-/// paths, relative to both.
++/// paths, relative to both. The source map a development build of
++/// JavaScript or TypeScript keeps beside its component comes with it, so a
++/// later Reload of the same build keeps it (#214).
+ pub fn copy_components(manifests: &dyn ManifestFiles, from: &Path, to: &Path) -> Vec<PathBuf> {
+     let Ok(components) = manifests.components(from) else {
+         return Vec::new();
+@@ -366,10 +368,24 @@ pub fn copy_components(manifests: &dyn ManifestFiles, from: &Path, to: &Path) ->
+         }
+         let _ = std::fs::remove_file(&target);
+         let _ = std::fs::copy(from.join(component), &target);
++        // The component's source map, when the build kept one.
++        let map = map_beside(&from.join(component));
++        if map.is_file() {
++            let beside = map_beside(&target);
++            let _ = std::fs::remove_file(&beside);
++            let _ = std::fs::copy(&map, &beside);
++        }
+     }
+     components
+ }
+ 
++/// The path of the source map a development build may keep beside the
++/// component at `component`: its file name plus `.map` (#214).
++fn map_beside(component: &Path) -> PathBuf {
++    let name = component.file_name().unwrap_or_default().to_string_lossy();
++    component.with_file_name(format!("{name}.map"))
++}
++
+ /// `path`, from an event of a watcher of `root` (canonical), relative to
+ /// `root`; FSEvents may report it through another path to the same place.
+ fn relative_to(root: &Path, path: &Path) -> Option<PathBuf> {
+diff --git a/crates/pane-core/src/extension_log.rs b/crates/pane-core/src/extension_log.rs
+index 014409e2..12de9a1b 100644
+--- a/crates/pane-core/src/extension_log.rs
++++ b/crates/pane-core/src/extension_log.rs
+@@ -20,6 +20,7 @@
+ //! file of the development session (rotated at [`FILE_LIMIT`], keeping one
+ //! earlier file) and sends each to whoever follows it.
+ 
++use std::borrow::Cow;
+ use std::collections::{HashMap, VecDeque};
+ use std::fs::File;
+ use std::io::{self, Write};
+@@ -30,6 +31,8 @@ use std::sync::{Arc, Mutex, MutexGuard};
+ use std::task::{Context, Poll};
+ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+ 
++use crate::source_map::SourceMap;
++
+ /// The longest line kept, in bytes: the rest is cut, with a note of how
+ /// much.
+ pub const LINE_LIMIT: usize = 4 * 1024;
+@@ -177,13 +180,19 @@ impl ExtensionLogs {
+ 
+     /// Where a guest instance of the package with identity key `owner`, in
+     /// generation `generation`, writes `stream`: lines are tagged with the
+-    /// command `command` holds when each is written.
++    /// command `command` holds when each is written. `map` is the source
++    /// map kept beside the component, when one is: what the package writes
++    /// has the frames of its stacks mapped back to the sources its bundle
++    /// was built from (see `crate::source_map`) as the lines are captured,
++    /// which is what a JavaScript or TypeScript development build keeps it
++    /// for.
+     pub fn output(
+         &self,
+         owner: &str,
+         generation: u64,
+         stream: LogStream,
+         command: CurrentCommand,
++        map: Option<Arc<SourceMap>>,
+     ) -> Output {
+         Output(Arc::new(OutputTo {
+             logs: self.clone(),
+@@ -191,6 +200,7 @@ impl ExtensionLogs {
+             generation,
+             stream,
+             command,
++            map,
+         }))
+     }
+ 
+@@ -480,6 +490,9 @@ struct OutputTo {
+     generation: u64,
+     stream: LogStream,
+     command: CurrentCommand,
++    /// The source map of the component the instance runs, when one is kept
++    /// beside it: a development build of JavaScript or TypeScript.
++    map: Option<Arc<SourceMap>>,
+ }
+ 
+ impl wasmtime_wasi::cli::IsTerminal for Output {
+@@ -536,6 +549,13 @@ impl Lines {
+             bytes.pop();
+         }
+         let text = String::from_utf8_lossy(&bytes);
++        // A JavaScript or TypeScript command's stacks name its bundle; a
++        // map beside the component turns them back into its sources as
++        // the line is captured, so every reader of the log shows them so.
++        let text = match &self.to.map {
++            Some(map) => Cow::Owned(map.map_frames(&text)),
++            None => text,
++        };
+         let cut = std::mem::take(&mut self.cut);
+         let to = &self.to;
+         to.logs.extension(
+@@ -640,7 +660,7 @@ mod tests {
+     use super::*;
+ 
+     fn write(logs: &ExtensionLogs, stream: LogStream, bytes: &[u8]) {
+-        let output = logs.output("p", 1, stream, CurrentCommand::default());
++        let output = logs.output("p", 1, stream, CurrentCommand::default(), None);
+         let mut lines = Lines {
+             to: output.0.clone(),
+             partial: Vec::new(),
+diff --git a/crates/pane-core/src/launcher.rs b/crates/pane-core/src/launcher.rs
+index d01d0af6..01b1cab8 100644
+--- a/crates/pane-core/src/launcher.rs
++++ b/crates/pane-core/src/launcher.rs
+@@ -87,6 +87,7 @@ use crate::search::{self, Keys, Query};
+ 
+ mod dependents;
+ mod developing;
++mod error_overlay;
+ mod extensions;
+ mod file_search;
+ mod files;
+@@ -117,6 +118,7 @@ pub use crash_notice::{LogNotice, UNEXPECTED_QUIT};
+ use developing::Developing;
+ pub use developing::{BuildFailure, Development};
+ pub(crate) use developing::{BuildNow, Remote};
++use error_overlay::Shown;
+ pub use extensions::{ExtensionMark, ExtensionOperation, OperationKind};
+ pub use hotkeys::HotkeyOutcome;
+ use hotkeys::{Bindings, OpenPane};
+@@ -242,6 +244,16 @@ pub enum Screen {
+         identity: PackageIdentity,
+         details: Vec<String>,
+     },
++    /// The error overlay of a developed package's command that crashed,
++    /// trapped, threw or failed to start (see `error_overlay`): the message
++    /// and the stack trace as lines of information under the title, with
++    /// rows that open the package's Logs screen, copy the message and
++    /// trace, and run the command again. Shown over what the launcher was
++    /// showing, which [`State::error_overlay`] holds for Back to put back.
++    Crash {
++        identity: PackageIdentity,
++        details: Vec<String>,
++    },
+     /// Why the last development build of an installed package failed, as
+     /// lines of information under the title (its command and output), with
+     /// a row that builds it again.
+@@ -550,6 +562,7 @@ impl LauncherView {
+             | Screen::Extensions { details }
+             | Screen::Confirm { details, .. }
+             | Screen::PauseDetails { details, .. }
++            | Screen::Crash { details, .. }
+             | Screen::NetworkDetails { details, .. }
+             | Screen::ProgramDetails { details, .. }
+             | Screen::BuildDetails { details, .. }
+@@ -858,6 +871,9 @@ struct State {
+     /// as last noted: their rows in root search say "Needs setup" (see
+     /// `setup`).
+     setup_needed: HashSet<String>,
++    /// The error overlay on show (see `error_overlay`): the covered view
++    /// and its rows, put back when it leaves.
++    error_overlay: Option<Shown>,
+     /// What this start forgot because its command is a root provider (see
+     /// `providers`), for the toast naming it.
+     provider_forgotten: providers::Forgotten,
+@@ -1224,6 +1240,15 @@ enum Entry {
+     /// Show the extension log of this developed package (extension list,
+     /// build details).
+     ExtensionLog(PackageIdentity),
++    /// Show the extension log of the developed package whose error overlay
++    /// is on display, leaving the overlay for it (error overlay).
++    CrashLogs(PackageIdentity),
++    /// Copy the message and stack trace the error overlay shows (error
++    /// overlay); the window writes the clipboard.
++    CrashCopy,
++    /// Run the failed command again, or start the failed package again
++    /// (error overlay).
++    CrashRetry,
+     /// Ask whether to clear this installed package's cache (extension list).
+     AskClearCache(PackageIdentity),
+     /// Forget the answers remembered for this installed package's
+@@ -1514,6 +1539,7 @@ impl Launcher {
+             confirmations,
+             confirmation_saves: Arc::default(),
+             setup_needed: HashSet::new(),
++            error_overlay: None,
+             provider_forgotten: providers::Forgotten::default(),
+         };
+         if let (Some(installation), Some(files)) = (&installation, &state.files) {
+@@ -2437,6 +2463,9 @@ impl Launcher {
+             .and_then(|index| state.entries.get(index));
+         match entry {
+             Some(Entry::Copy(text)) => Some(text.clone()),
++            // The error overlay's copy: the message and the trace, the
++            // lines its screen shows.
++            Some(Entry::CrashCopy) => Some(state.view.details().join("\n")),
+             _ => None,
+         }
+     }
+@@ -2533,6 +2562,9 @@ impl Launcher {
+                     |entry| matches!(entry, Entry::PauseDetails(shown) if *shown == identity),
+                 );
+             }
++            // The error overlay leaves for what it covered; the command it
++            // was about stays open underneath, as it was.
++            Screen::Crash { .. } => self.leave_error_overlay(&mut state),
+             Screen::NetworkDetails { identity, .. } => {
+                 let identity = identity.clone();
+                 self.show_extensions_at(
+@@ -2806,6 +2838,15 @@ impl Launcher {
+                 self.show_extension_log(state, &identity);
+                 Pending::Nothing
+             }
++            Entry::CrashLogs(identity) => {
++                self.open_crash_logs(state, &identity);
++                Pending::Nothing
++            }
++            Entry::CrashCopy => {
++                state.view.status = Status::Result("Copied the message and trace".into());
++                Pending::Nothing
++            }
++            Entry::CrashRetry => self.retry_crash(state),
+             Entry::AskUninstall(identity) => {
+                 let closure = dependencies::required_dependents(&state.packages, &identity);
+                 if closure.is_empty() {
+@@ -3375,6 +3416,10 @@ impl Launcher {
+             | Screen::CustomView(_)
+             | Screen::Confirm { .. }
+             | Screen::Hotkey { .. } => {}
++            // The error overlay covers the screen it stands over: what it
++            // was about does not change underneath it. A new development
++            // event of the package ends it (see `show_development`).
++            Screen::Crash { .. } => {}
+             // Its lines stay, also once development ended: the window reads
+             // them as they are.
+             Screen::ExtensionLog { .. } => {}
+@@ -4034,7 +4079,17 @@ impl Launcher {
+                 });
+                 state.next_screen();
+             }
+-            Err(error) => state.view.status = Status::Error(error.to_string()),
++            Err(error) => {
++                // A developed package's crash, or error its command answered
++                // with, while the custom view opens shows as the error
++                // overlay (see `error_overlay`), in place of the status
++                // line.
++                if let Some(retry) = Launcher::open_again(&state, &component)
++                    && !self.show_error_overlay(&mut state, &component, &error, retry)
++                {
++                    state.view.status = Status::Error(error.to_string());
++                }
++            }
+         }
+     }
+ 
+@@ -4252,6 +4307,17 @@ impl Launcher {
+             };
+             let state = &mut *state;
+             let ended = stopped(state, &component, &data);
++            // A developed package's crash, or error its command answered
++            // with, shows as the error overlay over the command's view
++            // (see `error_overlay`), in place of the status line and the
++            // failure toast.
++            if ended.is_none()
++                && let Err(error) = &result
++                && let Some(retry) = Launcher::open_again(state, &component)
++                && self.show_error_overlay(state, &component, error, retry)
++            {
++                return;
++            }
+             let list_again = handled && ended.is_none();
+             state.view.status = match (ended, result) {
+                 // Stopped while it was running: its answer is not shown.
+@@ -4483,7 +4549,23 @@ impl Launcher {
+                         searching = self.ask_files(state, "", 0);
+                     }
+                 }
+-                Err(error) => state.view.status = Status::Error(error.to_string()),
++                Err(error) => {
++                    // A developed package's crash, or error its command
++                    // answered with, while the command opens shows as the
++                    // error overlay (see `error_overlay`) over what the
++                    // launcher is showing, in place of the status line.
++                    let retry = Opening {
++                        component: component.clone(),
++                        command: command.clone(),
++                        search,
++                        launch: launch.clone(),
++                        initial_search: None,
++                        no_view: false,
++                    };
++                    if !self.show_error_overlay(state, &component, &error, retry) {
++                        state.view.status = Status::Error(error.to_string());
++                    }
++                }
+             }
+             searching
+         };
+diff --git a/crates/pane-core/src/launcher/actions.rs b/crates/pane-core/src/launcher/actions.rs
+index 51f08851..f6349078 100644
+--- a/crates/pane-core/src/launcher/actions.rs
++++ b/crates/pane-core/src/launcher/actions.rs
+@@ -436,6 +436,9 @@ pub(in crate::launcher) fn selected_action(state: &State) -> SelectedAction {
+         (_, Some(Entry::BuildDetails(_))) => acting("Show details"),
+         (_, Some(Entry::BuildAgain(_))) => acting("Build again"),
+         (_, Some(Entry::ExtensionLog(_))) => acting("Show logs"),
++        (_, Some(Entry::CrashLogs(_))) => acting("Show logs"),
++        (_, Some(Entry::CrashCopy)) => acting("Copy"),
++        (_, Some(Entry::CrashRetry)) => acting("Run again"),
+         (_, Some(Entry::AskClearCache(_))) => acting("Clear cache"),
+         (_, Some(Entry::ResetConfirmations(_))) => acting("Reset confirmations"),
+         (_, Some(Entry::AskHotkey(_))) => acting("Set hotkey"),
+@@ -472,6 +475,8 @@ pub(in crate::launcher) fn selected_action(state: &State) -> SelectedAction {
+         (Screen::Package { .. }, None) => unusable("Install"),
+         (Screen::Extensions { .. }, None) => unusable("Choose"),
+         (Screen::Confirm { .. }, None) => unusable("Choose"),
++        // The error overlay's first row shows its log.
++        (Screen::Crash { .. }, None) => acting("Show logs"),
+         // The hotkey screen without a row to remove has no primary action:
+         // Enter does nothing there; the keys it records are the point.
+         (Screen::Hotkey { .. }, None) => unusable(""),
+diff --git a/crates/pane-core/src/launcher/developing.rs b/crates/pane-core/src/launcher/developing.rs
+index ef1b26bd..c9e04284 100644
+--- a/crates/pane-core/src/launcher/developing.rs
++++ b/crates/pane-core/src/launcher/developing.rs
+@@ -718,6 +718,17 @@ impl Launcher {
+         }
+         let mut state = self.lock();
+         self.refresh(&mut state);
++        // A development event of the package whose error overlay is on
++        // display ends it, when its code is being replaced: what the
++        // overlay was about is over. A build failure or another failed
++        // start leaves it — the failure it shows is still the state of
++        // things.
++        if matches!(status, Status::Progress(_) | Status::Result(_))
++            && matches!(&state.view.screen, Screen::Crash { identity: shown } if shown == identity)
++        {
++            self.leave_error_overlay(&mut state);
++            self.refresh(&mut state);
++        }
+         let shown = match &state.view.screen {
+             Screen::Extensions { .. } | Screen::BuildDetails { .. } => true,
+             Screen::Root { query } => query.is_empty(),
+diff --git a/crates/pane-core/src/launcher/launching.rs b/crates/pane-core/src/launcher/launching.rs
+index 672e9352..053a307b 100644
+--- a/crates/pane-core/src/launcher/launching.rs
++++ b/crates/pane-core/src/launcher/launching.rs
+@@ -159,6 +159,7 @@ impl Launcher {
+         let Opening {
+             component,
+             command,
++            search,
+             launch,
+             ..
+         } = opening;
+@@ -188,6 +189,32 @@ impl Launcher {
+         // for it again.
+         state.indexes.stale();
+         let ended = stopped(state, &component, &data);
++        // A developed package's crash, or error its command answered with,
++        // shows as the error overlay (see `error_overlay`) over whatever
++        // the launcher is showing, in place of the status line and the
++        // failure toast: a no-view command has no view of its own to cover.
++        if let Err(error) = &result
++            && !background
++            && state.screen_epoch == epoch
++            && ended.is_none()
++            && self.show_error_overlay(
++                state,
++                &component,
++                error,
++                super::Opening {
++                    component: component.clone(),
++                    command: command.clone(),
++                    search,
++                    no_view: true,
++                    launch: launch.clone(),
++                    initial_search: None,
++                },
++            )
++        {
++            drop(guard);
++            self.changed();
++            return;
++        }
+         // A toast is not about a screen: an error the command answered with
+         // is shown wherever the user is now, unless it ran in the
+         // background.
+diff --git a/crates/pane-core/src/launcher/reload.rs b/crates/pane-core/src/launcher/reload.rs
+index 2c45e890..6b16085d 100644
+--- a/crates/pane-core/src/launcher/reload.rs
++++ b/crates/pane-core/src/launcher/reload.rs
+@@ -253,6 +253,16 @@ impl Launcher {
+                 }
+                 // The pause is on record before the outcome is shown.
+                 self.records_written().await;
++                // A package Pane is developing shows the failure as the
++                // error overlay (see `error_overlay`) over what the
++                // launcher is showing — the command the reload closed for
++                // root search included — with a row that starts it again;
++                // the pause and its details stay as they are. Not being
++                // developed, the status line below is the presentation.
++                {
++                    let mut state = self.lock();
++                    self.show_failed_start_overlay(&mut state, &identity, &error);
++                }
+                 let failed = match attempt {
+                     Attempt::Reload => format!("Reloaded {title}, but it failed to start"),
+                     Attempt::Retry => format!("{title} failed to start again"),
+diff --git a/crates/pane-core/src/lib.rs b/crates/pane-core/src/lib.rs
+index c62ec779..44449b68 100644
+--- a/crates/pane-core/src/lib.rs
++++ b/crates/pane-core/src/lib.rs
+@@ -45,6 +45,7 @@ mod programs;
+ mod protection;
+ mod runtime;
+ mod search;
++mod source_map;
+ pub mod system;
+ pub mod system_icons;
+ mod threads;
+diff --git a/crates/pane-core/src/packages.rs b/crates/pane-core/src/packages.rs
+index c6db1b43..ea0cedcc 100644
+--- a/crates/pane-core/src/packages.rs
++++ b/crates/pane-core/src/packages.rs
+@@ -2985,6 +2985,13 @@ fn copy_package(package: &SourcePackage, location: &Path) -> io::Result<()> {
+             runner::copy_executable(&source, &target)?;
+         } else {
+             fs::copy(source, target)?;
++            // A development build of JavaScript or TypeScript keeps a source
++            // map beside its component; it comes with the component, so the
++            // extension log's stack traces keep mapping to the sources after
++            // the install or reload that copied it (#214).
++            if let Some(map) = map_beside(&source) {
++                fs::copy(&map, map_beside(&target).expect("the target is named"))?;
++            }
+         }
+     }
+     for file in helper_files {
+@@ -2999,6 +3006,13 @@ fn copy_package(package: &SourcePackage, location: &Path) -> io::Result<()> {
+     copy_images(package, location)
+ }
+ 
++/// The source map kept beside the component at `component`, when there is
++/// one: its file name plus `.map` (#214).
++fn map_beside(component: &Path) -> Option<PathBuf> {
++    let name = component.file_name()?.to_str()?;
++    Some(component.with_file_name(format!("{name}.map")))
++}
++
+ /// The folder of a package whose images its lists name (#139), as
+ /// Raycast's `assets` folder is: copied whole into the managed copy.
+ pub(crate) const ASSETS_DIR: &str = "assets";
+diff --git a/crates/pane-core/src/runtime.rs b/crates/pane-core/src/runtime.rs
+index 2916e4f7..6d623544 100644
+--- a/crates/pane-core/src/runtime.rs
++++ b/crates/pane-core/src/runtime.rs
+@@ -4400,9 +4400,21 @@ impl Host {
+         let mut wasi = WasiCtx::builder();
+         if let Some(data) = &data {
+             let generation = data.generation().number();
++            // A development build of JavaScript or TypeScript keeps a
++            // source map beside its component: what the package writes has
++            // the frames of its stacks mapped back to the sources its
++            // bundle was built from as the lines are captured. Read once
++            // here, per instance, rather than per line: the file is small,
++            // and the instance runs beside it for its whole life.
++            let map = crate::source_map::SourceMap::beside(path).map(Arc::new);
+             let output = |stream| {
+-                self.logs
+-                    .output(data.owner(), generation, stream, log_command.clone())
++                self.logs.output(
++                    data.owner(),
++                    generation,
++                    stream,
++                    log_command.clone(),
++                    map.clone(),
++                )
+             };
+             wasi.stdout(output(LogStream::Stdout))
+                 .stderr(output(LogStream::Stderr));
+diff --git a/crates/pane-core/tests/develop.rs b/crates/pane-core/tests/develop.rs
+index 59726946..388379d0 100644
+--- a/crates/pane-core/tests/develop.rs
++++ b/crates/pane-core/tests/develop.rs
+@@ -457,12 +457,23 @@ fn a_build_that_fails_to_start_is_paused_with_retry_and_not_rolled_back() {
+ 
+     save(&folder, "failing_start");
+     dev.finished(&identity, 1);
+-    let message = error(dev.launcher.view().status);
+-    assert!(
+-        message
+-            .starts_with("Reloaded Dev, but it failed to start; its earlier code is not restored."),
+-        "{message}"
++    // A developed package's failed start shows as the error overlay (#214):
++    // the crash and its backtrace, with rows that open its log, copy them,
++    // and start it again. The pause it records stays, in the extension list.
++    let view = dev.launcher.view();
++    assert!(matches!(view.screen, Screen::Crash { .. }));
++    assert_eq!(view.title, "Dev failed to start");
++    assert_eq!(
++        titles(&dev.launcher),
++        ["Logs for Dev", "Copy the message and trace", "Retry starting Dev"]
+     );
++    let details = view.details().to_vec();
++    assert!(details[0].starts_with("The extension crashed:"));
++    assert!(details.len() > 1, "the trap's backtrace: {details:?}");
++
++    // Back leaves the overlay; the pause's row is in the extension list.
++    dev.launcher.back();
++    assert!(matches!(dev.launcher.view().screen, Screen::Root { .. }));
+     manage(&dev.launcher);
+     assert!(titles(&dev.launcher).contains(&"Retry starting Dev".to_string()));
+ 
+diff --git a/crates/pane-core/tests/extension_log.rs b/crates/pane-core/tests/extension_log.rs
+index f05345e1..c0fddc03 100644
+--- a/crates/pane-core/tests/extension_log.rs
++++ b/crates/pane-core/tests/extension_log.rs
+@@ -267,7 +267,16 @@ fn a_developed_package_logs_what_it_writes_in_order_with_levels() {
+ fn a_crash_logs_the_panic_and_pane_s_own_lines_follow_it() {
+     let pane = Pane::new();
+     let (folder, identity) = pane.developing("sample_settings");
+-    assert!(matches!(pane.run("Crash"), Status::Error(_)));
++    // A crash of a developed package shows as the error overlay (#214),
++    // over the command's view; the panic line and Pane's own are in its
++    // log either way.
++    pane.run("Crash");
++    let view = pane.launcher.view();
++    assert!(matches!(view.screen, Screen::Crash { .. }));
++    assert_eq!(view.title, "Dev crashed");
++    assert!(view.details()[0].starts_with("The extension crashed:"));
++    pane.launcher.back();
++    assert!(matches!(pane.launcher.view().screen, Screen::Command));
+     let lines = pane.log(&identity);
+     let panicked = written(&lines)
+         .into_iter()
+@@ -396,11 +405,20 @@ fn javascript_and_typescript_log_through_console_and_log_what_they_throw() {
+         );
+ 
+         // What a handler throws is the error it answers with, and is
+-        // logged with its stack.
+-        assert_eq!(
+-            pane.run("Fail"),
+-            Status::Error("The extension reported an error: failed on purpose".into()),
+-            "{source}"
++        // logged with its stack: a developed package shows it as the error
++        // overlay (#214), whose trace is that stack.
++        pane.run("Fail");
++        let view = pane.launcher.view();
++        assert!(matches!(view.screen, Screen::Crash { .. }), "{source}");
++        assert_eq!(view.title, "Dev failed", "{source}");
++        let details = view.details().to_vec();
++        assert!(
++            details[0].contains("The extension reported an error: failed on purpose"),
++            "{source}: {details:?}"
++        );
++        assert!(
++            details[1..].iter().any(|line| line.contains("at ")),
++            "{source}: {details:?}"
+         );
+         let lines = written(&pane.log(&identity));
+         let thrown = lines
+diff --git a/crates/pane/src/app.rs b/crates/pane/src/app.rs
+index 3dcd3e96..11fd0918 100644
+--- a/crates/pane/src/app.rs
++++ b/crates/pane/src/app.rs
+@@ -1754,7 +1754,8 @@ impl Render for LauncherWindow {
+             Screen::Extensions { .. } => "No extensions are installed.",
+             Screen::CustomView(_)
+             | Screen::NetworkDetails { .. }
+-            | Screen::ProgramDetails { .. } => "",
++            | Screen::ProgramDetails { .. }
++            | Screen::Crash { .. } => "",
+             Screen::Confirm { .. }
+             | Screen::Hotkey { .. }
+             | Screen::PauseDetails { .. }
+@@ -1769,7 +1770,11 @@ impl Render for LauncherWindow {
+         // (an npm or Git package's has several more lines), keep their choices in
+         // view.
+         let preview = matches!(view.screen, Screen::Package { .. }) && !view.rows.is_empty();
+-        let confirm = matches!(view.screen, Screen::Confirm { .. }) || preview;
++        // A confirmation, a preview and the error overlay keep their rows in
++        // view while their long lines of information scroll: the overlay's
++        // stack trace can be longer than the window.
++        let confirm =
++            matches!(view.screen, Screen::Confirm { .. } | Screen::Crash { .. }) || preview;
+         // A preview has one or two rows (Install or Update) and more lines
+         // to read, which may take more of the window than a confirmation's.
+         let details_share = if preview { 0.62 } else { 0.4 };
+@@ -2039,9 +2044,9 @@ impl Render for LauncherWindow {
+             .font_features(theme.typography.features.clone())
+             .text_color(theme.text_title)
+             .when_some(heading, |content, heading| content.child(heading))
+-            // A confirmation's or preview's long details scroll within 40%
+-            // (a preview's 62%) of the window, leaving the rest to its
+-            // choices, which stay visible.
++            // A confirmation's, preview's or error overlay's long details
++            // scroll within 40% (a preview's 62%) of the window, leaving the
++            // rest to its choices, which stay visible.
+             .when(!details.is_empty(), |content| {
+                 content.child(
+                     div()
+diff --git a/crates/pane/src/features/announcer.rs b/crates/pane/src/features/announcer.rs
+index f28d1daf..60cb4cd0 100644
+--- a/crates/pane/src/features/announcer.rs
++++ b/crates/pane/src/features/announcer.rs
+@@ -568,6 +568,7 @@ impl LauncherWindow {
+             | Screen::ProgramDetails { .. }
+             | Screen::PauseDetails { .. }
+             | Screen::BuildDetails { .. }
++            | Screen::Crash { .. }
+             | Screen::Confirm { .. }
+             | Screen::RuntimeDetails { .. }
+             | Screen::Hotkey { .. } => Opening::Titled(view.title.clone()),
+diff --git a/tools/componentize-js/bundle.mjs b/tools/componentize-js/bundle.mjs
+index 73d56df9..2056d2ea 100644
+--- a/tools/componentize-js/bundle.mjs
++++ b/tools/componentize-js/bundle.mjs
+@@ -5,6 +5,13 @@
+ // component's world provides them.
+ //
+ // Usage: node bundle.mjs <tool node_modules> <entry> <out.mjs>
++//
++// A source map is written beside the bundle (`<out.mjs>.map`): Pane's
++// development builds keep it beside the component, and the extension log's
++// stack traces map back to the sources with it (#214). It holds positions
++// only — esbuild's default sources content is left out, so the map stays
++// small — and `pane_js.py build` copies it next to the component it hands
++// to the componentizer.
+ import { createRequire } from "node:module";
+ import { join } from "node:path";
+ 
+@@ -21,4 +28,6 @@ await build({
+   external: ["wasi:*", "pane:*"],
+   mainFields: ["module", "main"],
+   logLevel: "warning",
++  sourcemap: "external",
++  sourcesContent: false,
+ });
+diff --git a/tools/componentize-js/pane_js.py b/tools/componentize-js/pane_js.py
+index a6f0f10c..7565741f 100644
+--- a/tools/componentize-js/pane_js.py
++++ b/tools/componentize-js/pane_js.py
+@@ -503,6 +503,12 @@ def build(package: Path, out: Path, toolchain: Toolchain) -> dict:
+     report = run([toolchain.componentizer, wit, COMMAND_WORLD, bundle, toolchain.runtime, out],
+                  env=clean_env(QJS_P3_LIBC=str(toolchain.libc)), capture=True)
+     result = json.loads(report.strip().splitlines()[-1])
++    # #214: the bundle's source map (beside it, written by bundle.mjs) is kept
++    # beside the staged component, its path plus `.map`; Pane's host reads it
++    # to map the stack traces the command throws back to its sources.
++    bundle_map = bundle.with_name(f"{bundle.name}.map")
++    if bundle_map.exists():
++        shutil.copyfile(bundle_map, out.with_name(f"{out.name}.map"))
+     log(f"built {out} ({result['component_bytes']} bytes in {result['componentize_ms']} ms)")
+     return result
+ 
+diff --git a/xtask/src/main.rs b/xtask/src/main.rs
+index db17e981..972b1a98 100644
+--- a/xtask/src/main.rs
++++ b/xtask/src/main.rs
+@@ -255,6 +255,14 @@ fn guests() -> Result<(), String> {
+         let prebuilt = root.join(format!("guests/prebuilt/{name}.wasm"));
+         std::fs::copy(&prebuilt, out.join(format!("{name}.wasm")))
+             .map_err(|error| format!("copy {} failed: {error}", prebuilt.display()))?;
++        // Its source map, which the prebuilt samples carry beside their
++        // components: the tests that develop one want the stacks the sample
++        // throws mapped to its sources (#214).
++        let map = root.join(format!("guests/prebuilt/{name}.wasm.map"));
++        if map.exists() {
++            std::fs::copy(&map, out.join(format!("{name}.wasm.map")))
++                .map_err(|error| format!("copy {} failed: {error}", map.display()))?;
++        }
+     }
+     // Ready-to-run sample packages: each manifest in guests/packages with the
+     // component it names, and the images it shows (#139): the other files
+@@ -276,6 +284,13 @@ fn guests() -> Result<(), String> {
+             std::fs::copy(&from, &to)
+                 .map_err(|error| format!("copy {} failed: {error}", from.display()))?;
+         }
++        // The component's source map, when the prebuilt sample has one, for
++        // the tests that develop the package (#214).
++        let map = out.join(format!("{component}.wasm.map"));
++        if map.exists() {
++            std::fs::copy(&map, dest.join(format!("{component}.wasm.map")))
++                .map_err(|error| format!("copy {} failed: {error}", map.display()))?;
++        }
+         // Everything beside the package's pane.json: its icons, its
+         // assets/ folder, and the help (HELP.md) its Setup screen shows.
+         copy_package_files(&root.join("guests/packages").join(package), &dest)?;

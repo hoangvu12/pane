@@ -1,0 +1,1 @@
+{"dependencies":[{"id":16261357,"version_id":1638935,"crate_id":"paste","req":"^1","optional":false,"default_features":true,"features":[],"target":null,"kind":"dev","downloads":0},{"id":16261356,"version_id":1638935,"crate_id":"rustversion","req":"^1","optional":false,"default_features":true,"features":[],"target":null,"kind":"normal","downloads":0}]}

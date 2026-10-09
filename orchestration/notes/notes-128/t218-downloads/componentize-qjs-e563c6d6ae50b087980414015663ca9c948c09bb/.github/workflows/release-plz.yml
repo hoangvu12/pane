@@ -1,0 +1,150 @@
+name: Release-plz
+
+on:
+  push:
+    branches: [main]
+
+permissions: {}
+
+jobs:
+  release-plz-release:
+    name: Release-plz release
+    runs-on: ubuntu-latest
+    environment: crates-io
+    permissions:
+      contents: write
+      pull-requests: read
+      id-token: write
+    outputs:
+      releases_created: ${{ steps.release_plz.outputs.releases_created }}
+      release_tag: ${{ steps.release.outputs.release_tag }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
+        with:
+          targets: wasm32-wasip2
+
+      - name: Install cargo-binstall
+        uses: cargo-bins/cargo-binstall@75b4bfae1b2c753a6806bbce6e6cb89b602de33c # v1.22.0
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      - name: Install SBOM tools
+        run: |
+          cargo binstall cargo-auditable --force
+          cargo binstall auditable2cdx --force
+
+      - name: Build runtime for packaging
+        shell: bash
+        run: |
+          bash .github/scripts/prepare-runtime-artifacts.sh \
+            target/release-plz-package \
+            crates/core/prebuilt \
+            runtime.wasm=runtime.wasm \
+            runtime-opt-size.wasm=runtime-opt-size.wasm \
+            runtime-sync.wasm=runtime-sync.wasm \
+            runtime-opt-size-sync.wasm=runtime-opt-size-sync.wasm
+
+      - name: Authenticate with crates.io
+        id: crates_io_auth
+        uses: rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18 # v1.0.5
+
+      - name: Run release-plz
+        id: release_plz
+        uses: release-plz/action@2eb1d8bcb770b4c48ccfaad919734b38b51958c9 # v0.5.131
+        with:
+          command: release
+          forge: github
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CARGO_REGISTRY_TOKEN: ${{ steps.crates_io_auth.outputs.token }}
+
+      - name: Extract release tag
+        if: steps.release_plz.outputs.releases_created == 'true'
+        id: release
+        shell: bash
+        env:
+          RELEASES: ${{ steps.release_plz.outputs.releases }}
+        run: |
+          tag=$(jq -r 'map(select(.package_name == "componentize-qjs-cli"))[0].tag // map(select((.tag // "") | startswith("v")))[0].tag // empty' <<< "$RELEASES")
+          if [ -z "$tag" ]; then
+            echo "release-plz did not report a v* release tag; skipping CLI/runtime publish"
+            echo "$RELEASES"
+            exit 0
+          fi
+          echo "release_tag=${tag}" >> "$GITHUB_OUTPUT"
+
+  publish-cli:
+    name: Publish CLI release assets
+    needs: release-plz-release
+    if: needs.release-plz-release.outputs.releases_created == 'true' && needs.release-plz-release.outputs.release_tag != ''
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    uses: ./.github/workflows/cli-release.yml
+    with:
+      release_tag: ${{ needs.release-plz-release.outputs.release_tag }}
+
+  publish-runtime:
+    name: Publish runtime Wasm
+    needs: release-plz-release
+    if: needs.release-plz-release.outputs.releases_created == 'true' && needs.release-plz-release.outputs.release_tag != ''
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+      packages: write
+    uses: ./.github/workflows/runtime-publish.yml
+    with:
+      release_tag: ${{ needs.release-plz-release.outputs.release_tag }}
+
+  publish-npm:
+    name: Publish npm packages
+    needs: release-plz-release
+    if: needs.release-plz-release.outputs.releases_created == 'true' && needs.release-plz-release.outputs.release_tag != ''
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/npm-publish.yml
+    with:
+      release_tag: ${{ needs.release-plz-release.outputs.release_tag }}
+
+  release-plz-pr:
+    name: Release-plz PR
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    concurrency:
+      group: release-plz-pr-${{ github.ref }}
+      cancel-in-progress: false
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
+        with:
+          targets: wasm32-wasip2
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      - name: Run release-plz
+        uses: release-plz/action@2eb1d8bcb770b4c48ccfaad919734b38b51958c9 # v0.5.131
+        with:
+          command: release-pr
+          forge: github
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

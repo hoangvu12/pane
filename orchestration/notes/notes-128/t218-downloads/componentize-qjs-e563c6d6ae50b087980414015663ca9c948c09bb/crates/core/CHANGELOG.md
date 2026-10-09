@@ -1,0 +1,109 @@
+# Changelog
+
+All notable changes to this project will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased]
+
+## [0.4.5](https://github.com/andreiltd/componentize-qjs/compare/componentize-qjs-v0.4.4...componentize-qjs-v0.4.5) - 2026-09-16
+
+### Bug Fixes
+
+- *(runtime)* correct resource ownership and async lifecycles ([#82](https://github.com/andreiltd/componentize-qjs/pull/82))
+
+## [0.4.4](https://github.com/andreiltd/componentize-qjs/compare/componentize-qjs-v0.4.3...componentize-qjs-v0.4.4) - 2026-09-01
+
+### Bug Fixes
+
+- *(deps)* update rust dependencies ([#79](https://github.com/andreiltd/componentize-qjs/pull/79))
+- *(deps)* update rust dependencies ([#73](https://github.com/andreiltd/componentize-qjs/pull/73))
+
+### Features
+
+- support async exported resource methods ([#77](https://github.com/andreiltd/componentize-qjs/pull/77))
+
+## [0.4.3](https://github.com/andreiltd/componentize-qjs/compare/componentize-qjs-v0.4.2...componentize-qjs-v0.4.3) - 2026-07-25
+
+### Bug Fixes
+
+- *(deps)* update rust dependencies to v47 ([#67](https://github.com/andreiltd/componentize-qjs/pull/67))
+- *(deps)* update rust dependencies ([#65](https://github.com/andreiltd/componentize-qjs/pull/65))
+
+### Features
+
+- support async iterables for component streams ([#69](https://github.com/andreiltd/componentize-qjs/pull/69))
+
+### Refactoring
+
+- simplify and harden runtime internals ([#70](https://github.com/andreiltd/componentize-qjs/pull/70))
+
+## [0.4.2](https://github.com/andreiltd/componentize-qjs/compare/componentize-qjs-v0.4.1...componentize-qjs-v0.4.2) - 2026-07-03
+
+### Miscellaneous
+
+- bump wasmtime ([#56](https://github.com/andreiltd/componentize-qjs/pull/56))
+
+## [0.4.1](https://github.com/andreiltd/componentize-qjs/compare/componentize-qjs-v0.4.0...componentize-qjs-v0.4.1) - 2026-06-18
+
+### Features
+
+- move oxc_resolver to host side ([#49](https://github.com/andreiltd/componentize-qjs/pull/49))
+
+## [0.4.0](https://github.com/andreiltd/componentize-qjs/compare/componentize-qjs-v0.3.0...componentize-qjs-v0.4.0) - 2026-06-16
+
+### Bug Fixes
+
+- allow unknown imports during wizening ([#48](https://github.com/andreiltd/componentize-qjs/pull/48))
+- *(deps)* update rust dependencies ([#43](https://github.com/andreiltd/componentize-qjs/pull/43))
+- preserve `this` binding when slicing ([#40](https://github.com/andreiltd/componentize-qjs/pull/40))
+
+### Features
+
+- [**breaking**] align top-level WIT result bindings with js throw semantics ([#47](https://github.com/andreiltd/componentize-qjs/pull/47))
+- add build time module resolver ([#45](https://github.com/andreiltd/componentize-qjs/pull/45))
+- [**breaking**] align bindings with jco ([#41](https://github.com/andreiltd/componentize-qjs/pull/41))
+
+## [0.3.0](https://github.com/andreiltd/componentize-qjs/compare/componentize-qjs-v0.2.2...componentize-qjs-v0.3.0) - 2026-06-09
+
+### Bug Fixes
+
+- *(deps)* update rust dependencies to v45 ([#35](https://github.com/andreiltd/componentize-qjs/pull/35))
+- *(deps)* update rust dependencies ([#34](https://github.com/andreiltd/componentize-qjs/pull/34))
+- address regression in 1.96 toolchain ([#36](https://github.com/andreiltd/componentize-qjs/pull/36))
+
+### Features
+
+- publish runtime built without async component model ([#37](https://github.com/andreiltd/componentize-qjs/pull/37))
+
+## [0.2.2](https://github.com/andreiltd/componentize-qjs/compare/componentize-qjs-v0.2.1...componentize-qjs-v0.2.2) - 2026-05-27
+
+### Bug Fixes
+
+- *(deps)* update rust dependencies ([#27](https://github.com/andreiltd/componentize-qjs/pull/27))
+- *(deps)* update rust dependencies ([#25](https://github.com/andreiltd/componentize-qjs/pull/25))
+
+## [0.2.1](https://github.com/andreiltd/componentize-qjs/compare/componentize-qjs-v0.2.0...componentize-qjs-v0.2.1) - 2026-05-12
+
+### Features
+
+- allow runtime builds without async support ([#19](https://github.com/andreiltd/componentize-qjs/pull/19))
+
+### Miscellaneous
+
+- *(ci)* enable trusted publishing ([#22](https://github.com/andreiltd/componentize-qjs/pull/22))
+- bump binaryen and wasi-sdk ([#20](https://github.com/andreiltd/componentize-qjs/pull/20))
+
+## [0.2.0](https://github.com/andreiltd/componentize-qjs/compare/componentize-qjs-v0.1.0...componentize-qjs-v0.2.0) - 2026-05-05
+
+### Bug Fixes
+
+- *(deps)* update rust dependencies ([#9](https://github.com/andreiltd/componentize-qjs/pull/9))
+- *(deps)* update rust dependencies to v44 ([#14](https://github.com/andreiltd/componentize-qjs/pull/14))
+- *(ci)* wire release asset publishing through release-plz ([#4](https://github.com/andreiltd/componentize-qjs/pull/4))
+
+### Features
+
+- add runtime optimized for size ([#15](https://github.com/andreiltd/componentize-qjs/pull/15))
+- switch from JS script to ES modules ([#8](https://github.com/andreiltd/componentize-qjs/pull/8))

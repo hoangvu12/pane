@@ -1,0 +1,60 @@
+[package]
+name = "componentize-qjs"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "Convert JavaScript to WebAssembly components using QuickJS"
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme = "../../README.md"
+include = [
+    "src/**/*",
+    "wit/**/*",
+    "build.rs",
+    "../../README.md",
+    "prebuilt/runtime.wasm",
+    "prebuilt/runtime.wasm.cdx.json",
+    "prebuilt/runtime.wasm.sha256",
+    "prebuilt/runtime-opt-size.wasm",
+    "prebuilt/runtime-opt-size.wasm.cdx.json",
+    "prebuilt/runtime-opt-size.wasm.sha256",
+    "prebuilt/runtime-sync.wasm",
+    "prebuilt/runtime-sync.wasm.cdx.json",
+    "prebuilt/runtime-sync.wasm.sha256",
+    "prebuilt/runtime-opt-size-sync.wasm",
+    "prebuilt/runtime-opt-size-sync.wasm.cdx.json",
+    "prebuilt/runtime-opt-size-sync.wasm.sha256",
+]
+
+[lib]
+name = "componentize_qjs"
+path = "src/lib.rs"
+
+[dependencies]
+anyhow.workspace = true
+bytes = "1"
+oxc_resolver = "11.21.0"
+tokio.workspace = true
+wit-parser.workspace = true
+wit-component = { version = "0.258", features = ["dummy-module"] }
+wit-dylib = "0.258"
+wasi-preview1-component-adapter-provider = "47"
+wasmtime.workspace = true
+wasmtime-wasi.workspace = true
+wasmtime-wizer = { version = "47", features = ["component-model", "wasmtime"] }
+wasm-compose = { version = "0.258", default-features = false }
+indexmap = "2"
+tempfile = "3"
+
+[build-dependencies]
+anyhow.workspace = true
+flate2 = "1.1"
+glob = "0.3"
+tar = "0.4"
+ureq = "3"
+
+[features]
+default = ["component-model-async"]
+opt-size = []
+component-model-async = []

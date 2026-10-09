@@ -1,0 +1,233 @@
+diff --git a/crates/pane-core/src/launcher.rs b/crates/pane-core/src/launcher.rs
+index d01d0af6..f2ff13a7 100644
+--- a/crates/pane-core/src/launcher.rs
++++ b/crates/pane-core/src/launcher.rs
+@@ -1978,8 +1978,9 @@ impl Launcher {
+                 let last = view.rows.len() - 1;
+                 view.selected = Some(selected.saturating_add_signed(delta).min(last));
+             }
+-            // Only root search's fallbacks are listed with none selected:
+-            // Down chooses the first, Up the last.
++            // Nothing is selected only while the list is empty — root
++            // search selects its first fallback too (ADR 0031): Down
++            // chooses the first, Up the last.
+             None if view.rows.is_empty() => {}
+             None if delta > 0 => view.selected = Some(0),
+             None => view.selected = Some(view.rows.len() - 1),
+@@ -4703,8 +4704,8 @@ fn root_rows(state: &State, query: &str) -> (Vec<Row>, Vec<Entry>) {
+     let computed_row = |computed: &Computed| (computed.row.clone(), computed.entry.clone());
+     // What the user's alias names comes first, even before computed
+     // results; files found for the query follow what is found by title,
+-    // since a folder can hold many; the fallbacks, which the user must
+-    // choose, come last.
++    // since a folder can hold many; the fallbacks, which the user chooses
++    // when anything else is listed, come last.
+     aliases::rows_sending_after_alias(state, query)
+         .into_iter()
+         .chain(by_alias.into_iter().map(by_its_alias))
+diff --git a/crates/pane-core/src/launcher/aliases.rs b/crates/pane-core/src/launcher/aliases.rs
+index b745b897..38704849 100644
+--- a/crates/pane-core/src/launcher/aliases.rs
++++ b/crates/pane-core/src/launcher/aliases.rs
+@@ -9,8 +9,8 @@
+ //!   sends that text to the command when the user invokes it.
+ //! - A **fallback** is a command that takes a query, which the user chose to
+ //!   have offered for any text typed in root search: it is listed below every
+-//!   other result and never selected by itself, so the text reaches it only
+-//!   when the user chooses it.
++//!   other result, and when nothing but fallbacks is listed the first is
++//!   selected, so Enter sends it the query (ADR 0031).
+ //!
+ //! The text sent also fills the command's first text or password argument
+ //! when it has one without a value (see `argument_form`).
+@@ -292,17 +292,22 @@ pub(super) fn fallback_rows(state: &State, query: &str) -> Vec<(Row, Entry)> {
+ }
+ 
+ /// The row root search selects by itself: the first one that is not a
+-/// fallback, whose command the user must choose.
++/// fallback, whose command the user must choose — or, when nothing but
++/// fallbacks is listed, the first of them, so Enter sends it the query
++/// (ADR 0031).
+ pub(super) fn first_choice(entries: &[Entry]) -> Option<usize> {
+-    entries.iter().position(|entry| {
+-        !matches!(
+-            entry,
+-            Entry::Send(Sending {
+-                via: Via::Fallback,
+-                ..
+-            })
+-        )
+-    })
++    entries
++        .iter()
++        .position(|entry| {
++            !matches!(
++                entry,
++                Entry::Send(Sending {
++                    via: Via::Fallback,
++                    ..
++                })
++            )
++        })
++        .or_else(|| (!entries.is_empty()).then_some(0))
+ }
+ 
+ /// An installed command as the extension list lists its alias and fallback.
+diff --git a/crates/pane-core/tests/aliases.rs b/crates/pane-core/tests/aliases.rs
+index 77513422..38cadc5e 100644
+--- a/crates/pane-core/tests/aliases.rs
++++ b/crates/pane-core/tests/aliases.rs
+@@ -322,7 +322,9 @@ fn an_alias_finds_the_command_first_and_sends_the_text_after_it_only_when_invoke
+     assert_eq!(titles(&launcher)[..2], ["Echo", "4"]);
+ }
+ 
+-fn a_fallback_is_listed_last_for_any_text_and_is_never_chosen_by_itself(fixture: &Fixture) {
++fn a_fallback_is_listed_last_for_any_text_and_the_first_is_selected_when_nothing_else_matches(
++    fixture: &Fixture,
++) {
+     let dirs = Dirs::new();
+     let (launcher, runtime) = dirs.launcher();
+     dirs.install(&launcher, fixture.package, "query");
+@@ -340,18 +342,13 @@ fn a_fallback_is_listed_last_for_any_text_and_is_never_chosen_by_itself(fixture:
+         "{recorded}"
+     );
+ 
+-    // Nothing else matches: the fallback is listed, not selected, so Enter
+-    // sends nothing.
++    // Nothing else matches: the fallback is listed and the first is
++    // selected, so Enter sends it the whole query (ADR 0031).
+     search(&launcher, "zqx words");
+     assert_eq!(titles(&launcher), ["Echo"]);
+     assert_eq!(subtitle(&launcher, 0), "Send “zqx words” · fallback");
+-    assert_eq!(launcher.view().selected, None);
+-    block_on(launcher.activate_selected());
+-    assert_eq!(shown(&launcher), Status::Idle);
++    assert_eq!(launcher.view().selected, Some(0));
+     assert_eq!(running(&runtime), Vec::<PathBuf>::new());
+-
+-    // Choosing it sends the whole query.
+-    launcher.move_selection(1);
+     block_on(launcher.activate_selected());
+     assert_eq!(
+         shown(&launcher),
+@@ -564,7 +561,7 @@ macro_rules! contract {
+ 
+ contract!(
+     an_alias_finds_the_command_first_and_sends_the_text_after_it_only_when_invoked,
+-    a_fallback_is_listed_last_for_any_text_and_is_never_chosen_by_itself,
++    a_fallback_is_listed_last_for_any_text_and_the_first_is_selected_when_nothing_else_matches,
+     an_answer_is_cleared_once_the_query_changes,
+     disabling_the_target_removes_its_alias_and_fallback_without_enabling_it_again,
+     copies_from_other_sources_with_the_same_title_stay_distinct,
+diff --git a/crates/pane-core/tests/arguments.rs b/crates/pane-core/tests/arguments.rs
+index b1fea116..744d9e9a 100644
+--- a/crates/pane-core/tests/arguments.rs
++++ b/crates/pane-core/tests/arguments.rs
+@@ -510,7 +510,9 @@ fn alias_and_fallback_text_fill_the_first_text_argument(fixture: &Fixture) {
+     block_on(launcher.activate_selected());
+     pane.search("zqx  words ");
+     assert_eq!(titles(launcher), ["Greet"]);
+-    launcher.move_selection(1);
++    // Nothing else is listed, so the first fallback is selected and Enter
++    // sends the text, which fills the name (ADR 0031).
++    assert_eq!(launcher.view().selected, Some(0));
+     block_on(launcher.activate_selected());
+     assert_eq!(
+         shown(launcher),
+@@ -520,6 +522,26 @@ fn alias_and_fallback_text_fill_the_first_text_argument(fixture: &Fixture) {
+     );
+ }
+ 
++/// A command whose first argument is not text cannot be sent the query,
++/// so the extension list offers no fallback row for it (#194).
++#[test]
++fn a_command_whose_first_argument_is_not_text_is_not_offered_as_a_fallback() {
++    let (pane, status) = install_changed(|manifest| {
++        manifest["commands"][0]["arguments"][0]["type"] = "password".into();
++    });
++    assert!(matches!(status, Status::Result(_)), "{status:?}");
++    manage(&pane.launcher);
++    let rows = titles(&pane.launcher);
++    assert!(
++        !rows.iter().any(|row| row == "Fallback: Greet"),
++        "Greet's first argument is a password: {rows:?}"
++    );
++    // Stamp's first argument is text and Relay takes a query, so both are
++    // offered.
++    select_title(&pane.launcher, "Fallback: Stamp");
++    select_title(&pane.launcher, "Fallback: Relay");
++}
++
+ fn the_last_dropdown_is_remembered_and_a_password_is_recorded_nowhere(fixture: &Fixture) {
+     let pane = Pane::new();
+     pane.install(fixture);
+diff --git a/crates/pane-core/tests/no_view.rs b/crates/pane-core/tests/no_view.rs
+index b311195f..d0e5bc62 100644
+--- a/crates/pane-core/tests/no_view.rs
++++ b/crates/pane-core/tests/no_view.rs
+@@ -284,14 +284,14 @@ fn each_way_in_runs_the_command_once_with_its_record_and_opens_no_screen(fixture
+     );
+     assert_eq!(launcher.view().query(), Some("rl  hello  world "));
+ 
+-    // As a fallback, which the user chooses.
++    // As a fallback: the first is selected when nothing else matches,
++    // so Enter sends it the text (ADR 0031).
+     manage(launcher);
+     select_title(launcher, "Fallback: Report launch");
+     block_on(launcher.activate_selected());
+     pane.search("zqx  words ");
+     assert_eq!(titles(launcher), ["Report launch"]);
+-    assert_eq!(launcher.view().selected, None);
+-    launcher.move_selection(1);
++    assert_eq!(launcher.view().selected, Some(0));
+     block_on(launcher.activate_selected());
+     assert_eq!(
+         shown(launcher),
+diff --git a/crates/pane/src/features/announcer.rs b/crates/pane/src/features/announcer.rs
+index f28d1daf..560b6ae5 100644
+--- a/crates/pane/src/features/announcer.rs
++++ b/crates/pane/src/features/announcer.rs
+@@ -153,8 +153,7 @@ pub(crate) enum Target {
+     /// Nothing, because the list has nothing to select: no rows, or root
+     /// search's notice that nothing matched.
+     NoResults,
+-    /// Nothing, with rows listed (root search's fallbacks are never
+-    /// selected by themselves).
++    /// Nothing, with rows listed but none of them selected.
+     Nothing,
+ }
+ 
+diff --git a/crates/pane/src/features/root_search/layouts.rs b/crates/pane/src/features/root_search/layouts.rs
+index bcb1f8b2..5dd5680e 100644
+--- a/crates/pane/src/features/root_search/layouts.rs
++++ b/crates/pane/src/features/root_search/layouts.rs
+@@ -4,11 +4,11 @@
+ //! launcher.
+ //!
+ //! Only what the launcher holds is drawn. The notice names the real query
+-//! and is shown when nothing but fallbacks is listed for it; the fallbacks
+-//! under it stay unselected until the user selects one (#100). A computed
+-//! answer's card shows the query it answers and the text Enter copies —
+-//! no units, conversions or history, which no command supplies — and the
+-//! row behind it keeps its id, its selection and its copy action.
++//! and is shown when nothing but fallbacks is listed for it; the first
++//! fallback under it is selected, so Enter sends it the query (ADR 0031).
++//! A computed answer's card shows the query it answers and the text Enter
++//! copies — no units, conversions or history, which no command supplies —
++//! and the row behind it keeps its id, its selection and its copy action.
+ 
+ use gpui::prelude::*;
+ use gpui::{Div, Role, Stateful};
+@@ -17,8 +17,10 @@ use pane_core::{ComputedAnswer, Screen};
+ use crate::ui::result_layouts::{self, AnswerCard, AnswerSide, NoticeCopy};
+ use crate::ui::theme::Theme;
+ 
+-/// The notice's description while fallbacks are listed under it.
+-const WITH_FALLBACKS: &str = "Pick a fallback below, or install an extension that knows about it.";
++/// The notice's description while fallbacks are listed under it: the
++/// first is selected (ADR 0031), so Enter sends the text to it.
++const WITH_FALLBACKS: &str =
++    "Enter sends it to the first fallback below, or install an extension that knows about it.";
+ 
+ /// The notice's description while the user has no fallback for the text:
+ /// the extension list offers a command that takes text as a fallback.

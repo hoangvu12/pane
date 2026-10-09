@@ -1,0 +1,1231 @@
+diff --git a/crates/pane/src/app.rs b/crates/pane/src/app.rs
+index 3dcd3e96..51996f3d 100644
+--- a/crates/pane/src/app.rs
++++ b/crates/pane/src/app.rs
+@@ -9,6 +9,7 @@
+ //! the per-screen sync and render methods this orchestration calls.
+ 
+ mod frame_motion;
++mod hover_wash;
+ mod presence;
+ mod result_list;
+ 
+@@ -58,6 +59,7 @@ use crate::{
+ };
+ 
+ pub(crate) use frame_motion::FrameMotion;
++pub(crate) use hover_wash::Spot;
+ use presence::{Fit, Presence, Press, WindowSize};
+ 
+ pub(crate) const KEY_CONTEXT: &str = "Launcher";
+@@ -104,7 +106,8 @@ pub struct LauncherWindow {
+     /// [`features::quick_slots`].
+     pub(crate) home: quick_slots::Home,
+     /// What moves between frames — the view transition, the footer menu
+-    /// popup's entrance and exit, the number hints' slide — and the rule
++    /// popup's entrance and exit, the number hints' slide, the hover
++    /// washes' exits — and the rule
+     /// of which navigation arrives and which lands at once; see
+     /// [`FrameMotion`].
+     pub(crate) motion: FrameMotion,
+@@ -1423,12 +1426,21 @@ impl LauncherWindow {
+         };
+         // Presentation only: the shared row paints the chrome, and the
+         // identity, accessibility and click behavior are attached here.
++        // The row's hover wash — fainter than the selection, fading out
++        // once the pointer leaves (#245) — is drawn only where hovering
++        // does not move the selection: root search's rows select under a
++        // free pointer, so the wash there shows only under an open overlay.
++        let hover = self
++            .motion
++            .hover
++            .look(Spot::Row(index), cx.background_executor().now());
+         result_row_with(
+             RowContent {
+                 title: row.title.clone().into(),
+                 subtitle: row.subtitle.clone().map(SharedString::from),
+                 unavailable_reason: reason.map(SharedString::from),
+                 selected,
++                hover,
+                 unavailable_id: ("unavailable", index).into(),
+                 icon: Some(icon),
+             },
+@@ -1442,6 +1454,9 @@ impl LauncherWindow {
+             let press = crate::ui::result_row::pressed_wash(selected, theme);
+             move |row| row.bg(press)
+         })
++        .on_hover(cx.listener(move |this, over: &bool, _, cx| {
++            this.motion.hover.set(Spot::Row(index), *over, cx);
++        }))
+         // Every row's washes change at once, as the reference's do (#100:
+         // a command's rows share root search's visuals). Root search's
+         // rows also select under the moving pointer; a command's rows keep
+@@ -1503,11 +1518,16 @@ impl LauncherWindow {
+             None => card,
+         }
+         .id(("row", index))
+-        // While held, the card takes the stronger wash of its own fill: it
+-        // has no hover or selected wash to derive one from (its selection
+-        // is a ring).
++        // While held, the card takes the stronger wash of its own fill —
++        // of its selected wash, the selection's, while it is selected
++        // (#245): the card has no hover wash (hovering it selects it, as
++        // any root row).
+         .active({
+-            let press = pressed(visuals.theme.results.card_fill);
++            let press = pressed(if selected {
++                visuals.theme.selection_wash
++            } else {
++                visuals.theme.results.card_fill
++            });
+             move |card| card.bg(press)
+         })
+         .on_mouse_move(cx.listener(move |this, event: &MouseMoveEvent, _, cx| {
+@@ -1541,16 +1561,25 @@ impl LauncherWindow {
+         cx: &mut Context<Self>,
+     ) -> Vec<gpui::AnyElement> {
+         let keyboard = crate::settings::shared(cx).read(cx).keyboard().clone();
++        let now = cx.background_executor().now();
+         let primary = (!action.label.is_empty() && !status).then(|| {
+             let invoke = keyboard.binding(pane_core::KeyboardAction::InvokeSelectedAction);
+-            action_button(action, invoke, theme)
+-                .on_click(cx.listener(|this, event: &gpui::ClickEvent, window, cx| {
+-                    // A double click's second click runs nothing more.
+-                    if event.click_count() <= 1 {
+-                        this.press_primary_action(window, cx);
+-                    }
+-                }))
+-                .into_any_element()
++            action_button(
++                action,
++                invoke,
++                self.motion.hover.look(Spot::Button("primary-action"), now),
++                theme,
++            )
++            .on_hover(cx.listener(move |this, over: &bool, _, cx| {
++                this.motion.hover.set(Spot::Button("primary-action"), *over, cx);
++            }))
++            .on_click(cx.listener(|this, event: &gpui::ClickEvent, window, cx| {
++                // A double click's second click runs nothing more.
++                if event.click_count() <= 1 {
++                    this.press_primary_action(window, cx);
++                }
++            }))
++            .into_any_element()
+         });
+         let actions = with_actions.then(|| {
+             let open = crate::keyboard::binding_keys(
+@@ -2257,6 +2286,7 @@ pub(crate) fn launcher_changed_outside(cx: &mut App) {
+ pub(crate) fn action_button(
+     action: &SelectedAction,
+     invoke: &pane_core::Binding,
++    hover: f32,
+     theme: &Theme,
+ ) -> Stateful<Div> {
+     let keys = crate::keyboard::binding_keys(invoke);
+@@ -2265,7 +2295,7 @@ pub(crate) fn action_button(
+         action.label.clone(),
+         &keys,
+         CapStyle::Accent,
+-        footer::ButtonWash::Hover,
++        footer::ButtonWash::Hover(hover),
+         theme,
+     )
+     .role(Role::Button)
+diff --git a/crates/pane/src/app/frame_motion.rs b/crates/pane/src/app/frame_motion.rs
+index 40deb044..910912fe 100644
+--- a/crates/pane/src/app/frame_motion.rs
++++ b/crates/pane/src/app/frame_motion.rs
+@@ -1,5 +1,6 @@
+ //! The launcher window's frame motion: the view transition, the footer
+-//! menu popup's entrance and exit, and the number hints' slide — what
++//! menu popup's entrance and exit, the number hints' slide and the hover
++//! washes' exits — what
+ //! moves between frames, presentation only (see [`crate::ui::motion`] for
+ //! the whole policy).
+ //!
+@@ -18,6 +19,7 @@ use std::time::Instant;
+ 
+ use pane_core::Screen;
+ 
++use crate::app::hover_wash::HoverWashes;
+ use crate::features::number_hints::Numbers;
+ use crate::ui::motion::{self, Direction};
+ 
+@@ -82,6 +84,11 @@ pub(crate) struct FrameMotion {
+     /// The number hints Ctrl reveals: the hold that shows them is the
+     /// number hints module's, their slide is advanced here each frame.
+     pub(crate) numbers: Numbers,
++    /// The hover washes the launcher's surfaces take under the pointer,
++    /// and the fade each leaves behind (#245; see
++    /// [`crate::app::hover_wash`]): the surfaces report their hover, and
++    /// their renders read the washes' strength as they draw.
++    pub(crate) hover: HoverWashes,
+ }
+ 
+ impl FrameMotion {
+@@ -100,6 +107,7 @@ impl FrameMotion {
+             #[cfg(any(test, debug_assertions))]
+             drawn_menu_popup: None,
+             numbers: Numbers::default(),
++            hover: HoverWashes::default(),
+         }
+     }
+ 
+@@ -202,11 +210,17 @@ impl FrameMotion {
+         if menu_open || menu_popup.is_none() {
+             self.menu_exit = None;
+         }
++        // The hover washes' exits, on the same frame discipline: a fade
++        // in flight keeps the frames coming; the frame that settles the
++        // last one asks for none. Reduced motion settles them at once.
++        let hover = self.hover.advance(reduced, now);
+         // While the arriving content is still in flight, frames keep
+         // coming; the frame that completes the transition asks for none,
+         // so a settled window is idle. The same holds for the footer menu
+-        // popup's entrance or exit and the number hints' slide.
+-        let animating = arriving.is_some() || menu_popup.is_some() || self.numbers.reveal.is_some();
++        // popup's entrance or exit, the number hints' slide and the hover
++        // washes' exits.
++        let animating =
++            arriving.is_some() || menu_popup.is_some() || self.numbers.reveal.is_some() || hover;
+         Frame {
+             arriving,
+             menu_popup,
+diff --git a/crates/pane/src/features/actions_panel.rs b/crates/pane/src/features/actions_panel.rs
+index 5d56ef11..66c60f1e 100644
+--- a/crates/pane/src/features/actions_panel.rs
++++ b/crates/pane/src/features/actions_panel.rs
+@@ -1510,8 +1510,10 @@ pub(crate) fn panel_child(
+ 
+ /// An entry (`.arow`): 36 high, radius 8, 8px either side, its 16px glyph
+ /// in the icon gray, its 13px/450 label filling the row, and its keys at
+-/// the right in their caps' style; the 11% wash when selected, the 6% one
+-/// on hover. A destructive entry draws its glyph and label in the
++/// the right in their caps' style; the selection wash when selected (the
++/// one set every launcher list takes, #245) — and none on hover, since
++/// the pointer moving over an available entry selects it. A destructive
++/// entry draws its glyph and label in the
+ /// destructive color, and says so to assistive technology; the keys are
+ /// also the row's shortcut there. An entry that opens a submenu ends in a
+ /// chevron (#140). A submenu's note (loading, or its error) is not dimmed
+@@ -1560,17 +1562,18 @@ pub(crate) fn action_row(
+             row.aria_description(description)
+         })
+         .when_some(keys, |row, (keys, _)| row.aria_keyshortcuts(keys.name()))
+-        .when(selected, |row| row.bg(theme.action_selected))
+-        .when(!selected && available, |row| {
+-            row.hover(|row| row.bg(theme.control_hover))
+-        })
++        // The selected entry's wash, the same one set every launcher list
++        // takes (#245). Hovering an available entry moves the panel's
++        // selection to it (the app's pointer handling), so no hover wash
++        // is drawn here: only the selection wash ever shows.
++        .when(selected, |row| row.bg(theme.selection_wash))
+         // While held, an available entry takes the stronger wash of its
+         // hover, or of its selected wash, at once.
+         .when(available, |row| {
+             let press = pressed(if selected {
+-                theme.action_selected
++                theme.selection_wash
+             } else {
+-                theme.control_hover
++                theme.hover_wash
+             });
+             row.active(move |row| row.bg(press))
+         })
+@@ -1718,7 +1721,7 @@ pub(crate) fn search_field(
+                 .placeholder(PLACEHOLDER)
+                 .placeholder_color(theme.text_placeholder)
+                 .caret_color(theme.accent_text)
+-                .selection_color(theme.row_selected)
++                .selection_color(theme.selection_wash)
+                 .marked_color(theme.accent_text)
+                 .text_size(theme.typography.action_size)
+                 .text_color(theme.text_title)
+diff --git a/crates/pane/src/features/clipboard_history.rs b/crates/pane/src/features/clipboard_history.rs
+index 0acc6302..b8337764 100644
+--- a/crates/pane/src/features/clipboard_history.rs
++++ b/crates/pane/src/features/clipboard_history.rs
+@@ -66,7 +66,7 @@ use pane_core::clipboard_view::{
+ };
+ use pane_core::{Binding, Keyboard, KeyboardAction, LauncherView, Screen, Status};
+ 
+-use crate::app::{KEY_CONTEXT, LauncherWindow};
++use crate::app::{KEY_CONTEXT, LauncherWindow, Spot};
+ use crate::features::announcer::{self, Listing, Noun, Opening, Selected, Target};
+ use crate::ui::extension_icon::{self, IconSize};
+ use crate::ui::footer::{self, ButtonWash};
+@@ -997,19 +997,29 @@ impl LauncherWindow {
+             crate::keyboard::binding_keys(keyboard.binding(KeyboardAction::OpenActions));
+         // Paste (Enter) acts on the selected record: with none, there is no
+         // primary action at all.
++        let button_now = cx.background_executor().now();
+         let paste = selected.map(|_| {
+             footer::footer_button(
+                 "clipboard-paste",
+                 "Paste",
+                 &invoke,
+                 CapStyle::Accent,
+-                ButtonWash::Hover,
++                ButtonWash::Hover(
++                    self.motion
++                        .hover
++                        .look(Spot::Button("clipboard-paste"), button_now),
++                ),
+                 &theme,
+             )
+             .role(Role::Button)
+             .aria_label("Paste")
+             .aria_keyshortcuts(invoke.name())
+             .cursor_pointer()
++            .on_hover(cx.listener(move |this, over: &bool, _, cx| {
++                this.motion
++                    .hover
++                    .set(Spot::Button("clipboard-paste"), *over, cx);
++            }))
+             .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+                 this.paste_selected_record(window, cx);
+             }))
+@@ -1020,13 +1030,22 @@ impl LauncherWindow {
+             "Actions",
+             &actions_keys,
+             CapStyle::Regular,
+-            ButtonWash::Hover,
++            ButtonWash::Hover(
++                self.motion
++                    .hover
++                    .look(Spot::Button("clipboard-actions"), button_now),
++            ),
+             &theme,
+         )
+         .role(Role::Button)
+         .aria_label("Actions")
+         .aria_keyshortcuts(actions_keys.name())
+         .cursor_pointer()
++        .on_hover(cx.listener(move |this, over: &bool, _, cx| {
++            this.motion
++                .hover
++                .set(Spot::Button("clipboard-actions"), *over, cx);
++        }))
+         .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+             if this.actions_open() {
+                 this.close_actions(window, cx);
+@@ -1150,6 +1169,10 @@ impl LauncherWindow {
+                             title: title.clone(),
+                             time: record.time.clone(),
+                             selected: on,
++                            hover: self.motion.hover.look(
++                                Spot::Clip(row),
++                                cx.background_executor().now(),
++                            ),
+                         },
+                         mark,
+                         &theme,
+@@ -1160,6 +1183,9 @@ impl LauncherWindow {
+                     .aria_selected(on)
+                     .aria_position_in_set(row + 1)
+                     .aria_size_of_set(frame.rows.len())
++                    .on_hover(cx.listener(move |this, over: &bool, _, cx| {
++                        this.motion.hover.set(Spot::Clip(row), *over, cx);
++                    }))
+                     .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                         if let Some(history) = this.clipboard.as_mut() {
+                             history.browse.select(id.clone());
+diff --git a/crates/pane/src/features/confirmation.rs b/crates/pane/src/features/confirmation.rs
+index a52d09ee..e576c7a0 100644
+--- a/crates/pane/src/features/confirmation.rs
++++ b/crates/pane/src/features/confirmation.rs
+@@ -33,7 +33,7 @@ use gpui::{
+ use pane_core::ConfirmAnswer;
+ use pane_core::feedback::DONT_ASK_AGAIN;
+ 
+-use crate::app::LauncherWindow;
++use crate::app::{LauncherWindow, Spot};
+ use crate::features::actions_panel::DESTRUCTIVE;
+ use crate::ui::footer::{self, ButtonWash};
+ use crate::ui::keycap::{CapStyle, Key, KeySequence, key_sequence};
+@@ -241,6 +241,8 @@ impl LauncherWindow {
+     ) -> Option<AnyElement> {
+         let asked = self.launcher.confirmation()?;
+         let ticked = self.confirmation.dont_ask_again;
++        let now = cx.background_executor().now();
++        let look = |id: &'static str| self.motion.hover.look(Spot::Button(id), now);
+         let primary_keys = one_key("↵", "Enter");
+         let primary = footer::footer_button(
+             "confirmation-primary",
+@@ -251,7 +253,7 @@ impl LauncherWindow {
+             } else {
+                 CapStyle::Accent
+             },
+-            ButtonWash::Hover,
++            ButtonWash::Hover(look("confirmation-primary")),
+             theme,
+         )
+         .when(asked.destructive, |button| {
+@@ -263,6 +265,11 @@ impl LauncherWindow {
+         .aria_label(asked.primary.clone())
+         .aria_keyshortcuts(primary_keys.name())
+         .cursor_pointer()
++        .on_hover(cx.listener(move |this, over: &bool, _, cx| {
++            this.motion
++                .hover
++                .set(Spot::Button("confirmation-primary"), *over, cx);
++        }))
+         .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+             this.answer_confirmation(ConfirmAnswer::Confirmed, window, cx);
+         }));
+@@ -280,13 +287,18 @@ impl LauncherWindow {
+             asked.dismiss.clone(),
+             &dismiss_keys,
+             CapStyle::Regular,
+-            ButtonWash::Hover,
++            ButtonWash::Hover(look("confirmation-dismiss")),
+             theme,
+         )
+         .role(Role::Button)
+         .aria_label(asked.dismiss.clone())
+         .aria_keyshortcuts(dismiss_keys.name())
+         .cursor_pointer()
++        .on_hover(cx.listener(move |this, over: &bool, _, cx| {
++            this.motion
++                .hover
++                .set(Spot::Button("confirmation-dismiss"), *over, cx);
++        }))
+         .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+             this.answer_confirmation(ConfirmAnswer::Dismissed, window, cx);
+         }));
+diff --git a/crates/pane/src/features/extension_log.rs b/crates/pane/src/features/extension_log.rs
+index 0e53e45f..8418da17 100644
+--- a/crates/pane/src/features/extension_log.rs
++++ b/crates/pane/src/features/extension_log.rs
+@@ -35,10 +35,10 @@ use pane_core::clipboard_view::local_offset_ms;
+ use pane_core::extension_log::{LogLevel, LogLine, LogSource};
+ use pane_core::{Binding, Launcher, PackageIdentity, Screen, Status};
+ 
+-use crate::app::LauncherWindow;
++use crate::app::{LauncherWindow, Spot};
+ use crate::ui::footer::{self, ButtonWash};
+ use crate::ui::keycap::{CapStyle, KeySequence};
+-use crate::ui::theme::Theme;
++use crate::ui::theme::{Theme, faded, pressed};
+ use crate::ui::virtual_list::{self, VirtualList};
+ use crate::{Confirm, SelectNext, SelectNextPage, SelectPrevious, SelectPreviousPage};
+ 
+@@ -424,8 +424,18 @@ impl LauncherWindow {
+     /// holds the keyboard's focus. `None` until the screen is read
+     /// ([`LauncherWindow::sync_extension_log`]).
+     pub(crate) fn render_extension_log(&mut self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
++        // The buttons' hover looks are read before the log is borrowed: a
++        // button's wash fades behind the pointer, and the log's records
++        // are read (and scrolled) while the buttons are drawn.
++        let now = cx.background_executor().now();
++        let look = |id: &'static str| self.motion.hover.look(Spot::Button(id), now);
++        let (copy_all_look, clear_look, open_look) = (
++            look("log-copy-all"),
++            look("log-clear"),
++            look("log-open-file"),
++        );
+         let theme = crate::settings::launcher_visuals(cx).theme;
+-        let log = self.log.as_mut()?;
++        let log = self.log.as_mut()?;;
+         log.sync_following();
+         if log.list.count() != log.lines.len() {
+             log.list.reset(log.lines.len());
+@@ -467,15 +477,27 @@ impl LauncherWindow {
+                 "log-copy-all",
+                 "Copy All",
+                 "shift-c",
++                copy_all_look,
+                 copy_all,
++                cx,
++                &theme,
++            ))
++            .child(log_button(
++                "log-clear",
++                "Clear",
++                "l",
++                clear_look,
++                clear,
++                cx,
+                 &theme,
+             ))
+-            .child(log_button("log-clear", "Clear", "l", clear, &theme))
+             .child(log_button(
+                 "log-open-file",
+                 "Open Log File",
+                 "o",
++                open_look,
+                 open,
++                cx,
+                 &theme,
+             ));
+         let lines = if empty {
+@@ -553,6 +575,10 @@ impl LauncherWindow {
+         };
+         let theme = crate::settings::launcher_visuals(cx).theme;
+         let selected = log.selected == Some(index);
++        let hover = self
++            .motion
++            .hover
++            .look(Spot::Log(index), cx.background_executor().now());
+         let pane = line.source == LogSource::Pane;
+         let tone = level_tone(line.level, &theme);
+         let time = clock(line.time, log.offset_ms);
+@@ -584,8 +610,13 @@ impl LauncherWindow {
+             })
+             .whitespace_nowrap()
+             .text_size(theme.typography.row_kind_size)
+-            .when(selected, |row| row.bg(theme.row_selected))
+-            .when(!selected, |row| row.hover(|row| row.bg(theme.row_hover)))
++            .when(selected, |row| row.bg(theme.selection_wash))
++            .when(!selected && hover > 0., |row| {
++                row.bg(faded(theme.hover_wash, hover))
++            })
++            .on_hover(cx.listener(move |this, over: &bool, _, cx| {
++                this.motion.hover.set(Spot::Log(index), *over, cx);
++            }))
+             .child(
+                 div()
+                     .debug_selector(move || format!("log-time-{index}"))
+@@ -639,26 +670,35 @@ impl LauncherWindow {
+ 
+ /// A button over the log's lines: `label` and the keys of its
+ /// [`chord`]`(key)`, in the footer buttons' chrome, doing `clicked`.
++/// `look` is the button's hover wash strength (see `crate::app::hover_wash`),
++/// read from the window's hover state; the button reports the pointer's
++/// arrivals and departures itself, by its `id`.
+ fn log_button(
+     id: &'static str,
+     label: &'static str,
+     key: &str,
++    look: f32,
+     clicked: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
++    cx: &Context<LauncherWindow>,
+     theme: &Theme,
+ ) -> Stateful<Div> {
+     let keys = chord_keys(key);
++    let spot = Spot::Button(id);
+     footer::footer_button(
+         id,
+         label,
+         &keys,
+         CapStyle::Regular,
+-        ButtonWash::Hover,
++        ButtonWash::Hover(look),
+         theme,
+     )
+     .role(Role::Button)
+     .aria_label(label)
+     .aria_keyshortcuts(keys.name())
+     .cursor_pointer()
++    .on_hover(cx.listener(move |this, over: &bool, _, cx| {
++        this.motion.hover.set(spot, *over, cx);
++    }))
+     .on_click(clicked)
+ }
+ 
+diff --git a/crates/pane/src/features/footer_menu.rs b/crates/pane/src/features/footer_menu.rs
+index abab94a9..e4b460ea 100644
+--- a/crates/pane/src/features/footer_menu.rs
++++ b/crates/pane/src/features/footer_menu.rs
+@@ -37,7 +37,7 @@ use gpui::{
+ };
+ use pane_core::KeyboardAction;
+ 
+-use crate::app::LauncherWindow;
++use crate::app::{LauncherWindow, Spot};
+ use crate::features::announcer::{Listing, Opening, Selected, Target};
+ use crate::features::settings;
+ use crate::ui;
+diff --git a/crates/pane/src/features/root_search/mod.rs b/crates/pane/src/features/root_search/mod.rs
+index 70c7bf65..adb85608 100644
+--- a/crates/pane/src/features/root_search/mod.rs
++++ b/crates/pane/src/features/root_search/mod.rs
+@@ -259,7 +259,7 @@ pub(crate) fn search_header(
+                 .placeholder(placeholder)
+                 .placeholder_color(theme.text_placeholder)
+                 .caret_color(theme.accent_text)
+-                .selection_color(theme.row_selected)
++                .selection_color(theme.selection_wash)
+                 .marked_color(theme.accent_text)
+                 .text_size(typography.search_size)
+                 .text_color(theme.text_query)
+diff --git a/crates/pane/src/features/search_files.rs b/crates/pane/src/features/search_files.rs
+index 208a105f..5d019a23 100644
+--- a/crates/pane/src/features/search_files.rs
++++ b/crates/pane/src/features/search_files.rs
+@@ -45,7 +45,7 @@ use pane_core::file_index::{IndexState, size_words};
+ use pane_core::search_files::{FileDetails, FileType, SearchFilesView};
+ use pane_core::{LauncherView, Screen, Status};
+ 
+-use crate::app::{KEY_CONTEXT, LauncherWindow};
++use crate::app::{KEY_CONTEXT, LauncherWindow, Spot};
+ use crate::features::announcer::{self, Listing, Noun, Opening, Selected, Target};
+ use crate::features::root_search;
+ use crate::ui::extension_icon::{self, IconSize};
+@@ -773,6 +773,10 @@ impl LauncherWindow {
+                             title: title.clone().into(),
+                             subtitle: folder.clone().into(),
+                             selected: on,
++                            hover: self.motion.hover.look(
++                                Spot::Clip(row),
++                                cx.background_executor().now(),
++                            ),
+                             icon,
+                         },
+                         &theme,
+@@ -784,6 +788,9 @@ impl LauncherWindow {
+                     .aria_selected(on)
+                     .aria_position_in_set(row + 1)
+                     .aria_size_of_set(frame.rows.len())
++                    .on_hover(cx.listener(move |this, over: &bool, _, cx| {
++                        this.motion.hover.set(Spot::Clip(row), *over, cx);
++                    }))
+                     // A click selects; a double click runs the primary
+                     // action, as Enter does.
+                     .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
+diff --git a/crates/pane/src/features/toast.rs b/crates/pane/src/features/toast.rs
+index 5e59b4f7..b3d1f62a 100644
+--- a/crates/pane/src/features/toast.rs
++++ b/crates/pane/src/features/toast.rs
+@@ -34,7 +34,7 @@ use gpui::{
+ use pane_core::feedback::TOAST_DURATION;
+ use pane_core::{ShownToast, Status, ToastSlot, ToastStyle};
+ 
+-use crate::app::{KEY_CONTEXT, LauncherWindow};
++use crate::app::{KEY_CONTEXT, LauncherWindow, Spot};
+ use crate::ui::footer::{self, ButtonWash};
+ use crate::ui::keycap::{CapStyle, KeySequence};
+ use crate::ui::theme::Theme;
+@@ -394,12 +394,16 @@ impl LauncherWindow {
+                 .unwrap_or(KeySequence { keys: Vec::new() });
+             let label = action.title.clone();
+             let shortcut = keys.name();
++            let look = self
++                .motion
++                .hover
++                .look(Spot::Button(id), cx.background_executor().now());
+             let button = footer::footer_button(
+                 id,
+                 label.clone(),
+                 &keys,
+                 CapStyle::Regular,
+-                ButtonWash::Hover,
++                ButtonWash::Hover(look),
+                 theme,
+             )
+             .key_context(BUTTON_CONTEXT)
+@@ -418,6 +422,9 @@ impl LauncherWindow {
+             })
+             .on_action(cx.listener(Self::press_toast_action))
+             .on_action(cx.listener(Self::leave_toast))
++            .on_hover(cx.listener(move |this, over: &bool, _, cx| {
++                this.motion.hover.set(Spot::Button(id), *over, cx);
++            }))
+             .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
+                 // A double click's second click chooses nothing again.
+                 if event.click_count() > 1 {
+diff --git a/crates/pane/src/ui/footer.rs b/crates/pane/src/ui/footer.rs
+index e0855d92..faf4006f 100644
+--- a/crates/pane/src/ui/footer.rs
++++ b/crates/pane/src/ui/footer.rs
+@@ -16,7 +16,7 @@
+ use gpui::{AnyElement, Div, IntoElement, SharedString, Stateful, div, prelude::*, px};
+ 
+ use crate::ui::keycap::{CapStyle, KeySequence, key_sequence};
+-use crate::ui::theme::{Theme, pressed};
++use crate::ui::theme::{Theme, faded, pressed};
+ 
+ /// One part of the footer's hint line.
+ pub(crate) enum HintPart {
+@@ -58,8 +58,12 @@ pub(crate) fn hint_line(parts: Vec<HintPart>, theme: &Theme) -> Div {
+ /// How a footer button answers the pointer and its panel.
+ #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+ pub(crate) enum ButtonWash {
+-    /// Transparent at rest, the 6% wash on hover (`.fbtn:hover`).
+-    Hover,
++    /// Transparent at rest, the hover wash at `0.5 strength under the
++    /// pointer (`.fbtn:hover`), fading out once it leaves (#245): the
++    /// caller passes the strength it read from the window's hover state
++    /// and reports the pointer's arrivals and departures through its
++    /// `.on_hover`.
++    Hover(f32),
+     /// Transparent, with no hover wash: the reference's Actions button,
+     /// whose inline background (transparent while its panel is closed)
+     /// overrides `.fbtn:hover`.
+@@ -100,10 +104,12 @@ pub(crate) fn footer_button(
+             ButtonWash::Pressed => button
+                 .bg(theme.footer_button_open)
+                 .text_color(theme.footer_button_open_text),
+-            ButtonWash::Hover => button
++            ButtonWash::Hover(look) => button
+                 .text_color(theme.footer_button_text)
+-                .hover(|button| button.bg(theme.control_hover))
+-                .active(|button| button.bg(pressed(theme.control_hover))),
++                .when(look > 0., |button| {
++                    button.bg(faded(theme.hover_wash, look))
++                })
++                .active(|button| button.bg(pressed(theme.hover_wash))),
+             ButtonWash::None => button.text_color(theme.footer_button_text),
+         })
+         .child(
+diff --git a/crates/pane/src/ui/motion.rs b/crates/pane/src/ui/motion.rs
+index 65d96a82..68333d50 100644
+--- a/crates/pane/src/ui/motion.rs
++++ b/crates/pane/src/ui/motion.rs
+@@ -90,12 +90,20 @@
+ //!   a reversal retargets smoothly instead of flashing.
+ //! - A **control's pointer feedback** — the wash a row, an item or a
+ //!   button takes under the pointer, and the stronger wash it takes
+-//!   while pressed ([`crate::ui::theme::pressed`]) — changes at once:
+-//!   the hover tens of times a day, the press the instant the pointer
+-//!   goes down, so the family has no motion at all. (GPUI fades a
+-//!   property the same way in every state, so a hover fade would have
+-//!   delayed the press too.) Keyboard focus and an option's active
+-//!   state stay rest styles: the focus ring and the selected wash.
++//!   while pressed ([`crate::ui::theme::pressed`]) — arrives at once,
++//!   and the press always changes at once: the press is the instant the
++//!   pointer goes down, never something the user waits on. The hover
++//!   wash's *exit* is the one exception, Raycast's (ADR 0035): where
++//!   hovering does not move the selection, the wash fades out over
++//!   [`HOVER_FADE`] once the pointer leaves, so moving across a surface
++//!   reads as smooth rather than blinking. That exit runs on the window's
++//!   own bookkeeping (`crate::app::hover_wash`), not on GPUI's style
++//!   states, which fade a property the same way in every state — a hover
++//!   fade there would have delayed the press too. Keyboard focus and an
++//!   option's active state stay rest styles: the focus ring and the
++//!   selected wash. Selection never fades: a key moves it at once, and
++//!   where hovering selects, the wash that shows is the selection's,
++//!   arriving and leaving with the pointer at once.
+ //!
+ //! Reduced motion: [`App::reduce_motion`] decides, and
+ //! [`observe_reduced_motion`] connects that flag to what the operating
+@@ -106,9 +114,10 @@
+ //! schedules no further cosmetic frames.
+ //!
+ //! Frame discipline: every transition — a view transition, a Settings
+-//! section arrival, a group disclosure, a popup's entrance or exit —
+-//! runs for its bounded duration (a control's hover and pressed washes
+-//! have none: they change at once) and requests
++//! section arrival, a group disclosure, a popup's entrance or exit, a
++//! hover wash's exit — runs for its bounded duration (a control's
++//! pressed wash has none: it changes at once, and a hover wash arrives
++//! at once) and requests
+ //! animation frames only while one is in flight. Completing, cancelling
+ //! (the screen changed again), reduced motion, an unmounted window and a
+ //! hidden window all end with a frame that requests nothing — the window
+@@ -178,11 +187,17 @@ pub(crate) const POPUP_ENTER: Duration = Duration::from_millis(140);
+ /// what the exit's inert visuals may and may not do while it runs.
+ pub(crate) const POPUP_EXIT: Duration = Duration::from_millis(100);
+ 
++/// How long the wash a surface takes under the pointer takes to fade out
++/// once the pointer leaves it (#245, ADR 0035): Raycast's 70ms. The wash
++/// arrives at once — only the way out fades — so a hover never delays
++/// anything the pointer does, and under reduced motion the exit leaves
++/// at once too, as every transition does. Selection never fades at all.
++pub(crate) const HOVER_FADE: Duration = Duration::from_millis(70);
++
+ /// How far the arriving content starts from its resting place, in logical
+ /// pixels: 3px, in the ticket's 2-4px window. Far enough to read as
+ /// direction, near enough never to look like scrolling.
+ pub(crate) const VIEW_SHIFT: f32 = 3.;
+-
+ /// Where the arriving content's opacity starts: 0.3, the floor Roboco's
+ /// menu entrance fades from, so the first frame of a transition already
+ /// shows the arriving content faintly instead of a blank content area
+@@ -217,7 +232,7 @@ pub(crate) struct Tween {
+ impl Tween {
+     /// The tween's value at `now`: `from` when it started, `target`
+     /// once its duration has passed.
+-    fn value(&self, now: Instant) -> f32 {
++    pub(crate) fn value(&self, now: Instant) -> f32 {
+         let elapsed = now.saturating_duration_since(self.started);
+         if self.duration.is_zero() || elapsed >= self.duration {
+             return self.target;
+@@ -225,6 +240,26 @@ impl Tween {
+         let progress = ease(elapsed.as_secs_f32() / self.duration.as_secs_f32());
+         self.target + (self.from - self.target) * (1. - progress)
+     }
++
++    /// Whether the tween has run its duration at `now`, so the
++    /// presentation it moves has arrived.
++    pub(crate) fn finished(&self, now: Instant) -> bool {
++        now.saturating_duration_since(self.started) >= self.duration
++    }
++}
++
++/// Starts the fade of a hover wash the pointer just left (#245): its
++/// strength from full to nothing over [`HOVER_FADE`], from `now`. The
++/// surface's render reads the tween's [`Tween::value`] each frame while
++/// the fade runs (see `crate::app::hover_wash`); the frame that finds it
++/// [`Tween::finished`] drops it and asks for no more.
++pub(crate) fn hover_exit(now: Instant) -> Tween {
++    Tween {
++        target: 0.,
++        from: 1.,
++        started: now,
++        duration: HOVER_FADE.mul_f32(measurement_scale()),
++    }
+ }
+ 
+ /// The curve every view transition follows: GPUI CE's quintic ease-out,
+diff --git a/crates/pane/src/ui/result_layouts.rs b/crates/pane/src/ui/result_layouts.rs
+index d2cafb5e..be466aba 100644
+--- a/crates/pane/src/ui/result_layouts.rs
++++ b/crates/pane/src/ui/result_layouts.rs
+@@ -98,7 +98,8 @@ pub(crate) struct AnswerCard {
+ 
+ /// The reference calculator board's card: the list's full width, 2 above
+ /// it and 4 below, padded 20 above and either side and 16 below, radius
+-/// 14, white 6%, and while selected a 1px inset ring in the accent. Its
++/// 14, white 6% — and while selected, the selection wash in the fill's
++/// place, with no accent ring (#245). Its
+ /// values sit in two equal columns either side of a 40px disc holding the
+ /// arrow, 16 apart, each centered over its caption 4 below it, in Geist
+ /// Mono 500 with −.03em of tracking — what was typed in #D9DADD, the
+@@ -174,12 +175,16 @@ pub(crate) fn answer_card(card: &AnswerCard, theme: &Theme) -> Div {
+         .px(geometry.card_padding_x)
+         .pb(geometry.card_padding_bottom)
+         .rounded(geometry.card_radius)
+-        .bg(colors.card_fill)
++        // The selected card takes the selection wash in place of its own
++        // fill, as every selected row is marked — no accent ring (#245,
++        // ADR 0035).
++        .bg(if card.selected {
++            theme.selection_wash
++        } else {
++            colors.card_fill
++        })
+         .cursor_pointer()
+         .font_family(theme.typography.family.clone())
+-        .when(card.selected, |surface| {
+-            surface.shadow(vec![ring(theme.accent_text)])
+-        })
+         .child(values)
+         .children(also)
+ }
+diff --git a/crates/pane/src/ui/result_row.rs b/crates/pane/src/ui/result_row.rs
+index eabb6986..ff8325db 100644
+--- a/crates/pane/src/ui/result_row.rs
++++ b/crates/pane/src/ui/result_row.rs
+@@ -7,10 +7,14 @@
+ //! 14px/500 title, the 13px subtitle and, on the right, an extension
+ //! item's accessories (text, a relative date, a coloured tag; #139), the
+ //! optional alias chip, key sequence and kind. A title, subtitle or
+-//! accessory with a tooltip shows it while the pointer rests on it. A pale
+-//! wash marks hover and selection; selection stays visible while hovering:
+-//! a selected row keeps its wash and inset edge and does not switch to the
+-//! hover wash. Neither wash fades: the reference's row changes at once.
++//! accessory with a tooltip shows it while the pointer rests on it. A
++//! wash marks hover and selection, the theme's two strengths of the text
++//! colour (ADR 0035): the selected row's wash has no inset edge or ring,
++//! and stays put under the pointer; an unselected row under the pointer
++//! takes the fainter hover wash — drawn where hovering does not move the
++//! selection, so a row the pointer selects never shows it — fading out
++//! over [`crate::ui::motion::HOVER_FADE`] once the pointer leaves. The
++//! selection itself never fades: the row changes at once.
+ //!
+ //! This component owns no identity and no behavior. It returns a plain
+ //! [`Div`] so the app attaches everything behavioral on top:
+@@ -47,7 +51,7 @@ use gpui::{
+ use crate::ui::extension_icon::{self, DrawnIcon, IconSize, RowIcon};
+ use crate::ui::icon::TileSize;
+ use crate::ui::keycap::{self, CapStyle, KeySequence};
+-use crate::ui::theme::{Theme, pressed};
++use crate::ui::theme::{Theme, faded, pressed};
+ use crate::ui::tooltip::{TooltipLook, text_tooltip};
+ 
+ /// What a result row shows — plain presentation values, already resolved
+@@ -67,6 +71,12 @@ pub(crate) struct RowContent {
+     pub(crate) unavailable_id: ElementId,
+     /// Whether the row is selected. Selection styling wins over hover.
+     pub(crate) selected: bool,
++    /// The hover wash's strength, 0 to 1 (see `crate::app::hover_wash`):
++    /// full while the pointer rests on the row, fading once it has left.
++    /// Drawn only while the row is unselected, where hovering does not
++    /// move the selection — root search's rows select under the pointer,
++    /// so a row there shows the selection wash instead.
++    pub(crate) hover: f32,
+     /// The row's icon presentation.
+     pub(crate) icon: Option<RowIcon>,
+ }
+@@ -117,7 +127,8 @@ pub(crate) struct AccessoryLook {
+ pub(crate) fn result_row_with(content: RowContent, meta: RowMeta, theme: &Theme) -> Div {
+     let geometry = &theme.geometry;
+     let typography = &theme.typography;
+-    let row = row_surface(content.selected, theme).font_family(typography.family.clone());
++    let row =
++        row_surface(content.selected, content.hover, theme).font_family(typography.family.clone());
+ 
+     let row = match &content.icon {
+         Some(icon) => row.child(extension_icon::row_icon_at(
+@@ -309,17 +320,19 @@ pub(crate) fn with_number_hint<E: ParentElement + Styled>(
+ /// no press for its rows.
+ pub(crate) fn pressed_wash(selected: bool, theme: &Theme) -> Hsla {
+     pressed(if selected {
+-        theme.row_selected
++        theme.selection_wash
+     } else {
+-        theme.row_hover
++        theme.hover_wash
+     })
+ }
+ 
+ /// A row's surface (`.row`): at least 44 high, radius 10, 10px either side
+-/// and 12 between its parts, with the pale hover wash while unselected,
+-/// and the selected wash and its 1px inset edge while `selected` (a
+-/// selected row keeps them under the pointer): the result row's.
+-fn row_surface(selected: bool, theme: &Theme) -> Div {
++/// and 12 between its parts, with the fainter hover wash while unselected
++/// at `hover`'s strength (1 under the pointer, fading once it has left,
++/// and drawn only where hovering does not move the selection), and the
++/// selected row's wash — no inset edge (ADR 0035), frosted over a
++/// background image (ADR 0028) — while `selected`: the result row's.
++fn row_surface(selected: bool, hover: f32, theme: &Theme) -> Div {
+     let geometry = &theme.geometry;
+     div()
+         .flex_none()
+@@ -331,19 +344,17 @@ fn row_surface(selected: bool, theme: &Theme) -> Div {
+         .px(geometry.row_padding_x)
+         .rounded(geometry.row_radius)
+         .cursor_pointer()
+-        // A row under the pointer (unselected only: selection stays
+-        // visible while hovering) takes the pale hover wash.
+-        .when(!selected, |row| row.hover(|row| row.bg(theme.row_hover)))
+-        // The selected row: its wash and its 1px inset edge — frosted over
+-        // a background image (ADR 0028).
++        // An unselected row under the pointer — or one its hover wash is
++        // still fading from — takes the fainter wash (#245). A selected
++        // row never does: selection stays visible while hovering.
++        .when(!selected && hover > 0., |row| {
++            row.bg(faded(theme.hover_wash, hover))
++        })
++        // The selected row: its wash, frosted over a background image
++        // (ADR 0028), with no inset edge (ADR 0035).
+         .when(selected, |row| {
+             row.when_some(theme.frost, |row, frost| row.backdrop_blur(frost.blur))
+-                .bg(theme.row_selected)
+-                .shadow(vec![
+-                    BoxShadow::new(px(0.), px(0.), theme.row_selected_border)
+-                        .spread_radius(px(1.))
+-                        .inset(),
+-                ])
++                .bg(theme.selection_wash)
+         })
+ }
+ 
+diff --git a/crates/pane/src/ui/split_view.rs b/crates/pane/src/ui/split_view.rs
+index 5a76394f..52cddba2 100644
+--- a/crates/pane/src/ui/split_view.rs
++++ b/crates/pane/src/ui/split_view.rs
+@@ -38,7 +38,7 @@ use gpui::{
+ use gpui_elements::editable_text::{EditableTextState, text_input};
+ 
+ use crate::ui::icon::{self, Glyph, IconTone};
+-use crate::ui::theme::{Theme, pressed};
++use crate::ui::theme::{Theme, faded, pressed};
+ 
+ /// The split view's client size in the reference, in logical pixels: the
+ /// clipboard board's 940×600.
+@@ -138,7 +138,7 @@ pub(crate) fn search_field(
+             .placeholder(placeholder)
+             .placeholder_color(theme.text_placeholder)
+             .caret_color(theme.accent_text)
+-            .selection_color(theme.row_selected)
++            .selection_color(theme.selection_wash)
+             .marked_color(theme.accent_text)
+             .text_size(typography.search_size)
+             .text_color(theme.text_query)
+@@ -178,6 +178,9 @@ pub(crate) struct ClipRow {
+     pub(crate) title: SharedString,
+     pub(crate) time: SharedString,
+     pub(crate) selected: bool,
++    /// The hover wash's strength, 0 to 1 (see `crate::app::hover_wash`):
++    /// full while the pointer rests on the row, fading once it has left.
++    pub(crate) hover: f32,
+ }
+ 
+ /// A text record's mark: `glyph` (its kind) on the row's neutral tile.
+@@ -210,10 +213,11 @@ pub(crate) fn thumbnail_mark(path: PathBuf, theme: &Theme) -> AnyElement {
+ /// either side, 12 between its `mark` (its kind's tile, an image's
+ /// thumbnail or a file's system icon), its 13.5px/500 title (truncating)
+ /// and its time in Geist Mono 11.5. The hover wash shows on an unselected
+-/// row; the selected one keeps its wash and inset edge. While held, a row
+-/// takes the [`pressed`] wash of its hover, or of its selected wash, at
+-/// once. The row is `id`; the caller attaches accessibility and the click,
+-/// which selects.
++/// row at `hover`'s strength, fading out once the pointer has left (#245);
++/// the selected one keeps its wash, with no inset edge (ADR 0035). While
++/// held, a row takes the [`pressed`] wash of its hover, or of its
++/// selected wash, at once. The row is `id`; the caller attaches its
++/// hover report, accessibility and the click, which selects.
+ pub(crate) fn clip_row(
+     id: impl Into<ElementId>,
+     row: ClipRow,
+@@ -223,9 +227,9 @@ pub(crate) fn clip_row(
+     let geometry = &theme.geometry;
+     let split = &theme.split;
+     let press = pressed(if row.selected {
+-        theme.row_selected
++        theme.selection_wash
+     } else {
+-        theme.row_hover
++        theme.hover_wash
+     });
+     div()
+         .id(id)
+@@ -239,16 +243,10 @@ pub(crate) fn clip_row(
+         .px(geometry.row_padding_x)
+         .rounded(geometry.row_radius)
+         .cursor_pointer()
+-        .when(!row.selected, |line| {
+-            line.hover(|line| line.bg(theme.row_hover))
+-        })
+-        .when(row.selected, |line| {
+-            line.bg(theme.row_selected).shadow(vec![
+-                BoxShadow::new(px(0.), px(0.), theme.row_selected_border)
+-                    .spread_radius(px(1.))
+-                    .inset(),
+-            ])
++        .when(!row.selected && row.hover > 0., |line| {
++            line.bg(faded(theme.hover_wash, row.hover))
+         })
++        .when(row.selected, |line| line.bg(theme.selection_wash))
+         .child(mark)
+         .child(
+             div()
+@@ -276,21 +274,24 @@ pub(crate) struct FoundFile {
+     /// Its folder below the home folder (`~/…`).
+     pub(crate) subtitle: SharedString,
+     pub(crate) selected: bool,
++    /// The hover wash's strength, 0 to 1 (see `crate::app::hover_wash`):
++    /// full while the pointer rests on the row, fading once it has left.
++    pub(crate) hover: f32,
+     /// The system's icon for the file, drawn bare.
+     pub(crate) icon: AnyElement,
+ }
+ 
+ /// A file's row: a record's row (see [`clip_row`]) with the file's own
+ /// icon in the tile's place and its folder, muted and truncating first,
+-/// after its title. The caller attaches identity, accessibility and the
+-/// click.
++/// after its title. The caller attaches identity, accessibility, its
++/// hover report and the click.
+ pub(crate) fn file_row(id: impl Into<ElementId>, row: FoundFile, theme: &Theme) -> Stateful<Div> {
+     let geometry = &theme.geometry;
+     let split = &theme.split;
+     let press = pressed(if row.selected {
+-        theme.row_selected
++        theme.selection_wash
+     } else {
+-        theme.row_hover
++        theme.hover_wash
+     });
+     div()
+         .id(id)
+@@ -304,16 +305,10 @@ pub(crate) fn file_row(id: impl Into<ElementId>, row: FoundFile, theme: &Theme)
+         .px(geometry.row_padding_x)
+         .rounded(geometry.row_radius)
+         .cursor_pointer()
+-        .when(!row.selected, |line| {
+-            line.hover(|line| line.bg(theme.row_hover))
+-        })
+-        .when(row.selected, |line| {
+-            line.bg(theme.row_selected).shadow(vec![
+-                BoxShadow::new(px(0.), px(0.), theme.row_selected_border)
+-                    .spread_radius(px(1.))
+-                    .inset(),
+-            ])
++        .when(!row.selected && row.hover > 0., |line| {
++            line.bg(faded(theme.hover_wash, row.hover))
+         })
++        .when(row.selected, |line| line.bg(theme.selection_wash))
+         .child(div().flex_none().child(row.icon))
+         .child(
+             div()
+diff --git a/crates/pane/src/ui/theme.rs b/crates/pane/src/ui/theme.rs
+index 374a10d1..54cfc323 100644
+--- a/crates/pane/src/ui/theme.rs
++++ b/crates/pane/src/ui/theme.rs
+@@ -65,6 +65,16 @@ pub(crate) fn pressed(wash: Hsla) -> Hsla {
+     }
+ }
+ 
++/// `color` at `strength` of its alpha: a hover wash's look as it fades
++/// out behind the pointer (#245). Full strength is the wash itself; 0
++/// is nothing drawn at all.
++pub(crate) fn faded(color: Hsla, strength: f32) -> Hsla {
++    Hsla {
++        alpha: (color.alpha * strength.clamp(0., 1.)).min(1.),
++        ..color
++    }
++}
++
+ /// The semantic tokens. Field groups follow the roles the launcher uses:
+ /// text, background, borders, selection, focus, semantic states, control
+ /// chrome — plus the typography and geometry the reference fixes.
+@@ -119,13 +129,23 @@ pub(crate) struct Theme {
+     /// Dividers between header/footer and the list (reference: .06).
+     pub(crate) hairline_soft: Hsla,
+ 
+-    // -- Selection roles ----------------------------------------------------
+-    /// A row under the pointer (reference: rgba(255,255,255,.035)).
+-    pub(crate) row_hover: Hsla,
+-    /// The selected row's wash (reference: rgba(255,255,255,.085)).
+-    pub(crate) row_selected: Hsla,
+-    /// The selected row's inset edge (reference: rgba(255,255,255,.05)).
+-    pub(crate) row_selected_border: Hsla,
++    // -- Selection and hover (ADR 0035) -------------------------------
++    /// The selected row's wash in every launcher list — root search's
++    /// rows, a command's list, a command search, a confirmation's rows,
++    /// the Actions panel's and the Pane menu's entries: the text colour
++    /// at 10% (Raycast's value), with no inset edge and no ring (ADR
++    /// 0035). A selected row over a background image keeps this wash over
++    /// its frost, without the edge.
++    pub(crate) selection_wash: Hsla,
++    /// The hover wash where hovering does not move the selection (a
++    /// command's list, rows under an open overlay, pinned slots, the
++    /// footer's buttons, the Pane menu's entries): the text colour at
++    /// 5%, fainter than the selection, fading out over
++    /// [`crate::ui::motion::HOVER_FADE`] once the pointer leaves (ADR
++    /// 0035). Where hovering *does* move the selection — root search's
++    /// rows, the Actions panel's entries — only the selection wash ever
++    /// shows.
++    pub(crate) hover_wash: Hsla,
+ 
+     // -- Root search's result layouts (#96) ----------------------------------
+     /// The no-results notice, the computed answer's card and the empty
+@@ -226,8 +246,6 @@ pub(crate) struct Theme {
+     pub(crate) footer_mark: Hsla,
+     /// A footer button's label (reference `.fbtn`: #D9DADD).
+     pub(crate) footer_button_text: Hsla,
+-    /// A footer button's hover wash, and an Actions row's (white 6%).
+-    pub(crate) control_hover: Hsla,
+     /// The Actions button while its panel is open (white 10%), with
+     /// [`Theme::footer_button_open_text`] on it.
+     pub(crate) footer_button_open: Hsla,
+@@ -235,8 +253,6 @@ pub(crate) struct Theme {
+     pub(crate) footer_button_open_text: Hsla,
+     /// The 1×16 rule between the footer's buttons (white 10%).
+     pub(crate) footer_divider: Hsla,
+-    /// The selected Actions row's wash (reference `.arow.sel`: white 11%).
+-    pub(crate) action_selected: Hsla,
+     /// An Actions row's label (#E4E4E7).
+     pub(crate) action_text: Hsla,
+     /// An Actions row's glyph (#A3A4A9).
+@@ -265,8 +281,6 @@ pub(crate) struct Theme {
+     pub(crate) slot_background: Hsla,
+     /// A pinned slot's 1px inset edge (white 5%).
+     pub(crate) slot_edge: Hsla,
+-    /// A pinned slot under the pointer (`.slot:hover`: white 7%).
+-    pub(crate) slot_hover: Hsla,
+     /// A pinned slot's title (`.slot-t`: #D9DADD).
+     pub(crate) slot_title: Hsla,
+     /// The pin hint's dashed outline, in the strip's cell after the last
+@@ -649,8 +663,8 @@ pub(crate) struct ResultColors {
+     pub(crate) notice_disc: Hsla,
+     pub(crate) notice_disc_edge: Hsla,
+     pub(crate) notice_glyph: Hsla,
+-    /// The answer card's fill (white 6%); its 1px ring while selected is
+-    /// the accent stroke ([`Theme::accent_text`]).
++    /// The answer card's fill (white 6%); while the card is selected it
++    /// takes [`Theme::selection_wash`] in its place, with no ring (#245).
+     pub(crate) card_fill: Hsla,
+     /// The value typed (#D9DADD) and the answer (#FFFFFF).
+     pub(crate) card_source: Hsla,
+@@ -1055,9 +1069,8 @@ impl Theme {
+             hairline: color(0xFFFFFF13),
+             hairline_soft: color(0xFFFFFF0F),
+ 
+-            row_hover: color(0xFFFFFF09),
+-            row_selected: color(0xFFFFFF16),
+-            row_selected_border: color(0xFFFFFF0D),
++            selection_wash: color(0xEDEDEF1A),
++            hover_wash: color(0xEDEDEF0D),
+ 
+             results: ResultColors::dark(),
+ 
+@@ -1101,11 +1114,9 @@ impl Theme {
+ 
+             footer_mark: color(0xEDEDEFEB),
+             footer_button_text: color(0xD9DADDFF),
+-            control_hover: color(0xFFFFFF0F),
+             footer_button_open: color(0xFFFFFF1A),
+             footer_button_open_text: color(0xFFFFFFFF),
+             footer_divider: color(0xFFFFFF1A),
+-            action_selected: color(0xFFFFFF1C),
+             action_text: color(0xE4E4E7FF),
+             action_icon: color(0xA3A4A9FF),
+             action_rule: color(0xFFFFFF12),
+@@ -1118,7 +1129,6 @@ impl Theme {
+ 
+             slot_background: color(0xFFFFFF09),
+             slot_edge: color(0xFFFFFF0D),
+-            slot_hover: color(0xFFFFFF12),
+             slot_title: color(0xD9DADDFF),
+             slot_empty_edge: color(0xFFFFFF1A),
+ 
+@@ -1162,9 +1172,8 @@ impl Theme {
+             hairline: color(0x00000017),
+             hairline_soft: color(0x00000012),
+ 
+-            row_hover: color(0x0000000B),
+-            row_selected: color(0x00000016),
+-            row_selected_border: color(0x0000000D),
++            selection_wash: color(0x2021261A),
++            hover_wash: color(0x2021260D),
+ 
+             results: ResultColors::light(),
+ 
+@@ -1211,11 +1220,9 @@ impl Theme {
+ 
+             footer_mark: color(0x202126EB),
+             footer_button_text: color(0x2A2B31FF),
+-            control_hover: color(0x0000000F),
+             footer_button_open: color(0x0000001A),
+             footer_button_open_text: color(0x111214FF),
+             footer_divider: color(0x0000001A),
+-            action_selected: color(0x0000001C),
+             action_text: color(0x202126FF),
+             action_icon: color(0x575A63FF),
+             action_rule: color(0x00000012),
+@@ -1228,7 +1235,6 @@ impl Theme {
+ 
+             slot_background: color(0x00000009),
+             slot_edge: color(0x0000000D),
+-            slot_hover: color(0x00000012),
+             slot_title: color(0x2A2B31FF),
+             slot_empty_edge: color(0x0000001A),
+ 
+@@ -1247,10 +1253,10 @@ impl Theme {
+     /// glass tint alpha on glass, so the window's frost still shows
+     /// through it; the frosted surfaces blur what is behind
+     /// them 30px under the canvas at 40% (the footer at 60%) and a cool
+-    /// silver edge; hover and selection are plain white washes (dark ones
+-    /// in the light palette); and the secondary text steps up a shade to
+-    /// read over the picture. The light values are the dark ones turned
+-    /// over, not yet tuned.
++    /// silver edge; selection and hover are the text colour's washes
++    /// (ADR 0035), which carry over from the palette beneath; and the
++    /// secondary text steps up a shade to read over the picture. The
++    /// light values are the dark ones turned over, not yet tuned.
+     pub(crate) fn over_backdrop(&self, canvas: Hsla) -> Theme {
+         let light = self.panel_solid.lightness > 0.5;
+         let at = |base: Hsla, alpha: f32| Hsla { alpha, ..base };
+@@ -1290,15 +1296,8 @@ impl Theme {
+             panel_sheen: transparent_black(),
+             footer_tint: at(canvas, 0.6),
+             hairline_soft: edge,
+-            row_hover: wash(0.06),
+-            row_selected: wash(0.10),
+-            row_selected_border: Hsla {
+-                alpha: edge.alpha + 0.01,
+-                ..edge
+-            },
+             slot_background: frost.tint,
+             slot_edge: edge,
+-            slot_hover: wash(0.09),
+             frost: Some(frost),
+             ..self.clone()
+         }

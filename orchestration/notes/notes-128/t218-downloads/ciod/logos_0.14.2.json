@@ -1,0 +1,1 @@
+{"dependencies":[{"id":11957236,"version_id":1273902,"crate_id":"ariadne","req":"^0.2.0","optional":false,"default_features":true,"features":["auto-color"],"target":null,"kind":"dev","downloads":0},{"id":11957235,"version_id":1273902,"crate_id":"logos-derive","req":"^0.14.2","optional":true,"default_features":true,"features":[],"target":null,"kind":"normal","downloads":0}]}

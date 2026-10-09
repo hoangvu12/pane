@@ -1,0 +1,21 @@
+ M crates/pane-build/src/session.rs
+ M crates/pane-core/src/extension_log.rs
+ M crates/pane-core/src/launcher.rs
+ M crates/pane-core/src/launcher/actions.rs
+ M crates/pane-core/src/launcher/developing.rs
+ M crates/pane-core/src/launcher/launching.rs
+ M crates/pane-core/src/launcher/reload.rs
+ M crates/pane-core/src/lib.rs
+ M crates/pane-core/src/packages.rs
+ M crates/pane-core/src/runtime.rs
+ M crates/pane-core/tests/develop.rs
+ M crates/pane-core/tests/extension_log.rs
+ M crates/pane/src/app.rs
+ M crates/pane/src/features/announcer.rs
+ M tools/componentize-js/bundle.mjs
+ M tools/componentize-js/pane_js.py
+ M xtask/src/main.rs
+?? crates/pane-core/src/launcher/error_overlay.rs
+?? crates/pane-core/src/source_map.rs
+?? crates/pane-core/tests/error_overlay.rs
+?? crates/pane/tests/error_overlay.rs
