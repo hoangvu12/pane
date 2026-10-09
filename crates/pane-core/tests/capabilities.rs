@@ -770,11 +770,8 @@ fn a_malformed_capability_name_is_refused() {
     ] {
         let dirs = Dirs::new();
         // Both `provides` and `uses` read the name.
-        let members = format!(
-            "{}\n{}",
-            dirs.providing(name),
-            format!(r#","uses": [{{ "capability": "{name}", "operations": ["greet"] }}]"#)
-        );
+        let uses = format!(r#","uses": [{{ "capability": "{name}", "operations": ["greet"] }}]"#);
+        let members = format!("{}\n{}", dirs.providing(name), uses);
         let message = dirs.refused(&members);
         assert!(
             message.starts_with(&format!(
@@ -810,12 +807,11 @@ fn an_operation_listed_twice_is_refused() {
 #[test]
 fn the_same_capability_provided_twice_at_one_major_is_refused() {
     let dirs = Dirs::new();
-    let members = format!(
-        r#","provides": [
-            {{ "capability": "fixture:greet@1", "component": "fixture.wasm", "operations": ["greet"] }},
-            {{ "capability": "fixture:greet@1", "component": "fixture.wasm", "operations": ["greet"] }}
-        ]"#
-    );
+    let members = r#","provides": [
+        { "capability": "fixture:greet@1", "component": "fixture.wasm", "operations": ["greet"] },
+        { "capability": "fixture:greet@1", "component": "fixture.wasm", "operations": ["greet"] }
+    ]"#
+        .to_string();
     let message = dirs.refused(&members);
     assert_eq!(
         message,
@@ -891,10 +887,9 @@ fn a_component_without_the_operations_export_is_refused() {
 #[test]
 fn commands_naming_an_unknown_command_are_refused() {
     let dirs = Dirs::new();
-    let members = format!(
-        r#","uses": [{{ "capability": "fixture:greet@1", "operations": ["greet"],
-             "commands": ["no-such-command"] }}]"#
-    );
+    let members = r#","uses": [{ "capability": "fixture:greet@1", "operations": ["greet"],
+         "commands": ["no-such-command"] }]"#
+        .to_string();
     let message = dirs.refused(&members);
     assert_eq!(
         message,
