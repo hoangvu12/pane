@@ -204,20 +204,12 @@ fn draw(
         NodeKind::Column(layout) => {
             let own = path.clone();
             let children = children(node, path, focus, theme, cx);
-            named(
-                container(true, layout, children).id(own),
-                name.as_deref(),
-            )
-            .into_any_element()
+            named(container(true, layout, children).id(own), name.as_deref()).into_any_element()
         }
         NodeKind::Row(layout) => {
             let own = path.clone();
             let children = children(node, path, focus, theme, cx);
-            named(
-                container(false, layout, children).id(own),
-                name.as_deref(),
-            )
-            .into_any_element()
+            named(container(false, layout, children).id(own), name.as_deref()).into_any_element()
         }
         NodeKind::Text(text) => {
             let element = text_element(text, theme).id(path.clone());
@@ -235,7 +227,7 @@ fn draw(
 
 /// Gives `node` the group role and name assistive technology reads it by:
 /// every node is reported, with its own name when the tree gave one.
-fn named<E: Stateful<Div> + FluentBuilder>(node: E, name: Option<&str>) -> E {
+fn named(node: Stateful<Div>, name: Option<&str>) -> Stateful<Div> {
     node.role(Role::Group)
         .when_some(name, |node, name| node.aria_label(name))
 }
