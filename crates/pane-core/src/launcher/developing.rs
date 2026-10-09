@@ -440,7 +440,9 @@ impl Launcher {
                 }
             });
         if let Err(error) = spawned {
-            eprintln!("pane: the Logs screen of {identity} will not follow its lines: {error}");
+            crate::diagnostic!(
+                "pane: the Logs screen of {identity} will not follow its lines: {error}"
+            );
         }
     }
 
@@ -751,7 +753,7 @@ impl Launcher {
             Some(log) => format!("the whole output is in {}", log.display()),
             None => "Pane could not keep its output".into(),
         };
-        eprintln!("pane: {title} did not build with `{command}`: {summary} ({whole})");
+        crate::diagnostic!("pane: {title} did not build with `{command}`: {summary} ({whole})");
         self.show_development(
             identity,
             Status::Error(format!(
