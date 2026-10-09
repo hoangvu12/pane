@@ -59,8 +59,8 @@ use wasmtime::component::{Access, Accessor, HasData};
 
 use crate::extension_data::{ExtensionData, PackageData};
 use crate::packages::{
-    InstalledPackage, ManifestOperation, ManifestProvides, ManifestUse, PackageIdentity, SourceSpec,
-    installed_as, paused_reason,
+    InstalledPackage, ManifestOperation, ManifestProvides, ManifestUse, PackageIdentity,
+    SourceSpec, installed_as, paused_reason,
 };
 use crate::platform;
 use crate::runtime::{CallError, GuestState, bindings};
@@ -895,14 +895,9 @@ impl<T> operations::HostWithStore<T> for Calls {
         operation: String,
         input: String,
     ) -> Result<Vec<operations::ProviderAnswer>, operations::CallError> {
-        let answer = send(
-            accessor,
-            Addressed::Every { capability },
-            operation,
-            input,
-        )
-        .await
-        .map_err(operations::CallError::from)?;
+        let answer = send(accessor, Addressed::Every { capability }, operation, input)
+            .await
+            .map_err(operations::CallError::from)?;
         match answer {
             Answer::Every(result) => result
                 .map(|answers| {

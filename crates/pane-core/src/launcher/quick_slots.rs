@@ -344,13 +344,10 @@ fn resolve_command(launcher: &Launcher, state: &State, target: &PinTarget, id: &
             // runs nothing (see `waiting`).
             Entry::Waiting {
                 identity, manifest, ..
-            } => Err(state
-                .waiting
-                .reason_for(&identity, &manifest)
-                .map_or_else(
-                    || format!("{} no longer waits", state.title_of(&identity)),
-                    |reason| reason.row.clone(),
-                )),
+            } => Err(state.waiting.reason_for(&identity, &manifest).map_or_else(
+                || format!("{} no longer waits", state.title_of(&identity)),
+                |reason| reason.row.clone(),
+            )),
             entry => Ok(entry),
         };
         return Resolved {

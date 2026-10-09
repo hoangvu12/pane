@@ -59,7 +59,12 @@ const GREET: &str = "pane-samples:greet@1";
 /// The greet providers: (package, command title, package title, answer's
 /// language).
 const PROVIDERS: [(&str, &str, &str, &str); 3] = [
-    ("sample-greet", "Rust greet provider", "Rust greet provider sample", "Rust"),
+    (
+        "sample-greet",
+        "Rust greet provider",
+        "Rust greet provider sample",
+        "Rust",
+    ),
     (
         "sample-greet-js",
         "JavaScript greet provider",
@@ -342,7 +347,10 @@ fn a_consumer_waits_with_no_provider_and_comes_back_when_one_is_installed() {
             );
             assert_eq!(view.title, format!("Why {command} cannot run"));
             let reason = format!("Needs {GREET}: no extension provides it.");
-            assert_eq!(view.details().first().map(String::as_str), Some(reason.as_str()));
+            assert_eq!(
+                view.details().first().map(String::as_str),
+                Some(reason.as_str())
+            );
             assert_eq!(
                 titles(&launcher),
                 [format!("Install an extension that provides {GREET}")]
@@ -567,9 +575,7 @@ fn a_cycle_through_capabilities_waits_as_a_whole_when_one_member_cannot_run() {
         )
     };
     let uses = |capability: &str| {
-        format!(
-            r#","uses": [{{ "capability": "{capability}", "operations": ["greet"] }}]"#
-        )
+        format!(r#","uses": [{{ "capability": "{capability}", "operations": ["greet"] }}]"#)
     };
     dirs.fixture(
         "x",
@@ -691,9 +697,7 @@ fn a_fan_out_answers_each_available_provider_in_order_and_skips_the_rest() {
     dirs.install(&launcher, &consumer);
     let command = CONSUMERS[0].1;
     let said = |answers: &[String]| answers.join("; ");
-    let answer = |(title, language): (&str, &str)| {
-        format!("{title}: Hello, Pane, from {language}")
-    };
+    let answer = |(title, language): (&str, &str)| format!("{title}: Hello, Pane, from {language}");
 
     // Install order is the order the providers are called in.
     for (package, ..) in [PROVIDERS[1], PROVIDERS[2], PROVIDERS[0]] {
@@ -749,7 +753,11 @@ fn the_fixture_drives_a_fan_out_skipping_and_refusing() {
           "operations": ["greet"] }
     ]"#;
     dirs.fixture("b", "", provides);
-    dirs.fixture("c", "", &format!("{}, \"dependencies\": [{}]", provides, needs("w")));
+    dirs.fixture(
+        "c",
+        "",
+        &format!("{}, \"dependencies\": [{}]", provides, needs("w")),
+    );
     dirs.fixture("d", "", provides);
     dirs.fixture(
         "w",
@@ -778,18 +786,24 @@ fn the_fixture_drives_a_fan_out_skipping_and_refusing() {
     // operation qualified by the capability; the waiting one and the one
     // for another system are skipped.
     let answer = |title: &str| {
-        format!(
-            "{title}: {{\"greeting\":\"Hello, Ada\",\"operation\":\"fixture:every@1/greet\"}}"
-        )
+        format!("{title}: {{\"greeting\":\"Hello, Ada\",\"operation\":\"fixture:every@1/greet\"}}")
     };
-    open_item(&launcher, "Capabilities fixture", "Call every provider of the every capability");
+    open_item(
+        &launcher,
+        "Capabilities fixture",
+        "Call every provider of the every capability",
+    );
     assert_eq!(
         shown(&launcher),
         result(&[answer("Package b"), answer("Package d")].join("; "))
     );
 
     // Each provider's own error reaches its own answer.
-    open_item(&launcher, "Capabilities fixture", "Call every provider with no name");
+    open_item(
+        &launcher,
+        "Capabilities fixture",
+        "Call every provider with no name",
+    );
     assert_eq!(
         shown(&launcher),
         result("Package b: failed: a name is needed; Package d: failed: a name is needed")
@@ -798,11 +812,19 @@ fn the_fixture_drives_a_fan_out_skipping_and_refusing() {
     // None left: the empty list.
     block_on(launcher.set_enabled(&dirs.identity("b"), false));
     block_on(launcher.set_enabled(&dirs.identity("d"), false));
-    open_item(&launcher, "Capabilities fixture", "Call every provider of the every capability");
+    open_item(
+        &launcher,
+        "Capabilities fixture",
+        "Call every provider of the every capability",
+    );
     assert_eq!(shown(&launcher), result("no provider answered"));
 
     // A fan-out of a use of one provider is refused.
-    open_item(&launcher, "Capabilities fixture", "Call every provider of the greet capability");
+    open_item(
+        &launcher,
+        "Capabilities fixture",
+        "Call every provider of the greet capability",
+    );
     assert_eq!(
         shown(&launcher),
         Status::Error(
@@ -908,7 +930,11 @@ fn root_results_are_not_asked_while_waiting_for_a_capability() {
     block_on(launcher.set_enabled(&dirs.identity(PROVIDERS[0].0), false));
     block_on(launcher.set_query("reverse another"));
     assert!(
-        launcher.view().rows.iter().all(|row| row.title != "rehtona"),
+        launcher
+            .view()
+            .rows
+            .iter()
+            .all(|row| row.title != "rehtona"),
         "{:?}",
         titles(&launcher)
     );

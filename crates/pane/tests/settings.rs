@@ -2522,7 +2522,9 @@ fn a_row_waiting_on_a_capability_offers_the_install_row_that_opens_the_install_f
     let mut settings_cx = settings_context(&settings, cx);
     settings_cx.run_until_parked();
     assert!(
-        settings_cx.debug_bounds("extension-install-field").is_some(),
+        settings_cx
+            .debug_bounds("extension-install-field")
+            .is_some(),
         "the npm field is asked for"
     );
     let view = cx.read_entity(&launcher, |window, _| window.launcher().view());

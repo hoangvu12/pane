@@ -349,8 +349,7 @@ fn unmet_of(
             .iter()
             .filter(|used| used.required && !used.use_all && used.commands.is_none())
             .filter_map(|used| {
-                unmet_capability(packages, able, paused, package, used)
-                    .map(Requirement::Capability)
+                unmet_capability(packages, able, paused, package, used).map(Requirement::Capability)
             }),
     );
     requirements
@@ -559,9 +558,7 @@ fn reason(
         // The first requirement's root cause is what the fix row fixes.
         fix: requirements
             .first()
-            .map(|first| {
-                root_of_requirement(packages, able, paused, title_of, &path, first).fix()
-            })
+            .map(|first| root_of_requirement(packages, able, paused, title_of, &path, first).fix())
             .unwrap_or(Fix::Manage),
     }
 }
@@ -666,7 +663,11 @@ fn providers_say(
                 // cycle.
                 Cannot::Waiting => match root_of(packages, able, paused, title_of, &path) {
                     Some(root) => {
-                        format!("{}, which waits for {}", provider.title, root.what(title_of))
+                        format!(
+                            "{}, which waits for {}",
+                            provider.title,
+                            root.what(title_of)
+                        )
                     }
                     None => format!("{}, which is waiting for something else", provider.title),
                 },

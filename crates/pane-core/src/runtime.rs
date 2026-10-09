@@ -178,7 +178,9 @@ use crate::generation::{End, Fence, Generation, Registration};
 use crate::helpers;
 use crate::helpers::runner::{self, HelperError, HelperErrorKind, Helpers, Running, Spec};
 use crate::launch::{LaunchRecord, LaunchRequest, LaunchSource, LaunchType, Launches};
-use crate::operations::{self, Addressed, Answer, Directory, OperationCall, OperationError, Target};
+use crate::operations::{
+    self, Addressed, Answer, Directory, OperationCall, OperationError, Target,
+};
 use crate::packages::EXTENSION_API;
 
 /// Interface-version prefix every imported WASI interface must carry.

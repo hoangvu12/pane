@@ -2772,7 +2772,11 @@ impl Launcher {
                 state.view.status = Status::Error(problem);
                 Pending::Nothing
             }
-            Entry::Waiting { identity, command, manifest } => {
+            Entry::Waiting {
+                identity,
+                command,
+                manifest,
+            } => {
                 self.show_waiting_details(state, &identity, &command, &manifest);
                 Pending::Nothing
             }
@@ -3450,9 +3454,9 @@ impl Launcher {
             // Once the command no longer waits (what it needed came back, or
             // it is gone or disabled), root search lists its commands as
             // they are now, keeping the screen epoch as refreshing does.
-            Screen::WaitingDetails { identity, command, .. }
-                if state.waiting.reason_for(identity, command).is_none() =>
-            {
+            Screen::WaitingDetails {
+                identity, command, ..
+            } if state.waiting.reason_for(identity, command).is_none() => {
                 let epoch = state.screen_epoch;
                 self.show_root(state, None);
                 state.screen_epoch = epoch;
@@ -4007,13 +4011,17 @@ impl Launcher {
             // its use names, or any extension that provides it. Either way
             // the row opens one of Settings' install forms, where a
             // provider is chosen and installed.
-            Fix::Install { capability, default } => {
+            Fix::Install {
+                capability,
+                default,
+            } => {
                 let named_by = state.title_of(identity);
                 // Which install form the row opens: the one for the default's
                 // source, or npm's, where a published provider is named.
-                let entry = match default.as_deref().and_then(|source| {
-                    crate::packages::SourceSpec::parse(source).ok()
-                }) {
+                let entry = match default
+                    .as_deref()
+                    .and_then(|source| crate::packages::SourceSpec::parse(source).ok())
+                {
                     Some(crate::packages::SourceSpec::Local(_)) => Entry::InstallFromFolder,
                     Some(crate::packages::SourceSpec::Git(_)) => Entry::AskGit,
                     _ => Entry::AskNpm,
