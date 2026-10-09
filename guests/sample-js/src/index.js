@@ -88,7 +88,7 @@ const MOVES = { left: [-1, 0], right: [1, 0], up: [0, -1], down: [0, 1] };
  * An open color picker: a grid of swatches and a preview of the chosen
  * color. Arrow keys, Home and End move the choice; pressing or dragging the
  * pointer over the grid chooses the swatch under it. Pane creates one per
- * opened view (`openView`) and drops it when the view closes.
+ * opened view (`openCustomView`) and drops it when the view closes.
  */
 class ColorPicker {
   constructor() {
@@ -259,7 +259,7 @@ export const command = {
     return `${GREETINGS[greeting]}, ${name}, from the JavaScript guest`;
   },
 
-  async openView(itemId) {
+  async openCustomView(itemId) {
     if (itemId !== "color") {
       throw new Error(`unknown view: ${itemId}`);
     }

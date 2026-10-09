@@ -1,0 +1,15 @@
+{
+  "manifestVersion": 1,
+  "title": "Designed view sample",
+  "version": "0.1.0",
+  "apiVersion": "0.1",
+  "commands": [
+    {
+      "id": "sample",
+      "title": "Designed view sample",
+      "subtitle": "A counter whose screen the extension designs as a tree",
+      "component": "sample_view.wasm",
+      "mode": "designed"
+    }
+  ]
+}

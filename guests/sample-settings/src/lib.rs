@@ -160,6 +160,7 @@ async fn outcome(id: &str) -> Result<String, String> {
 
 impl Command for Greeting {
     type CustomView = NoCustomView;
+    type DesignedView = pane_extension::view::NoDesignedView;
 
     async fn render() -> Result<List, String> {
         let title = match settings::get(STYLE)? {
@@ -237,7 +238,7 @@ impl Command for Greeting {
         })
     }
 
-    async fn open_view(item_id: String) -> Result<CustomView, String> {
+    async fn open_custom_view(item_id: String) -> Result<CustomView, String> {
         Err(format!("unknown view: {item_id}"))
     }
 }

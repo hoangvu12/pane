@@ -48,8 +48,8 @@ use crate::ui::icon::{Glyph, glyph, glyph_rotated};
 use crate::ui::theme::{Theme, pressed};
 
 /// A 1px ring inset along a box's edge (`box-shadow: inset 0 0 0 1px`):
-/// it takes no layout space.
-fn inset_ring(color: Hsla, width: Pixels) -> BoxShadow {
+/// it takes no layout space. (Shared with the designed view's buttons.)
+pub(crate) fn inset_ring(color: Hsla, width: Pixels) -> BoxShadow {
     BoxShadow::new(px(0.), px(0.), color)
         .spread_radius(width)
         .inset()

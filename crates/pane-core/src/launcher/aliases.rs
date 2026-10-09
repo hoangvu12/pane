@@ -42,7 +42,7 @@ use super::{
     Opening, Row, Screen, State, Status, Unavailable, off_thread,
 };
 use crate::launch::{LaunchRecord, LaunchSource};
-use crate::packages::{PackageIdentity, paused_reason};
+use crate::packages::{CommandMode, PackageIdentity, paused_reason};
 use crate::runtime::FieldKind;
 use crate::search::same_text;
 
@@ -183,9 +183,9 @@ pub(super) struct Target {
     pub(super) identity: PackageIdentity,
     /// Why it cannot run now: paused, or unavailable on this system.
     pub(super) unavailable: Option<Unavailable>,
-    /// Whether it is a no-view command, which runs with the text sent
-    /// rather than opening a screen.
-    pub(super) no_view: bool,
+    /// Its mode, as its manifest declares it (a no-view command runs with
+    /// the text sent; a designed one opens its own screen).
+    pub(super) mode: CommandMode,
 }
 
 /// How a row sends the query to its command.
@@ -243,7 +243,7 @@ fn send_row(state: &State, target: &Target, text: &str, via: Via, how: &str) -> 
         Via::Alias => LaunchSource::Alias,
         Via::Fallback => LaunchSource::Fallback,
     };
-    let mut opening = Opening::of(registration, target.no_view, from);
+    let mut opening = Opening::of(registration, target.mode, from);
     opening.launch = LaunchRecord::sending(from, text);
     let entry = Entry::Send(Sending {
         opening,

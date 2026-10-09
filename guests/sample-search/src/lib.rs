@@ -126,6 +126,7 @@ async fn outcome(id: &str) -> Result<String, String> {
 
 impl Command for Packages {
     type CustomView = NoCustomView;
+    type DesignedView = pane_extension::view::NoDesignedView;
 
     async fn render() -> Result<List, String> {
         let item =
@@ -182,7 +183,7 @@ impl Command for Packages {
         Ok(format!("Searching {address} from now on"))
     }
 
-    async fn open_view(_item_id: String) -> Result<CustomView, String> {
+    async fn open_custom_view(_item_id: String) -> Result<CustomView, String> {
         Err("Package search has no custom views".into())
     }
 }

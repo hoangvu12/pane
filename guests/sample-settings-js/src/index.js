@@ -188,7 +188,7 @@ export const command = {
     throw new Error(`unknown form: ${itemId}`);
   },
 
-  async openView(itemId) {
+  async openCustomView(itemId) {
     throw new Error(`unknown view: ${itemId}`);
   },
 };

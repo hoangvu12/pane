@@ -102,6 +102,7 @@ fn form_error(message: String) -> FormError {
 
 impl Command for Operations {
     type CustomView = NoCustomView;
+    type DesignedView = pane_extension::view::NoDesignedView;
 
     async fn render() -> Result<List, String> {
         Ok(List::new("Call from Rust").items([
@@ -147,7 +148,7 @@ impl Command for Operations {
         greet(source, name).await.map_err(form_error)
     }
 
-    async fn open_view(item_id: String) -> Result<CustomView, String> {
+    async fn open_custom_view(item_id: String) -> Result<CustomView, String> {
         Err(format!("unknown view: {item_id}"))
     }
 }

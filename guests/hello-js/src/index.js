@@ -35,7 +35,7 @@ export const command = {
   async submitForm() {
     throw { message: "this command has no forms" };
   },
-  async openView() {
+  async openCustomView() {
     throw new Error("this command has no custom views");
   },
 };

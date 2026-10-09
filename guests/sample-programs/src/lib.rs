@@ -308,6 +308,7 @@ async fn outcome(item_id: &str) -> Result<String, String> {
 
 impl Command for ProgramsSample {
     type CustomView = NoCustomView;
+    type DesignedView = pane_extension::view::NoDesignedView;
 
     async fn render() -> Result<List, String> {
         let item = |id: &'static str, title: &str, subtitle: &str| {

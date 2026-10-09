@@ -361,6 +361,7 @@ fn new_quicklink(
 
 impl Command for Quicklinks {
     type CustomView = NoCustomView;
+    type DesignedView = pane_extension::view::NoDesignedView;
 
     async fn render() -> Result<List, String> {
         let launch = commands::current();

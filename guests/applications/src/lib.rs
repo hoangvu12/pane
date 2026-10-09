@@ -28,6 +28,7 @@ fn installed() -> Result<Vec<Application>, String> {
 /// defaults (opening it is an error).
 impl Command for Applications {
     type CustomView = NoCustomView;
+    type DesignedView = pane_extension::view::NoDesignedView;
 }
 
 impl pane_extension::indexed::Guest for Applications {

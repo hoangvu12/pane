@@ -393,7 +393,7 @@ export const command = {
     return `Text copied from ${program} is not kept`;
   },
 
-  async openView(itemId) {
+  async openCustomView(itemId) {
     throw new Error(`unknown view: ${itemId}`);
   },
 };

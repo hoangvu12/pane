@@ -101,6 +101,7 @@ async fn outcome(item_id: &str) -> Result<String, String> {
 
 impl Command for Counting {
     type CustomView = NoCustomView;
+    type DesignedView = pane_extension::view::NoDesignedView;
 
     async fn render() -> Result<List, String> {
         let runs = count()?;
@@ -146,7 +147,7 @@ impl Command for Counting {
         })
     }
 
-    async fn open_view(_item_id: String) -> Result<CustomView, String> {
+    async fn open_custom_view(_item_id: String) -> Result<CustomView, String> {
         Err("The schedule sample has no custom views".into())
     }
 }
