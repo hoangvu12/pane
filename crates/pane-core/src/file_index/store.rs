@@ -761,7 +761,7 @@ impl Merger {
                     // segments are next added).
                     Ok(Ok(false) | Err(_)) => break,
                     Err(_) => {
-                        eprintln!("pane: a merge of the file index's segments panicked");
+                        crate::diagnostic!("pane: a merge of the file index's segments panicked");
                         break;
                     }
                 }
