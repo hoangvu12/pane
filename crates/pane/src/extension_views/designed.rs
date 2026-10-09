@@ -130,6 +130,19 @@ impl LauncherWindow {
             .unwrap_or(0)
     }
 
+    /// Test support: the paths of the designed view's focusable buttons.
+    #[doc(hidden)]
+    pub fn designed_paths(&self) -> Vec<String> {
+        self.designed
+            .as_ref()
+            .map(|controls| {
+                let mut paths: Vec<String> = controls.focus.keys().cloned().collect();
+                paths.sort();
+                paths
+            })
+            .unwrap_or_default()
+    }
+
     /// Sends the press of the button with callback id `callback` to the
     /// open designed view, raised on the node with `key`, and redraws when
     /// its answer arrives.
