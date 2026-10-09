@@ -1016,7 +1016,8 @@ impl Dirs {
     /// Settings' dropdown does, waiting for the record.
     fn choose(&self, launcher: &Launcher, provider: &str) {
         let key = self.sample_identity(provider).key();
-        block_on(launcher.choose_provider(GREET, &key).unwrap());
+        let chosen = launcher.choose_provider(GREET, &key).unwrap();
+        block_on(chosen).unwrap();
         let recorded = fs::read_to_string(self.choices_file()).unwrap();
         assert!(
             recorded.contains(&format!("\"{key}\"")),
@@ -1279,11 +1280,10 @@ fn the_choice_falls_back_while_the_chosen_provider_is_paused() {
     dirs.fixture("b", "", &provides(PROVIDED, ""));
     dirs.fixture("c", "", &provides(PROVIDED, ""));
     let launcher = dirs.install_fixtures(&["a", "b", "c"]);
-    block_on(
-        launcher
-            .choose_provider("fixture:greet@1", &dirs.identity("c").key())
-            .unwrap(),
-    );
+    let chosen = launcher
+        .choose_provider("fixture:greet@1", &dirs.identity("c").key())
+        .unwrap();
+    block_on(chosen).unwrap();
     assert_eq!(
         fixture_run(&launcher, "Call the greet capability"),
         result(r#"answered: {"greeting":"Hello, Ada","operation":"fixture:greet@1/greet"}"#)
@@ -1341,11 +1341,10 @@ fn the_choice_falls_back_while_the_chosen_provider_waits() {
         r#","operations": [{ "id": "echo", "version": 1, "component": "fixture.wasm" }]"#,
     );
     let launcher = dirs.install_fixtures(&["a", "b", "c", "d"]);
-    block_on(
-        launcher
-            .choose_provider("fixture:greet@1", &dirs.identity("c").key())
-            .unwrap(),
-    );
+    let chosen = launcher
+        .choose_provider("fixture:greet@1", &dirs.identity("c").key())
+        .unwrap();
+    block_on(chosen).unwrap();
     assert_eq!(
         fixture_run(&launcher, "Call the greet capability"),
         result(r#"answered: {"greeting":"Hello, Ada","operation":"fixture:greet@1/greet"}"#)
@@ -1438,7 +1437,8 @@ fn the_choice_is_kept_across_an_update_of_the_chosen_provider() {
         .find(|package| package.identity.npm_name() == Some(name))
         .map(|package| package.identity)
         .unwrap();
-    block_on(launcher.choose_provider(GREET, &npm.key()).unwrap());
+    let chosen = launcher.choose_provider(GREET, &npm.key()).unwrap();
+    block_on(chosen).unwrap();
     assert_eq!(
         greet(&launcher, "Greet from Rust"),
         result("Hello, Pane, from JavaScript")

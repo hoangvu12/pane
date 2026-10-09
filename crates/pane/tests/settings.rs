@@ -2727,12 +2727,11 @@ fn the_capabilities_section_shows_the_fallback_while_the_chosen_provider_cannot_
 ) {
     let mut opened = with_capabilities(cx, &["sample-greet-js", "sample-greet-ts"]);
     let ts = opened.identity("sample-greet-ts");
-    futures::executor::block_on(
-        opened
-            .launcher
-            .choose_provider("pane-samples:greet@1", &ts.key())
-            .unwrap(),
-    );
+    let chosen = opened
+        .launcher
+        .choose_provider("pane-samples:greet@1", &ts.key())
+        .unwrap();
+    futures::executor::block_on(chosen).unwrap();
     assert_eq!(
         opened.run("Greet through a capability"),
         Status::Result("Hello, Pane, from TypeScript".into())

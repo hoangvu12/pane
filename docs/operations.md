@@ -342,7 +342,11 @@ calling every provider of a `use: "all"` capability are later slices of
   [`crates/pane-core/tests/capabilities.rs`](../crates/pane-core/tests/capabilities.rs)
   assert all of it through the launcher's public interface, and the native
   smoke scripts install the Rust and JavaScript samples and show a
-  cross-language answer in the real window.
+  cross-language answer in the real window; the capabilities smoke
+  installs a provider and a consumer in two languages and switches
+  providers in Settings, whose dropdown the window tests drive with real
+  key events
+  ([`crates/pane/tests/settings.rs`](../crates/pane/tests/settings.rs)).
 
 ## Limits
 
