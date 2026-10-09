@@ -71,7 +71,9 @@ impl Pane {
             let name = dir.path().file_name().unwrap().to_string_lossy();
             Endpoint::at(format!(r"\\.\pipe\pane-channel-test-{name}"))
         } else {
-            Endpoint::at(dir.path().join("channel"))
+            // Its folder is left for Pane to make, as only this user's: a
+            // temporary folder others can enter is refused.
+            Endpoint::at(dir.path().join("pane").join("channel"))
         };
         let (server, previews) = local_channel::serve(launcher.clone(), &endpoint).unwrap();
         window(launcher.clone(), previews, answer);

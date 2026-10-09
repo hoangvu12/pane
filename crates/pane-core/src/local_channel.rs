@@ -917,13 +917,15 @@ mod tests {
         Launcher::with_packages(crate::Runtime::start(), Vec::new(), data.join("extensions"))
     }
 
-    /// An endpoint of this test's own.
+    /// An endpoint of this test's own. On Unix its folder is left for Pane
+    /// to make, as only this user's: a temporary folder others can enter is
+    /// refused.
     fn endpoint(folder: &Path) -> Endpoint {
         if cfg!(windows) {
             let name = folder.file_name().unwrap().to_string_lossy();
             Endpoint::at(format!(r"\\.\pipe\pane-test-{name}"))
         } else {
-            Endpoint::at(folder.join("channel"))
+            Endpoint::at(folder.join("pane").join("channel"))
         }
     }
 

@@ -78,13 +78,14 @@ fn save(folder: &Path, greeting: &str) {
     fs::write(folder.join("src/lib.rs"), source).unwrap();
 }
 
-/// An endpoint of this test's own.
+/// An endpoint of this test's own. On Unix its folder is left for Pane to
+/// make, as only this user's: a temporary folder others can enter is refused.
 fn endpoint(folder: &Path) -> Endpoint {
     if cfg!(windows) {
         let name = folder.file_name().unwrap().to_string_lossy();
         Endpoint::at(format!(r"\\.\pipe\pane-ext-dev-{name}"))
     } else {
-        Endpoint::at(folder.join("channel"))
+        Endpoint::at(folder.join("pane").join("channel"))
     }
 }
 
@@ -162,9 +163,12 @@ impl Drop for PaneExt {
     }
 }
 
+/// The install previews shown: each one's title and details.
+type Shown = Arc<Mutex<Vec<(String, Vec<String>)>>>;
+
 /// Stands in for Pane's window: shows each install preview it is asked
 /// for, records its title and details, and chooses Install.
-fn window(launcher: Launcher, mut previews: Previews) -> Arc<Mutex<Vec<(String, Vec<String>)>>> {
+fn window(launcher: Launcher, mut previews: Previews) -> Shown {
     let shown = Arc::new(Mutex::new(Vec::new()));
     let recorded = shown.clone();
     std::thread::spawn(move || {
