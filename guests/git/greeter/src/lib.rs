@@ -12,7 +12,9 @@
 
 use pane_extension::alloc::{format, string::String, string::ToString, vec::Vec};
 use pane_extension::feedback::{Toast, show_toast};
-use pane_extension::{Command, CustomView, FieldValue, FormError, Item, List, NoCustomView, publish};
+use pane_extension::{
+    Command, CustomView, FieldValue, FormError, Item, List, NoCustomView, publish,
+};
 use serde_json::{Value, json};
 
 struct Greeter;

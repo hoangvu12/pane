@@ -21,7 +21,9 @@
   "files": [
     "*.js",
     "*.d.ts",
-    "wit/world.wit"
+    "wit/world.wit",
+    "LICENSE-APACHE",
+    "LICENSE-MIT"
   ],
   "types": "pane.d.ts",
   "exports": {

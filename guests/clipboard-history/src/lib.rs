@@ -29,7 +29,9 @@ use pane_extension::clipboard_history::{self as history, Capture, Entry, History
 use pane_extension::feedback::{Toast, ToastStyle, show_hud, show_toast};
 use pane_extension::system::{self, Clip, SystemError};
 use pane_extension::window::{PopToRootType, close};
-use pane_extension::{Action, Command, CustomView, FieldValue, FormError, Item, List, NoCustomView};
+use pane_extension::{
+    Action, Command, CustomView, FieldValue, FormError, Item, List, NoCustomView,
+};
 
 struct ClipboardHistory;
 pane_extension::export!(ClipboardHistory);
