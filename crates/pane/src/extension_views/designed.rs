@@ -130,7 +130,6 @@ impl LauncherWindow {
             .unwrap_or(0)
     }
 
-
     /// Sends the press of the button with callback id `callback` to the
     /// open designed view, raised on the node with `key`, and redraws when
     /// its answer arrives.

@@ -202,12 +202,7 @@ fn the_components_resolve_their_tokens_to_the_theme_in_the_light(cx: &mut TestAp
 /// button fills with the theme's pill and the destructive one with its
 /// danger tone, which the appearance decides (white 8% in the dark, black
 /// 8% in the light).
-fn tokens_resolve_to_the_theme(
-    cx: &mut VisualTestContext,
-    theme: &str,
-    pill: u32,
-    danger: u32,
-) {
+fn tokens_resolve_to_the_theme(cx: &mut VisualTestContext, theme: &str, pill: u32, danger: u32) {
     // The column: the text above the row of buttons; the row: the buttons
     // beside each other.
     let text = bounds(cx, "designed-text-Count: 0");
