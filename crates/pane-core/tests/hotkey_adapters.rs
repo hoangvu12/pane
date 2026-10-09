@@ -18,11 +18,12 @@
 //! the macOS adapter is checked by the GUI smoke only.
 
 #[cfg(any(target_os = "linux", target_os = "windows"))]
-use pane_core::hotkeys::{HotkeyError, Hotkeys, Shortcut, channel};
+use pane_core::hotkeys::{Hotkeys, Shortcut, channel};
 
 #[cfg(target_os = "linux")]
 mod x11 {
     use super::*;
+    use pane_core::hotkeys::HotkeyError;
     use std::process::{Child, Command, Stdio};
     use std::time::{Duration, Instant};
 
