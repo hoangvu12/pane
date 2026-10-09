@@ -505,6 +505,13 @@ pub enum CommandMode {
     /// answer while its package is enabled, and its extension's Settings
     /// card lists it, so the user can still turn it off.
     Provider,
+    /// `"designed"`: launching it opens a designed view (`open-view`, ADR
+    /// 0036) — a screen the extension describes as a tree of layout nodes
+    /// and UI components that Pane renders (`docs/designed-tree.md`) — and
+    /// never calls its `render`. Transitional: the List and the Form move
+    /// onto the tree (#240, #241), after which the `view` mode retires into
+    /// this one and the mode says only that a screen opens.
+    Designed,
 }
 
 /// The shortest interval a command's schedule may declare: 1 second.
@@ -908,11 +915,14 @@ impl Manifest {
                 None | Some("view") => CommandMode::View,
                 Some("no-view") => CommandMode::NoView,
                 Some("provider") => CommandMode::Provider,
+                Some("designed") => CommandMode::Designed,
                 Some(other) => {
                     return Err(invalid(format!(
                         "command `{}` has the mode \"{}\"; a command's `mode` is \"view\" (it \
-                         opens a screen, the default), \"no-view\" (it runs without one) or \
-                         \"provider\" (it only answers root search)",
+                         opens a screen of items, the default), \"no-view\" (it runs without one), \
+                         \"provider\" (it only answers root search) or \"designed\" (it opens a \
+                         screen the extension designs as a tree Pane renders; the `view` mode \
+                         retires into it once the List and the Form move onto the tree)",
                         command.id,
                         other.escape_debug()
                     )));
@@ -1127,7 +1137,7 @@ fn parse_schedule(
                  has no list, and Pane runs the command itself on its schedule; remove `item`"
             )));
         }
-        (CommandMode::View, item) => {
+        (CommandMode::View | CommandMode::Designed, item) => {
             let item = item.unwrap_or_default();
             if item.trim().is_empty() {
                 return Err(invalid(format!(

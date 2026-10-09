@@ -261,7 +261,7 @@ The one record a command receives on every way in: how it was launched (by the u
 _Avoid_: Launch props (Raycast's name), arguments (one part of it)
 
 **Command mode**:
-What a command declares in its package manifest entry: `view`, it opens a screen, or `no-view`, invoking it runs it and opens none (ADR 0037). Pane reads it before running anything, to decide at Enter whether to open a screen.
+What a command declares in its package manifest entry: `view`, it opens a screen, `no-view`, invoking it runs it and opens none, or `designed`, its screen is a designed view (ADR 0037). Pane reads it before running anything, to decide at Enter whether to open a screen and which of its entry points to call. Transitional: `view` retires into `designed` once the List and the Form move onto the tree.
 _Avoid_: Command type, menu-bar command (not offered)
 
 **No-view command**:
@@ -485,11 +485,11 @@ An interactive view an extension draws itself from shapes the launcher paints, r
 _Avoid_: Webview, custom control (a UI component is Pane's own)
 
 **UI tree**:
-What a command's view renders: a tree of layout nodes (row, column, stack, scroll, wrap) and UI components that Pane renders and runs (ADR 0036). Authors write it with a GPUI-like builder in Rust or JSX in JavaScript and TypeScript; the SDKs carry it as versioned JSON the author never sees. Pane keeps each node's state by the key the author gave it, and asks for the tree again after an event.
+What a command's view renders: a tree of layout nodes (row, column, stack, scroll, wrap) and UI components that Pane renders and runs (ADR 0036). Authors write it with a GPUI-like builder in Rust or JSX in JavaScript and TypeScript; the SDKs carry it as versioned JSON the author never sees (`docs/designed-tree.md`). A designed view's tree is carried through its `view` resource: Pane asks for it when the view opens and again after each event, and keeps each node's state by the key the author gave it (#238).
 _Avoid_: DOM, webview, view model
 
 **UI component**:
-One of Pane's shared building blocks that a UI tree names, the same ones Pane's own UI draws: rich row, icon tile, keycap, tag, button, input, select, toggle, Markdown and others, and the standard views built from them (List, Detail, Grid, Form). They are versioned as a set; a node Pane does not know draws the author's fallback or its children.
+One of Pane's shared building blocks that a UI tree names, the same ones Pane's own UI draws: rich row, icon tile, keycap, tag, button, input, select, toggle, Markdown and others, and the standard views built from them (List, Detail, Grid, Form). They are versioned as a set — each document names the `MAJOR.MINOR` it targets, a newer minor degrades property by property, and another major is refused naming both — so a node Pane does not know draws the author's fallback or its children. The first set (1.0) has the column, the row, the text and the button.
 _Avoid_: Component alone (a package's built WebAssembly component), widget, custom view (drawn by the extension)
 
 **Theme token**:

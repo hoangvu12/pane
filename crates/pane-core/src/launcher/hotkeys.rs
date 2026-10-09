@@ -365,8 +365,8 @@ impl Launcher {
                         .find(|(offered, unavailable)| {
                             offered.id == command && unavailable.is_none()
                         })?;
-                let no_view = package.mode_of(offered.manifest_id()) == CommandMode::NoView;
-                Some(Opening::of(&offered, no_view, LaunchSource::Hotkey))
+                let mode = package.mode_of(offered.manifest_id());
+                Some(Opening::of(&offered, mode, LaunchSource::Hotkey))
             })
     }
 

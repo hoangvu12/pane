@@ -30,7 +30,7 @@ use pane_core::{
     Screen, SelectedAction, SettingsTarget, Status, WindowPresence,
 };
 
-use crate::extension_views::{custom_view, form};
+use crate::extension_views::{custom_view, designed, form};
 use crate::features::actions_panel;
 use crate::features::announcer;
 use crate::features::clipboard_history;
@@ -74,6 +74,9 @@ pub struct LauncherWindow {
     /// The open custom view's focus and layout; `Some` exactly on the
     /// custom view screen.
     pub(crate) custom_view: Option<custom_view::CustomViewControls>,
+    /// The open designed view's button focus; `Some` exactly on the
+    /// designed view screen.
+    pub(crate) designed: Option<designed::DesignedControls>,
     /// The footer menu's button: the leftmost control of the bottom strip
     /// (the open menu's own focus is held by the menu, while it is open).
     pub(crate) menu_button: FocusHandle,
@@ -210,6 +213,7 @@ impl LauncherWindow {
             reveal_after_layout: None,
             dates: None,
             custom_view: None,
+            designed: None,
             menu_button,
             menu: None,
             actions: None,
@@ -1256,6 +1260,7 @@ impl LauncherWindow {
         }
         self.sync_form(window, cx);
         self.sync_custom_view(window, cx);
+        self.sync_designed_view(window, cx);
         // Last: coming back to root search, even as a view closes, focuses
         // the query rather than the list.
         self.sync_root_search(window, cx);
@@ -1594,7 +1599,8 @@ impl LauncherWindow {
             Screen::Command
             | Screen::CommandSearch { .. }
             | Screen::Form(_)
-            | Screen::CustomView(_) => self.launcher.open_command_id()?,
+            | Screen::CustomView(_)
+            | Screen::DesignedView(_) => self.launcher.open_command_id()?,
             Screen::Extensions { .. } => pane_core::MANAGE_EXTENSIONS.to_owned(),
             _ => return None,
         };
@@ -1753,6 +1759,7 @@ impl Render for LauncherWindow {
             Screen::Form(_) => "",
             Screen::Extensions { .. } => "No extensions are installed.",
             Screen::CustomView(_)
+            | Screen::DesignedView(_)
             | Screen::NetworkDetails { .. }
             | Screen::ProgramDetails { .. } => "",
             Screen::Confirm { .. }
@@ -1926,13 +1933,17 @@ impl Render for LauncherWindow {
             | Screen::CommandSearch { .. }
             | Screen::Form(_)
             | Screen::CustomView(_)
+            | Screen::DesignedView(_)
             | Screen::Extensions { .. } => None,
             _ => Some(shell::screen_heading(view.title.clone(), &theme)),
         };
         // Whether the result list is what scrolls: a form and a custom
         // view scroll their own content, which the background image does
         // not follow.
-        let listed = !matches!(view.screen, Screen::Form(_) | Screen::CustomView(_));
+        let listed = !matches!(
+            view.screen,
+            Screen::Form(_) | Screen::CustomView(_) | Screen::DesignedView(_)
+        );
 
         // The content that changes between screens — the results, a form,
         // a custom view — is what arrives with the transition. On the
@@ -1946,6 +1957,10 @@ impl Render for LauncherWindow {
             }
             Screen::CustomView(custom_view) => {
                 motion::arriving(self.render_custom_view(custom_view, cx), arriving)
+                    .into_any_element()
+            }
+            Screen::DesignedView(designed) => {
+                motion::arriving(self.render_designed_view(designed, cx), arriving)
                     .into_any_element()
             }
             // While the Actions panel is open, its dimmer lies over the

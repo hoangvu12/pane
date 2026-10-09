@@ -96,7 +96,7 @@ const ROWS: i32 = SHADES.len() as i32;
 /// An open color picker: a grid of swatches and a preview of the chosen
 /// color. Arrow keys, Home and End move the choice; pressing or dragging the
 /// pointer over the grid chooses the swatch under it. Pane creates one per
-/// opened view (`open_view`) and drops it when the view closes.
+/// opened view (`open_custom_view`) and drops it when the view closes.
 struct ColorPicker {
     column: Cell<i32>,
     row: Cell<i32>,
@@ -250,6 +250,7 @@ async fn outcome(id: &str) -> Result<String, String> {
 
 impl Command for Sample {
     type CustomView = ColorPicker;
+    type DesignedView = pane_extension::view::NoDesignedView;
 
     async fn render() -> Result<List, String> {
         let item =
@@ -329,7 +330,7 @@ impl Command for Sample {
         Ok(format!("{greeting}, {name}, from the Rust guest"))
     }
 
-    async fn open_view(item_id: String) -> Result<CustomView, String> {
+    async fn open_custom_view(item_id: String) -> Result<CustomView, String> {
         if item_id != "color" {
             return Err(format!("unknown view: {item_id}"));
         }

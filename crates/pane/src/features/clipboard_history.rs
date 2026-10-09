@@ -433,7 +433,7 @@ impl LauncherWindow {
         }
         let kept = matches!(
             self.launcher.screen(),
-            Screen::Form(_) | Screen::CustomView(_)
+            Screen::Form(_) | Screen::CustomView(_) | Screen::DesignedView(_)
         );
         if !kept && self.clipboard.take().is_some() {
             self.fit_client(shell::LAUNCHER_CLIENT, window, cx);

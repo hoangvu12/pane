@@ -1,0 +1,15 @@
+{
+  "manifestVersion": 1,
+  "title": "TypeScript designed view sample",
+  "version": "0.1.0",
+  "apiVersion": "0.1",
+  "commands": [
+    {
+      "id": "sample",
+      "title": "TypeScript designed view sample",
+      "subtitle": "A counter whose screen the extension designs as a tree",
+      "component": "sample_view_ts.wasm",
+      "mode": "designed"
+    }
+  ]
+}

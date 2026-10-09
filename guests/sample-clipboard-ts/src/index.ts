@@ -319,7 +319,7 @@ async function submitForm(itemId: string, values: FieldValue[]): Promise<string>
   return `Text copied from ${program} is not kept`;
 }
 
-async function openView(itemId: string): Promise<CustomView> {
+async function openCustomView(itemId: string): Promise<CustomView> {
   throw new Error(`unknown view: ${itemId}`);
 }
 
@@ -331,4 +331,4 @@ async function runSearchResult(id: string): Promise<void> {
   await act(id);
 }
 
-export const command: Command = { render, runSearchResult, submitForm, openView };
+export const command: Command = { render, runSearchResult, submitForm, openCustomView };

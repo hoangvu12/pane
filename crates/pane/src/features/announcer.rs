@@ -558,7 +558,10 @@ impl LauncherWindow {
         let opening = match &view.screen {
             // Forms, custom views and a package's Logs screen (#213) keep
             // their own accessibility.
-            Screen::Form(_) | Screen::CustomView(_) | Screen::ExtensionLog { .. } => return None,
+            Screen::Form(_)
+            | Screen::CustomView(_)
+            | Screen::DesignedView(_)
+            | Screen::ExtensionLog { .. } => return None,
             Screen::Root { .. } => Opening::Silent,
             Screen::Command | Screen::CommandSearch { .. } | Screen::Extensions { .. } => {
                 Opening::Named(view.title.clone(), Noun::Results)

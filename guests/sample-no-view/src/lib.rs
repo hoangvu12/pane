@@ -126,6 +126,7 @@ fn launch(text: Option<&str>) -> Result<String, String> {
 
 impl Command for NoView {
     type CustomView = NoCustomView;
+    type DesignedView = pane_extension::view::NoDesignedView;
 
     /// "Show launch": its launch record, one line per part.
     async fn render() -> Result<List, String> {

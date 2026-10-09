@@ -40,7 +40,7 @@ export interface Item {
   /**
    * Identifies the item among the list's items: Pane keeps the selection on
    * it when the list is drawn again, and passes it to `submitForm` and
-   * `openView`.
+   * `openCustomView`.
    */
   id: string;
   title: string;
@@ -77,7 +77,7 @@ export interface Item {
   platforms?: Platform[] | null;
   /**
    * When set, choosing the item opens this custom view instead of running
-   * its action: Pane calls `openView` and shows what the view draws. Ignored
+   * its action: Pane calls `openCustomView` and shows what the view draws. Ignored
    * when `form` is set. Omitted or `null` for none.
    */
   customView?: CustomViewInfo | null;
@@ -325,9 +325,9 @@ export type ViewEvent =
 
 /**
  * A custom view the user has open, holding the view's state: any object with
- * these methods, such as an instance of a class. `openView` returns a new one
- * for each opened view; Pane drops it when the view closes and never uses it
- * again.
+ * these methods, such as an instance of a class. `openCustomView` returns a new
+ * one for each opened view; Pane drops it when the view closes and never uses
+ * it again.
  */
 export interface CustomView {
   /** Draws the view as it is now. Throwing is a crash. */
@@ -337,6 +337,36 @@ export interface CustomView {
    * reports an error to the user; the view stays open.
    */
   handleEvent(event: ViewEvent): Promise<void>;
+}
+
+/**
+ * A designed view the user has open, holding the view's state: what
+ * `createView` makes, or any object with these methods. `openView` returns
+ * a new one for each opened view; Pane drops it when the view leaves the
+ * screen and never uses it again. The tree is the versioned JSON document
+ * of docs/designed-tree.md; `@pane-app/extension/view`'s `createView`
+ * writes it, so an author never does.
+ */
+export interface DesignedView {
+  /**
+   * Draws the view as it is now. `context` is JSON: the sequence number of
+   * this render, so each render's listeners can be named by it, and the
+   * version of the UI component set Pane supports. Throwing reports an
+   * error to the user; the view keeps its last good tree.
+   */
+  render(context: string): Promise<{ tree: string; refreshAfterMs?: number | null }>;
+  /**
+   * Handle the user's input to the view: `event.callback`, the id the tree
+   * named for what was pressed, with the sequence number of the render
+   * whose tree the user saw. Pane then calls `render`. Throwing reports an
+   * error to the user; the view stays open.
+   */
+  handleEvent(event: {
+    render: number;
+    key: string;
+    callback: number;
+    payload: string;
+  }): Promise<void>;
 }
 
 /**
@@ -352,7 +382,7 @@ export interface CustomView {
  *     };
  *   },
  *   async submitForm(id, values) { ... },
- *   async openView(id) { return new MyView(); },
+ *   async openCustomView(id) { return new MyView(); },
  * };
  * ```
  *
@@ -372,7 +402,8 @@ export interface CustomView {
  *
  * Resolving gives Pane the value. Throwing (rejecting) reports an error to the
  * user, never a crash: from `render`, `run`, an item's `onAction`,
- * `runSearchResult`, `openView` and a view's `handleEvent` an `Error`'s
+ * `runSearchResult`, `openView`, `openCustomView` and a view's `handleEvent` an
+ * `Error`'s
  * message, or a thrown string as is; from `submitForm` a {@link FormError}
  * object as is, and an `Error` or string as a message about the whole form.
  * An action, `run` and `runSearchResult` resolve with nothing: Pane shows
@@ -423,9 +454,26 @@ export interface Command {
   /**
    * Open the custom view of the item with `itemId`: a new {@link CustomView}
    * with its own state. Throwing reports an error and opens nothing. Without
-   * it, opening one is an error.
+   * it, opening one is an error. The canvas retires it (#242), which moves a
+   * custom view's shapes onto the designed tree.
    */
-  openView?(itemId: string): Promise<CustomView>;
+  openCustomView?(itemId: string): Promise<CustomView>;
+  /**
+   * Open the designed view of the command with id `command` (its id in
+   * `pane.json`, so one component can serve several commands), launched as
+   * `launch` says: a screen the extension describes as a tree of layout
+   * nodes and UI components that Pane renders (`"mode": "designed"` in
+   * `pane.json`, docs/designed-tree.md). `createView` makes the answer:
+   *
+   * ```ts
+   * import { createView } from "@pane-app/extension/view";
+   * async openView(command) { return createView(Counter); },
+   * ```
+   *
+   * Throwing reports an error and opens nothing. Without it, opening one is
+   * an error. Pane never calls `render` for the command.
+   */
+  openView?(command: string, launch: LaunchRecord): Promise<DesignedView>;
 }
 
 /** What invoking a root result does; Pane performs it. */

@@ -105,7 +105,11 @@ pub(super) fn search_all_row(command: &CommandRegistration, query: &str) -> Opti
     if !command.search || text.is_empty() {
         return None;
     }
-    let mut opening = Opening::of(command, false, LaunchSource::RootSearch);
+    let mut opening = Opening::of(
+        command,
+        crate::packages::CommandMode::View,
+        LaunchSource::RootSearch,
+    );
     opening.initial_search = Some(text.to_owned());
     let row = Row {
         id: format!("{}:search-all-files", command.id),

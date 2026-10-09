@@ -146,7 +146,7 @@ async function submitForm(itemId: string, values: FieldValue[]): Promise<string>
   }
 }
 
-async function openView(itemId: string): Promise<CustomView> {
+async function openCustomView(itemId: string): Promise<CustomView> {
   throw new Error(`unknown view: ${itemId}`);
 }
 
@@ -169,6 +169,6 @@ async function runOperation(operation: string, input: string): Promise<string> {
   return JSON.stringify(result);
 }
 
-export const command: Command = { render, submitForm, openView };
+export const command: Command = { render, submitForm, openCustomView };
 
 export const publishedOperations: PublishedOperations = { runOperation };

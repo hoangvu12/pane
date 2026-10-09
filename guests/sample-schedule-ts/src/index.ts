@@ -121,7 +121,7 @@ export const command: Command = {
     throw new Error(`The schedule sample has no forms: ${itemId}`);
   },
 
-  async openView(itemId: string): Promise<CustomView> {
+  async openCustomView(itemId: string): Promise<CustomView> {
     throw new Error(`The schedule sample has no custom views: ${itemId}`);
   },
 };

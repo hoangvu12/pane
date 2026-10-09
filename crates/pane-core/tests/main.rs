@@ -29,6 +29,7 @@ mod command_search;
 mod confirmations;
 mod credentials;
 mod dependencies;
+mod designed_views;
 mod develop;
 mod develop_builds;
 mod disable;

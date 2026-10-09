@@ -495,8 +495,9 @@ impl Item {
 }
 
 /// An extension command: one whose screen is a list (a view command), one
-/// that runs without a screen (a no-view command), or a component serving
-/// several commands of either mode. Implement it and call
+/// that runs without a screen (a no-view command), one whose screen is a
+/// designed view (a `"mode": "designed"` command), or a component serving
+/// several commands of any mode. Implement it and call
 /// [`export!`](crate::export):
 ///
 /// ```ignore
@@ -505,6 +506,7 @@ impl Item {
 ///
 /// impl pane_extension::Command for Hello {
 ///     type CustomView = pane_extension::NoCustomView;
+///     type DesignedView = pane_extension::view::NoDesignedView;
 ///
 ///     async fn render() -> Result<List, String> {
 ///         Ok(List::new("Hello").item(Item::new("greet", "Say hello").on_action(|| async {
@@ -512,19 +514,21 @@ impl Item {
 ///             Ok(())
 ///         })))
 ///     }
-///     // submit_form, open_view ...
+///     // submit_form, open_custom_view ...
 /// }
 /// ```
 ///
 /// A root provider (`"mode": "provider"`, a command that only answers root
 /// search through [`crate::root`] or [`crate::indexed`]) implements neither:
-/// Pane never opens or runs it, so `type CustomView` is all it needs.
+/// Pane never opens or runs it, so `type CustomView` and `type DesignedView`
+/// are all it needs.
 ///
 /// A no-view command implements [`Command::run`] instead of `render`:
 ///
 /// ```ignore
 /// impl pane_extension::Command for Toggle {
 ///     type CustomView = pane_extension::NoCustomView;
+///     type DesignedView = pane_extension::view::NoDesignedView;
 ///
 ///     async fn run(command: String, launch: LaunchRecord) -> Result<(), String> {
 ///         pane_extension::feedback::show_hud("Toggled", ToastStyle::Success);
@@ -532,10 +536,40 @@ impl Item {
 ///     }
 /// }
 /// ```
+///
+/// A designed command implements [`view::View`](crate::view::View) for its
+/// screen's state and opens it:
+///
+/// ```ignore
+/// impl pane_extension::view::View for Counter {
+///     fn render(&mut self, cx: &mut Cx<Self>) -> impl IntoNode {
+///         column()
+///             .gap(Space::M)
+///             .child(text("Count").style(TextStyle::Title))
+///             .child(button("Increment").on_click(cx.listener(|this: &mut Self| {
+///                 this.count += 1;
+///             })))
+///     }
+/// }
+///
+/// impl pane_extension::Command for Sample {
+///     type CustomView = pane_extension::NoCustomView;
+///     type DesignedView = Counter;
+///
+///     async fn open_designed_view(command: String, launch: LaunchRecord) -> Result<Counter, String> {
+///         Ok(Counter { count: 0 })
+///     }
+/// }
+/// ```
 pub trait Command: 'static {
     /// The custom view the command opens ([`NoCustomView`](crate::NoCustomView)
     /// for none).
     type CustomView: GuestCustomView;
+
+    /// The state of the designed view the command opens
+    /// ([`view::NoDesignedView`](crate::view::NoDesignedView) for none):
+    /// a [`view::View`](crate::view::View) whose `render` answers the
+    /// tree its screen draws.
 
     /// The command's list, as it is now. Pane asks for it when the command
     /// opens and again after each action. An error is shown to the user.
@@ -593,14 +627,31 @@ pub trait Command: 'static {
 
     /// Opens the custom view of the item with `item_id`. Each call opens a
     /// new view with its own state. Without it, opening one is an error.
-    fn open_view(item_id: String) -> impl Future<Output = Result<CustomView, String>> {
+    /// The canvas retires it (#242), which moves a custom view's shapes
+    /// onto the designed tree.
+    fn open_custom_view(item_id: String) -> impl Future<Output = Result<CustomView, String>> {
         let _ = item_id;
         async { Err("this command has no custom views".into()) }
+    }
+
+    /// Opens the designed view of the command `command` (its id in
+    /// `pane.json`, so one component can serve several commands), launched
+    /// as `launch` says: the screen a `"mode": "designed"` command opens,
+    /// a tree of layout nodes and UI components that Pane renders
+    /// (`docs/designed-tree.md`). Each call opens a new view with its own
+    /// state. Without it, opening one is an error.
+    fn open_designed_view(
+        command: String,
+        launch: LaunchRecord,
+    ) -> impl Future<Output = Result<Self::DesignedView, String>> {
+        let _ = (command, launch);
+        async { Err("this command opens no designed view".into()) }
     }
 }
 
 impl<T: Command> wit::Guest for T {
     type CustomView = <T as Command>::CustomView;
+    type View = crate::view::Open<<T as Command>::DesignedView>;
 
     async fn render(launch: LaunchRecord) -> Result<String, String> {
         crate::commands::set_current(launch);
@@ -649,8 +700,14 @@ impl<T: Command> wit::Guest for T {
         <T as Command>::submit_form(item_id, values).await
     }
 
-    async fn open_view(item_id: String) -> Result<CustomView, String> {
-        <T as Command>::open_view(item_id).await
+    async fn open_custom_view(item_id: String) -> Result<CustomView, String> {
+        <T as Command>::open_custom_view(item_id).await
+    }
+
+    async fn open_view(command: String, launch: LaunchRecord) -> Result<wit::View, String> {
+        crate::commands::set_current(launch.clone());
+        let state = <T as Command>::open_designed_view(command, launch).await?;
+        Ok(wit::View::new(crate::view::Open::new(state)))
     }
 }
 

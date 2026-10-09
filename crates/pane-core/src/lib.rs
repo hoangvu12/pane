@@ -74,8 +74,9 @@ pub use launcher::clipboard_view;
 pub use launcher::search_files;
 pub use launcher::{
     AliasOutcome, ApplicationUpdate, BuildFailure, CommandPreferences, CommandRegistration,
-    ComputedAnswer, CustomViewSnapshot, DISMISS_NOTICE, Development, ExtensionMark,
-    ExtensionOperation, FormField, FormView, HotkeyOutcome, ItemAction, ItemActions, Launcher,
+    ComputedAnswer, CustomViewSnapshot, DesignedViewSnapshot, DISMISS_NOTICE, Development,
+    ExtensionMark, ExtensionOperation, FormField, FormView, HotkeyOutcome, ItemAction,
+    ItemActions, Launcher,
     LauncherView, ListPresentation, LogNotice, MANAGE_EXTENSIONS, OpenSubmenu, OperationKind,
     PackagePreferences, PinTarget, PreferenceField, PreferencesTarget, Presentation, Question,
     QuickSlot, ResultAction, ResultActionItem, ResultActions, Row, RowKind, RowPresentation,
@@ -108,11 +109,13 @@ pub use runtime::Timers;
 #[doc(hidden)]
 pub use runtime::memory_peak;
 pub use runtime::{
-    Action, ActionKind, ActionStyle, ActionSubmenu, Answer, COMPUTE_LIMIT, CallError, Choice,
-    CustomViewInfo, CustomViewRole, Field, FieldKind, FieldValue, Form, FormError, Frame,
-    GUEST_MEMORY, Item, Key, MAX_FRAME_SHAPES, MAX_FRAME_SIZE, MAX_TEXT_CHARS, PathKind, Point,
-    Rgb, Runtime, RuntimeFailure, RuntimeStatus, Shape, SubmenuEntries, TREE_VERSION,
-    UNRESPONSIVE_LIMIT, View, ViewEvent, ViewId, WARN_AFTER,
+    Action, ActionKind, ActionStyle, ActionSubmenu, Align, Answer, Button, COMPUTE_LIMIT,
+    CallError, Choice, COMPONENT_SET, CustomViewInfo, CustomViewRole, DesignedEvent,
+    DesignedRendered, DesignedTree, Field, FieldKind, FieldValue, Form, FormError, Frame,
+    GUEST_MEMORY, Item, Justify, Key, Layout, MAX_DEPTH, MAX_FRAME_SHAPES, MAX_FRAME_SIZE,
+    MAX_NODES, MAX_TEXT_CHARS, MAX_TREE_BYTES, Node, NodeKind, Padding, PathKind, Point, Rgb,
+    Runtime, RuntimeFailure, RuntimeStatus, Shape, Space, SubmenuEntries, Text, TextLevel,
+    TextStyle, Tone, TREE_VERSION, UNRESPONSIVE_LIMIT, View, ViewEvent, ViewId, WARN_AFTER,
 };
 pub use search::{SettingsEntry, settings_matches, title_matches};
 // Icons, accessories and tooltips (#139).

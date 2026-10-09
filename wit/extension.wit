@@ -5,7 +5,10 @@
 // 0036's envelope: `render` and `handle-event`, see docs/list-tree.md),
 // forms with a text field and a choice, the operating systems an item's
 // action supports, and custom views the extension draws from rectangles and
-// text; and the run entry point of a command that opens no screen (ADR
+// text; a designed view, a screen the extension describes as a tree of
+// layout nodes and UI components Pane renders (`open-view`, its `view`
+// resource answering `rendered` trees, see docs/designed-tree.md); and the
+// run entry point of a command that opens no screen (ADR
 // 0037). Both receive the command's launch record (wit/commands.wit), and
 // every command may close the window and show toasts and HUDs
 // (wit/feedback.wit), and use the clipboard, open things, reveal and
@@ -77,7 +80,7 @@ interface command {
 
   /// What Pane shows of an item's custom view besides the view's drawing. In
   /// the tree, an item's `customView` carries it as JSON; choosing the item
-  /// calls `open-view` with the item's id.
+  /// calls `open-custom-view` with the item's id.
   record custom-view-info {
     /// The screen's title.
     title: string,
@@ -168,6 +171,76 @@ interface command {
     handle-event: async func(event: view-event) -> result<_, string>;
   }
 
+  /// A designed view the user has open: a screen the extension describes as
+  /// a tree of layout nodes and UI components that Pane renders (ADR 0036;
+  /// `docs/designed-tree.md` describes every node). The extension keeps the
+  /// view's state in the resource. Pane drops it when the view leaves the
+  /// screen, and never uses it again. Only the envelope is typed: the tree
+  /// is JSON, so a UI component, a property or an event can be added with
+  /// no WIT change, and a component built against an older component set
+  /// keeps working.
+  resource view {
+    /// Draws the view as it is now: its tree as JSON, naming the version of
+    /// the UI component set it uses, such as `{"version": "1.0", "root":
+    /// {"type": "column", "children": [...]}}`, and how long Pane waits
+    /// before asking again (`refresh-after-ms`, which Pane reads and
+    /// carries but does not act on until timers land). `context` is JSON
+    /// too: the sequence number of this render, so the extension can name
+    /// each render's callbacks, and the version of the UI component set
+    /// Pane supports, such as `{"render": 1, "ui": "1.0"}`; it can grow
+    /// without WIT changes. Pane ignores a node it does not know, drawing
+    /// the `fallback` the tree gave, else the node's children, and a
+    /// property it does not know; a tree it cannot read, over one of its
+    /// limits, or of another major version of the component set, is the
+    /// extension's error: the view keeps its last good tree. An error is
+    /// shown to the user.
+    render: async func(context: string) -> result<rendered, string>;
+
+    /// Handles the user's input to the view: `callback`, the id the tree
+    /// named for what was pressed, with the sequence number of the render
+    /// whose tree the user saw (`render`), the key of the node the event
+    /// was raised on (`key`, or `""` when the tree gave it none) and the
+    /// event's details as JSON in `payload` (`"{}"` for a press). An event
+    /// from a render older than the extension's last two is stale: it is
+    /// dropped, never an error. Pane calls `render` afterwards. An error
+    /// is shown to the user; the view stays open with its last good tree.
+    handle-event: async func(event: ui-event) -> result<outcome, string>;
+  }
+
+  /// What `view.render` answers: the view's tree, and how long Pane waits
+  /// before asking for it again.
+  record rendered {
+    tree: string,
+    refresh-after-ms: option<u32>,
+  }
+
+  /// The user's input to a designed view, as the tree's callback ids name
+  /// it.
+  record ui-event {
+    /// The sequence number of the render whose tree the user saw.
+    render: u64,
+    /// The key of the node the event was raised on, or `""` when the tree
+    /// gave it none.
+    key: string,
+    /// The callback id the tree named for what was pressed.
+    callback: u32,
+    /// The event's details as JSON, `"{}"` when it has none.
+    payload: string,
+  }
+
+  /// What handling a designed view's event does next. Pane ignores every
+  /// field for now: the navigation stack lands with #239, which gives
+  /// `push` and `replace` their meaning, and `pop`'s, and until then an
+  /// answer is the empty outcome.
+  record outcome {
+    /// A view to push onto the stack.
+    push: option<view>,
+    /// A view to replace the top of the stack with.
+    replace: option<view>,
+    /// Pops the top of the stack, answering the pushing view with `pop`.
+    pop: option<string>,
+  }
+
   /// Draws the command's screen: a JSON tree that names its version, such
   /// as `{"version": 1, "view": {"type": "list", "title": "Notes", "items":
   /// [...]}}` (docs/list-tree.md describes every field). An item's action
@@ -215,8 +288,19 @@ interface command {
   submit-form: async func(item-id: string, values: list<field-value>) -> result<string, form-error>;
 
   /// Open the custom view of the item with `item-id`. Each call opens a new
-  /// view with its own state.
-  open-view: async func(item-id: string) -> result<custom-view, string>;
+  /// view with its own state. The canvas retires it (#242), which moves a
+  /// custom view's shapes onto the designed tree as one node among the
+  /// layout.
+  open-custom-view: async func(item-id: string) -> result<custom-view, string>;
+
+  /// Opens the designed view of the command `command` (its id in
+  /// `pane.json`, so one component can serve several commands), launched as
+  /// `launch` says: a command whose `pane.json` entry says
+  /// `"mode": "designed"`, which Pane calls at its launch and never
+  /// `render`. Each call opens a new view with its own state; Pane's first
+  /// `render` of it follows this answer. A component that serves no
+  /// designed command answers with an error; Pane never calls it then.
+  open-view: async func(command: string, launch: launch-record) -> result<view, string>;
 }
 
 world extension {

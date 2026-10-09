@@ -110,6 +110,7 @@ fn action(title: &'static str, icon: Icon) -> Action {
 
 impl Command for Icons {
     type CustomView = NoCustomView;
+    type DesignedView = pane_extension::view::NoDesignedView;
 
     async fn render() -> Result<List, String> {
         let server = setting(IMAGE_SERVER);
@@ -199,7 +200,7 @@ impl Command for Icons {
         })
     }
 
-    async fn open_view(_item_id: String) -> Result<CustomView, String> {
+    async fn open_custom_view(_item_id: String) -> Result<CustomView, String> {
         Err("The icons sample has no custom views".into())
     }
 }

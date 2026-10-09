@@ -56,6 +56,14 @@ pub use exports::pane::extension::command::{
     ViewEvent,
 };
 pub use list::{Action, Command, Item, List, Modifier, Shortcut, Submenu};
+pub mod view;
+pub use view::{
+    Align, Cx, IntoNode, Justify, Listener, Node, Space, TextLevel, TextStyle, Tone, View,
+    button, column, row, text,
+};
+/// The designed view type of a command that opens none: `type DesignedView
+/// = view::NoDesignedView;` in its [`Command`] implementation.
+pub use view::NoDesignedView;
 pub use pane::extension::commands::{LaunchRecord, LaunchSource, LaunchType};
 
 pub mod actions;

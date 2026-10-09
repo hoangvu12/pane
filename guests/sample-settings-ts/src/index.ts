@@ -173,8 +173,8 @@ async function submitForm(itemId: string): Promise<string> {
   throw new Error(`unknown form: ${itemId}`);
 }
 
-async function openView(itemId: string): Promise<CustomView> {
+async function openCustomView(itemId: string): Promise<CustomView> {
   throw new Error(`unknown view: ${itemId}`);
 }
 
-export const command: Command = { render, submitForm, openView };
+export const command: Command = { render, submitForm, openCustomView };

@@ -115,6 +115,7 @@ fn relay(text: Option<&str>) -> Result<String, String> {
 
 impl Command for Arguments {
     type CustomView = NoCustomView;
+    type DesignedView = pane_extension::view::NoDesignedView;
 
     async fn run(command: String, launch: LaunchRecord) -> Result<(), String> {
         let done = match command.as_str() {

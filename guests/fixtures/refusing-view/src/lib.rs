@@ -12,6 +12,7 @@ pane_extension::export!(RefusingView);
 
 impl Command for RefusingView {
     type CustomView = NoCustomView;
+    type DesignedView = pane_extension::view::NoDesignedView;
 
     async fn render() -> Result<List, String> {
         Err("sign in first".into())
@@ -24,7 +25,7 @@ impl Command for RefusingView {
         })
     }
 
-    async fn open_view(item_id: String) -> Result<CustomView, String> {
+    async fn open_custom_view(item_id: String) -> Result<CustomView, String> {
         Err(format!("unknown view: {item_id}"))
     }
 }

@@ -129,6 +129,7 @@ fn outcome(item_id: &str) -> Result<String, String> {
 
 impl Command for Watching {
     type CustomView = NoCustomView;
+    type DesignedView = pane_extension::view::NoDesignedView;
 
     async fn render() -> Result<List, String> {
         let cycles = counted(CYCLES)?;
@@ -188,7 +189,7 @@ impl Command for Watching {
         })
     }
 
-    async fn open_view(_item_id: String) -> Result<CustomView, String> {
+    async fn open_custom_view(_item_id: String) -> Result<CustomView, String> {
         Err("The service sample has no custom views".into())
     }
 }

@@ -16,9 +16,9 @@ Defined in [`wit/extension.wit`](../wit/extension.wit), identically for Rust
 
 - An item may carry a `customView` (screen title, accessible label, role;
   the WIT record `custom-view-info`, carried in the list's tree, see
-  [list-tree.md](list-tree.md)). Activating it calls `open-view(item-id)`
+  [list-tree.md](list-tree.md)). Activating it calls `open-custom-view(item-id)`
   instead of running the item's action (a `form`, if also set, wins).
-- `open-view` returns a `custom-view`, a WIT **resource** the extension
+- `open-custom-view` returns a `custom-view`, a WIT **resource** the extension
   implements and in which it keeps the view's state. Each call opens a new
   view with its own state. Pane owns the handle: it drops it when the view
   closes, and never calls it again. In Rust, the resource's value is dropped
@@ -60,7 +60,7 @@ Defined in [`wit/extension.wit`](../wit/extension.wit), identically for Rust
   are answered, or before the next other event, so a drag never lags behind
   the pointer by more than one move and the release comes after the last
   move.
-- An `Err` from `open-view` or `handle-event` is shown to the user as the
+- An `Err` from `open-custom-view` or `handle-event` is shown to the user as the
   extension's error ("The extension reported an error: ..."); after a
   `handle-event` error the view stays open with its last drawing. A trap
   (crash) in any of these calls drops the instance, as for every call, and
@@ -78,7 +78,7 @@ Defined in [`wit/extension.wit`](../wit/extension.wit), identically for Rust
   synchronous one before anything runs: "The types returned by 'render()'
   are incompatible between these types. Type 'Frame' is missing the
   following properties from type 'Promise<Frame>'". Unchecked JavaScript
-  gets no such error. The object `openView` returns needs only these two
+  gets no such error. The object `openCustomView` returns needs only these two
   methods; it need not be a class the module exports.
 
 The runnable example is the "Choose a color" item of the three samples
@@ -125,7 +125,7 @@ only if no later event's drawing is already shown, so a late older answer
 cannot replace a newer one. An answer is also applied only while the screen
 it was requested from is still shown: after Back (or any navigation), the
 view is closed and later answers for it are discarded. A view whose
-`open-view` answer arrives after the user has left the command is closed as
+`open-custom-view` answer arrives after the user has left the command is closed as
 soon as it arrives, so it never lingers in the guest. Events cannot reach a
 closed view: the launcher sends nothing when no view is open, and the
 runtime answers `ViewClosed` for a closed or dropped view. No "Running…"
@@ -215,7 +215,7 @@ not run yet.
   waiting is stopped too, at once then, and after 5 seconds of computing
   otherwise, as unresponsive (#18,
   [pausing](pausing.md#when-an-extension-stops-responding)).
-- The contract adds required exports (`open-view` and the `custom-view`
+- The contract adds required exports (`open-custom-view` and the `custom-view`
   resource) without changing the extension API version (0.1), as #20 did for
   `submit-form`: components built against the earlier contract must be
   rebuilt. Pane refuses them at install as built for an older extension API
