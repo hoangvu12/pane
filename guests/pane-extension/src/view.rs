@@ -55,6 +55,7 @@
 //! every document; a Pane that renders another major refuses it naming
 //! both versions, and one that knows less draws what it understands.
 
+use alloc::borrow::ToOwned as _;
 use alloc::boxed::Box;
 use alloc::format;
 use alloc::string::String;
@@ -74,7 +75,7 @@ const COMPONENT_SET: &str = "1.0";
 /// [`Cx`] through which the tree's listeners are named; the view's state
 /// is the author's, kept in the view's resource for as long as it is
 /// open.
-pub trait View: 'static {
+pub trait View: Sized + 'static {
     /// The view's tree, as it is now. The buttons' `on_click` listeners
     /// are named through `cx`; the tree is drawn whole again after each
     /// event, so what the view's state now says is what the user sees.
@@ -100,6 +101,7 @@ impl<V: View> Cx<'_, V> {
 
 /// A named listener of the tree: what [`Cx::listener`] answers, handed to
 /// [`Button::on_click`].
+#[derive(Debug)]
 pub struct Listener(u32);
 
 /// What a listener runs, once, with the view's state mutably.
@@ -329,7 +331,7 @@ impl Container {
     /// This container with `children` after its children.
     pub fn children(mut self, children: impl IntoIterator<Item = impl IntoNode>) -> Container {
         if let Node::Column { children: own, .. } | Node::Row { children: own, .. } = &mut self.0 {
-            own.extend(children.map(IntoNode::into_node));
+            own.extend(children.into_iter().map(IntoNode::into_node));
         }
         self
     }
@@ -396,7 +398,7 @@ pub enum NoDesignedView {}
 
 impl View for NoDesignedView {
     fn render(&mut self, _cx: &mut Cx<Self>) -> impl IntoNode {
-        match *self {}
+        unreachable!("no designed view is ever rendered")
     }
 }
 

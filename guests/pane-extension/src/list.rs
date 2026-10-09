@@ -570,6 +570,7 @@ pub trait Command: 'static {
     /// ([`view::NoDesignedView`](crate::view::NoDesignedView) for none):
     /// a [`view::View`](crate::view::View) whose `render` answers the
     /// tree its screen draws.
+    type DesignedView: crate::view::View;
 
     /// The command's list, as it is now. Pane asks for it when the command
     /// opens and again after each action. An error is shown to the user.

@@ -29,6 +29,7 @@ extern crate alloc;
 
 use alloc::format;
 use alloc::string::String;
+use alloc::vec::Vec;
 use core::cell::Cell;
 use core::ffi::c_void;
 
@@ -98,7 +99,12 @@ impl GuestView for Designed {
                 "{{\"version\":\"2.0\",\"root\":{{\"type\":\"column\",\
                  \"children\":[{{\"type\":\"text\",\"text\":\"Future\"}}]}}}}"
             ),
-            Next::Unreadable => return Ok("{\"version\":\"1.0\",\"root\":".into()),
+            Next::Unreadable => {
+                return Ok(Rendered {
+                    tree: "{\"version\":\"1.0\",\"root\":".into(),
+                    refresh_after_ms: None,
+                })
+            }
         };
         Ok(Rendered {
             tree,
