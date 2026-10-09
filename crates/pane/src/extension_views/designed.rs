@@ -212,7 +212,7 @@ fn draw(
             named(container(false, layout, children).id(own), name.as_deref()).into_any_element()
         }
         NodeKind::Text(text) => {
-            let element = text_element(text, theme).id(path.clone());
+            let element = text_element(text, theme, path);
             named(element, name.as_deref()).into_any_element()
         }
         NodeKind::Button(button) => {
@@ -296,8 +296,8 @@ fn container(column: bool, layout: &Layout, children: Vec<AnyElement>) -> Div {
 }
 
 /// One text node: what it says, in the style and level its properties
-/// name.
-fn text_element(text: &TextNode, theme: &Theme) -> Div {
+/// name, named by its place in the tree.
+fn text_element(text: &TextNode, theme: &Theme, path: &str) -> Stateful<Div> {
     let typography = &theme.typography;
     let (size, weight, family) = match text.style {
         None | Some(TextStyle::Body) => (
@@ -330,6 +330,7 @@ fn text_element(text: &TextNode, theme: &Theme) -> Div {
     let label: SharedString = text.content.clone().into();
     let debug = format!("designed-text-{}", text.content);
     div()
+        .id(path.to_owned())
         .flex_none()
         .min_w(px(0.))
         .debug_selector(move || debug)
@@ -362,6 +363,7 @@ fn button_element(
                 level: Some(TextLevel::Secondary),
             },
             theme,
+            path,
         )
         .into_any_element();
     };
