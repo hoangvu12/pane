@@ -4651,11 +4651,15 @@ fn the_fix_row_installs_a_not_installed_dependency_again(cx: &mut TestAppContext
     // The fix row beside the requirement installs it again, from where it
     // came, and the dependent comes back by itself.
     open_page(&mut settings_cx, "Caller");
+    let of_caller = PackageIdentity::local(&caller).unwrap();
+    let details = cx.read_entity(&launcher, |window, _| {
+        window.launcher().extension_details(&of_caller)
+    });
     assert!(
         settings_cx
             .debug_bounds("extension-requirement-Needs Greeter, which is not installed")
             .is_some(),
-        "the requirement row names what is not installed"
+        "the requirement row names what is not installed: {details:?}"
     );
     click_row(&mut settings_cx, "extension-fix-Install Greeter again");
     until_text(&mut settings_cx, "Installed Greeter");
@@ -4679,6 +4683,7 @@ fn the_fix_row_retries_a_paused_dependency_and_the_dependent_comes_back(cx: &mut
     // Install them with a launcher that is dropped before the window
     // opens: Pane paused the greeter after it crashed, as recorded before
     // a restart.
+    cx.executor().allow_parking();
     let installing =
         Launcher::with_packages(Runtime::start(), vec![], data.path().join("extensions"));
     cx.foreground_executor()
