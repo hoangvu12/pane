@@ -50,7 +50,7 @@ mod crash_notice;
 mod designed_list;
 mod designed_views;
 
-pub use designed_list::{DesignedDropdown, DesignedList, DesignedRow, GridShape, LOADING_MS};
+pub use designed_list::{DesignedDropdown, DesignedList, DesignedRow, GridShape};
 mod feedback;
 mod hotkeys;
 mod icon_loads;
@@ -4601,7 +4601,7 @@ impl Launcher {
             // search field (#177): a command's own search is the designed
             // List's search-text event now (#240), and no command of a
             // package opens one.
-            let search = self.registered(state, &component, command.as_str());
+            let search = Self::registered(state, &component, command.as_str());
             match result {
                 Ok(view) => {
                     let extra = looks::remember(state, &component, &view.items);

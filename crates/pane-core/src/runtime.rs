@@ -4539,6 +4539,57 @@ impl Host {
 
     /// Runs one cycle of the continuing service of the command with
     /// manifest id `command` in `component` (see `Runtime::run_cycle_with`).
+    /// Asks the command in `component`, which supplies root results ahead
+    /// of the query, for all of them; the command reads and saves `data`.
+    async fn indexed_results(
+        &self,
+        path: &Path,
+        data: Option<PackageData>,
+    ) -> Result<Vec<IndexedResult>, CallError> {
+        let chain = self.chain();
+        let _turn = self.turn_for(path, &chain).await?;
+        self.instance(path, data).await?;
+        let indexed = self
+            .instances
+            .borrow()
+            .get(path)
+            .and_then(|instance| instance.indexed_results.as_ref())
+            .map(|provider| provider.pane_extension_indexed_results().clone())
+            .ok_or_else(|| {
+                CallError::Interface(format!("it does not export {INDEXED_RESULTS_INTERFACE}"))
+            })?;
+        let result = self
+            .run_guest(path, &chain, async |instance| {
+                instance
+                    .store
+                    .run_concurrent(async |store| indexed.call_results(store).await)
+                    .await
+            })
+            .await?;
+        let results = self.settle(path, result, CallError::Guest)?;
+        Ok(results
+            .into_iter()
+            .map(|result| IndexedResult {
+                listing: ResultListing {
+                    id: result.id,
+                    title: result.title,
+                    subtitle: result.subtitle,
+                },
+                alternate_titles: result.alternate_titles,
+                keywords: result.keywords,
+                action: match result.action {
+                    indexed_results::IndexedAction::OpenApplication(id) => {
+                        IndexedAction::OpenApplication(id)
+                    }
+                    indexed_results::IndexedAction::Open(target) => IndexedAction::Open {
+                        target: target.target,
+                        application: target.application,
+                    },
+                },
+            })
+            .collect())
+    }
+
     async fn run_cycle(
         &self,
         path: &Path,

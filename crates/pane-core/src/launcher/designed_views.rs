@@ -149,7 +149,7 @@ impl DesignedStack {
 /// One view of the stack, as the launcher holds it.
 struct OpenDesignedView {
     /// The view in the runtime; closed when the view leaves the screen.
-    id: ViewId,
+    pub(super) id: ViewId,
     /// The package the view's command belongs to: whose identity its
     /// web images and system icons load under, and whose folder its
     /// packaged images resolved in.
@@ -178,7 +178,7 @@ struct OpenDesignedView {
     /// The List or Grid this view's tree names: its search text and
     /// selection, which Pane owns (#240), with the bookkeeping of the
     /// events it raises. A tree that names no list holds it unused.
-    list: super::designed_list::ListHeld,
+    pub(super) list: super::designed_list::ListHeld,
 }
 
 /// One event sent to a designed view, with its reply: a user's event, or

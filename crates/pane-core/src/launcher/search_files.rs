@@ -550,7 +550,7 @@ impl Launcher {
         component: &Path,
         command: &str,
     ) -> bool {
-        if !self.registered(state, component, command) {
+        if !Self::registered(state, component, command) {
             return false;
         }
         let owner = owner(&state.packages, component)

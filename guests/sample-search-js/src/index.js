@@ -140,19 +140,19 @@ function Packages() {
       return;
     }
     setLoading(true);
-    const run = search(text);
-    searching.current = run;
+    const held = { run: search(text) };
+    searching.current = held;
     try {
-      const found = await run;
-      if (searching.current !== run) return;
+      const found = await held.run;
+      if (searching.current !== held) return;
       setResults(found.results);
       setFailed(null);
     } catch (error) {
-      if (searching.current !== run) return;
+      if (searching.current !== held) return;
       setResults([]);
       setFailed(String(/** @type {Error} */ (error).message ?? error));
     } finally {
-      if (searching.current === run) setLoading(false);
+      if (searching.current === held) setLoading(false);
     }
   };
   const items = results.map((/** @type {{ name: string, summary: string }} */ pkg) =>

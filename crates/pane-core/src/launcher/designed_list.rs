@@ -572,7 +572,7 @@ impl Launcher {
     /// is told to the tree's `onChange`, raised on the list's key. For
     /// the window, which the dropdown's commit reaches, and the tests.
     pub fn set_designed_dropdown(&self, value: &str) -> impl Future<Output = ()> + Send + 'static {
-        let mut state = self.lock();
+        let state = self.lock();
         let event = match &state.view.screen {
             Screen::DesignedView(snapshot) => snapshot.list.as_ref().map(|list| {
                 (
