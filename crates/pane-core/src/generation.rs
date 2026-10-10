@@ -154,6 +154,7 @@ impl Generation {
     /// [`Undo`] runs it, newest first, when it is dropped (or run), so a
     /// caller holding a lock can let it go first.
     pub fn end(&self, why: End) -> Undo {
+        eprintln!("pane-generation: ended {why:?}");
         let first = self.0.end.send_if_modified(|end| {
             let first = end.is_none();
             if first {
@@ -206,6 +207,7 @@ impl Generation {
     ) -> Registration {
         let mut list = self.list();
         if list.done {
+            eprintln!("pane-register: generation already done for {what}");
             drop(list);
             undo_one(what, Box::new(undo));
             return Registration {
