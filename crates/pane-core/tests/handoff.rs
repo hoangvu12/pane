@@ -358,7 +358,7 @@ fn an_update_the_user_chose_hands_the_state_over_and_reopens_the_screen() {
         // command they have open in the launcher: the replacement hands
         // the state over and reopens the screen.
         block_on(launcher.preview_package(&folder));
-        select_title(launcher, "Update");
+        select_title(&launcher, "Update");
         let updating = launcher.activate_selected();
         open(&launcher, sample.command);
         block_on(updating);
@@ -445,7 +445,7 @@ fn a_failing_replacement_takes_no_snapshot_and_changes_nothing() {
         other => panic!("expected an error, got {other:?}"),
     };
     assert!(
-        message.starts_with("{} was not reloaded: ", SAMPLES[0].title),
+        message.starts_with(&format!("{} was not reloaded: ", SAMPLES[0].title)),
         "{message}"
     );
     assert!(message.contains("no pane.json"), "{message}");
@@ -469,7 +469,7 @@ fn a_busy_instance_gives_no_snapshot_and_is_stopped_as_today() {
     // An item that holds for ten seconds, run on another thread: the
     // instance is busy with its call when the code is replaced.
     open(&launcher, "Handoff fixture");
-    select_title(launcher, "Hold for ten seconds");
+    select_title(&launcher, "Hold for ten seconds");
     let holding = launcher.activate_selected();
     let held = thread::spawn(move || block_on(holding));
     until("the item to start holding", || {
