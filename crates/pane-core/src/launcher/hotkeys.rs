@@ -236,6 +236,7 @@ fn offered_dynamic(state: &State) -> Vec<String> {
 /// title and that the item is gone. `None` when the hotkey names nothing
 /// of the kind. The surfaces that hold a dynamic item say so while it is
 /// not registered (#158), as one of a missing target does.
+
 /// The action a `shortcut` runs, if it is recorded for a dynamic root
 /// item that runs an action rather than launching a command: the hotkey
 /// runs the action, as activating its row does.
@@ -256,23 +257,6 @@ fn command_of(state: &State, shortcut: &Shortcut) -> Option<String> {
         .iter()
         .find(|(_, registered)| registered.shortcut == *shortcut)
         .map(|(command, _)| command.as_str().to_owned())
-}
-
-/// The action a `shortcut` runs, if it is recorded for a dynamic root
-/// item that runs an action rather than launching a command: the hotkey
-/// runs the action, as activating its row does.
-fn dynamic_action_of(state: &State, shortcut: &Shortcut) -> Option<super::dynamic::DynamicAction> {
-    let command = state
-        .bindings
-        .registered
-        .iter()
-        .find(|(_, registered)| registered.shortcut == *shortcut)
-        .map(|(command, _)| command.as_str())?;
-    let row = super::dynamic::pinned_by_id(state, command)?;
-    match row.entry {
-        Entry::DynamicAction(action) => Some(action),
-        _ => None,
-    }
 }
 
 fn gone_dynamic(state: &State, shortcut: &Shortcut) -> Option<String> {
