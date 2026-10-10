@@ -37,7 +37,11 @@
 //! that listens asks the adapter for a recording session
 //! ([`Hotkeys::recording`]), which holds the keys back from the system
 //! while it lasts, so those kinds can be recorded without the system
-//! acting on them (the Start menu the Windows key alone opens).
+//! acting on them (the Start menu the Windows key alone opens). The
+//! Windows key alone is also the fresh-install Open Pane default on
+//! Windows, where the adapter can take it (ADR 0039, #268; see
+//! [`Hotkeys::open_pane_fresh_default`]); where it cannot, the default
+//! stays today's, with the reason.
 
 use std::fmt;
 use std::sync::Arc;
@@ -198,18 +202,42 @@ impl Shortcut {
         })
     }
 
-    /// The provisional Open Pane default: Ctrl+Alt+Space on Windows and
-    /// Linux, Option+Space on macOS. The parent specification records it
-    /// as a synthesis default, not a separately confirmed product
-    /// decision: it stays clear of the combinations each system keeps for
-    /// itself (the Windows key, Spotlight, the window menu) and of plain
-    /// typing, and the General page can change it.
+    /// The Open Pane default where the Windows key alone is not taken
+    /// (#268, ADR 0039): Ctrl+Alt+Space on Windows and Linux, Option+Space
+    /// on macOS. The parent specification records it as a synthesis
+    /// default, not a separately confirmed product decision: it stays
+    /// clear of the combinations each system keeps for itself (the
+    /// Windows key, Spotlight, the window menu) and of plain typing, and
+    /// the General page can change it. On Windows a fresh data folder
+    /// starts with the Windows key alone instead, where the adapter's
+    /// own keyboard hook can recognize the tap — that is
+    /// [`Hotkeys::open_pane_fresh_default`]'s to decide; this remains
+    /// the default where it cannot, and what an existing record keeps.
     pub fn open_pane_default() -> Shortcut {
-        if cfg!(target_os = "macos") {
+        Shortcut::open_pane_default_on(Platform::current())
+    }
+
+    /// [`Shortcut::open_pane_default`] as `platform` names it, so every
+    /// system's default is decided and tested on every system:
+    /// Option+Space on macOS, Ctrl+Alt+Space elsewhere.
+    fn open_pane_default_on(platform: Option<Platform>) -> Shortcut {
+        if platform == Some(Platform::Macos) {
             Shortcut::parse("alt+space").expect("a valid default")
         } else {
             Shortcut::parse("ctrl+alt+space").expect("a valid default")
         }
+    }
+
+    /// The Windows key tapped alone — the fresh-install Open Pane default
+    /// on Windows, where the adapter's own keyboard hook can recognize
+    /// the tap (#268, ADR 0039), as Raycast's fresh installs are: Pane
+    /// replaces the Start menu as the place the user starts everything.
+    /// The General page's "Use the Windows key" choice sets it in one
+    /// step; while it is bound, Win+E, Win+D, Win+L and the rest keep
+    /// Windows' meaning, and the Start menu stays reachable from the
+    /// taskbar's Start button and Ctrl+Esc.
+    pub fn windows_key() -> Shortcut {
+        Shortcut::parse("tap:win").expect("a valid default")
     }
 
     /// Reads a shortcut as [`Shortcut::id`] writes it: a chord such as
@@ -847,6 +875,74 @@ pub trait Hotkeys: Send + Sync + 'static {
     fn recording(&self) -> Option<RecordingSession> {
         None
     }
+
+    /// The Open Pane hotkey a fresh data folder on `platform` starts
+    /// with, as this adapter can register it (#268, ADR 0039): the
+    /// Windows key alone on Windows — Pane replaces the Start menu as
+    /// the place the user starts everything — where this adapter's own
+    /// keyboard hook can recognize the tap, and
+    /// [`Shortcut::open_pane_default`] where it cannot, as on the other
+    /// systems. The platform is named, so every system's default is
+    /// decided and tested on every system; whether the folder is fresh
+    /// is the caller's to know (the host settings' record does), and an
+    /// existing record keeps the hotkey it holds wherever this is
+    /// asked.
+    ///
+    /// The answer carries why the Windows key alone was not taken, where
+    /// the platform is Windows and the adapter cannot recognize the tap:
+    /// today's default is registered instead, and the reason is the
+    /// Settings page's to show. `None` where the Windows key was taken,
+    /// and where it was never the default (the other systems).
+    fn open_pane_fresh_default(&self, platform: Option<Platform>) -> FreshOpenPane {
+        if platform != Some(Platform::Windows) {
+            // The other systems keep their defaults; the Windows key
+            // alone was never a candidate, so there is nothing to
+            // explain.
+            return FreshOpenPane {
+                shortcut: Shortcut::open_pane_default_on(platform),
+                why_not_windows_key: None,
+            };
+        }
+        let windows_key = Shortcut::windows_key();
+        match self.kind_unavailable(&windows_key) {
+            // The adapter's own keyboard hook recognizes the tap, as
+            // Windows' does: the fresh install opens Pane with the
+            // Windows key alone.
+            None => FreshOpenPane {
+                shortcut: windows_key,
+                why_not_windows_key: None,
+            },
+            // The adapter has no hook to recognize a tap with (the
+            // tests' fakes model one): today's default is registered
+            // instead, and the reason says why the Windows key alone
+            // was not taken.
+            Some(reason) => FreshOpenPane {
+                shortcut: Shortcut::open_pane_default_on(platform),
+                why_not_windows_key: Some(format!(
+                    "The Windows key alone is not the default: {reason}"
+                )),
+            },
+        }
+    }
+}
+
+/// The Open Pane hotkey a fresh data folder starts with, as
+/// [`Hotkeys::open_pane_fresh_default`] decides it (#268, ADR 0039):
+/// the Windows key alone on Windows where the adapter's own keyboard
+/// hook can recognize the tap, today's default elsewhere or where it
+/// cannot — with why the Windows key alone was not taken, where the
+/// platform is Windows and the adapter cannot, for the Settings page to
+/// show beside the binding that stands in.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FreshOpenPane {
+    /// The hotkey itself: what a fresh data folder's Open Pane binding
+    /// comes to hold, and what registers.
+    pub shortcut: Shortcut,
+    /// Why the Windows key alone was not taken, where the platform is
+    /// Windows and the adapter cannot recognize the tap: today's default
+    /// stands in, and this says why. `None` where the Windows key was
+    /// taken, and where it was never the default (the other systems).
+    pub why_not_windows_key: Option<String>,
 }
 
 /// A recording session with the hotkeys adapter (#260): while one

@@ -5,8 +5,10 @@
 //! guests`). The system is a fake [`Hotkeys`], so which shortcuts other
 //! applications use is deterministic; it can answer as Windows' adapter
 //! does instead, taking a shortcut the system refuses through a keyboard
-//! hook of its own and reporting that hook's state (#252, #259). Each
-//! system's real adapter is checked in `hotkey_adapters.rs`.
+//! hook of its own and reporting that hook's state (#252, #259), and the
+//! fresh data folder's Open Pane default is decided against it too (#268,
+//! ADR 0039). Each system's real adapter is checked in
+//! `hotkey_adapters.rs`.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -1121,4 +1123,104 @@ fn the_kinds_unavailable_on_this_system_are_explained_on_their_rows() {
     restarted.back();
     activate(&restarted, "Greeting");
     assert_eq!(restarted.view().title, "Greeting");
+}
+
+#[test]
+fn the_fresh_install_default_is_decided_per_system_against_the_adapter() {
+    // The fresh-install Open Pane default, decided per system against the
+    // adapter that will register it (#268, ADR 0039): the Windows key
+    // alone on Windows where the adapter's own hook recognizes the tap,
+    // today's default elsewhere — and, where the platform is Windows but
+    // the adapter cannot, today's default with the reason the Windows key
+    // alone was not taken.
+    let hooking = FakeSystem::hooking();
+    for (platform, expected) in [
+        (Some(pane_core::Platform::Windows), "tap:win"),
+        (Some(pane_core::Platform::Macos), "alt+space"),
+        (Some(pane_core::Platform::Linux), "ctrl+alt+space"),
+        (None, "ctrl+alt+space"),
+    ] {
+        let fresh = hooking.open_pane_fresh_default(platform);
+        assert_eq!(fresh.shortcut, key(expected), "{platform:?}");
+        assert_eq!(fresh.why_not_windows_key, None, "{platform:?}");
+    }
+    // The adapter without a hook, as the other systems' are: the Windows
+    // key alone is not taken on Windows, with the reason, and the other
+    // platforms keep their defaults with nothing to explain.
+    let plain = FakeSystem::new();
+    let windows = plain.open_pane_fresh_default(Some(pane_core::Platform::Windows));
+    assert_eq!(windows.shortcut, key("ctrl+alt+space"));
+    let why = windows.why_not_windows_key.expect("the reason is carried");
+    assert!(
+        why.contains("The Windows key alone is not the default"),
+        "{why}"
+    );
+    assert!(
+        why.contains("lone modifier taps work only on Windows"),
+        "{why}"
+    );
+    for platform in [
+        Some(pane_core::Platform::Macos),
+        Some(pane_core::Platform::Linux),
+        None,
+    ] {
+        let fresh = plain.open_pane_fresh_default(platform);
+        assert_eq!(fresh.why_not_windows_key, None, "{platform:?}");
+    }
+    assert_eq!(
+        plain
+            .open_pane_fresh_default(Some(pane_core::Platform::Macos))
+            .shortcut,
+        key("alt+space")
+    );
+    assert_eq!(
+        plain
+            .open_pane_fresh_default(Some(pane_core::Platform::Linux))
+            .shortcut,
+        key("ctrl+alt+space")
+    );
+}
+
+#[test]
+fn the_fresh_default_registers_through_the_same_path_a_choice_takes() {
+    let dirs = Dirs::new();
+    // Windows' fresh default, as the window applies it at startup over a
+    // fresh data folder: registered and answered through the launcher's
+    // own path, exactly as a recorded choice is.
+    let system = FakeSystem::hooking();
+    let launcher = dirs.launcher(&system);
+    let fresh = system.open_pane_fresh_default(Some(pane_core::Platform::Windows));
+    launcher.sync_open_pane(fresh.shortcut).unwrap();
+    assert_eq!(system.registered(), ["tap:win"]);
+    assert!(launcher.opens_pane(&key("tap:win")));
+
+    // A choice the record holds is applied as it is, never upgraded to
+    // the fresh default: the record's reader decides fresh from existing
+    // (#268), and the launcher registers whatever it is handed.
+    let kept = dirs.launcher(&system);
+    kept.sync_open_pane(key("ctrl+alt+space")).unwrap();
+    assert_eq!(system.registered(), ["ctrl+alt+space"]);
+    assert!(!kept.opens_pane(&key("tap:win")));
+}
+
+#[test]
+fn where_the_adapter_cannot_take_the_windows_key_the_fresh_default_falls_back() {
+    let dirs = Dirs::new();
+    // A system whose adapter cannot recognize a tap, as one whose hook
+    // cannot be installed: the fresh default on Windows falls back to
+    // today's, registered in its place, and the reason says why the
+    // Windows key alone was not taken (#268).
+    let system = FakeSystem::new();
+    let launcher = dirs.launcher(&system);
+    let fresh = system.open_pane_fresh_default(Some(pane_core::Platform::Windows));
+    assert_eq!(fresh.shortcut, key("ctrl+alt+space"));
+    launcher.sync_open_pane(fresh.shortcut).unwrap();
+    assert_eq!(system.registered(), ["ctrl+alt+space"]);
+    assert!(launcher.opens_pane(&key("ctrl+alt+space")));
+    assert!(
+        fresh
+            .why_not_windows_key
+            .is_some_and(|why| why.contains("lone modifier taps work only on Windows")),
+        "the reason is carried for the page to show"
+    );
 }

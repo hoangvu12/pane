@@ -17,7 +17,7 @@ use std::mem::{Discriminant, discriminant};
 use std::path::Path;
 
 use gpui::{
-    App, ClipboardItem, Context, Div, EntityInputHandler, FocusHandle, Focusable, Hsla,
+    App, ClipboardItem, Context, Div, Entity, EntityInputHandler, FocusHandle, Focusable, Hsla,
     KeyDownEvent, MouseMoveEvent, ObjectFit, PathPromptOptions, Pixels, Point, Role, SharedString,
     Size, Stateful, Window, div, img, prelude::*, px, relative,
 };
@@ -120,6 +120,12 @@ pub struct LauncherWindow {
     /// hotkey's repeat guard and the compact window mode's sizes; see
     /// [`Presence`].
     presence: Presence,
+    /// The "Show the taskbar when Pane opens" choice as this window last
+    /// applied it (#268), so only a change acts: turned on while the
+    /// launcher is shown, the taskbar shows at once; turned off, it goes
+    /// back as the user had it. The show and hide transitions apply the
+    /// choice in between.
+    taskbar_followed: bool,
     /// The result list, drawn virtually: its scroll position, the heights
     /// it measured and the frame it lays out (#165; see
     /// [`result_list`]).
@@ -236,6 +242,7 @@ impl LauncherWindow {
             motion: FrameMotion::new(),
             hotkey_recording: None,
             presence: Presence::default(),
+            taskbar_followed: crate::settings::ensure(cx).read(cx).show_taskbar(),
             tray_paused: false,
             #[cfg(any(test, debug_assertions))]
             drawn: None,
@@ -268,6 +275,18 @@ impl LauncherWindow {
         this.place(window, cx);
         // The home's slots resolve from the first visit.
         this.sync_home(cx);
+        // The taskbar follows the choice as it changes while the window
+        // lives (#268), and the launcher starts shown, so the choice
+        // applies at once: for a user whose taskbar hides itself, the
+        // Start button is one click away from the first frame.
+        let taskbar = crate::settings::ensure(cx);
+        cx.observe_in(&taskbar, window, |this, settings, _, cx| {
+            this.follow_taskbar(&settings, cx);
+        })
+        .detach();
+        if this.taskbar_followed {
+            taskbar.read(cx).taskbar_while_open();
+        }
         this
     }
 
@@ -888,6 +907,11 @@ impl LauncherWindow {
             // shares nothing of the launcher's lifecycle, stays where the
             // user put it.
             self.place(window, cx);
+            // The taskbar shows while the launcher is open, where the user
+            // chose that and this system has one to show (#268): a taskbar
+            // that hides itself is on screen now, so the Start button
+            // stays one click away.
+            crate::settings::shared(cx).read(cx).taskbar_while_open();
         }
     }
 
@@ -899,6 +923,10 @@ impl LauncherWindow {
     fn hide(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         window.set_visible(false);
         self.presence.hide(cx.background_executor().now());
+        // The taskbar goes back as the user had it, where showing it while
+        // the launcher was open was chosen (#268): hidden, the launcher
+        // leaves the screen to what the user had there.
+        crate::settings::shared(cx).read(cx).restore_taskbar();
         // A toast shown from now on is a HUD (#141), and a confirmation
         // shown is answered as not confirmed (#146).
         self.launcher.set_window_presence(WindowPresence::Hidden);
@@ -908,6 +936,35 @@ impl LauncherWindow {
         self.motion.land_at_once();
         self.end_numbers(cx);
         cx.notify();
+    }
+
+    /// Follows the "Show the taskbar when Pane opens" choice as it
+    /// changes while this window lives (#268): while the launcher is
+    /// shown, turning the choice on shows the taskbar at once, and
+    /// turning it off puts it back as the user had it; while the launcher
+    /// is hidden, the next showing applies the choice (see
+    /// [`LauncherWindow::unhide`]). Any other change of the settings
+    /// leaves the taskbar as it is.
+    fn follow_taskbar(
+        &mut self,
+        settings: &Entity<crate::settings::Settings>,
+        cx: &mut Context<Self>,
+    ) {
+        let chosen = settings.read(cx).show_taskbar();
+        if chosen == self.taskbar_followed {
+            return;
+        }
+        self.taskbar_followed = chosen;
+        if self.presence.hidden() {
+            // Hidden: nothing shows now; the next showing applies the
+            // choice.
+            return;
+        }
+        if chosen {
+            settings.read(cx).taskbar_while_open();
+        } else {
+            settings.read(cx).restore_taskbar();
+        }
     }
 
     /// Places the launcher window on the display the Launcher page's

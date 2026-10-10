@@ -63,10 +63,25 @@ fn open_pane_keystrokes() -> &'static str {
 struct FakeHotkeys {
     registered: Mutex<Vec<Shortcut>>,
     taken: Mutex<Vec<Shortcut>>,
+    /// Whether this system's adapter has a keyboard hook of its own, as
+    /// Windows' does (#260, #268): the binding kinds #260 adds bind here
+    /// and the recorder's sessions come from the hook; a system without
+    /// one explains the kinds and offers no session.
+    hooks: bool,
     /// The senders of the recording sessions handed out (#260), for the
     /// test to feed what the user pressed, as the hook adapter would
     /// report it.
     reporters: Mutex<Vec<pane_core::hotkeys::PressSender>>,
+}
+
+impl FakeHotkeys {
+    /// A system whose adapter has a keyboard hook, as Windows' does.
+    fn hooking() -> FakeHotkeys {
+        FakeHotkeys {
+            hooks: true,
+            ..FakeHotkeys::default()
+        }
+    }
 }
 
 impl Hotkeys for FakeHotkeys {
@@ -74,13 +89,20 @@ impl Hotkeys for FakeHotkeys {
         None
     }
 
-    // The fake models a system whose adapter has a keyboard hook, as
-    // Windows' does: the binding kinds #260 adds bind here.
-    fn kind_unavailable(&self, _shortcut: &Shortcut) -> Option<String> {
-        None
+    // A system whose adapter has a keyboard hook takes the binding kinds
+    // #260 adds; one without explains them, as the default does.
+    fn kind_unavailable(&self, shortcut: &Shortcut) -> Option<String> {
+        if self.hooks {
+            None
+        } else {
+            pane_core::hotkeys::kinds_unavailable(shortcut, pane_core::Platform::current())
+        }
     }
 
     fn recording(&self) -> Option<pane_core::hotkeys::RecordingSession> {
+        if !self.hooks {
+            return None;
+        }
         let (sender, presses) = pane_core::hotkeys::channel();
         self.reporters.lock().unwrap().push(sender);
         Some(pane_core::hotkeys::RecordingSession::of(presses, || {}))
@@ -249,7 +271,36 @@ fn open<'a>(
     Arc<FakeHotkeys>,
     &'a mut VisualTestContext,
 ) {
-    let hotkeys = Arc::new(FakeHotkeys::default());
+    open_over(Arc::new(FakeHotkeys::default()), cx, data, packages)
+}
+
+/// [`open`] over a fake whose adapter has a keyboard hook, as Windows'
+/// does, for the tests that record the kinds only a session can report
+/// (#260).
+fn open_hooking<'a>(
+    cx: &'a mut TestAppContext,
+    data: &TempDir,
+    packages: &[&Path],
+) -> (
+    Entity<LauncherWindow>,
+    WindowHandle<SettingsWindow>,
+    Arc<FakeHotkeys>,
+    &'a mut VisualTestContext,
+) {
+    open_over(Arc::new(FakeHotkeys::hooking()), cx, data, packages)
+}
+
+fn open_over<'a>(
+    hotkeys: Arc<FakeHotkeys>,
+    cx: &'a mut TestAppContext,
+    data: &TempDir,
+    packages: &[&Path],
+) -> (
+    Entity<LauncherWindow>,
+    WindowHandle<SettingsWindow>,
+    Arc<FakeHotkeys>,
+    &'a mut VisualTestContext,
+) {
     let launcher = Launcher::with_packages(
         Ok(Runtime::start().unwrap()),
         vec![],
@@ -2146,7 +2197,7 @@ fn reduced_motion_settles_disclosures_at_once(cx: &mut TestAppContext) {
 fn a_hotkey_cell_records_the_kinds_a_session_reports(cx: &mut TestAppContext) {
     let data = tempfile::tempdir().unwrap();
     let query = query_package(&data.path().join("sources").join("query"));
-    let (window, settings, hotkeys, cx) = open(cx, &data, &[&query]);
+    let (window, settings, hotkeys, cx) = open_hooking(cx, &data, &[&query]);
     let mut settings_cx = record_hotkey(&settings, cx, &command_id(&query));
     let echo_id = command_id(&query);
 

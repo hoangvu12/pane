@@ -22,6 +22,7 @@ mod ui;
 
 pub mod placement;
 pub mod settings;
+pub mod taskbar;
 
 pub use app::LauncherWindow;
 pub use features::settings::SettingsWindow;

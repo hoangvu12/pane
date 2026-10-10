@@ -63,7 +63,7 @@ use super::{
 };
 use crate::game_mode::{Foreground, GameMode, is_game};
 use crate::generation::EndMark;
-use crate::hotkeys::{HookHealth, Route, Shortcut};
+use crate::hotkeys::{FreshOpenPane, HookHealth, Route, Shortcut};
 use crate::launch::LaunchSource;
 use crate::launcher::CommandRegistration;
 use crate::packages::{CommandId, CommandMode, InstalledPackage, PackageIdentity};
@@ -962,6 +962,27 @@ impl Launcher {
     /// beside the binding, with [`Route::note_on`].
     pub fn open_pane_route(&self) -> Route {
         self.lock().open_pane.route
+    }
+
+    /// The Open Pane hotkey a fresh data folder on this system starts
+    /// with, as the adapter this launcher registers through can take it
+    /// (#268, ADR 0039): the Windows key alone on Windows where the
+    /// adapter's own keyboard hook recognizes the tap, today's default
+    /// otherwise — with why the Windows key alone was not taken, where
+    /// this system is Windows and the adapter cannot. The host settings
+    /// apply it where their record is absent; an existing record keeps
+    /// the hotkey it holds.
+    pub fn open_pane_fresh_default(&self) -> FreshOpenPane {
+        self.hotkeys.open_pane_fresh_default(Platform::current())
+    }
+
+    /// Why the Windows key alone cannot be Pane's hotkey here, if it
+    /// cannot: it needs Pane's own keyboard hook, which only Windows'
+    /// adapter has (#260). The General page's "Use the Windows key"
+    /// choice is offered where it can be and explains this where it
+    /// cannot (#268).
+    pub fn windows_key_unavailable(&self) -> Option<String> {
+        self.hotkeys.kind_unavailable(&Shortcut::windows_key())
     }
 
     /// The state of Pane's own keyboard hook, where this system's adapter

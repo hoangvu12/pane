@@ -255,6 +255,11 @@ fn main() {
             Some(source) => launcher.with_foreground(source),
             None => launcher,
         };
+        // The taskbar while the launcher is open (#268): Windows' adapter
+        // — which shows a taskbar that hides itself and puts it back as
+        // the user had it — or none, and the General page explains the
+        // choice where the platform has no taskbar of the kind.
+        pane::settings::attach_taskbar(pane::taskbar::native(), cx);
         // The tray or menu-bar entry: Pane's item in the system's tray
         // (Windows) or menu bar (macOS), whose menu opens the launcher,
         // Settings and Quit — the entry the General page's visibility

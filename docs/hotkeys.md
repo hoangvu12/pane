@@ -101,7 +101,10 @@ presses. A lone tap of the **Windows key** while it is bound is masked: any
 other key pressed with it passes through untouched (Win+E, Win+R, Win+D
 keep Windows' meaning), and Pane injects a tagged neutral key before the
 tap's release reaches Explorer, so the Start menu does not open as well —
-it stays reachable from the taskbar's Start button and Ctrl+Esc.
+it stays reachable from the taskbar's Start button and Ctrl+Esc. The
+"Show the taskbar when Pane opens" choice keeps a taskbar that hides
+itself on screen while the launcher is open, so the Start button stays
+one click away.
 
 **Recording these kinds** (#260): on Windows the recorder — the Open Pane
 recorder, the Shortcuts page's hotkey cells and the extension page's — asks
@@ -146,11 +149,17 @@ Settings' **General** page, in the "Open Pane hotkey" row.
   keeps running, the Settings window stays open, and the next press shows the
   same launcher again. A second press within 600 ms of an accepted one is taken
   as the repeat of a key still held and does nothing.
-- **Defaults.** Ctrl+Alt+Space on Windows and Linux, Option+Space on macOS (a
-  provisional default, chosen to stay clear of the Windows key, Spotlight and
-  the window menu). [#125](https://github.com/hoangvu12/pane/issues/125) (ADR 0039)
-  will change the Windows default on a fresh install later, and this document
-  changes with it; what is written here is what ships now.
+- **Defaults.** On Windows, the Windows key alone — the user's decision
+  ([ADR 0039](adr/0039-hotkeys-fall-back-to-a-keyboard-hook-and-the-windows-key-opens-pane.md),
+  [#125](https://github.com/pane-app/pane/issues/125) — as Raycast's fresh
+  installs are, Pane replacing the Start menu as the place the user starts
+  everything — for a **fresh data folder**: one whose `settings.json` does
+  not exist. A record an earlier Pane wrote keeps the hotkey it has,
+  whatever the fresh default is; only a fresh folder starts with it. Where
+  the Windows key alone cannot be taken — an adapter whose own keyboard
+  hook cannot be installed, so a tap is not recognized — Ctrl+Alt+Space is
+  registered instead, with the reason shown on the row. Linux keeps
+  Ctrl+Alt+Space, macOS Option+Space.
 - **Recording and reset.** Click the row's recorder, or press Enter or Space on
   it, and it listens ("Recording; Open Pane with Ctrl+Alt+Space" to a screen
   reader): the keys pressed next are the hotkey, captured. Escape, Tab or a
@@ -158,16 +167,38 @@ Settings' **General** page, in the "Open Pane hotkey" row.
   registered with the system before the one it replaces is released, so any
   refusal leaves the earlier one working and nothing is saved; the reason is
   shown in the row and the recorder keeps listening. The reset button beside
-  it ("Reset the Open Pane hotkey to Ctrl+Alt+Space") goes back to the default
-  through the same checks, and is enabled only while the hotkey is not the
-  default.
+  it ("Reset the Open Pane hotkey to …") goes back to the default of this
+  system — the Windows key alone on Windows where the adapter's hook can
+  take it, Ctrl+Alt+Space or Option+Space elsewhere — through the same
+  checks, and is enabled only while the hotkey is not the default.
+- **"Use the Windows key"**
+  ([#125](https://github.com/pane-app/pane/issues/125) #268, [ADR 0039](adr/0039-hotkeys-fall-back-to-a-keyboard-hook-and-the-windows-key-opens-pane.md);
+  Raycast's "Replace Start Menu"). Beside the recorder, while another hotkey
+  is set, the General page offers the choice: one step that sets the Windows
+  key alone, through the same checks a recording takes, its note saying
+  where the Start menu remains — the taskbar's Start button and Ctrl+Esc —
+  and that only the lone tap changes, Win+E, Win+D, Win+L and the rest
+  keeping Windows' meaning. Where the Windows key alone cannot be used
+  (a system whose adapter has no keyboard hook), the choice is explained
+  instead of offered, through the same unavailable mechanism as the kinds.
+- **Show the taskbar when Pane opens.**
+  ([#125](https://github.com/pane-app/pane/issues/125) #268, [ADR 0039](adr/0039-hotkeys-fall-back-to-a-keyboard-hook-and-the-windows-key-opens-pane.md),
+  proposed): a General-page choice, Windows only, for a user whose taskbar
+  hides itself — while the launcher window is shown the taskbar is kept on
+  screen, so the Start button stays one click away, and when the launcher
+  hides it goes back exactly as the user had it. Where the platform has no
+  taskbar of the kind, the choice is explained rather than offered.
 - **Where it is kept.** In Pane's own settings record, `settings.json` in the
-  data folder, as `"open_pane": "ctrl+alt+space"`, with the other host
+  data folder, as `"open_pane": "ctrl+alt+space"` — or the fresh default's
+  own textual form, `"tap:win"` — with the other host
   settings: not in `hotkeys.json` and not in any extension's data. It is
   registered at every start, and stays registered while every extension is
   disabled and while the extension runtime has failed. A change whose save
   fails releases what the record does not hold, so what the record names is
-  what works.
+  what works. A fresh data folder holds no record at all: its binding is the
+  fresh default, resolved against the adapter and registered at start, and
+  nothing is written for the resolution itself — the next save of any
+  preference is what records the binding the install came to hold (#268).
 - **Refusals.** The same checks as a command hotkey (the table above), and
   the explanation is shown in the row. A shortcut a command already has: "Ctrl+Alt+G
   already opens Greeting: remove it there first, or press another shortcut."
@@ -284,7 +315,12 @@ cannot assign, read or declare one (no WIT or manifest change).
   refused ("cannot coexist"), and the kinds unavailable on the test binary's
   own system explained on their rows. The hook's state is answered
   through the launcher while a binding is dispatched through it, and not
-  otherwise ([#259](https://github.com/pane-app/pane/issues/259)).
+  otherwise ([#259](https://github.com/pane-app/pane/issues/259)); and
+  #268's fresh-install default is decided per system against the same
+  fake — the Windows key alone on Windows where the fake's hook can take
+  the tap, today's default where it cannot, with the reason — registers
+  through the same path a recorded choice takes, and a choice the record
+  holds is applied as it is, never upgraded to it.
 - Window ([`crates/pane/tests/hotkeys.rs`](../crates/pane/tests/hotkeys.rs)),
   on GPUI's test platform: Enter on the hotkey row, a plain `p` explained,
   `ctrl-alt-p` assigned; a reported press with root search showing a query
@@ -302,7 +338,12 @@ cannot assign, read or declare one (no WIT or manifest change).
   hotkey working while the extension runtime has failed, and Wayland's
   explanation on the General page; and, with a fake recording session (#260),
   the recorder showing "Right Ctrl", "Ctrl Ctrl" and the Windows key's name
-  from what the session reports, and Escape still cancelling.
+  from what the session reports, and Escape still cancelling. #268 adds the
+  fresh-install default registered at start — the Windows key alone where
+  the fake's hook can take the tap, on a fresh data folder only, a record
+  keeping its hotkey — the "Use the Windows key" choice beside the recorder
+  setting it in one step with its Start-menu note, and the choice explained
+  where the Windows key cannot be taken.
 - Shortcuts page ([`crates/pane/tests/shortcuts.rs`](../crates/pane/tests/shortcuts.rs)),
   likewise: a hotkey recorded inline and cleared, the collisions with another
   command and with the Open Pane hotkey ("… opens Pane itself: …") explained,
@@ -319,6 +360,13 @@ cannot assign, read or declare one (no WIT or manifest change).
   installed, how many times it was reinstalled, pages pinned — and says
   nothing where no hook is in use, and the diagnostics copy holds the
   hook's state ([#259](https://github.com/pane-app/pane/issues/259)).
+- The taskbar choice
+  ([`crates/pane/tests/settings.rs`](../crates/pane/tests/settings.rs)),
+  on GPUI's test platform with a fake taskbar seam (#268): the choice
+  toggled on the General page shows the taskbar at once while the
+  launcher is open, hiding the launcher puts it back as the user had it,
+  showing the launcher again shows it, turning the choice off restores
+  it at once, and the record keeps the choice.
 - The recognizer ([`crates/pane-core/tests/hotkey_recognizer.rs`](../crates/pane-core/tests/hotkey_recognizer.rs)),
   on every system: the pure state machine the Windows hook feeds, driven by
   synthetic key-event sequences — chords fired with exactly their modifiers

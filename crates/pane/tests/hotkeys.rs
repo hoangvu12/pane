@@ -26,10 +26,25 @@ use packages::package;
 #[derive(Default)]
 struct FakeSystem {
     registered: Mutex<Vec<Shortcut>>,
+    /// Whether this system's adapter has a keyboard hook of its own, as
+    /// Windows' does (#260, #268): the binding kinds #260 adds bind here
+    /// and the recorder's sessions come from the hook; a system without
+    /// one explains the kinds and offers no session.
+    hooks: bool,
     /// The senders of the recording sessions handed out (#260), for the
     /// test to feed what the user pressed, as the hook adapter would
     /// report it.
     reporters: Mutex<Vec<pane_core::hotkeys::PressSender>>,
+}
+
+impl FakeSystem {
+    /// A system whose adapter has a keyboard hook, as Windows' does.
+    fn hooking() -> FakeSystem {
+        FakeSystem {
+            hooks: true,
+            ..FakeSystem::default()
+        }
+    }
 }
 
 impl Hotkeys for FakeSystem {
@@ -37,13 +52,20 @@ impl Hotkeys for FakeSystem {
         None
     }
 
-    // The fake models a system whose adapter has a keyboard hook, as
-    // Windows' does: the binding kinds #260 adds bind here.
-    fn kind_unavailable(&self, _shortcut: &Shortcut) -> Option<String> {
-        None
+    // A system whose adapter has a keyboard hook takes the binding kinds
+    // #260 adds; one without explains them, as the default does.
+    fn kind_unavailable(&self, shortcut: &Shortcut) -> Option<String> {
+        if self.hooks {
+            None
+        } else {
+            pane_core::hotkeys::kinds_unavailable(shortcut, pane_core::Platform::current())
+        }
     }
 
     fn recording(&self) -> Option<pane_core::hotkeys::RecordingSession> {
+        if !self.hooks {
+            return None;
+        }
         let (sender, presses) = pane_core::hotkeys::channel();
         self.reporters.lock().unwrap().push(sender);
         Some(pane_core::hotkeys::RecordingSession::of(presses, || {}))
@@ -220,7 +242,7 @@ fn the_hotkey_screen_records_the_kinds_a_recording_session_reports(cx: &mut Test
     let (sources, data): (TempDir, TempDir) =
         (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
     let folder = package(&sources.path().join("hello"));
-    let system = Arc::new(FakeSystem::default());
+    let system = Arc::new(FakeSystem::hooking());
     cx.executor().allow_parking();
     cx.update(pane::bind_keys);
     let launcher =
