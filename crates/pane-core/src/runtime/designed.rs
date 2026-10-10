@@ -1717,9 +1717,8 @@ fn list_node(wire: &WireNode) -> Result<ListNode, ReadError> {
         is_loading: boolean(wire, "isLoading")?.unwrap_or(false),
         is_showing_detail: boolean(wire, "isShowingDetail")?.unwrap_or(false),
         has_more: boolean(wire, "hasMore")?.unwrap_or(false),
-        page_size: number(wire, "pageSize")?.map(|Finite(size)| {
-            size.clamp(1., MAX_PAGE_SIZE as f32) as u64
-        }),
+        page_size: number(wire, "pageSize")?
+            .map(|Finite(size)| size.clamp(1., MAX_PAGE_SIZE as f32) as u64),
         on_search_text: callback(wire, "onSearchText")?,
         on_selection_change: callback(wire, "onSelectionChange")?,
         on_load_more: callback(wire, "onLoadMore")?,
@@ -1796,9 +1795,8 @@ fn list_item(wire: &WireNode, depth: usize, nodes: &mut usize) -> Result<ListIte
                 };
                 Ok(ListAction {
                     title: string(&action_wire, "title")?,
-                    on_press: callback(&action_wire, "onPress")?.ok_or_else(|| {
-                        unreadable("an action of its item has no onPress")
-                    })?,
+                    on_press: callback(&action_wire, "onPress")?
+                        .ok_or_else(|| unreadable("an action of its item has no onPress"))?,
                 })
             })
             .collect::<Result<Vec<ListAction>, ReadError>>()?,
@@ -1863,9 +1861,8 @@ fn list_dropdown(wire: &WireNode) -> Result<ListDropdown, ReadError> {
                     rest: fields.clone(),
                 };
                 Ok(DropdownItem {
-                    value: string(&item_wire, "value")?.ok_or_else(|| {
-                        unreadable("an item of its dropdown has no value")
-                    })?,
+                    value: string(&item_wire, "value")?
+                        .ok_or_else(|| unreadable("an item of its dropdown has no value"))?,
                     label: fields
                         .get("title")
                         .or_else(|| fields.get("label"))

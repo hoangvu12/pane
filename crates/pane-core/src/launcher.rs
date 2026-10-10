@@ -50,9 +50,7 @@ mod crash_notice;
 mod designed_list;
 mod designed_views;
 
-pub use designed_list::{
-    DesignedDropdown, DesignedList, DesignedRow, GridShape, LOADING_MS,
-};
+pub use designed_list::{DesignedDropdown, DesignedList, DesignedRow, GridShape, LOADING_MS};
 mod feedback;
 mod hotkeys;
 mod icon_loads;
@@ -613,10 +611,7 @@ impl Screen {
             Screen::Root { query } | Screen::CommandSearch { query } => Some(query),
             // A designed view's List owns the header's search field (#240);
             // a tree that names no list has none.
-            Screen::DesignedView(view) => view
-                .list
-                .as_ref()
-                .map(|list| list.search.as_str()),
+            Screen::DesignedView(view) => view.list.as_ref().map(|list| list.search.as_str()),
             _ => None,
         }
     }

@@ -38,7 +38,9 @@ use std::pin::Pin;
 
 use super::presentation::Section;
 use super::{Entry, Launcher, Pending, Row, Screen, State, first_index};
-use crate::runtime::{Accessory, DesignedHandler, DesignedTree, ItemLook, ListNode, Node, NodeKind};
+use crate::runtime::{
+    Accessory, DesignedHandler, DesignedTree, ItemLook, ListNode, Node, NodeKind,
+};
 use crate::search::{self, Keys, Query};
 
 /// How long the list's loading runs before the loading bar draws (the

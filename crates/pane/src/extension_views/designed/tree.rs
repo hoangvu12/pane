@@ -112,9 +112,6 @@ pub(super) fn place_child_owned(
         .filter(|key| !duplicates.contains(*key));
     push(path, held, index);
 }
-    let key = child.key.as_deref().filter(|key| !duplicates.contains(key));
-    push(path, key, index);
-}
 
 /// The keys `parent`'s children share with a sibling: those children are
 /// matched by position instead of by key.

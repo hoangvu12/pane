@@ -740,7 +740,9 @@ fn size_of(text: &str) -> Option<(Option<u32>, Option<u32>)> {
         return None;
     }
     let read = |part: &str| {
-        (!part.is_empty()).then(|| part.parse::<u32>().ok()).flatten()
+        (!part.is_empty())
+            .then(|| part.parse::<u32>().ok())
+            .flatten()
     };
     if (!width.is_empty() && read(width).is_none())
         || (!height.is_empty() && read(height).is_none())
