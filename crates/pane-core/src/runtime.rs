@@ -5525,9 +5525,7 @@ mod tests {
             block_on(runtime.designed_view_event(old, designed_key_event())),
             Err(CallError::ViewClosed)
         );
-        assert!(
-            block_on(runtime.designed_view_event(new, designed_key_event())).is_ok()
-        );
+        assert!(block_on(runtime.designed_view_event(new, designed_key_event())).is_ok());
         assert_eq!(block_on(runtime.designed_view_count()), 1);
     }
 
@@ -5651,12 +5649,8 @@ mod tests {
         assert_eq!(block_on(runtime.running()), vec![other.clone()]);
         // The other command's view is still open, and the package runs
         // again from a fresh instance.
-        assert!(
-            block_on(runtime.designed_view_event(view, designed_key_event())).is_ok()
-        );
-        assert!(
-            block_on(runtime.render_with(&component, Some(packages.owned_by(&identity)))).is_ok()
-        );
+        assert!(block_on(runtime.designed_view_event(view, designed_key_event())).is_ok());
+        assert!(block_on(runtime.render_with(&component, Some(packages.owned_by(&identity)))).is_ok());
         assert_eq!(runtime.status(), RuntimeStatus::Running);
     }
 
@@ -5782,9 +5776,7 @@ mod tests {
         assert_eq!(runtime.abandoned_threads(), 1);
         assert!(lock(&reported).is_empty(), "no package is named");
         // A fresh thread serves.
-        assert!(
-            block_on(runtime.render_with(&component, Some(packages.owned_by(&identity)))).is_ok()
-        );
+        assert!(block_on(runtime.render_with(&component, Some(packages.owned_by(&identity)))).is_ok());
 
         runtime.inject(Fault::Release);
         until("the stuck thread ended", || {
@@ -5906,9 +5898,7 @@ mod tests {
 
         assert_eq!(block_on(stale), Err(CallError::Disabled));
         assert_eq!(block_on(runtime.designed_view_count()), 1);
-        assert!(
-            block_on(runtime.designed_view_event(view, designed_key_event())).is_ok()
-        );
+        assert!(block_on(runtime.designed_view_event(view, designed_key_event())).is_ok());
     }
 
     /// The launch record every designed view of these tests opens with:

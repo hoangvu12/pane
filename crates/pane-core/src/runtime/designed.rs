@@ -709,7 +709,7 @@ pub enum Tone {
 /// input names. Its size is its style's sizing, as any node's is — fixed,
 /// or filling the space the layout gives it, which the view's render
 /// context names with its key (#242).
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Canvas {
     /// The operations it paints, in order.
     pub ops: Vec<CanvasOp>,

@@ -710,7 +710,7 @@ fn views_open_at_once_keep_their_own_state(sample: &Sample) {
     let open = || {
         block_on(runtime.open_designed_view(&sample.path(), "color", &default_launch())).unwrap()
     };
-    let (first, rendered), (second, _) = (open(), open());
+    let ((first, rendered), (second, _)) = (open(), open());
 
     // The event each view is sent: a key pressed on its canvas, by the
     // callback id its own tree named.

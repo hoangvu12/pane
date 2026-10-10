@@ -7,6 +7,7 @@
 // (guests/sample-rust) and the TypeScript sample. The JSDoc types let
 // TypeScript check this file against Pane's contract; they are optional.
 // @ts-check
+/** @typedef {import("@pane-app/extension/view").CanvasEvent} CanvasEvent */
 import { launch } from "pane:extension/commands@0.1.0";
 import { jsxs } from "@pane-app/extension/jsx-runtime";
 import {
@@ -141,7 +142,7 @@ function ColorPicker() {
     { op: "rect", x: column * STEP, y: row * STEP, width: STEP, height: STEP, fill: FRAME },
   ];
   for (let x = 0; x < COLUMNS; x += 1) {
-    const shades = COLORS[x].slice(1);
+    const [, ...shades] = COLORS[x];
     for (let y = 0; y < ROWS; y += 1) {
       ops.push({
         op: "rect",
@@ -168,7 +169,8 @@ function ColorPicker() {
     if (name === "home") setChoice({ column: 0, row });
     else if (name === "end") setChoice({ column: COLUMNS - 1, row });
     else if (Object.hasOwn(MOVES, name)) {
-      const [columns, rows] = /** @type {[number, number]} */ (MOVES[name]);
+      const [columns, rows] =
+        /** @type {[number, number]} */ (MOVES[/** @type {"left" | "right" | "up" | "down"} */ (name)]);
       setChoice(moved(column, row, columns, rows));
     }
   };
@@ -202,8 +204,8 @@ function ColorPicker() {
         label: "Color",
         value: `${shade ? `${shade} ${hue.toLowerCase()}` : hue}, ${code}`,
         onKey: key,
-        onPointerDown: (event) => pointed(event, true),
-        onPointerMove: (event) => pointed(event, false),
+        onPointerDown: (/** @type {CanvasEvent} */ event) => pointed(event, true),
+        onPointerMove: (/** @type {CanvasEvent} */ event) => pointed(event, false),
         onPointerUp: () => {
           dragging.current = false;
         },
