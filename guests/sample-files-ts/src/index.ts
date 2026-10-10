@@ -56,15 +56,11 @@ async function render(): Promise<List> {
   };
 }
 
-async function submitForm(itemId: string): Promise<string> {
-  throw { message: `unknown form: ${itemId}` };
-}
-
 async function openCustomView(itemId: string): Promise<CustomView> {
   throw new Error(`unknown view: ${itemId}`);
 }
 
-export const command: Command = { render, submitForm, openCustomView };
+export const command: Command = { render, openCustomView };
 
 export const commandSearch: CommandSearch = {
   async search(_command: string, query: string): Promise<SearchResult[]> {

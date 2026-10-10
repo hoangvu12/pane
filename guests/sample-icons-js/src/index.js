@@ -159,10 +159,6 @@ export const command = {
     };
   },
 
-  async submitForm(itemId) {
-    throw new Error(`The icons sample has no forms: ${itemId}`);
-  },
-
   async openCustomView(itemId) {
     throw new Error(`The icons sample has no custom views: ${itemId}`);
   },

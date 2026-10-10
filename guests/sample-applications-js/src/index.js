@@ -66,10 +66,6 @@ export const command = {
     };
   },
 
-  async submitForm() {
-    throw { message: "this sample has no forms" };
-  },
-
   async openCustomView() {
     throw new Error("this sample has no custom views");
   },

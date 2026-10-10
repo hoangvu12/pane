@@ -142,11 +142,6 @@ export const command = {
     };
   },
 
-  async submitForm(itemId) {
-    // Any Error thrown from submitForm is a message about the whole form.
-    throw new Error(`The service sample has no forms: ${itemId}`);
-  },
-
   async openCustomView(itemId) {
     throw new Error(`The service sample has no custom views: ${itemId}`);
   },

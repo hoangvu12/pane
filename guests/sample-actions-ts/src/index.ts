@@ -670,11 +670,6 @@ export const command: Command = {
     }
   },
 
-  async submitForm(itemId: string): Promise<string> {
-    // A rejected submitForm is a message about the whole form.
-    throw new Error(`The actions sample has no forms: ${itemId}`);
-  },
-
   async openCustomView(itemId: string): Promise<CustomView> {
     throw new Error(`The actions sample has no custom views: ${itemId}`);
   },

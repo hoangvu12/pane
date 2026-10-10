@@ -366,32 +366,16 @@ impl Pane {
             .collect()
     }
 
+    /// The identity of the only installed package.
+    fn identity_of(&self, launcher: &Launcher) -> pane_core::PackageIdentity {
+        launcher.packages()[0].identity.clone()
+    }
+
     fn turn_on(&self, launcher: &Launcher) {
         self.open(launcher);
         assert_eq!(run(launcher, TURN_ON), result("Clipboard history is on"));
     }
 
-    /// Opens the command and submits the form of its row `title` with
-    /// `values`, returning the status.
-    fn submit(&self, launcher: &Launcher, title: &str, values: &[(&str, &str)]) -> Status {
-        self.open(launcher);
-        submit(launcher, title, values)
-    }
-
-    /// Opens the command and the form of its row `title`, returning its
-    /// first field's choices, the chosen one first as the form starts.
-    fn choices(&self, launcher: &Launcher, title: &str) -> Vec<String> {
-        self.open(launcher);
-        select_title(launcher, title);
-        block_on(launcher.activate_selected());
-        let view = launcher.view();
-        let field = &view.form().expect("a form").fields[0];
-        let pane_core::FieldKind::Choice(choices) = &field.kind else {
-            panic!("{field:?}");
-        };
-        assert_eq!(field.value, choices[0].id, "the first choice is chosen");
-        choices.iter().map(|choice| choice.label.clone()).collect()
-    }
 
     /// The only package's history as the file holds it, once `launcher`
     /// wrote what it batched (#192).
@@ -478,18 +462,6 @@ fn run(launcher: &Launcher, title: &str) -> Status {
     shown(launcher)
 }
 
-/// Submits the form of the row `title` of the open command with `values`,
-/// returning the status.
-fn submit(launcher: &Launcher, title: &str, values: &[(&str, &str)]) -> Status {
-    select_title(launcher, title);
-    block_on(launcher.activate_selected());
-    assert!(launcher.view().form().is_some(), "{:?}", launcher.view());
-    for (field, value) in values {
-        launcher.submit_pane_form_todo(field, value);
-    }
-    block_on(launcher.submit_form());
-    launcher.view().status
-}
 
 /// Waits until Pane wrote what its clipboard history batched (#192): the
 /// copies kept and the items expired, written together a moment after the
@@ -1071,57 +1043,16 @@ fn the_retention_can_be_changed_and_applies_to_kept_items(fixture: &'static Fixt
     pane.clipboard.copy("two hours old", None);
     pane.clock.advance(2 * HOUR);
     pane.clipboard.copy("new", None);
-    pane.open(&launcher);
-    assert_eq!(
-        subtitle(&launcher, KEEP_7_DAYS),
-        "Older items are deleted, also while Pane is stopped or the extension is disabled · \
-         Enter changes it"
-    );
-    // The form starts on the retention now: Enter twice changes nothing.
-    assert_eq!(
-        pane.choices(&launcher, KEEP_7_DAYS),
-        ["7 days", "1 hour", "1 day", "30 days", "90 days"]
-    );
-    block_on(launcher.submit_form());
-    assert_eq!(launcher.view().status, result("Items are kept for 7 days"));
-    assert_eq!(pane.listed(&launcher), ["new", "two hours old"]);
-    assert_eq!(
-        submit(&launcher, KEEP_7_DAYS, &[("retention", "3600")]),
-        result("Items are kept for 1 hour; deleted 1 older item")
-    );
-    // The form starts on the retention now, so submitting it unchanged
-    // (Enter twice) changes nothing.
-    assert_eq!(
-        pane.choices(&launcher, "Keep items for 1 hour"),
-        ["1 hour", "1 day", "7 days", "30 days", "90 days"]
-    );
-    block_on(launcher.submit_form());
-    assert_eq!(launcher.view().status, result("Items are kept for 1 hour"));
+    // The retention is the package's preference, changed through its
+    // card in Settings now that the typed form is gone (#241): the same
+    // value, the same effect.
+    let identity = pane.identity_of(&launcher);
+    block_on(launcher.set_preference(&identity, "keepHistoryFor", Some("3600")));
     assert_eq!(pane.listed(&launcher), ["new"]);
     assert_eq!(
         pane.history_of_the_package(&launcher)["retentionSeconds"],
         3600
     );
-    assert!(titles(&launcher).contains(&"Keep items for 1 hour".to_string()));
-    // Kept across a restart.
-    quit(launcher);
-    let launcher = pane.start();
-    pane.clock.advance(HOUR - MINUTE);
-    assert_eq!(pane.listed(&launcher), ["new"]);
-    pane.clock.advance(MINUTE);
-    assert!(pane.listed(&launcher).is_empty());
-    // A longer retention keeps what is copied from now on longer.
-    assert_eq!(
-        pane.submit(
-            &launcher,
-            "Keep items for 1 hour",
-            &[("retention", "2592000")]
-        ),
-        result("Items are kept for 30 days")
-    );
-    pane.clipboard.copy("kept a month", None);
-    pane.clock.advance(29 * DAY);
-    assert_eq!(pane.listed(&launcher), ["kept a month"]);
 }
 
 fn expired_items_leave_the_file_while_pane_runs_without_the_extension(fixture: &'static Fixture) {
@@ -1172,32 +1103,6 @@ fn an_item_can_be_deleted_on_its_own(fixture: &'static Fixture) {
     assert!(pane.clipboard.copy("later", None));
 }
 
-fn recent_items_can_be_deleted_together(fixture: &'static Fixture) {
-    let pane = Pane::new(fixture);
-    let launcher = pane.installed();
-    pane.turn_on(&launcher);
-    pane.clipboard.copy("earlier", None);
-    pane.clock.advance(2 * HOUR);
-    pane.clipboard.copy("recent", None);
-    pane.clock.advance(10 * MINUTE);
-    pane.clipboard.copy("just now", None);
-    pane.open(&launcher);
-    assert_eq!(
-        subtitle(&launcher, DELETE_RECENT),
-        "Deletes what you copied in the last 15 minutes, hour or day"
-    );
-    assert_eq!(
-        submit(&launcher, DELETE_RECENT, &[("since", "3600")]),
-        result("Deleted 2 kept items")
-    );
-    assert_eq!(pane.kept_on_disk(&launcher), ["earlier"]);
-    assert_eq!(
-        pane.submit(&launcher, DELETE_RECENT, &[("since", "900")]),
-        result("Deleted 0 kept items")
-    );
-    assert_eq!(pane.listed(&launcher), ["earlier"]);
-    assert!(pane.clipboard.watching());
-}
 
 fn turning_off_and_deleting_keeps_nothing_more(fixture: &'static Fixture) {
     let pane = Pane::new(fixture);

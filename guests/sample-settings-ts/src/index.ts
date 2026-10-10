@@ -168,13 +168,8 @@ async function outcome(itemId: string): Promise<string | null> {
   }
 }
 
-async function submitForm(itemId: string): Promise<string> {
-  // Any Error thrown from submitForm is a message about the whole form.
-  throw new Error(`unknown form: ${itemId}`);
-}
-
 async function openCustomView(itemId: string): Promise<CustomView> {
   throw new Error(`unknown view: ${itemId}`);
 }
 
-export const command: Command = { render, submitForm, openCustomView };
+export const command: Command = { render, openCustomView };
