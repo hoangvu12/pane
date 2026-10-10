@@ -177,6 +177,15 @@ fn going_back_while_an_action_runs_discards_its_answer() {
     assert_eq!((view.query(), &view.status), (Some(""), &Status::Idle));
 }
 
+/// A launcher with an assembled package installed from
+/// `target/guests/packages`, and the data folder it was installed into,
+/// which must outlive it. Only an installed command can be launched, so
+/// the designed views these tests open come from packages.
+struct Installed {
+    _data: tempfile::TempDir,
+    launcher: Launcher,
+}
+
 /// A launcher with the Rust sample's package installed, at root search.
 fn sample_installed(runtime: &Runtime) -> Installed {
     let data = tempfile::tempdir().unwrap();
