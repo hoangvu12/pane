@@ -218,10 +218,6 @@ pub(crate) struct ResultListing {
     pub title: String,
     pub subtitle: Option<String>,
 }
-    pub id: String,
-    pub title: String,
-    pub subtitle: Option<String>,
-}
 
 /// A result a command computed from root search's query.
 #[derive(Clone, Debug, PartialEq, Eq)]

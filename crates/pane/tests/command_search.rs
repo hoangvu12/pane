@@ -93,7 +93,10 @@ fn the_commands_own_search_field_lists_the_service_results(cx: &mut TestAppConte
     assert_eq!(field_text(&window, cx), "");
     assert!(cx.debug_bounds("search").is_some(), "the field is rendered");
     assert!(cx.debug_bounds("designed-title").is_some(), "the title row");
-    assert!(cx.debug_bounds("designed-empty-Type to search the package registry").is_some());
+    assert!(
+        cx.debug_bounds("designed-empty-Type to search the package registry")
+            .is_some()
+    );
 
     // Typing searches the service; its results are the rows, and the
     /// field holds the text typed.
@@ -127,7 +130,11 @@ fn the_commands_own_search_field_lists_the_service_results(cx: &mut TestAppConte
     assert_eq!(field_text(&window, cx), "");
     cx.simulate_keystrokes("escape");
     let view = settle(&window, cx);
-    assert!(matches!(view.screen, Screen::Root { .. }), "{:?}", view.screen);
+    assert!(
+        matches!(view.screen, Screen::Root { .. }),
+        "{:?}",
+        view.screen
+    );
 }
 
 #[gpui::test]
@@ -171,6 +178,9 @@ fn backspace_in_the_empty_search_field_pops_the_view(cx: &mut TestAppContext) {
     settle(&window, cx);
     cx.simulate_keystrokes("backspace");
     let view = settle(&window, cx);
-    assert!(matches!(view.screen, Screen::Root { .. }), "{:?}", view.screen);
+    assert!(
+        matches!(view.screen, Screen::Root { .. }),
+        "{:?}",
+        view.screen
+    );
 }
-

@@ -859,12 +859,6 @@ impl LauncherWindow {
                 .collect(),
             committed: committed.map(gpui::SharedString::from),
         }
-            crate::ui::select::Model {
-            theme: visuals.theme,
-            material: visuals.material,
-            choices,
-            committed,
-        }
     }
 }
 
