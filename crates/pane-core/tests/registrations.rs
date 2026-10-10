@@ -119,7 +119,10 @@ impl Hotkeys for AnyHotkeys {
     }
 
     fn unregister(&self, shortcut: &Shortcut) {
-        self.registered.lock().unwrap().retain(|held| held != shortcut);
+        self.registered
+            .lock()
+            .unwrap()
+            .retain(|held| held != shortcut);
     }
 }
 
