@@ -1809,6 +1809,17 @@ impl Launcher {
             foreground: Some(source),
             ..self
         }
+    /// A recording session with this system's hotkeys adapter, for a
+    /// recorder that is about to listen (#260): while the session lasts,
+    /// the adapter holds the keys back from the system and reports the
+    /// bindings the user pressed — chords, lone taps, double taps, sides —
+    /// so the kinds no registration can express are recorded as easily
+    /// as a chord, without the system acting on them (the Start menu the
+    /// Windows key alone opens). `None` where this system's adapter has
+    /// no hook to hold keys back with (macOS, X11): the recorder records
+    /// through the window's own keys, as it does today.
+    pub fn recording(&self) -> Option<crate::hotkeys::RecordingSession> {
+        self.hotkeys.recording()
     }
 
     /// This launcher keeping clipboard history for the installed packages

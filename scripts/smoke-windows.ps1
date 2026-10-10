@@ -30,6 +30,7 @@ public static class Win {
     [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
     [DllImport("user32.dll")] public static extern bool RegisterHotKey(IntPtr h, int id, uint modifiers, uint key);
     [DllImport("user32.dll")] public static extern bool UnregisterHotKey(IntPtr h, int id);
+    [DllImport("user32.dll")] public static extern void keybd_event(byte key, byte scan, uint flags, UIntPtr extra);
 }
 "@
 # Screenshots, screen bounds and SetCursorPos then all use physical pixels,
@@ -113,6 +114,15 @@ function Click-At($x, $y) {
     [Win]::mouse_event(0x4, 0, 0, 0, [UIntPtr]::Zero)   # left button up
 }
 function Send($keys) { [System.Windows.Forms.SendKeys]::SendWait($keys) }
+# Presses one key, as a tool that injects input does (#260): the Windows
+# key has no SendKeys form, and the binding kinds the hotkeys gain are
+# pressed with the key's own code. Injected and untagged: another tool's
+# keys, which the hook takes as the user's presses.
+function Press-Key([byte]$key) {
+    [Win]::keybd_event($key, 0, 0, [UIntPtr]::Zero) | Out-Null
+    Start-Sleep -Milliseconds 100
+    [Win]::keybd_event($key, 0, 2, [UIntPtr]::Zero) | Out-Null   # KEYEVENTF_KEYUP
+}
 # Brings Pane's window to the front, so that key events reach it.
 function Focus-Pane($process) {
     [Win]::SetForegroundWindow($process.MainWindowHandle) | Out-Null
@@ -886,6 +896,43 @@ python "$PSScriptRoot/check_screenshot.py" --distinct @shots
 if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: the hook-dispatched hotkey opened nothing" }
 Stop-Pane $process
 [void][Win]::UnregisterHotKey([IntPtr]::Zero, 0x5A4A)
+
+# A lone tap of the Windows key (#260): the recorder's session with the
+# hook holds the keys back from Windows while it listens, so the tap is
+# recorded without the Start menu opening — the session is what makes
+# the kinds no registration can express recordable — and the row says
+# the binding works through Pane's keyboard hook. Pressed with the
+# launcher unfocused, the tap opens Greeting: the Start-menu mask keeps
+# the Start menu closed, so Pane is what comes to the front. A data
+# folder of its own.
+$data = Join-Path $OutDir "tap-hotkeys-data"
+if (Test-Path $data) { Remove-Item -Recurse -Force $data }
+$env:PANE_DATA_DIR = $data
+$process = Start-Pane "stderr-tap.log" @("--install", "target/guests/packages/sample-settings")
+Send "{ENTER}"; Start-Sleep -Seconds 2   # Install; Greeting is selected
+Open-Extension "Settings sample"
+Press-Named "Hotkey for Greeting:" -Prefix   # the recorder listens, holding the keys back
+Wait-Shown "Recording; Hotkey for Greeting"
+Capture "80-tap-recording.png"
+# VK_LWIN, pressed and released alone: a lone tap, held back from Windows.
+Press-Key 0x5B
+Wait-For (Join-Path $data "extensions/hotkeys.json") '"tap:win"' $true
+Wait-Shown "through Pane's keyboard hook" -Prefix
+Capture "81-tap-assigned.png"   # the row says the binding's dispatch route
+Close-Settings   # root search
+Minimize-Pane $process
+Capture "82-tap-unfocused.png"   # evidence only: Pane is not on screen
+# The bound tap, pressed as a tool's keys are: the mask keeps the Start
+# menu closed, and Pane opens Greeting in front.
+Press-Key 0x5B
+Start-Sleep -Seconds 3
+Check-Pane-In-Front $process
+Capture "83-tap-opened.png"
+Check "83-tap-opened.png" "selected" 3000   # Greeting's first item, selected
+$shots = "82-tap-unfocused", "83-tap-opened" | ForEach-Object { Join-Path $OutDir "$_.png" }
+python "$PSScriptRoot/check_screenshot.py" --distinct @shots
+if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: the tapped hotkey opened nothing" }
+Stop-Pane $process
 
 # Pausing a broken extension: the settings sample's last item, Crash, crashes
 # on purpose; the third crash within five minutes pauses the package and

@@ -39,9 +39,11 @@ const FILE: &str = "settings.json";
 const VERSION: u64 = 2;
 
 /// Whether this Pane reads a record of `version`: its own, and 1, the
-/// record an older Pane wrote. Only the version number moved with the
-/// Open Pane field's grammar open to the later binding kinds (#125);
-/// a chord's id is still all it holds, so version 1 reads as it is.
+/// record an older Pane wrote. The Open Pane field's grammar moved with
+/// #260's binding kinds — a lone tap (`tap:win`), a double tap
+/// (`double:ctrl`), a side-specific modifier (`rctrl+space`) — but the
+/// grammar is [`Shortcut::parse`], which reads a chord's id from version
+/// 1 as it is, so a record of either version reads.
 fn reads(version: u64) -> bool {
     version == VERSION || version == 1
 }
@@ -457,11 +459,13 @@ struct Recorded {
     theme: ThemePreference,
     #[serde(default)]
     material: MaterialPreference,
-    /// The Open Pane hotkey as its id, such as `ctrl+alt+space`; missing
-    /// means this system's provisional default. A value that is not a
-    /// shortcut fails the whole record. The field keeps the name it was
-    /// first recorded with, so records an earlier Pane wrote still read,
-    /// while the record's other fields follow the house camelCase names.
+    /// The Open Pane hotkey as its id, such as `ctrl+alt+space`, or one of
+    /// the binding kinds #260 adds written as their ids (`tap:win`,
+    /// `double:ctrl`, `rctrl+space`); missing means this system's
+    /// provisional default. A value that is not a shortcut fails the whole
+    /// record. The field keeps the name it was first recorded with, so
+    /// records an earlier Pane wrote still read, while the record's other
+    /// fields follow the house camelCase names.
     #[serde(default, rename = "open_pane")]
     open_pane: Option<String>,
     /// Whether the tray or menu-bar entry is shown; missing means shown,
@@ -744,6 +748,18 @@ mod tests {
                 ..HostSettings::default()
             }
         );
+        // The binding kinds #260 add are the field's grammar too, recorded
+        // as their ids and read back.
+        for text in ["tap:win", "double:ctrl", "rctrl+space", "tap:ralt"] {
+            assert_eq!(
+                reading(&format!(r#"{{ "version": 2, "open_pane": "{text}" }}"#)).unwrap(),
+                HostSettings {
+                    open_pane: Shortcut::parse(text).unwrap(),
+                    ..HostSettings::default()
+                },
+                "{text} does not round trip"
+            );
+        }
         // A value that is not a shortcut fails the whole record.
         let problem = reading(r#"{ "version": 1, "open_pane": "not a shortcut" }"#);
         assert!(problem.is_err(), "{problem:?}");
@@ -753,6 +769,8 @@ mod tests {
                 .contains("its open pane hotkey is not one"),
             "the field is named"
         );
+        let problem = reading(r#"{ "version": 2, "open_pane": "tap:escape" }"#);
+        assert!(problem.is_err(), "{problem:?}");
     }
 
     #[test]

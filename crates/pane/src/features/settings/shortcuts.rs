@@ -316,6 +316,20 @@ enum StatusLine {
 }
 
 impl State {
+    /// The command whose hotkey is being recorded, if any: for routing
+    /// what a recording session reported to the recorder that is
+    /// listening (#260).
+    pub(super) fn recording_command(&self) -> Option<String> {
+        self.recording
+            .as_ref()
+            .map(|recording| recording.command.clone())
+    }
+
+    /// Whether a hotkey recorder is listening (#260).
+    pub(super) fn recording_hotkey(&self) -> bool {
+        self.recording.is_some()
+    }
+
     /// The page's state over `launcher`: the filter field, every group
     /// expanded, no edit open. The first catalog is the launcher's as it
     /// is now, so the watcher does not ask for a redraw before the page
@@ -610,6 +624,12 @@ impl SettingsWindow {
         if let Some(cell) = self.shortcuts.hotkey_cells.get(command) {
             window.focus(cell, cx);
         }
+        // On a system whose adapter has one, a recording session starts
+        // with the listening (#260): the adapter holds the keys back from
+        // the system and reports what the user presses, so the Windows
+        // key alone, a double tap and the side of a modifier are recorded
+        // without the Start menu opening; Escape and Tab still cancel.
+        self.start_recording_session(window, cx);
         cx.notify();
     }
 
@@ -627,9 +647,11 @@ impl SettingsWindow {
 
     /// Cancels the hotkey recorder, if one is listening, changing nothing:
     /// Escape on its cell, or a mouse-down outside it while it listens
-    /// (see the cell's `on_mouse_down_out`).
+    /// (see the cell's `on_mouse_down_out`). The recording session ends
+    /// with the listening (#260).
     pub(crate) fn shortcuts_cancel_recording(&mut self, cx: &mut Context<Self>) {
         if self.shortcuts.recording.take().is_some() {
+            self.end_recording_session();
             cx.notify();
         }
     }
@@ -678,7 +700,8 @@ impl SettingsWindow {
     /// the cell and keeps the recorder listening for another try; a
     /// change that lands is recorded by the returned future, its outcome
     /// the page's status line, and focus returns to the row's hotkey cell.
-    fn shortcuts_apply_hotkey(
+    /// Called with what a recording session reported too (#260).
+    pub(super) fn shortcuts_apply_hotkey(
         &mut self,
         command: &str,
         shortcut: Option<Shortcut>,
@@ -696,6 +719,7 @@ impl SettingsWindow {
             }
             Ok(pending) => {
                 self.shortcuts.recording = None;
+                self.end_recording_session();
                 self.shortcuts.status = Some(StatusLine::Saving("Saving the hotkey…".into()));
                 if let Some(cell) = self.shortcuts.hotkey_cells.get(command) {
                     window.focus(cell, cx);
@@ -768,6 +792,7 @@ fn render(
         });
         if !offered {
             this.shortcuts.recording = None;
+            this.end_recording_session();
         }
     }
     let query = this.shortcuts.query.read(cx).as_str().to_owned();

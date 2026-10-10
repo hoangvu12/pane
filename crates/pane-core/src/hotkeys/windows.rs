@@ -1,11 +1,13 @@
 //! Global hotkeys on Windows: `RegisterHotKey` on a thread of Pane's own
 //! for the chords Windows accepts, and a low-level keyboard hook of
 //! Pane's own (`WH_KEYBOARD_LL`) for the chords Windows refuses — another
-//! application has the shortcut, or Windows keeps it for itself — so a
-//! refused shortcut is never an error: the binding works while Pane runs
-//! (ADR 0039). A conflict shows as `ERROR_HOTKEY_ALREADY_REGISTERED`,
-//! which is the hook's cue rather than the user's problem. No permission
-//! is needed.
+//! application has the shortcut, or Windows keeps it for itself — and
+//! for the binding kinds no registration can express: a lone tap or a
+//! double tap of a modifier, a side-specific modifier, a numpad key
+//! (#260) — so a refused shortcut is never an error: the binding works
+//! while Pane runs (ADR 0039). A conflict shows as
+//! `ERROR_HOTKEY_ALREADY_REGISTERED`, which is the hook's cue rather than
+//! the user's problem. No permission is needed.
 //!
 //! A hotkey belongs to the thread that registered it, so registering and
 //! releasing are done by that thread: the caller queues the request, wakes
@@ -14,17 +16,29 @@
 //! thread is a `threads::windows::MessageThread`, like the clipboard
 //! listener's.
 //!
+//! A recorder that listens asks for a recording session
+//! ([`Hotkeys::recording`], #260): the hook then holds every key back
+//! from the system — Escape and Tab excepted, so the recorder's own
+//! cancellation keys work — and reports what the user presses to the
+//! session, which lasts until the recorder stops listening, a window of
+//! another process comes in front, or Pane quits.
+//!
 //! The hook lives on a thread of its own, started when the first binding
-//! needs it and stopped when none does. Its callback runs at the highest
-//! thread priority — not a raised process priority, so the rest of Pane is
-//! unaffected — and only steps the recognizer (see `recognizer`) and
-//! posts a message to the adapter's thread when a chord fires: it never
-//! allocates, takes no lock another thread holds, and calls nothing
-//! outside `user32`'s hook machinery. Its code and data pages are locked
-//! in memory after the process's minimum working set is raised by what
-//! they need, so a trimmed working set cannot fault the callback past
-//! Windows' hook timeout; if Windows refuses, the diagnostic says the
-//! pages are not pinned. A watchdog window that receives raw keyboard
+//! or session needs it and stopped when none does. Its callback runs at the
+//! highest thread priority — not a raised process priority, so the rest of
+//! Pane is unaffected — and only steps the recognizer (see `recognizer`)
+//! and posts a message to the adapter's thread when a binding fires: it
+//! never allocates, takes no lock another thread holds, and calls nothing
+//! outside `user32`'s input machinery. While the Windows key is bound
+//! alone, the release that completes its tap — and the release of a
+//! Windows key whose chord Pane swallowed — carries the Start-menu mask
+//! first: a tagged neutral key injected before the release reaches
+//! Windows, so Explorer does not open the Start menu (which stays on the
+//! taskbar's Start button and Ctrl+Esc). Its code and data pages are
+//! locked in memory after the process's minimum working set is raised by
+//! what they need, so a trimmed working set cannot fault the callback
+//! past Windows' hook timeout; if Windows refuses, the diagnostic says
+//! the pages are not pinned. A watchdog window that receives raw keyboard
 //! input notices when key events stop reaching the hook — Windows has
 //! silently removed it — and installs it again, giving up with a
 //! diagnostic after repeated failures within a short time. The
@@ -50,27 +64,32 @@ use ::windows::Win32::System::RemoteDesktop::{
     NOTIFY_FOR_THIS_SESSION, WTSRegisterSessionNotification,
 };
 use ::windows::Win32::System::Threading::{
-    GetCurrentProcess, GetCurrentThread, GetCurrentThreadId, SetThreadPriority,
-    THREAD_PRIORITY_TIME_CRITICAL,
+    GetCurrentProcess, GetCurrentProcessId, GetCurrentThread, GetCurrentThreadId,
+    SetThreadPriority, THREAD_PRIORITY_TIME_CRITICAL,
 };
 use ::windows::Win32::UI::Input::KeyboardAndMouse::{
-    GetAsyncKeyState, HOT_KEY_MODIFIERS, MOD_ALT, MOD_CONTROL, MOD_NOREPEAT, MOD_SHIFT, MOD_WIN,
-    RegisterHotKey, UnregisterHotKey, VIRTUAL_KEY, VK_LCONTROL, VK_LMENU, VK_LSHIFT, VK_LWIN,
-    VK_RCONTROL, VK_RMENU, VK_RSHIFT, VK_RWIN,
+    GetAsyncKeyState, HOT_KEY_MODIFIERS, INPUT, INPUT_KEYBOARD, KEYBD_EVENT_FLAGS, KEYBDINPUT,
+    KEYEVENTF_KEYUP, MOD_ALT, MOD_CONTROL, MOD_NOREPEAT, MOD_SHIFT, MOD_WIN, RegisterHotKey,
+    SendInput, UnregisterHotKey, VIRTUAL_KEY, VK_ESCAPE, VK_LCONTROL, VK_LMENU, VK_LSHIFT, VK_LWIN,
+    VK_NONAME, VK_RCONTROL, VK_RMENU, VK_RSHIFT, VK_RWIN, VK_TAB,
 };
 use ::windows::Win32::UI::Input::{RAWINPUTDEVICE, RIDEV_INPUTSINK, RegisterRawInputDevices};
 use ::windows::Win32::UI::WindowsAndMessaging::{
-    CallNextHookEx, DefWindowProcW, HHOOK, KBDLLHOOKSTRUCT, LLKHF_INJECTED, LLKHF_UP, MSG,
-    PBT_APMRESUMEAUTOMATIC, PBT_APMRESUMESUSPEND, PostThreadMessageW, SetWindowsHookExW,
-    UnhookWindowsHookEx, WH_KEYBOARD_LL, WM_HOTKEY, WM_INPUT, WM_POWERBROADCAST,
-    WM_WTSSESSION_CHANGE,
+    CallNextHookEx, DefWindowProcW, GetForegroundWindow, GetWindowThreadProcessId, HHOOK,
+    KBDLLHOOKSTRUCT, LLKHF_EXTENDED, LLKHF_INJECTED, LLKHF_UP, MSG, PBT_APMRESUMEAUTOMATIC,
+    PBT_APMRESUMESUSPEND, PostThreadMessageW, SetWindowsHookExW, UnhookWindowsHookEx,
+    WH_KEYBOARD_LL, WM_HOTKEY, WM_INPUT, WM_POWERBROADCAST, WM_WTSSESSION_CHANGE,
 };
 use ::windows::core::HRESULT;
 
 use super::{
-    Decision, HookHealth, HotkeyError, Hotkeys, KeyEvent, PressSender, Recognizer, Route, Shortcut,
+    Binding, Decision, HookHealth, HotkeyError, Hotkeys, KeyEvent, Kind, PressSender, Recognizer,
+    Recorded, RecordingSession, Route, Shortcut, Side,
 };
-use crate::threads::windows::{MessageThread, WM_FIRED, WM_WAKE, Window, WindowClass, stop_sent};
+use crate::threads::windows::{
+    MessageThread, WM_FIRED, WM_RECORDED, WM_RECORDED_ENDED, WM_WAKE, Window, WindowClass,
+    stop_sent,
+};
 
 /// How many raw key events arrive without the hook reporting one before
 /// the watchdog concludes that Windows removed the hook and installs it
@@ -101,6 +120,13 @@ const SESSION_UNLOCK: usize = 8;
 enum Request {
     Register(Shortcut, mpsc::Sender<Result<Route, HotkeyError>>),
     Unregister(Shortcut, mpsc::Sender<()>),
+    /// Starts a recording session, reporting what the user presses to
+    /// `reports` (#260); the answer says the hook is holding the keys
+    /// back, so the session is live when it is handed out.
+    Record(PressSender, mpsc::Sender<()>),
+    /// Ends the recording session (the recorder stopped listening); the
+    /// answer says the hook stopped holding the keys back.
+    EndRecording(mpsc::Sender<()>),
 }
 
 type Requests = Arc<Mutex<VecDeque<Request>>>;
@@ -110,10 +136,13 @@ type Requests = Arc<Mutex<VecDeque<Request>>>;
 type Routes = Arc<Mutex<HashMap<Shortcut, Route>>>;
 
 /// A binding the hotkey thread asks the hook thread to watch: the
-/// binding's id, the key's virtual-key code, and the modifiers held.
+/// binding's id and the binding itself, as the recognizer takes it.
 enum HookRequest {
-    Add(u32, u32, [bool; 4], mpsc::Sender<Result<(), String>>),
+    Add(u32, Binding, mpsc::Sender<Result<(), String>>),
     Remove(u32, mpsc::Sender<()>),
+    /// Turns the recording mode on or off: while it is on, the hook holds
+    /// the keys back from the system and reports what is pressed (#260).
+    Record(bool, mpsc::Sender<()>),
 }
 
 type HookRequests = Arc<Mutex<VecDeque<HookRequest>>>;
@@ -156,17 +185,294 @@ fn update(report: &Mutex<Report>, change: impl FnOnce(&mut Report)) {
     change(&mut *report.lock().unwrap_or_else(|p| p.into_inner()));
 }
 
+/// The virtual-key code of `key` (see `Shortcut::key`), and whether it
+/// is the numpad's form of a code the main keyboard shares — the
+/// numpad's Enter (#260).
+fn key_code(key: &str) -> Option<(u32, bool)> {
+    if key == "numpad_enter" {
+        // VK_RETURN, which the numpad's Enter shares with the main one;
+        // the extended flag tells them apart, as the recognizer matches
+        // it.
+        return Some((0x0D, true));
+    }
+    Some((virtual_key(key)?, key.starts_with("numpad")))
+}
+
 /// The virtual-key code of `key` (see `Shortcut::key`).
 fn virtual_key(key: &str) -> Option<u32> {
     match key.as_bytes() {
         [c @ b'a'..=b'z'] => Some(u32::from(c.to_ascii_uppercase())),
         [c @ b'0'..=b'9'] => Some(u32::from(*c)),
+        [c] if ",./;'`[]\\-=".as_bytes().contains(c) => Some(match c {
+            b',' => 0xBC,  // VK_OEM_COMMA
+            b'.' => 0xBE,  // VK_OEM_PERIOD
+            b'/' => 0xBF,  // VK_OEM_2
+            b';' => 0xBA,  // VK_OEM_1
+            b'\'' => 0xDE, // VK_OEM_7
+            b'`' => 0xC0,  // VK_OEM_3
+            b'[' => 0xDB,  // VK_OEM_4
+            b']' => 0xDD,  // VK_OEM_6
+            b'\\' => 0xDC, // VK_OEM_5
+            b'-' => 0xBD,  // VK_OEM_MINUS
+            _ => 0xBB,     // VK_OEM_PLUS, the '=' key
+        }),
         _ if key == "space" => Some(0x20),
+        _ if key == "enter" => Some(0x0D),
+        _ if key == "tab" => Some(0x09),
+        _ if key == "left" => Some(0x25),
+        _ if key == "right" => Some(0x27),
+        _ if key == "up" => Some(0x26),
+        _ if key == "down" => Some(0x28),
+        _ if key == "home" => Some(0x24),
+        _ if key == "end" => Some(0x23),
+        _ if key == "pageup" => Some(0x21),
+        _ if key == "pagedown" => Some(0x22),
+        _ if key == "insert" => Some(0x2D),
+        _ if key == "delete" => Some(0x2E),
+        _ if key.starts_with("numpad") => match key.strip_prefix("numpad")? {
+            // VK_NUMPAD0 is 0x60, and the arithmetic keys follow their
+            // own codes.
+            "0" => Some(0x60),
+            "1" => Some(0x61),
+            "2" => Some(0x62),
+            "3" => Some(0x63),
+            "4" => Some(0x64),
+            "5" => Some(0x65),
+            "6" => Some(0x66),
+            "7" => Some(0x67),
+            "8" => Some(0x68),
+            "9" => Some(0x69),
+            "add" => Some(0x6B),
+            "decimal" => Some(0x6E),
+            "divide" => Some(0x6F),
+            "multiply" => Some(0x6A),
+            "subtract" => Some(0x6D),
+            _ => None,
+        },
         _ => {
             let number: u32 = key.strip_prefix('f')?.parse().ok()?;
-            // VK_F1 is 0x70.
-            (1..=12).contains(&number).then(|| 0x70 + number - 1)
+            // VK_F1 is 0x70; F13, the first of the extended key set's,
+            // is 0x7C (#260).
+            (1..=24).contains(&number).then(|| 0x70 + number - 1)
         }
+    }
+}
+
+/// The letters as the record writes them, for a virtual-key code's
+/// name: `a` to `z`, whose codes run 0x41 to 0x5A.
+const LETTERS: [&str; 26] = [
+    "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p", "q", "r", "s",
+    "t", "u", "v", "w", "x", "y", "z",
+];
+
+/// The digits as the record writes them, for a virtual-key code's name:
+/// `0` to `9`, whose codes run 0x30 to 0x39.
+const DIGITS: [&str; 10] = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"];
+
+/// The key a virtual-key code names, as the record writes it: the
+/// reverse of [`key_code`], for what a recording session recognized
+/// (#260).
+fn key_name_of(key: u32, numpad: bool) -> Option<&'static str> {
+    if (0x41..=0x5A).contains(&key) {
+        // The letters, as their own lowercase.
+        return Some(LETTERS[(key - 0x41) as usize]);
+    }
+    if (0x30..=0x39).contains(&key) {
+        return Some(DIGITS[(key - 0x30) as usize]);
+    }
+    if (0x70..=0x87).contains(&key) {
+        return Some(match key - 0x70 + 1 {
+            1 => "f1",
+            2 => "f2",
+            3 => "f3",
+            4 => "f4",
+            5 => "f5",
+            6 => "f6",
+            7 => "f7",
+            8 => "f8",
+            9 => "f9",
+            10 => "f10",
+            11 => "f11",
+            12 => "f12",
+            13 => "f13",
+            14 => "f14",
+            15 => "f15",
+            16 => "f16",
+            17 => "f17",
+            18 => "f18",
+            19 => "f19",
+            20 => "f20",
+            21 => "f21",
+            22 => "f22",
+            23 => "f23",
+            _ => "f24",
+        });
+    }
+    if (0x60..=0x69).contains(&key) {
+        return Some(match key - 0x60 {
+            0 => "numpad0",
+            1 => "numpad1",
+            2 => "numpad2",
+            3 => "numpad3",
+            4 => "numpad4",
+            5 => "numpad5",
+            6 => "numpad6",
+            7 => "numpad7",
+            8 => "numpad8",
+            _ => "numpad9",
+        });
+    }
+    Some(match (key, numpad) {
+        (0x0D, true) => "numpad_enter",
+        (0x0D, false) => "enter",
+        (0x20, _) => "space",
+        (0x09, _) => "tab",
+        (0x25, _) => "left",
+        (0x27, _) => "right",
+        (0x26, _) => "up",
+        (0x28, _) => "down",
+        (0x24, _) => "home",
+        (0x23, _) => "end",
+        (0x21, _) => "pageup",
+        (0x22, _) => "pagedown",
+        (0x2D, _) => "insert",
+        (0x2E, _) => "delete",
+        (0xBC, _) => ",",
+        (0xBE, _) => ".",
+        (0xBF, _) => "/",
+        (0xBA, _) => ";",
+        (0xDE, _) => "'",
+        (0xC0, _) => "`",
+        (0xDB, _) => "[",
+        (0xDD, _) => "]",
+        (0xDC, _) => "\\",
+        (0xBD, _) => "-",
+        (0xBB, _) => "=",
+        (0x6A, _) => "numpad_multiply",
+        (0x6B, _) => "numpad_add",
+        (0x6D, _) => "numpad_subtract",
+        (0x6E, _) => "numpad_decimal",
+        (0x6F, _) => "numpad_divide",
+        _ => return None,
+    })
+}
+
+/// The name of the modifier at `at` — control, alt, shift, the Windows
+/// key — as the record writes it for the tap kinds, with the side prefix
+/// where the session recognized one side (#260).
+fn modifier_name(at: usize, side: Side) -> String {
+    let name = ["ctrl", "alt", "shift", "win"][at];
+    match side {
+        Side::Any => name.into(),
+        Side::Left => format!("l{name}"),
+        Side::Right => format!("r{name}"),
+    }
+}
+
+/// What a recording session recognized, as the binding's text: the
+/// recognizer's report, built by [`Shortcut::parse`] (#260).
+fn recorded_text(report: Recorded) -> Option<String> {
+    Some(match report {
+        Recorded::Chord {
+            modifiers,
+            key,
+            numpad,
+        } => {
+            let mut parts: Vec<String> = modifiers
+                .iter()
+                .enumerate()
+                .filter_map(|(at, side)| {
+                    side.map(|side| match side {
+                        Side::Any => ["ctrl", "alt", "shift", "super"][at].into(),
+                        _ => modifier_name(at, side),
+                    })
+                })
+                .collect();
+            parts.push(key_name_of(key, numpad)?.into());
+            parts.join("+")
+        }
+        Recorded::Tap { modifier, side } => format!("tap:{}", modifier_name(modifier, side)),
+        Recorded::Double { modifier, side } => {
+            format!("double:{}", modifier_name(modifier, side))
+        }
+    })
+}
+
+/// Packs what a recording session recognized into a posted message's
+/// word: the kind, and for a chord the modifiers' sides and the key, for
+/// a tap or a double tap the modifier and its side. The hook's callback
+/// may not allocate, so the report crosses the threads packed (#260).
+fn pack(report: Recorded) -> usize {
+    let kind = match report {
+        Recorded::Chord { .. } => 0,
+        Recorded::Tap { .. } => 1,
+        Recorded::Double { .. } => 2,
+    };
+    match report {
+        Recorded::Chord {
+            modifiers,
+            key,
+            numpad,
+        } => {
+            let sides = modifiers.iter().enumerate().fold(0, |packed, (at, side)| {
+                let side = match side {
+                    None => 0,
+                    Some(Side::Any) => 1,
+                    Some(Side::Left) => 2,
+                    Some(Side::Right) => 3,
+                };
+                packed | (side << (2 + 2 * at))
+            });
+            kind | sides | ((numpad as usize) << 10) | ((key as usize) << 16)
+        }
+        Recorded::Tap { modifier, side } | Recorded::Double { modifier, side } => {
+            let side = match side {
+                Side::Any => 1,
+                Side::Left => 2,
+                Side::Right => 3,
+            };
+            kind | (modifier << 4) | (side << 8)
+        }
+    }
+}
+
+/// Unpacks what a recording session recognized from a posted message's
+/// word, as [`pack`] wrote it.
+fn unpack(word: usize) -> Recorded {
+    match word & 0xF {
+        0 => {
+            let mut modifiers = [None; 4];
+            for (at, side) in modifiers.iter_mut().enumerate() {
+                *side = match (word >> (2 + 2 * at)) & 3 {
+                    0 => None,
+                    1 => Some(Side::Any),
+                    2 => Some(Side::Left),
+                    _ => Some(Side::Right),
+                };
+            }
+            Recorded::Chord {
+                modifiers,
+                key: ((word >> 16) & 0xFFFF) as u32,
+                numpad: (word >> 10) & 1 != 0,
+            }
+        }
+        1 => Recorded::Tap {
+            modifier: (word >> 4) & 3,
+            side: unpacked_side((word >> 8) & 3),
+        },
+        _ => Recorded::Double {
+            modifier: (word >> 4) & 3,
+            side: unpacked_side((word >> 8) & 3),
+        },
+    }
+}
+
+/// The side a packed tap or double tap names.
+fn unpacked_side(word: usize) -> Side {
+    match word {
+        2 => Side::Left,
+        3 => Side::Right,
+        _ => Side::Any,
     }
 }
 
@@ -188,15 +494,34 @@ fn modifiers(shortcut: &Shortcut) -> HOT_KEY_MODIFIERS {
     modifiers
 }
 
-/// The chord `shortcut` binds, as the recognizer takes it: the modifiers
-/// held and the key's virtual-key code.
-fn mask(shortcut: &Shortcut) -> [bool; 4] {
-    [
-        shortcut.control(),
-        shortcut.alt(),
-        shortcut.shift(),
-        shortcut.super_key(),
-    ]
+/// The binding `shortcut` names, as the recognizer takes it (#260): the
+/// kind, the modifiers with their sides, and the key's code with its
+/// numpad flag.
+fn hook_binding(shortcut: &Shortcut) -> Option<Binding> {
+    let (key, numpad) = match shortcut.kind() {
+        Kind::Chord => key_code(shortcut.key())?,
+        _ => (0, false),
+    };
+    Some(Binding {
+        kind: shortcut.kind(),
+        modifiers: shortcut.sides(),
+        key,
+        numpad,
+    })
+}
+
+/// Whether `shortcut` is a binding `RegisterHotKey` cannot express, so
+/// Pane's own keyboard hook takes it before the system is asked (#260):
+/// a lone tap or a double tap of a modifier, a side-specific modifier,
+/// or a numpad key, which the registration cannot tell from its
+/// counterpart.
+fn hook_only(shortcut: &Shortcut) -> bool {
+    shortcut.kind() != Kind::Chord
+        || shortcut
+            .sides()
+            .iter()
+            .any(|side| matches!(side, Some(Side::Left | Side::Right)))
+        || shortcut.key().starts_with("numpad")
 }
 
 impl WindowsHotkeys {
@@ -315,6 +640,60 @@ impl Hotkeys for WindowsHotkeys {
             given_up: report.given_up.clone(),
         })
     }
+
+    // The binding kinds #260 adds all work here: the ones no
+    // registration can express go through Pane's own keyboard hook.
+    fn kind_unavailable(&self, _shortcut: &Shortcut) -> Option<String> {
+        None
+    }
+
+    fn recording(&self) -> Option<RecordingSession> {
+        // The session's reports: the hotkey thread unpacks what the hook
+        // recognizes, builds the binding and sends it here; dropping the
+        // session (or its stop half) ends it. The answer says the hook is
+        // holding the keys back, so the session is live when this hands
+        // it out.
+        let (reports, presses) = super::channel();
+        let (answer, answered) = mpsc::channel();
+        if !self.send(Request::Record(reports, answer)) {
+            return None;
+        }
+        if answered.recv().is_err() {
+            return None;
+        }
+        let requests = self.requests.clone();
+        let thread = self.thread.id();
+        Some(RecordingSession::of(presses, move || {
+            let (answer, answered) = mpsc::channel();
+            queue(&requests, thread, Request::EndRecording(answer));
+            // The hook stops holding the keys back before the drop ends,
+            // or at least soon after: a thread that is gone answers
+            // nothing, and the keys are gone with it.
+            let _ = answered.recv_timeout(Duration::from_secs(1));
+        }))
+    }
+}
+
+/// Queues `request` for the hotkey thread and wakes it, trying again for
+/// a moment while its queue is full; false if it could not. The stop of a
+/// recording session calls this without the thread's handle, so it posts
+/// to the thread's id itself.
+fn queue(requests: &Requests, thread: u32, request: Request) -> bool {
+    requests
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .push_back(request);
+    for attempt in 0..5 {
+        if attempt > 0 {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        // SAFETY: plain values, posted to the hotkey thread, which pumps
+        // its messages.
+        if unsafe { PostThreadMessageW(thread, WM_WAKE, WPARAM(0), LPARAM(0)) }.is_ok() {
+            return true;
+        }
+    }
+    false
 }
 
 impl Drop for WindowsHotkeys {
@@ -333,13 +712,17 @@ struct Registered {
     /// The bindings the keyboard hook watches, by their id.
     hooked: HashMap<u32, Shortcut>,
     next_hook: u32,
-    /// The keyboard hook's thread, while a binding needs it.
+    /// The keyboard hook's thread, while a binding or a recording
+    /// session needs it.
     hook: Option<Hook>,
     /// This thread's id, which the hook posts the presses it recognizes
     /// to.
     adapter: u32,
     /// The hook's state, shared with its thread and the adapter.
     report: Arc<Mutex<Report>>,
+    /// Where a recording session's reports go, while one listens (#260);
+    /// dropped when it ends, which ends the reports.
+    recording: Option<PressSender>,
 }
 
 impl Registered {
@@ -352,6 +735,7 @@ impl Registered {
             hook: None,
             adapter,
             report,
+            recording: None,
         }
     }
 
@@ -373,8 +757,8 @@ impl Registered {
     }
 
     /// Releases the hook bindings of `shortcut`, stopping the hook's
-    /// thread when none is left: the hook is removed when no binding
-    /// needs it.
+    /// thread when none is left: the hook is removed when no binding —
+    /// and no recording session — needs it (#260).
     fn release_hooked(&mut self, shortcut: &Shortcut) {
         let ids: Vec<u32> = self
             .hooked
@@ -389,6 +773,7 @@ impl Registered {
             self.hooked.remove(&id);
         }
         if self.hooked.is_empty()
+            && self.recording.is_none()
             && let Some(mut hook) = self.hook.take()
         {
             hook.stop();
@@ -422,6 +807,23 @@ impl Registered {
                     presses.send(shortcut.clone());
                 }
             }
+            WM_RECORDED => {
+                // What a recording session recognized (#260): the binding
+                // the session's report names, sent to the session's
+                // reports.
+                if let Some(text) = recorded_text(unpack(message.wParam.0))
+                    && let Some(shortcut) = Shortcut::parse(&text).ok()
+                    && let Some(reports) = self.recording.as_ref()
+                {
+                    reports.send(shortcut);
+                }
+            }
+            WM_RECORDED_ENDED => {
+                // The hook thread noticed the window lost the focus (#260):
+                // the session ends, and the hook stops when no binding
+                // needs it.
+                self.end_recording();
+            }
             WM_WAKE => loop {
                 let request = requests
                     .lock()
@@ -445,20 +847,70 @@ impl Registered {
                         self.release_hooked(&shortcut);
                         let _ = answer.send(());
                     }
+                    Some(Request::Record(reports, answer)) => {
+                        self.recording = Some(reports);
+                        self.ensure_hook();
+                        if let Some(hook) = &self.hook {
+                            hook.record(true);
+                        }
+                        let _ = answer.send(());
+                    }
+                    Some(Request::EndRecording(answer)) => {
+                        self.end_recording();
+                        let _ = answer.send(());
+                    }
                 }
             },
             _ => {}
         }
     }
 
+    /// Starts the keyboard hook's thread if no binding or session has it
+    /// (#260): a recording session needs it to hold the keys back, as a
+    /// binding needs it to recognize the kinds no registration expresses.
+    /// A hook that cannot start leaves the session's reports silent, with
+    /// a diagnostic saying why.
+    fn ensure_hook(&mut self) {
+        if self.hook.is_some() {
+            return;
+        }
+        let adapter = self.adapter;
+        let report = self.report.clone();
+        match Hook::start(adapter, report) {
+            Ok(hook) => self.hook = Some(hook),
+            Err(problem) => crate::diagnostics::report_line(&format!(
+                "Pane's keyboard hook is not available: {problem}"
+            )),
+        }
+    }
+
+    /// Ends the recording session (#260): its reports end with their
+    /// sender, and the hook stops when no binding needs it.
+    fn end_recording(&mut self) {
+        self.recording = None;
+        if let Some(hook) = &self.hook {
+            hook.record(false);
+        }
+        if self.hooked.is_empty()
+            && let Some(mut hook) = self.hook.take()
+        {
+            hook.stop();
+        }
+    }
+
     /// Registers `shortcut` with the system: `RegisterHotKey` when Windows
     /// accepts the chord, and Pane's own keyboard hook when Windows
     /// refuses it — another application has the shortcut, or Windows keeps
-    /// it — which is not an error (ADR 0039): the binding works while
-    /// Pane runs.
+    /// it — or when the binding is a kind the registration cannot express
+    /// (a lone tap, a double tap, a side-specific modifier, a numpad key,
+    /// #260), none of which is an error (ADR 0039): the binding works
+    /// while Pane runs.
     fn register(&mut self, shortcut: Shortcut) -> Result<Route, HotkeyError> {
         if let Some(route) = self.route_of(&shortcut) {
             return Ok(route);
+        }
+        if hook_only(&shortcut) {
+            return self.through_hook(shortcut);
         }
         let Some(key) = virtual_key(shortcut.key()) else {
             return Err(HotkeyError::Refused(format!(
@@ -475,16 +927,21 @@ impl Registered {
                 self.shortcuts.insert(id, shortcut);
                 Ok(Route::System)
             }
-            Err(error) if error.code() == taken => self.through_hook(shortcut, key),
+            Err(error) if error.code() == taken => self.through_hook(shortcut),
             Err(error) => Err(HotkeyError::Refused(error.message())),
         }
     }
 
-    /// Recognizes `shortcut`, whose key is `key`, through Pane's own
-    /// keyboard hook instead: Windows refused the registration, and the
-    /// hook can still see the chord pressed. The hook's thread starts
-    /// when the first binding needs it.
-    fn through_hook(&mut self, shortcut: Shortcut, key: u32) -> Result<Route, HotkeyError> {
+    /// Recognizes `shortcut` through Pane's own keyboard hook instead:
+    /// Windows refused the registration, or the binding is a kind the
+    /// registration cannot express. The hook's thread starts when the
+    /// first binding needs it.
+    fn through_hook(&mut self, shortcut: Shortcut) -> Result<Route, HotkeyError> {
+        let Some(binding) = hook_binding(&shortcut) else {
+            return Err(HotkeyError::Refused(format!(
+                "{shortcut} has no Windows key"
+            )));
+        };
         if self.hook.is_none() {
             self.hook = Some(Hook::start(self.adapter, self.report.clone()).map_err(
                 |problem| {
@@ -495,12 +952,7 @@ impl Registered {
             )?);
         }
         let id = self.next_hook + 1;
-        if let Err(problem) =
-            self.hook
-                .as_mut()
-                .expect("just started")
-                .add(id, key, mask(&shortcut))
-        {
+        if let Err(problem) = self.hook.as_mut().expect("just started").add(id, binding) {
             return Err(HotkeyError::Refused(format!(
                 "Pane's keyboard hook could not take it: {problem}"
             )));
@@ -543,16 +995,25 @@ impl Hook {
         self.thread.post(WM_WAKE)
     }
 
-    /// Binds the chord of `mask` with `key` as binding `id`, which the
-    /// hook reports when it is pressed.
-    fn add(&self, id: u32, key: u32, mask: [bool; 4]) -> Result<(), String> {
+    /// Binds `binding` as binding `id`, which the hook reports when it is
+    /// pressed.
+    fn add(&self, id: u32, binding: Binding) -> Result<(), String> {
         let (answer, answered) = mpsc::channel();
-        if !self.send(HookRequest::Add(id, key, mask, answer)) {
+        if !self.send(HookRequest::Add(id, binding, answer)) {
             return Err("the keyboard hook thread stopped".into());
         }
         answered
             .recv()
             .unwrap_or_else(|_| Err("the keyboard hook thread stopped".into()))
+    }
+
+    /// Turns the hook's recording mode on or off (#260), waiting for the
+    /// hook thread to have done it.
+    fn record(&self, on: bool) {
+        let (answer, answered) = mpsc::channel();
+        if self.send(HookRequest::Record(on, answer)) {
+            let _ = answered.recv();
+        }
     }
 
     /// Unbinds the binding `id`.
@@ -579,7 +1040,8 @@ fn finish_hook(_: ()) {}
 /// and the watchdog's counters. On the hook thread only, which the
 /// callback, the watchdog window and the request serving all share.
 struct Hooked {
-    /// The bound chords and the keyboard state, stepped by the callback.
+    /// The bound bindings and the keyboard state, stepped by the
+    /// callback.
     recognizer: Recognizer,
     /// The low-level keyboard hook, replaced when Windows removes it.
     hook: HHOOK,
@@ -594,6 +1056,10 @@ struct Hooked {
     adapter: u32,
     /// The hook's state, shared with the adapter.
     report: Arc<Mutex<Report>>,
+    /// Whether a recording session listens (#260): the callback holds
+    /// the keys back and posts what it recognizes to the adapter's
+    /// thread, which sends it to the session.
+    recording: bool,
     /// The key events the hook last reported seeing, for the watchdog's
     /// comparison.
     last_seen: u64,
@@ -680,6 +1146,7 @@ fn start_hook(adapter: u32, report: Arc<Mutex<Report>>) -> Result<((), Option<HW
             window,
             adapter,
             report: report.clone(),
+            recording: false,
             last_seen: 0,
             unseen: 0,
             first: None,
@@ -720,11 +1187,15 @@ fn serve_hook(message: &MSG, requests: &Mutex<VecDeque<HookRequest>>) {
             .pop_front();
         match request {
             None => break,
-            Some(HookRequest::Add(id, key, mask, answer)) => {
-                let _ = answer.send(bind(id, key, mask));
+            Some(HookRequest::Add(id, binding, answer)) => {
+                let _ = answer.send(bind(id, binding));
             }
             Some(HookRequest::Remove(id, answer)) => {
                 unbind(id);
+                let _ = answer.send(());
+            }
+            Some(HookRequest::Record(on, answer)) => {
+                record(on);
                 let _ = answer.send(());
             }
         }
@@ -732,7 +1203,7 @@ fn serve_hook(message: &MSG, requests: &Mutex<VecDeque<HookRequest>>) {
 }
 
 /// Adds the binding to the recognizer of the hook thread's state.
-fn bind(id: u32, key: u32, mask: [bool; 4]) -> Result<(), String> {
+fn bind(id: u32, binding: Binding) -> Result<(), String> {
     HOOKED
         .try_with(|hooked| {
             let Ok(mut held) = hooked.try_borrow_mut() else {
@@ -741,10 +1212,25 @@ fn bind(id: u32, key: u32, mask: [bool; 4]) -> Result<(), String> {
             let Some(state) = held.as_mut() else {
                 return Err("the hook's state is gone".into());
             };
-            state.recognizer.add(id, mask, key);
+            state.recognizer.add(id, binding);
             Ok(())
         })
         .unwrap_or_else(|_| Err("the hook's state is gone".into()))
+}
+
+/// Turns the recording mode of the hook thread's recognizer on or off
+/// (#260): while it is on, the callback holds the keys back and reports
+/// what is pressed.
+fn record(on: bool) {
+    let _ = HOOKED.try_with(|hooked| {
+        let Ok(mut held) = hooked.try_borrow_mut() else {
+            return;
+        };
+        if let Some(state) = held.as_mut() {
+            state.recognizer.recording(on);
+            state.recording = on;
+        }
+    });
 }
 
 /// Removes the binding from the recognizer of the hook thread's state.
@@ -777,7 +1263,14 @@ unsafe extern "system" fn hooked(code: i32, wparam: WPARAM, lparam: LPARAM) -> L
         let event = unsafe { &*(lparam.0 as *const KBDLLHOOKSTRUCT) };
         decide(event)
     });
-    let (swallow, fired) = decided.unwrap_or((false, None));
+    let (swallow, fired, mask) = decided.unwrap_or((false, None, false));
+    if mask {
+        // The Start-menu mask (#260): a tagged neutral key, injected
+        // before the Windows key's release is passed along, so Windows
+        // does not act on the key held alone. The injected events pass
+        // through this hook untouched, being tagged.
+        inject_neutral();
+    }
     if let Some(binding) = fired
         && let Some(adapter) = adapter_thread()
     {
@@ -794,9 +1287,42 @@ unsafe extern "system" fn hooked(code: i32, wparam: WPARAM, lparam: LPARAM) -> L
     }
 }
 
+/// Injects the neutral key — `VK_NONAME`, a key no keyboard has — as a
+/// press and a release, both tagged [`INJECTED_TAG`] (#260): the Start-menu
+/// mask. Any key event between the Windows key's press and its release
+/// keeps Windows from acting on the key held alone, so the mask is sent
+/// before the release reaches the system, and its tag keeps Pane's own
+/// hook from taking it.
+fn inject_neutral() {
+    let mut events = [INPUT::default(), INPUT::default()];
+    for (event, up) in events.iter_mut().zip([false, true]) {
+        event.r#type = INPUT_KEYBOARD;
+        event.Anonymous.ki = KEYBDINPUT {
+            wVk: VK_NONAME,
+            wScan: 0,
+            dwFlags: if up {
+                KEYEVENTF_KEYUP
+            } else {
+                KEYBD_EVENT_FLAGS(0)
+            },
+            time: 0,
+            dwExtraInfo: super::INJECTED_TAG,
+        };
+    }
+    // SAFETY: the events are this slice's, both of them.
+    let _ = unsafe { SendInput(&events, size_of::<INPUT>() as i32) };
+}
+
 /// Steps the recognizer with one keyboard event, saying whether to
-/// swallow the event and which binding it fired.
-fn decide(event: &KBDLLHOOKSTRUCT) -> (bool, Option<u32>) {
+/// swallow the event, which binding it fired, and whether the
+/// Start-menu mask is to be injected first (#260). While a recording
+/// session listens, the keys are held back from the system — except
+/// Pane's own tagged ones, which pass untouched, and Escape and Tab,
+/// which the recorder's own cancellation keys take — and what the
+/// session recognizes is posted to the adapter's thread; the session
+/// ends when a window of another process is in front, so the keys
+/// belong to it and not to Pane's recorder.
+fn decide(event: &KBDLLHOOKSTRUCT) -> (bool, Option<u32>, bool) {
     HOOKED
         .try_with(|hooked| {
             let mut held = hooked.try_borrow_mut().ok()?;
@@ -805,27 +1331,91 @@ fn decide(event: &KBDLLHOOKSTRUCT) -> (bool, Option<u32>) {
                 key: event.vkCode,
                 scan: event.scanCode,
                 pressed: !event.flags.contains(LLKHF_UP),
+                extended: event.flags.contains(LLKHF_EXTENDED),
                 injected: event.flags.contains(LLKHF_INJECTED),
                 tag: event.dwExtraInfo,
                 time: u64::from(event.time),
             };
-            Some(match state.recognizer.step(key) {
-                Decision::Fire(binding) => (true, Some(binding)),
-                Decision::Injected(binding) => (false, Some(binding)),
-                Decision::Swallow => (true, None),
-                Decision::Pass => (false, None),
-                Decision::Resync => {
-                    // The event contradicts the state Pane holds: re-read
-                    // the modifiers' real state, as an unlock or a resume
-                    // does.
-                    resync(&mut state.recognizer);
-                    (false, None)
+            if state.recording {
+                // Escape and Tab pass, so the recorder's own cancellation
+                // keys work as they do today; everything else is held
+                // back, and what the session recognizes is posted.
+                if key.key == VK_ESCAPE.0 as u32 || key.key == VK_TAB.0 as u32 {
+                    return Some((false, None, false));
                 }
-            })
+                if !pane_in_front() {
+                    // Another application's window is in front: the keys
+                    // are the user's there, not the recorder's. The
+                    // session ends, and this event passes.
+                    state.recording = false;
+                    state.recognizer.recording(false);
+                    post(WM_RECORDED_ENDED, 0);
+                    return Some((false, None, false));
+                }
+                return Some(match state.recognizer.step(key) {
+                    Decision::Recorded(report) => {
+                        post(WM_RECORDED, pack(report));
+                        (true, None, false)
+                    }
+                    Decision::Swallow => (true, None, false),
+                    Decision::Pass => (false, None, false),
+                    Decision::Resync => {
+                        resync(&mut state.recognizer);
+                        (false, None, false)
+                    }
+                    // The recording mode answers none of these.
+                    _ => (false, None, false),
+                });
+            } else {
+                Some(match state.recognizer.step(key) {
+                    Decision::Fire(binding) => (true, Some(binding), false),
+                    Decision::Injected(binding) => (false, Some(binding), false),
+                    Decision::Tap { binding, mask } => (false, Some(binding), mask),
+                    Decision::Mask => (false, None, true),
+                    Decision::Swallow => (true, None, false),
+                    Decision::Pass => (false, None, false),
+                    Decision::Resync => {
+                        // The event contradicts the state Pane holds:
+                        // re-read the modifiers' real state, as an unlock
+                        // or a resume does.
+                        resync(&mut state.recognizer);
+                        (false, None, false)
+                    }
+                    Decision::Recorded(_) => (false, None, false),
+                })
+            }
         })
         .ok()
         .flatten()
-        .unwrap_or((false, None))
+        .unwrap_or((false, None, false))
+}
+
+/// Posts `message` with `word` to the adapter's thread; a post that
+/// fails leaves the recognizer's answer as it was, and the hotkey
+/// thread will see the session's end when it ends.
+fn post(message: u32, word: usize) {
+    if let Some(adapter) = adapter_thread() {
+        // SAFETY: plain values, posted to the adapter's thread, which
+        // pumps its messages.
+        let _ = unsafe { PostThreadMessageW(adapter, message, WPARAM(word), LPARAM(0)) };
+    }
+}
+
+/// Whether a window of Pane's own process is the one in front, so a
+/// recording session may keep the keys it would hold back (#260): a
+/// window of any other process in front ends the session, whoever it
+/// belongs to — the keys are that application's to take.
+fn pane_in_front() -> bool {
+    // SAFETY: no arguments; the front window's handle is only read.
+    let front = unsafe { GetForegroundWindow() };
+    if front.is_invalid() {
+        return false;
+    }
+    // SAFETY: a window handle; the process id is not wanted.
+    let process = unsafe { GetWindowThreadProcessId(front, None) };
+    // SAFETY: no arguments; it reads this process's own id.
+    let ours = unsafe { GetCurrentProcessId() };
+    process != 0 && process == ours
 }
 
 /// The adapter's thread, to post the presses to; `None` if the hook
@@ -986,23 +1576,31 @@ fn resync_hooked() {
 /// unlock, a resume, a reinstall, or the re-read a contradictory event
 /// asked for.
 fn resync(recognizer: &mut Recognizer) {
-    recognizer.resync(real());
+    recognizer.resync(&real());
 }
 
-/// The modifiers' real state, as the system reports it: either side of
-/// each one held counts as held.
-fn real() -> [bool; 4] {
+/// The modifiers' real state, as the system reports it: the keys held,
+/// by their virtual-key codes, whichever side of each modifier they
+/// are.
+fn real() -> Vec<u32> {
     let down = |key: VIRTUAL_KEY| {
         // SAFETY: the call only reads that key's state.
         unsafe { (GetAsyncKeyState(key.0 as i32) as u16) & 0x8000 != 0 }
     };
-    let either = |a: VIRTUAL_KEY, b: VIRTUAL_KEY| down(a) || down(b);
     [
-        either(VK_LCONTROL, VK_RCONTROL),
-        either(VK_LMENU, VK_RMENU),
-        either(VK_LSHIFT, VK_RSHIFT),
-        either(VK_LWIN, VK_RWIN),
+        VK_LCONTROL,
+        VK_RCONTROL,
+        VK_LMENU,
+        VK_RMENU,
+        VK_LSHIFT,
+        VK_RSHIFT,
+        VK_LWIN,
+        VK_RWIN,
     ]
+    .into_iter()
+    .filter(|key| down(*key))
+    .map(|key| key.0 as u32)
+    .collect()
 }
 
 /// Installs the low-level keyboard hook on this thread, which the system

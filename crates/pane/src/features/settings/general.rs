@@ -731,20 +731,30 @@ impl SettingsWindow {
     }
 
     /// Starts listening: the recorder row takes focus, so the keys
-    /// pressed next are the binding being recorded.
+    /// pressed next are the binding being recorded. On a system whose
+    /// adapter has one, a recording session starts with it (#260): the
+    /// adapter holds the keys back from the system and reports what the
+    /// user presses, so the Windows key alone, a double tap and the side
+    /// of a modifier are recorded without the Start menu opening; Escape
+    /// and Tab still cancel, and the session ends when this stops
+    /// listening, the window loses focus, or Pane quits.
     fn start_recorder(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.general.recording = true;
         self.general.rejection = None;
         let focus = self.general.focus.clone();
         window.focus(&focus, cx);
+        self.start_recording_session(window, cx);
         cx.notify();
     }
 
     /// Stops listening, without changing anything: focus returns to the
-    /// sidebar, the window's own keyboard focus.
+    /// sidebar, the window's own keyboard focus, and the recording
+    /// session ends with the listening (#260), so the adapter stops
+    /// holding the keys back.
     fn stop_recording(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.general.recording = false;
         self.general.rejection = None;
+        self.end_recording_session();
         let sidebar = self.focus.clone();
         window.focus(&sidebar, cx);
         cx.notify();
@@ -787,7 +797,13 @@ impl SettingsWindow {
     /// keep and save the choice. A refusal leaves the previous binding
     /// working and nothing saved; the reason is the page's status, and the
     /// recorder — if one is listening — keeps listening for another try.
-    fn apply_open_pane(&mut self, shortcut: Shortcut, window: &mut Window, cx: &mut Context<Self>) {
+    /// Called with what a recording session reported too (#260).
+    pub(super) fn apply_open_pane(
+        &mut self,
+        shortcut: Shortcut,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let applied = crate::settings::shared(cx)
             .update(cx, |settings, cx| settings.set_open_pane(shortcut, cx));
         match applied {
@@ -796,6 +812,7 @@ impl SettingsWindow {
                 // returns to the sidebar.
                 self.general.recording = false;
                 self.general.rejection = None;
+                self.end_recording_session();
                 let sidebar = self.focus.clone();
                 window.focus(&sidebar, cx);
                 cx.notify();

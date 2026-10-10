@@ -98,23 +98,38 @@ impl Hotkeys for FakeSystem {
         self.unavailable.clone()
     }
 
+    // A system whose adapter falls back to its own keyboard hook takes
+    // the binding kinds #260 adds; one without explains them.
+    fn kind_unavailable(&self, shortcut: &Shortcut) -> Option<String> {
+        if self.hooks {
+            None
+        } else {
+            pane_core::hotkeys::kinds_unavailable(shortcut, pane_core::Platform::current())
+        }
+    }
+
     fn register(&self, shortcut: &Shortcut) -> Result<(), HotkeyError> {
         if let Some(reason) = &self.unavailable {
             return Err(HotkeyError::Refused(reason.clone()));
         }
+        // The binding the system refuses (another application has it) and
+        // the kinds no registration can express (#260) go through the
+        // hook where this system's adapter has one, as Windows' does
+        // (ADR 0039): not an error, and the row says the route.
+        let through_hook = self.hooks
+            && (self.taken.lock().unwrap().contains(shortcut)
+                || shortcut.kind() != pane_core::hotkeys::Kind::Chord);
+        if through_hook {
+            self.hooked.lock().unwrap().push(shortcut.clone());
+            let mut registered = self.registered.lock().unwrap();
+            assert!(
+                !registered.contains(shortcut),
+                "{shortcut} registered twice"
+            );
+            registered.push(shortcut.clone());
+            return Ok(());
+        }
         if self.taken.lock().unwrap().contains(shortcut) {
-            if self.hooks {
-                // The hook takes the binding the system refused (ADR 0039):
-                // not an error, and the row says the route.
-                self.hooked.lock().unwrap().push(shortcut.clone());
-                let mut registered = self.registered.lock().unwrap();
-                assert!(
-                    !registered.contains(shortcut),
-                    "{shortcut} registered twice"
-                );
-                registered.push(shortcut.clone());
-                return Ok(());
-            }
             return Err(HotkeyError::Taken);
         }
         let mut registered = self.registered.lock().unwrap();
@@ -911,4 +926,199 @@ fn a_hotkey_record_of_version_1_still_reads_and_the_new_version_round_trips() {
     assert_eq!(older_system.registered(), ["ctrl+alt+g"]);
     assert!(older_system.press(&older, "ctrl+alt+g"));
     assert_eq!(older.view().title, "Greeting");
+}
+
+#[test]
+fn the_binding_kinds_bind_fire_and_round_trip_through_the_hook() {
+    let dirs = Dirs::new();
+    let system = FakeSystem::hooking();
+    let launcher = dirs.launcher(&system);
+    dirs.install(&launcher, "sample-settings");
+    dirs.install(&launcher, "sample-rust");
+
+    // The tap, double-tap and side-specific kinds, and a numpad key,
+    // register through the system's hook, fire as a chord does, and
+    // their records round trip their textual forms (#260). Each goes to
+    // its own command, so each keeps working beside the others.
+    for (command, shortcut) in [("Greeting", "tap:win"), ("Rust sample", "double:ctrl")] {
+        assign(&launcher, command, shortcut);
+        assert!(
+            system.registered().contains(&shortcut.to_owned()),
+            "{shortcut} for {command} did not register: {:?}",
+            system.registered()
+        );
+        assert!(system.hooked.lock().unwrap().contains(&key(shortcut)));
+        assert!(
+            system.press(&launcher, shortcut),
+            "{shortcut} for {command} did not fire"
+        );
+        assert_eq!(launcher.view().title, command);
+        launcher.back();
+    }
+    // The extended key set and a side in a chord, changed onto the same
+    // command: the release of the one before it follows.
+    assign(&launcher, "Greeting", "rctrl+alt+f13");
+    assert!(
+        system
+            .hooked
+            .lock()
+            .unwrap()
+            .contains(&key("rctrl+alt+f13"))
+    );
+    assert!(!system.press(&launcher, "tap:win"));
+    assert!(system.press(&launcher, "rctrl+alt+f13"));
+    assign(&launcher, "Greeting", "ctrl+alt+numpad5");
+    assert!(system.press(&launcher, "ctrl+alt+numpad5"));
+    assert!(
+        fs::read_to_string(dirs.packages_dir().join("hotkeys.json"))
+            .unwrap()
+            .contains("\"ctrl+alt+numpad5\""),
+        "the record holds the kinds' textual forms"
+    );
+    // A restart reads them back and registers them again.
+    drop(launcher);
+    let restarted_system = FakeSystem::hooking();
+    let restarted = dirs.launcher(&restarted_system);
+    assert!(
+        restarted_system
+            .registered()
+            .contains(&"double:ctrl".to_owned())
+    );
+    assert!(restarted_system.press(&restarted, "double:ctrl"));
+    assert_eq!(restarted.view().title, "Rust sample");
+}
+
+#[test]
+fn a_single_and_a_double_tap_of_the_same_modifier_cannot_coexist() {
+    let dirs = Dirs::new();
+    let system = FakeSystem::hooking();
+    let launcher = dirs.launcher(&system);
+    dirs.install(&launcher, "sample-settings");
+    dirs.install(&launcher, "sample-rust");
+
+    // A single tap and a double tap of the same modifier bound together
+    // are refused ("cannot coexist", #260): one would swallow the other's
+    // presses. The refusal names the conflict as today's clashes do.
+    assign(&launcher, "Greeting", "tap:win");
+    assign(&launcher, "Rust sample", "double:win");
+    let refusal = error(&launcher);
+    assert!(refusal.contains("cannot coexist"), "{refusal}");
+    assert!(
+        refusal.contains(&key("double:win").to_string()),
+        "{refusal}"
+    );
+    assert!(refusal.contains("Greeting"), "{refusal}");
+    assert!(
+        refusal.contains("a single tap and a double tap of the same modifier"),
+        "{refusal}"
+    );
+    assert!(refusal.contains("remove it there first"), "{refusal}");
+    assert_eq!(
+        system.registered(),
+        ["tap:win"],
+        "the refusal changed nothing"
+    );
+    // The Open Pane hotkey meets the kinds the same way, both ways
+    // round: a command's double tap of the modifier Pane's own tap
+    // names, and Pane's double tap of one a command's tap names.
+    launcher.set_open_pane(key("tap:alt")).unwrap();
+    assign(&launcher, "Rust sample", "double:alt");
+    assert!(
+        error(&launcher).contains("cannot coexist with Pane's"),
+        "the Open Pane hotkey's tap is named"
+    );
+    assert!(
+        error(&launcher).contains(&key("tap:alt").to_string()),
+        "{:?}",
+        launcher.view().status
+    );
+    assign(&launcher, "Rust sample", "ctrl+alt+h");
+    launcher.set_open_pane(key("tap:alt")).unwrap();
+    launcher.set_open_pane(key("double:rshift")).unwrap();
+    assign(&launcher, "Rust sample", "tap:rshift");
+    assert!(
+        error(&launcher).contains("cannot coexist with Pane's"),
+        "Pane's double tap is named"
+    );
+    // Different modifiers coexist, and a chord beside a tap does too.
+    assign(&launcher, "Rust sample", "double:rshift");
+    assert!(system.press(&launcher, "double:rshift"));
+    assert!(system.press(&launcher, "tap:alt"));
+}
+
+#[test]
+fn the_kinds_unavailable_on_this_system_are_explained_on_their_rows() {
+    let dirs = Dirs::new();
+    // The fake without a hook models a system whose adapter has none
+    // (macOS, X11): the kinds #260 adds are refused and explained, so a
+    // record copied from a Windows machine is not a mystery.
+    let system = FakeSystem::new();
+    let launcher = dirs.launcher(&system);
+    dirs.install(&launcher, "sample-settings");
+
+    assign(&launcher, "Greeting", "tap:win");
+    let here = pane_core::Platform::current()
+        .map(|platform| platform.to_string())
+        .unwrap_or_else(|| "this system".into());
+    assert_eq!(
+        error(&launcher),
+        format!("Not available on {here}: lone modifier taps work only on Windows for now")
+    );
+    // The screen stays for another try, and a chord still records.
+    assert!(matches!(launcher.view().screen, Screen::Hotkey { .. }));
+    block_on(launcher.record_hotkey(key("ctrl+alt+g")));
+    assert_eq!(system.registered(), ["ctrl+alt+g"]);
+
+    // The Open Pane hotkey is explained the same way, and the working
+    // binding is untouched.
+    let refused = launcher
+        .set_open_pane(key("tap:win"))
+        .expect_err("a tap is unavailable here");
+    assert!(
+        refused.contains("lone modifier taps work only on Windows"),
+        "{refused}"
+    );
+    assert!(launcher.open_pane_problem().is_none());
+
+    // A record naming a kind this system cannot take is explained on its
+    // row — through the unavailable-row mechanism, as the command's own
+    // platform unavailability is — and nothing registers; the command
+    // still opens from root search as it always does.
+    drop(launcher);
+    let record = dirs.packages_dir().join("hotkeys.json");
+    let text = fs::read_to_string(&record).unwrap();
+    fs::write(&record, text.replace("\"ctrl+alt+g\"", "\"double:ctrl\"")).unwrap();
+    let restart = FakeSystem::new();
+    let restarted = dirs.launcher(&restart);
+    assert!(restart.registered().is_empty());
+    manage(&restarted);
+    let subtitle = row_subtitle(&restarted, "Hotkey for Greeting");
+    assert!(
+        subtitle.contains(&key("double:ctrl").to_string()),
+        "{subtitle}"
+    );
+    assert!(subtitle.contains("Not available on"), "{subtitle}");
+    assert!(subtitle.contains("only on Windows for now"), "{subtitle}");
+    activate(&restarted, "Hotkey for Greeting");
+    assert!(
+        matches!(restarted.view().status, Status::Error(ref error) if error.contains("only on Windows")),
+        "{:?}",
+        restarted.view().status
+    );
+    assert!(matches!(restarted.view().screen, Screen::Extensions { .. }));
+    // The Shortcuts catalog explains it under the hotkey cell, and the
+    // command still opens from root search.
+    assert!(
+        restarted
+            .shortcut_catalog()
+            .groups
+            .iter()
+            .flat_map(|group| group.commands.iter())
+            .find(|command| command.title == "Greeting")
+            .and_then(|command| command.hotkey_inactive.as_ref())
+            .is_some_and(|why| why.contains("only on Windows"))
+    );
+    restarted.back();
+    activate(&restarted, "Greeting");
+    assert_eq!(restarted.view().title, "Greeting");
 }

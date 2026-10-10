@@ -71,7 +71,10 @@ use crate::platform::Platform;
 
 /// Each command's hotkey by command id, recorded in `hotkeys.json` as
 /// `{ "version": 2, "hotkeys": { "<command id>": "ctrl+alt+g" } }` —
-/// a record of version 1 still reads.
+/// a record of version 1 still reads. The value is the binding's id as
+/// [`Shortcut::parse`] reads it, so the kinds #260 adds record as their
+/// ids too: `tap:win`, `double:ctrl`, `rctrl+alt+g` — version 2 is
+/// unreleased, so its grammar grew rather than the version moving again.
 pub(super) type HotkeyChoices = BTreeMap<String, Shortcut>;
 
 impl Choices for HotkeyChoices {
@@ -80,9 +83,9 @@ impl Choices for HotkeyChoices {
     const WHAT: &'static str = "hotkeys";
 
     /// Version 1 reads too: this version holds the same chords by command
-    /// id (the tap, double-tap and side-specific kinds of #260 are the
-    /// grammar a later version adds). Only the version number moved, so
-    /// a record an older Pane wrote keeps working.
+    /// id, and the binding kinds #260 adds are the grammar of version 2
+    /// itself, which an older Pane never wrote. Only the version number
+    /// moved, so a record an older Pane wrote keeps working.
     fn reads(version: u64) -> bool {
         version == 1 || version == Self::VERSION
     }
@@ -156,6 +159,22 @@ impl Bindings {
         self.chosen()
             .iter()
             .find(|(command, chosen)| *chosen == shortcut && command.as_str() != except)
+            .map(|(command, _)| command.as_str())
+    }
+
+    /// The command whose chosen hotkey is the other of a single tap and
+    /// a double tap of the same modifier as `shortcut` is one of (#260):
+    /// the two cannot be bound together, one swallowing the other's
+    /// presses.
+    fn coexisting_with(&self, shortcut: &Shortcut, except: &str) -> Option<&str> {
+        if shortcut.lone().is_none() {
+            return None;
+        }
+        self.chosen()
+            .iter()
+            .find(|(command, chosen)| {
+                command.as_str() != except && cannot_coexist(shortcut, chosen)
+            })
             .map(|(command, _)| command.as_str())
     }
 
@@ -234,6 +253,26 @@ impl OpenPane {
             .as_ref()
             .is_some_and(|open| open == shortcut)
     }
+
+    /// Whether the working Open Pane binding is the other of a single
+    /// tap and a double tap of the same modifier as `shortcut` is one of
+    /// (#260): the two cannot be bound together.
+    fn coexists_with(&self, shortcut: &Shortcut) -> bool {
+        self.registered
+            .as_ref()
+            .is_some_and(|open| cannot_coexist(shortcut, open))
+    }
+}
+
+/// Whether `shortcut` and `other` are a single tap and a double tap of
+/// the same modifier — either side of it, either way round — which
+/// cannot be bound together: one would swallow the other's presses
+/// (#260).
+fn cannot_coexist(shortcut: &Shortcut, other: &Shortcut) -> bool {
+    let (Some((at, _)), Some((other_at, _))) = (shortcut.lone(), other.lone()) else {
+        return false;
+    };
+    shortcut.kind() != other.kind() && at == other_at
 }
 
 /// Game mode's state in the launcher (#125): the settings in force, the
@@ -358,6 +397,14 @@ impl Launcher {
                 bindings
                     .problems
                     .insert(command, "the Open Pane hotkey uses it".into());
+                continue;
+            }
+            // The binding kinds that need Pane's own keyboard hook work
+            // only where the adapter has one (#260): a record copied from
+            // a Windows machine is explained on its row, not left a
+            // mystery.
+            if let Some(why) = self.hotkeys.kind_unavailable(&shortcut) {
+                bindings.problems.insert(command, why);
                 continue;
             }
             match self.hotkeys.register(&shortcut) {
@@ -513,7 +560,17 @@ impl Launcher {
                     None => "None · Choose keys that open it from any application".into(),
                 };
                 let subtitle = format!("{state} · {identity}");
+                // The binding kinds that need Pane's own keyboard hook
+                // work only where the adapter has one (#260): a record
+                // copied from a Windows machine is explained through the
+                // unavailable-row mechanism, as the command's own
+                // platform unavailability is.
+                let kind = bindings
+                    .chosen()
+                    .get(&command.id)
+                    .and_then(|shortcut| self.hotkeys.kind_unavailable(shortcut));
                 let unavailable = unavailable
+                    .or(kind)
                     .or_else(|| everywhere.clone())
                     .map(Unavailable::OnThisSystem);
                 let entry = match &unavailable {
@@ -711,6 +768,12 @@ impl Launcher {
         if let Some(refusal) = shortcut.refusal() {
             return Err(format!("{refusal}."));
         }
+        // The binding kinds that need Pane's own keyboard hook work only
+        // where the adapter has one (#260): a system without one explains
+        // them, rather than taking a binding that could never fire.
+        if let Some(why) = self.hotkeys.kind_unavailable(&shortcut) {
+            return Err(why);
+        }
         if let Some(other) = state.bindings.opened_by(&shortcut, command) {
             let other = self.command_title(state, other);
             return Err(format!(
@@ -718,10 +781,29 @@ impl Launcher {
                  shortcut."
             ));
         }
+        // A single tap and a double tap of the same modifier cannot be
+        // bound together (#260): one would swallow the other's presses.
+        if let Some(other) = state.bindings.coexisting_with(&shortcut, command) {
+            let other = self.command_title(state, other);
+            return Err(format!(
+                "{shortcut} cannot coexist with {other}: a single tap and a double tap of the \
+                 same modifier cannot be bound together. Remove it there first, or press another \
+                 shortcut."
+            ));
+        }
         if state.open_pane.taken_by(&shortcut) {
             return Err(format!(
                 "{shortcut} opens Pane itself: choose another shortcut for {title}, or change \
                  Pane's hotkey in Settings."
+            ));
+        }
+        if state.open_pane.coexists_with(&shortcut)
+            && let Some(open) = state.open_pane.registered.as_ref()
+        {
+            return Err(format!(
+                "{shortcut} cannot coexist with Pane's {open}: a single tap and a double tap of \
+                 the same modifier cannot be bound together. Choose another shortcut for \
+                 {title}, or change Pane's hotkey in Settings."
             ));
         }
         let previous = state.bindings.chosen().get(command);
@@ -1111,10 +1193,26 @@ impl Launcher {
         if let Some(refusal) = shortcut.refusal() {
             return Err(refusal);
         }
+        // The binding kinds that need Pane's own keyboard hook work only
+        // where the adapter has one (#260); a system without one explains
+        // them.
+        if let Some(why) = self.hotkeys.kind_unavailable(&shortcut) {
+            return Err(why);
+        }
         if let Some(other) = state.bindings.opened_by(&shortcut, "") {
             let other = self.command_title(state, other);
             return Err(format!(
                 "{shortcut} already opens {other}: remove it there first, or press another \
+                 shortcut."
+            ));
+        }
+        // A single tap and a double tap of the same modifier cannot be
+        // bound together (#260).
+        if let Some(other) = state.bindings.coexisting_with(&shortcut, "") {
+            let other = self.command_title(state, other);
+            return Err(format!(
+                "{shortcut} cannot coexist with {other}: a single tap and a double tap of the \
+                 same modifier cannot be bound together. Remove it there first, or press another \
                  shortcut."
             ));
         }

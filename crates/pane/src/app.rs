@@ -108,6 +108,14 @@ pub struct LauncherWindow {
     /// of which navigation arrives and which lands at once; see
     /// [`FrameMotion`].
     pub(crate) motion: FrameMotion,
+    /// The hotkey screen's recording session, while the screen listens
+    /// (#260): the hook adapter holds the keys back from Windows and
+    /// reports what the user presses, so the kinds no registration can
+    /// express are recorded without the Start menu opening. `None` where
+    /// this system's adapter has no session (macOS, X11) — the screen's
+    /// own keystrokes record, as they do today — or while no session
+    /// listens.
+    hotkey_recording: Option<pane_core::hotkeys::RecordingStop>,
     /// Whether the window is shown, when it was hidden, the Open Pane
     /// hotkey's repeat guard and the compact window mode's sizes; see
     /// [`Presence`].
@@ -226,6 +234,7 @@ impl LauncherWindow {
             confirmation: confirmation::ConfirmationControls::new(cx),
             home: quick_slots::Home::default(),
             motion: FrameMotion::new(),
+            hotkey_recording: None,
             presence: Presence::default(),
             tray_paused: false,
             #[cfg(any(test, debug_assertions))]
@@ -1269,6 +1278,9 @@ impl LauncherWindow {
         if !self.actions_belong_to(&self.launcher.screen()) && self.actions.take().is_some() {
             self.launcher.close_submenus();
         }
+        // The hotkey screen's recording session starts when the screen
+        // listens and ends when it leaves (#260).
+        self.sync_hotkey_recording(window, cx);
         self.sync_form(window, cx);
         self.sync_custom_view(window, cx);
         // Last: coming back to root search, even as a view closes, focuses
@@ -1286,6 +1298,72 @@ impl LauncherWindow {
         // over whatever screen is shown (#146).
         self.sync_confirmation(window, cx);
         cx.refresh_windows();
+    }
+
+    /// Starts or ends the hotkey screen's recording session so it lasts
+    /// exactly while the screen listens (#260): while it does, the hook
+    /// adapter holds the keys back from Windows — the Start menu the
+    /// Windows key alone opens stays closed — and reports what the user
+    /// presses, including the kinds no registration can express and
+    /// modifiers' sides, which the screen's own keystrokes cannot name.
+    /// The reports end when the recorder stops listening, the window
+    /// loses focus, or Pane quits; on a system whose adapter has no
+    /// session the screen records through its own keystrokes, as it
+    /// always has. Idempotent, so every screen change can call it.
+    fn sync_hotkey_recording(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let listening = matches!(self.launcher.screen(), Screen::Hotkey { .. });
+        if listening == self.hotkey_recording.is_some() {
+            return;
+        }
+        if !listening {
+            // The screen left: the session ends with the stop it owns.
+            self.hotkey_recording = None;
+            return;
+        }
+        let Some(session) = self.launcher.recording() else {
+            // No adapter session here: the keystroke path records, as it
+            // does today (macOS, X11).
+            return;
+        };
+        let (reports, stop) = session.split();
+        self.hotkey_recording = Some(stop);
+        cx.spawn_in(window, async move |this, cx| {
+            let mut reports = reports;
+            while let Some(shortcut) = reports.next().await {
+                // Still listening: the task ends with the screen it
+                // records for, and the session's stop ends the reports
+                // when the recorder stops listening without a press.
+                let listening = this
+                    .update_in(cx, |window, w, cx| {
+                        window.hotkey_recording_reported(shortcut, w, cx)
+                    })
+                    .unwrap_or(false);
+                if !listening {
+                    break;
+                }
+            }
+        })
+        .detach();
+    }
+
+    /// One binding a recording session reported, pressed on the hotkey
+    /// screen (#260): recorded as the screen's own keystrokes are — the
+    /// same checks, the same flow, the same refusals — and whether the
+    /// screen still listens for another try (a refusal keeps it
+    /// listening, a change that lands leaves it).
+    fn hotkey_recording_reported(
+        &mut self,
+        shortcut: Shortcut,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if !matches!(self.launcher.screen(), Screen::Hotkey { .. }) {
+            return false;
+        }
+        let pending = self.launcher.record_hotkey(shortcut);
+        self.motion.land_at_once();
+        self.show_until_done(pending, window, cx);
+        matches!(self.launcher.screen(), Screen::Hotkey { .. })
     }
 
     /// Freezes root search's selection against the pointer, or lets it

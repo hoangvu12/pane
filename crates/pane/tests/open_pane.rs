@@ -49,11 +49,27 @@ use wait::until_record_holds;
 struct FakeSystem {
     registered: Mutex<Vec<Shortcut>>,
     taken: Mutex<Vec<Shortcut>>,
+    /// The senders of the recording sessions handed out (#260), for the
+    /// test to feed what the user pressed, as the hook adapter would
+    /// report it.
+    reporters: Mutex<Vec<pane_core::hotkeys::PressSender>>,
 }
 
 impl Hotkeys for FakeSystem {
     fn unavailable(&self) -> Option<String> {
         None
+    }
+
+    // The fake models a system whose adapter has a keyboard hook, as
+    // Windows' does: the binding kinds #260 adds bind here.
+    fn kind_unavailable(&self, _shortcut: &Shortcut) -> Option<String> {
+        None
+    }
+
+    fn recording(&self) -> Option<pane_core::hotkeys::RecordingSession> {
+        let (sender, presses) = pane_core::hotkeys::channel();
+        self.reporters.lock().unwrap().push(sender);
+        Some(pane_core::hotkeys::RecordingSession::of(presses, || {}))
     }
 
     fn register(&self, shortcut: &Shortcut) -> Result<(), HotkeyError> {
@@ -827,4 +843,89 @@ fn where_global_hotkeys_cannot_be_used_the_page_explains(cx: &mut TestAppContext
         "{:?}",
         view.screen
     );
+}
+
+#[gpui::test]
+fn the_open_pane_recorder_records_the_kinds_a_session_reports(cx: &mut TestAppContext) {
+    let data = tempfile::tempdir().unwrap();
+    let system = Arc::new(FakeSystem::default());
+    let launcher = Launcher::new(Runtime::start(), Vec::new()).with_hotkeys(system.clone());
+    init_settings(Some(data.path()), cx);
+    cx.executor().allow_parking();
+    cx.update(pane::bind_keys);
+    let (_window, cx) = cx.add_window_view(|window, cx| LauncherWindow::new(launcher, window, cx));
+    let (_settings, mut settings_cx) = open_settings(cx);
+    settings_cx.run_until_parked();
+
+    // The names the row shows for the kinds: the platform's own for a
+    // modifier (Control on macOS), "Right " before a side's.
+    let ctrl = if cfg!(target_os = "macos") {
+        "Control"
+    } else {
+        "Ctrl"
+    };
+    // Click the recorder: it listens, and a recording session starts with
+    // the adapter (#260) — the fake hands one whose reports the test feeds
+    // as the user's presses: the kinds the window's own keystrokes cannot
+    // name, pressed without the Start menu the Windows key alone opens. A
+    // side of a modifier records first: the row names it as Windows does,
+    // "Right Ctrl".
+    click(&mut settings_cx, "open-pane-recorder");
+    settings_cx.run_until_parked();
+    let reported = system.reporters.lock().unwrap().clone();
+    assert_eq!(reported.len(), 1, "the recorder asked for one session");
+    let right_ctrl = Shortcut::parse("tap:rctrl").unwrap();
+    reported[0].send(right_ctrl.clone());
+    settings_cx.run_until_parked();
+    assert_eq!(registered(&system), vec![right_ctrl.clone()]);
+    until_record(&mut settings_cx, data.path(), "tap:rctrl");
+    let tree = a11y(&mut settings_cx);
+    assert!(
+        tree.contains(&format!("Open Pane with Right {ctrl}")),
+        "the row names the side, {tree}"
+    );
+
+    // A double tap records the same way: "Ctrl Ctrl".
+    click(&mut settings_cx, "open-pane-recorder");
+    settings_cx.run_until_parked();
+    let reported = system.reporters.lock().unwrap().clone();
+    let double = Shortcut::parse("double:ctrl").unwrap();
+    reported[1].send(double.clone());
+    settings_cx.run_until_parked();
+    assert_eq!(registered(&system), vec![double.clone()]);
+    until_record(&mut settings_cx, data.path(), "double:ctrl");
+    assert!(
+        a11y(&mut settings_cx).contains(&format!("Open Pane with {ctrl} {ctrl}")),
+        "the row names the double tap"
+    );
+
+    // The Windows key alone: "Win" on Windows, the platform's own name
+    // elsewhere; the recorder shows the binding and the record holds its
+    // textual form.
+    click(&mut settings_cx, "open-pane-recorder");
+    settings_cx.run_until_parked();
+    let reported = system.reporters.lock().unwrap().clone();
+    let tap = Shortcut::parse("tap:win").unwrap();
+    reported[2].send(tap.clone());
+    settings_cx.run_until_parked();
+    assert_eq!(registered(&system), vec![tap.clone()]);
+    until_record(&mut settings_cx, data.path(), "tap:win");
+    assert!(
+        a11y(&mut settings_cx).contains(&format!("Open Pane with {tap}")),
+        "the row names the tap"
+    );
+
+    // Escape still cancels, session and all: the binding is kept, the
+    // recorder stops listening, and no fourth session outlives it.
+    click(&mut settings_cx, "open-pane-recorder");
+    settings_cx.run_until_parked();
+    assert_eq!(system.reporters.lock().unwrap().len(), 4);
+    settings_cx.simulate_keystrokes("escape");
+    settings_cx.run_until_parked();
+    assert_eq!(registered(&system), vec![tap.clone()]);
+    assert!(
+        !a11y(&mut settings_cx).contains("Recording;"),
+        "the recorder is no longer listening"
+    );
+    until_record_holds(&mut settings_cx, data.path(), "\"open_pane\": \"tap:win\"");
 }
