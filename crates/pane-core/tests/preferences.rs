@@ -24,8 +24,8 @@ use std::time::Duration;
 use futures::executor::block_on;
 use pane_core::clipboard::{Clock, ManualClock, SystemClock};
 use pane_core::{
-    Launcher, PackageIdentity, PreferenceKind, PreferencesTarget, ResultAction, Runtime,
-    SavedData, Screen, Status,
+    Launcher, PackageIdentity, PreferenceKind, PreferencesTarget, ResultAction, Runtime, SavedData,
+    Screen, Status,
 };
 use tempfile::TempDir;
 
@@ -251,12 +251,7 @@ impl Pane {
 fn fields_of(tree: &pane_core::DesignedTree) -> Vec<(String, String, Option<String>, bool)> {
     fn at(node: &pane_core::Node, into: &mut Vec<(String, String, Option<String>, bool)>) {
         let field = |key: &str, title: Option<String>, info: Option<String>, hidden: bool| {
-            (
-                key.to_owned(),
-                title.unwrap_or_default(),
-                info,
-                hidden,
-            )
+            (key.to_owned(), title.unwrap_or_default(), info, hidden)
         };
         match &node.kind {
             pane_core::NodeKind::TextInput(input) | pane_core::NodeKind::PasswordInput(input) => {
@@ -271,7 +266,12 @@ fn fields_of(tree: &pane_core::DesignedTree) -> Vec<(String, String, Option<Stri
             }
             pane_core::NodeKind::Select(select) => {
                 if let Some(key) = &node.key {
-                    into.push(field(key, select.field.title.clone(), select.field.info.clone(), false));
+                    into.push(field(
+                        key,
+                        select.field.title.clone(),
+                        select.field.info.clone(),
+                        false,
+                    ));
                 }
             }
             pane_core::NodeKind::Checkbox(checkbox) => {
@@ -286,7 +286,12 @@ fn fields_of(tree: &pane_core::DesignedTree) -> Vec<(String, String, Option<Stri
             }
             pane_core::NodeKind::FilePicker(picker) | pane_core::NodeKind::FolderPicker(picker) => {
                 if let Some(key) = &node.key {
-                    into.push(field(key, picker.field.title.clone(), picker.field.info.clone(), false));
+                    into.push(field(
+                        key,
+                        picker.field.title.clone(),
+                        picker.field.info.clone(),
+                        false,
+                    ));
                 }
             }
             _ => {}
@@ -395,7 +400,10 @@ fn the_setup_screen_asks_only_for_required_unset_values_then_launches(fixture: &
     );
     // The package's `HELP.md` beside the fields, as its paragraphs.
     for paragraph in HELP {
-        assert!(texts.iter().any(|text| text.contains(paragraph)), "{texts:?}");
+        assert!(
+            texts.iter().any(|text| text.contains(paragraph)),
+            "{texts:?}"
+        );
     }
 
     // Cancelling launches nothing.
@@ -433,17 +441,16 @@ fn the_setup_screen_asks_only_for_required_unset_values_then_launches(fixture: &
     );
     // A folder that does not exist is no value.
     let gone = pane.sources.path().join("gone");
-    block_on(launcher.submit_pane_form(vec![
-        ("show#folder".to_owned(), (gone.to_str().unwrap()).to_owned()),
-    ]));
+    block_on(launcher.submit_pane_form(vec![(
+        "show#folder".to_owned(),
+        (gone.to_str().unwrap()).to_owned(),
+    )]));
     assert_eq!(
         field_error(launcher, "show#folder").as_deref(),
         Some("No folder has this path")
     );
     let notes = pane.notes();
-    block_on(launcher.submit_pane_form(vec![
-        ("show#folder".to_owned(), (&notes).to_owned()),
-    ]));
+    block_on(launcher.submit_pane_form(vec![("show#folder".to_owned(), (&notes).to_owned())]));
     let view = launcher.view();
     assert_eq!(view.screen, Screen::Command);
     assert_eq!(view.title, "Preferences");

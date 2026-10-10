@@ -277,12 +277,7 @@ fn choices_of(form: &pane_core::PaneForm, key: &str) -> Vec<String> {
         pane_core::NodeKind::Select(select) => select
             .options
             .iter()
-            .map(|option| {
-                option
-                    .label
-                    .clone()
-                    .unwrap_or_else(|| option.value.clone())
-            })
+            .map(|option| option.label.clone().unwrap_or_else(|| option.value.clone()))
             .collect(),
         _ => Vec::new(),
     }
@@ -313,9 +308,7 @@ fn error_of(form: &pane_core::PaneForm, key: &str) -> Option<String> {
 /// The value a dropdown of the argument form's tree has chosen.
 fn chosen(form: &pane_core::PaneForm, key: &str) -> String {
     match &field_node(form, key).kind {
-        pane_core::NodeKind::Select(select) => {
-            select.value.clone().unwrap_or_default()
-        }
+        pane_core::NodeKind::Select(select) => select.value.clone().unwrap_or_default(),
         _ => String::new(),
     }
 }

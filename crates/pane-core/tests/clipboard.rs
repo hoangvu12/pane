@@ -633,7 +633,6 @@ fn marked_blank_other_and_long_content_is_not_kept(fixture: &'static Fixture) {
     assert!(!file.contains("hunter2"));
 }
 
-
 fn pausing_stops_the_watch_and_resuming_starts_it_again(fixture: &'static Fixture) {
     let pane = Pane::new(fixture);
     let launcher = pane.installed();

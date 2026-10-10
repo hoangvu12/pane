@@ -1063,7 +1063,11 @@ fn an_extension_view_has_no_heading_and_the_footer_names_it(cx: &mut TestAppCont
 
     cx.simulate_keystrokes("down down down down enter");
     let view = settle(&window, cx);
-    assert!(matches!(view.screen, Screen::PaneForm(_)), "{:?}", view.screen);
+    assert!(
+        matches!(view.screen, Screen::PaneForm(_)),
+        "{:?}",
+        view.screen
+    );
     assert_eq!(view.title, "Greet someone");
     assert_named_in_the_footer(cx, "a form");
 }
@@ -2338,7 +2342,11 @@ fn a_click_that_opens_nothing_leaves_the_next_keyboard_open_settled(cx: &mut Tes
 
     cx.simulate_keystrokes("down down down down enter");
     let view = settle(&window, cx);
-    assert!(matches!(view.screen, Screen::PaneForm(_)), "{:?}", view.screen);
+    assert!(
+        matches!(view.screen, Screen::PaneForm(_)),
+        "{:?}",
+        view.screen
+    );
     assert!(
         arriving(&window, cx).is_none(),
         "Enter after a click that opened nothing drew the form settled"
