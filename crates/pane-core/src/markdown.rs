@@ -367,12 +367,13 @@ fn list(lines: &mut Lines) -> Block {
 fn task(text: &str) -> (Option<bool>, Vec<Block>) {
     let checked = text
         .strip_prefix("[ ] ")
-        .map(|_| Some(false))
-        .or_else(|| {
-            text.strip_prefix("[x] ")
-                .or_else(|| text.strip_prefix("[X] "))
-                .map(|_| Some(true))
-        });
+    let checked = if text.starts_with("[ ] ") {
+        Some(false)
+    } else if text.starts_with("[x] ") || text.starts_with("[X] ") {
+        Some(true)
+    } else {
+        None
+    };
     match checked {
         Some(_) => (checked, parse(&text[4..])),
         None => (None, parse(text)),
@@ -674,8 +675,8 @@ mod tests {
             panic!("a paragraph");
         };
         assert_eq!(
-            runs,
-            vec![Inline::Text("snake_case_name".into())],
+            runs.as_slice(),
+            &[Inline::Text("snake_case_name".into())],
             "{runs:?}"
         );
     }
@@ -707,8 +708,8 @@ mod tests {
             panic!("a paragraph: {:?}", items[0].blocks);
         };
         assert_eq!(
-            runs,
-            vec![Inline::Text("one and two".into())],
+            runs.as_slice(),
+            &[Inline::Text("one and two".into())],
             "{runs:?}"
         );
     }

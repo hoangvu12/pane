@@ -149,6 +149,26 @@ pub enum NodeKind {
     Unknown(String),
 }
 
+/// How a container's children are laid out along its cross axis.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Align {
+    Start,
+    Center,
+    End,
+    Stretch,
+    Baseline,
+}
+
+/// How a container's children share its main axis.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Justify {
+    Start,
+    Center,
+    End,
+    SpaceBetween,
+    SpaceAround,
+}
+
 /// What a `column`, `row` or `card` says about its layout.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Layout {
@@ -791,6 +811,9 @@ fn node(wire: WireNode, depth: usize, nodes: &mut usize) -> Result<Node, ReadErr
             _ => NodeKind::Unknown(wire.kind.clone()),
         }
     };
+    let style = style(&wire)?;
+    let place = place_of(&wire, "place")?;
+    let offset = offset_of(&wire)?;
     let children = wire
         .children
         .unwrap_or_default()
@@ -807,9 +830,9 @@ fn node(wire: WireNode, depth: usize, nodes: &mut usize) -> Result<Node, ReadErr
         .transpose()?;
     Ok(Node {
         kind,
-        style: style(&wire)?,
-        place: place_of(&wire, "place")?,
-        offset: offset_of(&wire)?,
+        style,
+        place,
+        offset,
         key: wire.key,
         name: wire.name,
         requires: wire.requires,
@@ -826,7 +849,7 @@ fn layout(wire: &WireNode) -> Result<Layout, ReadError> {
     let over = |message: String| ReadError::Unreadable(message);
     let rest = &wire.rest;
     Ok(Layout {
-        gap: token(rest.get("gap"), "gap", space)?,
+        gap: token(rest.get("gap"), "gap", Space::named)?,
         padding: padding(rest.get("padding")).map_err(over)?,
         align: token(rest.get("align"), "align", align)?,
         justify: token(rest.get("justify"), "justify", justify)?,
@@ -1905,9 +1928,9 @@ mod tests {
         };
         assert_eq!(image.fit, Fit::Cover);
         assert_eq!(image.size, Some(IconExtent::Token(IconSize::L)));
-        assert_eq!(image.place, Some(Place::TopEnd));
+        assert_eq!(tree.root.children[0].place, Some(Place::TopEnd));
         assert_eq!(
-            image.offset,
+            tree.root.children[0].offset,
             Some(Offset {
                 x: Length::Px(Finite(8.)),
                 y: Length::Px(Finite(4.)),
@@ -1922,7 +1945,7 @@ mod tests {
         ));
         assert_eq!(scroll.children[0].style.sizing.grow, Some(Finite(2.)));
         assert!(matches!(scroll.children[0].kind, NodeKind::Spacer));
-        assert!(matches!(scroll.children[1].kind, NodeKind::Divider));
+        assert!(matches!(scroll.children[1].kind, NodeKind::Divider { .. }));
         assert!(matches!(
             tree.root.children[2].kind,
             NodeKind::Divider {
@@ -1934,12 +1957,12 @@ mod tests {
     #[test]
     fn every_node_carries_its_sizing_and_surface_with_variants() {
         let tree = tree(
-            r#"{"type":"text","text":"Hi","grow":1,"shrink":0,"basis":"40px",
+            r##"{"type":"text","text":"Hi","grow":1,"shrink":0,"basis":"40px",
                 "width":"1/2","height":64,"minWidth":"s","maxWidth":4096,
                 "aspectRatio":1.5,
                 "background":"danger","border":{"width":"2px","color":"#0f0"},
                 "radius":"full","opacity":0.8,
-                "hover":{"background":{"raw":"#ff0000"}},"pressed":{"opacity":1}}"#,
+                "hover":{"background":{"raw":"#ff0000"}},"pressed":{"opacity":1}"##,
         )
         .unwrap();
         let style = &tree.root.style;
@@ -2000,7 +2023,9 @@ mod tests {
                 NodeKind::Text(text) => text.color,
                 _ => panic!("a text"),
             };
-            tree(root).map(field).map_err(|e| e.message().to_owned())
+            tree(root)
+                .map(|tree| field(&tree))
+                .map_err(|e| e.message().to_owned())
         };
         assert_eq!(
             read(r#"{"type":"text","text":"a","color":"success"}"#).unwrap(),
@@ -2017,7 +2042,7 @@ mod tests {
             })
         );
         assert_eq!(
-            read(r#"{"type":"text","text":"a","color":{"light":"#111","dark":"secondary"}}"#)
+            read(r##"{"type":"text","text":"a","color":{"light":"#111","dark":"secondary"}}"##)
             .unwrap(),
             Some(Paint {
                 tint: Tint::Pair {
@@ -2028,7 +2053,7 @@ mod tests {
             })
         );
         assert_eq!(
-            read(r#"{"type":"text","text":"a","color":{"raw":{"light":"#111","dark":"#eee"}}}"#)
+            read(r##"{"type":"text","text":"a","color":{"raw":{"light":"#111","dark":"#eee"}}}"##)
             .unwrap(),
             Some(Paint {
                 tint: Tint::Pair {
@@ -2044,7 +2069,7 @@ mod tests {
             read(r#"{"type":"text","text":"a","color":"sparkle"}"#).unwrap(),
             None
         );
-        assert!(read(r#"{"type":"text","text":"a","color":{"light":"#111"}}"#)
+        assert!(read(r##"{"type":"text","text":"a","color":{"light":"#111"}}"##)
             .unwrap_err()
             .contains("only one of a light and a dark"));
         assert!(read(r#"{"type":"text","text":"a","color":5}"#)

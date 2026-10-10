@@ -135,7 +135,13 @@ impl Launcher {
                 let owner = super::owner(&state.packages, &component)
                     .map(|package| package.identity.clone());
                 let mut tree = rendered.tree;
-                let loading = landed(&mut state, &component, owner.as_ref(), &mut tree);
+                let loading = landed(
+                    &state.packages,
+                    &state.icon_loads,
+                    &component,
+                    owner.as_ref(),
+                    &mut tree,
+                );
                 let view = super::LauncherView::new(
                     super::Screen::DesignedView(super::DesignedViewSnapshot { id, tree }),
                     // The view's own content is its title, as a command's
@@ -313,7 +319,7 @@ impl Launcher {
             return false;
         }
         let owner = open.owner.as_ref().map(|identity| identity.key());
-        let Some(super::Screen::DesignedView(snapshot)) = &mut state.view.screen else {
+        let super::Screen::DesignedView(snapshot) = &mut state.view.screen else {
             return false;
         };
         shown(&mut snapshot.tree, owner.as_deref(), &state.icon_loads)
@@ -438,8 +444,9 @@ fn shown_node(
     let mut changed = false;
     let show = |icon: &mut Option<Icon>, changed: &mut bool| {
         if let Some(held) = icon.as_ref() {
-            *icon = Some(loads.shown(owner, held));
-            *changed |= held != icon.as_ref().expect("an icon");
+            let shown = loads.shown(owner, held);
+            *changed |= held != &shown;
+            *icon = Some(shown);
         }
     };
     match &mut node.kind {
