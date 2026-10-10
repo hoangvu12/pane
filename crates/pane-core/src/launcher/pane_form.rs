@@ -130,7 +130,7 @@ impl PaneForm {
             }
             children.push(node);
         }
-        children.push(Node {
+        let form = Node {
             kind: NodeKind::Form(FormNode {
                 on_submit: None,
                 submit_label: Some(submit.to_owned()),
@@ -138,13 +138,13 @@ impl PaneForm {
             key: Some("form".into()),
             children,
             ..Node::plain()
-        });
+        };
         let tree = DesignedTree {
             root: Node {
                 kind: NodeKind::Column(Layout::default()),
                 navigation_title: Some(title.to_owned()),
                 key: Some("screen".into()),
-                children,
+                children: vec![form],
                 ..Node::plain()
             },
         };
@@ -174,7 +174,7 @@ impl PaneForm {
 impl PaneFormField {
     /// The field as a tree node: its key, title, placeholder, note and
     /// starting value.
-    fn node(&self) -> Node {
+    pub(super) fn node(&self) -> Node {
         let field = FieldProps {
             title: Some(self.title.clone()),
             info: self.info.clone(),
@@ -232,7 +232,11 @@ impl PaneFormField {
 /// Settings card's "Choose…" does (a folder there chooses a bundle).
 fn path_node(pick: PathPick, field: &PaneFormField, props: FieldProps) -> NodeKind {
     let picker = FilePicker {
-        paths: (!field.value.is_empty()).then(|| vec![field.value.clone()]),
+        paths: if field.value.is_empty() {
+            Vec::new()
+        } else {
+            vec![field.value.clone()]
+        },
         multiple: false,
         field: props,
     };

@@ -677,7 +677,7 @@ impl Launcher {
                     // when its key is new to the view (#241).
                     remember_keys(&stack.top().tree)
                 };
-                let (screen, title, mut tree, owner, loading) = {
+                let (screen, title, tree, owner, loading) = {
                     let stack = state.designed_view.as_mut().expect("a view is open");
                     let top = stack.top_mut();
                     top.shown = number;
@@ -698,6 +698,7 @@ impl Launcher {
                     let shown = stack.shown();
                     (shown.0, shown.1, top.tree.clone(), owner, loading)
                 };
+                let mut tree = tree;
                 // The remembered values, placed onto the tree on screen.
                 self.prefill_remembered(state, &component, previous, &mut tree);
                 if let Some(stack) = state.designed_view.as_mut() {
@@ -716,7 +717,7 @@ impl Launcher {
                 let component = state.open.clone().unwrap_or_default();
                 // The pushed view's first render asks for its own refresh.
                 let ask = rendered.refresh_after_ms;
-                let (screen, title) = {
+                let (screen, title, mut tree) = {
                     let stack = state.designed_view.as_mut().expect("a view is open");
                     stack.top_mut().shown = number;
                     let owner = stack.top().owner.clone();
@@ -728,16 +729,15 @@ impl Launcher {
                         &state.icon_loads,
                         &component,
                     ));
-                    // A pushed view is opened afresh: its `remember` fields
-                    // prefill as a root view's do (#241).
-                    self.prefill_remembered(
-                        state,
-                        &component,
-                        Vec::new(),
-                        &mut stack.top_mut().tree,
-                    );
-                    stack.shown()
+                    let shown = stack.shown();
+                    (shown.0, shown.1, stack.top_mut().tree.clone())
                 };
+                // A pushed view is opened afresh: its `remember` fields
+                // prefill as a root view's do (#241).
+                self.prefill_remembered(state, &component, Vec::new(), &mut tree);
+                if let Some(stack) = state.designed_view.as_mut() {
+                    stack.top_mut().tree = tree;
+                }
                 state.view.screen = super::Screen::DesignedView(screen);
                 state.view.title = title;
                 state.view.status = Status::Idle;
@@ -748,7 +748,7 @@ impl Launcher {
                 // The replacing view's first render asks for its own
                 // refresh.
                 let ask = rendered.refresh_after_ms;
-                let (screen, title) = {
+                let (screen, title, mut tree) = {
                     let stack = state.designed_view.as_mut().expect("a view is open");
                     stack.top_mut().shown = number;
                     let owner = stack.top().owner.clone();
@@ -760,16 +760,15 @@ impl Launcher {
                         &state.icon_loads,
                         &component,
                     );
-                    // A replacing view is opened afresh: its `remember`
-                    // fields prefill as a root view's do (#241).
-                    self.prefill_remembered(
-                        state,
-                        &component,
-                        Vec::new(),
-                        &mut stack.top_mut().tree,
-                    );
-                    stack.shown()
+                    let shown = stack.shown();
+                    (shown.0, shown.1, stack.top_mut().tree.clone())
                 };
+                // A replacing view is opened afresh: its `remember` fields
+                // prefill as a root view's do (#241).
+                self.prefill_remembered(state, &component, Vec::new(), &mut tree);
+                if let Some(stack) = state.designed_view.as_mut() {
+                    stack.top_mut().tree = tree;
+                }
                 state.view.screen = super::Screen::DesignedView(screen);
                 state.view.title = title;
                 state.view.status = Status::Idle;
@@ -1263,7 +1262,7 @@ fn json_of(value: &FormValue) -> String {
         FormValue::List(values) => {
             let joined = values
                 .iter()
-                .map(json_string)
+                .map(|value| json_string(value))
                 .collect::<Vec<String>>()
                 .join(",");
             format!("[{joined}]")

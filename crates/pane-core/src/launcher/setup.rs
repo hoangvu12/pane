@@ -222,7 +222,7 @@ impl Launcher {
             &preferences::help(&location),
             fields,
         );
-        show_setup_form(state, SetupGate { identity, opening }, form, title.clone());
+        show_setup_form(&mut state, SetupGate { identity, opening }, form, title.clone());
         None
     }
 
