@@ -274,7 +274,10 @@ impl Launcher {
         let built = self.list_of(state);
         let Some((built, list)) = built else {
             // No list on the tree: the screen is the tree's alone, with
-            // no rows of its own.
+            // no rows of its own and no list presented.
+            if let Screen::DesignedView(snapshot) = &mut state.view.screen {
+                snapshot.list = None;
+            }
             state.view.rows.clear();
             state.entries.clear();
             state.view.selected = None;
@@ -323,7 +326,6 @@ impl Launcher {
             };
             let Some((node, list)) = first_list(&snapshot.tree) else {
                 // No list on this tree: the screen is the tree's alone.
-                snapshot.list = None;
                 return None;
             };
             let top = stack.top_mut();
@@ -410,6 +412,12 @@ impl Launcher {
                     Some(state.view.selected?.min(last))
                 })
                 .or_else(|| first_index(&rows));
+            let selected_key = selected
+                .and_then(|index| presented.get(index))
+                .map(|row| row.key.clone());
+            let detail = selected
+                .and_then(|index| presented.get(index))
+                .and_then(|row| row.detail.clone());
             Some((
                 Built {
                     rows,
@@ -423,15 +431,11 @@ impl Launcher {
                     search: held.search.clone(),
                     placeholder: list.search_placeholder.clone(),
                     loading: held.loading_since,
-                    selected: selected
-                        .and_then(|index| presented.get(index))
-                        .map(|row| row.key.clone()),
+                    selected: selected_key,
                     rows: presented,
                     sections,
                     empty: empty.cloned().map(Box::new),
-                    detail: selected
-                        .and_then(|index| presented.get(index))
-                        .and_then(|row| row.detail.clone()),
+                    detail,
                     dropdown: dropdown.map(dropdown_of),
                     on_search_text: list.on_search_text,
                     on_selection_change: list.on_selection_change,
@@ -493,7 +497,7 @@ impl Launcher {
     /// more is there. Both events are delivered in the background, as the
     /// pop event is: their answers land through the change channel.
     pub(super) fn designed_list_selected(&self, state: &mut State, index: usize) {
-        let events = {
+        let events: Vec<(DesignedHandler, u32, Option<String>, String)> = {
             let Screen::DesignedView(snapshot) = &state.view.screen else {
                 return;
             };
