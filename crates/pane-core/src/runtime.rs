@@ -5039,7 +5039,7 @@ impl Host {
                             if wanted.load(Ordering::SeqCst) {
                                 return Poll::Ready(());
                             }
-                            let woken = std::pin::pin!(woken.notified());
+                            let mut woken = std::pin::pin!(woken.notified());
                             if woken.as_mut().poll(cx).is_ready() {
                                 return Poll::Ready(());
                             }

@@ -259,9 +259,7 @@ impl Refresh {
         // another command's — are dropped; with none open, one whose view
         // is still opening is kept: its first render may be asking still.
         if let Some(stack) = state.designed_view.as_ref() {
-            refreshing
-                .pushed
-                .retain(|view| stack.views.iter().any(|open| open.id.id == *view));
+            refreshing.pushed.retain(|view| stack.holds(*view));
         }
         if refreshing.in_flight {
             return None;
@@ -270,7 +268,7 @@ impl Refresh {
         // the clock made due: data landing is newer than a timer. Only the
         // stack's top view is drawn, and only while the window is shown;
         // an ask for another view of the stack waits for its showing.
-        if let Some(top) = state.designed_view.as_ref().map(|stack| stack.top().id.id)
+        if let Some(top) = state.designed_view.as_ref().map(|stack| stack.top_id())
             && refreshing.pushed.contains(&top)
             && on_top_and_shown(&state)
         {

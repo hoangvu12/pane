@@ -78,11 +78,8 @@ impl Pane {
     /// `target/guests/packages`.
     fn new(packages: &[&str]) -> Pane {
         let data = tempfile::tempdir().unwrap();
-        let launcher = Launcher::with_packages(
-            Runtime::start(),
-            Vec::new(),
-            data.path().join("extensions"),
-        );
+        let launcher =
+            Launcher::with_packages(Runtime::start(), Vec::new(), data.path().join("extensions"));
         let pane = Pane { data, launcher };
         for package in packages {
             pane.install_assembled(package);
@@ -395,9 +392,7 @@ impl SlowPane {
             .map(|name| {
                 (
                     name.to_owned(),
-                    PackageIdentity::local(&sources.join(name))
-                        .unwrap()
-                        .key(),
+                    PackageIdentity::local(&sources.join(name)).unwrap().key(),
                 )
             })
             .collect::<serde_json::Map<String, serde_json::Value>>();

@@ -18,6 +18,7 @@
 // type-checked, so a misspelling fails the build (the `jsxImportSource`
 // in tsconfig.json makes the transform use the SDK's runtime).
 import type { Command } from "@pane-app/extension";
+import { waitFor } from "wasi:clocks/monotonic-clock@0.3.0";
 import {
   Badge,
   Button,
@@ -189,15 +190,14 @@ const load = (): Promise<string> =>
 function LoadingView() {
   const what = usePending(load);
   if (what === undefined) {
-    return jsxs(Text, { level: "secondary", children: ["Loading…"] });
+    return <Text level="secondary">Loading…</Text>;
   }
-  return jsxs(Column, {
-    gap: "m",
-    children: [
-      jsxs(Text, { style: "title", children: ["Loaded"] }),
-      jsxs(Text, { level: "secondary", children: [what] }),
-    ],
-  });
+  return (
+    <Column gap="m">
+      <Text style="title">Loaded</Text>
+      <Text level="secondary">{what}</Text>
+    </Column>
+  );
 }
 
 export const command: Command = {
