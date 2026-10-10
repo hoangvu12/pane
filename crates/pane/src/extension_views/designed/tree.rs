@@ -20,6 +20,7 @@ use crate::app::LauncherWindow;
 use crate::ui::theme::Theme;
 use crate::ui::tokens;
 
+use super::canvas;
 use super::components::{self, FieldKind};
 use super::reconcile::{FieldEvents, Held, KeyedState};
 
@@ -371,6 +372,12 @@ pub(super) fn draw_node(
             path,
             draw,
             components::select(select, path, &draw).into_any_element(),
+        ),
+        NodeKind::Canvas(held) => styled(
+            node,
+            path,
+            draw,
+            canvas::canvas(node, held, path, &draw, cx).into_any_element(),
         ),
     };
     path.truncate(start);

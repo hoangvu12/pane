@@ -41,6 +41,7 @@
 //! and shows the tree it answers with; the extension's state lives in
 //! its view, and the whole screen is redrawn from the answer.
 
+mod canvas;
 mod components;
 mod markdown;
 mod reconcile;
@@ -57,6 +58,7 @@ use crate::app::LauncherWindow;
 use reconcile::{FieldEvents, Held};
 use tree::Draw;
 
+pub(crate) use canvas::measures_of;
 pub(crate) use reconcile::DesignedControls;
 
 /// The key context of a designed view's button and link: Enter and Space
@@ -82,8 +84,17 @@ const AREA_CONTEXT: &str = "DesignedTextArea";
 /// The key context of a designed view's select: the searchable select's
 /// trigger takes its keys from `ui::select`'s bindings.
 const SELECT_CONTEXT: &str = "DesignedSelect";
+/// The key context of a designed view's canvas (#242): it binds nothing of
+/// its own — its keys are the node's `onKey` events — but its semantic
+/// handlers' bindings sit under [`CANVAS_SEMANTICS_CONTEXT`].
+const CANVAS_CONTEXT: &str = "DesignedCanvas";
+/// The key context of a canvas that names the semantic handlers
+/// (`onIncrement`, `onDecrement`, `onActivate`): the up and down arrows
+/// and Space run them, taking those keys from the canvas's own key
+/// events.
+const CANVAS_SEMANTICS_CONTEXT: &str = "DesignedCanvasSemantics";
 
-actions!(designed, [Press, Toggle, Move, Adjust, Commit]);
+actions!(designed, [Press, Toggle, Move, Adjust, Commit, Increment, Decrement, Activate]);
 
 /// Registers the designed view's key bindings: Enter and Space press a
 /// button or a link, change a toggle or a checkbox; a segmented
@@ -109,6 +120,13 @@ pub(crate) fn bind_keys(cx: &mut App) {
             gpui_elements::editable_text::actions::Enter,
             Some(AREA_CONTEXT),
         ),
+        // A canvas that names the semantic handlers takes the up and down
+        // arrows and Space itself (#242): a slider-like canvas needs no key
+        // parsing. Other keys are its own `onKey` events, which the
+        // window's keystroke observer raises.
+        KeyBinding::new("up", Increment, Some(CANVAS_SEMANTICS_CONTEXT)),
+        KeyBinding::new("down", Decrement, Some(CANVAS_SEMANTICS_CONTEXT)),
+        KeyBinding::new("space", Activate, Some(CANVAS_SEMANTICS_CONTEXT)),
     ]);
 }
 

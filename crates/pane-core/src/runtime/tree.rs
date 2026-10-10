@@ -15,7 +15,7 @@ use crate::icons::{self, Icon, Tint};
 use serde::Deserialize;
 use serde_json::Value;
 
-use super::{Choice, CustomViewInfo, CustomViewRole, Field, FieldKind, Form};
+use super::{Choice, Field, FieldKind, Form};
 use crate::keyboard::Binding;
 use crate::platform::Platform;
 
@@ -64,9 +64,6 @@ pub struct Item {
     /// The operating systems the item's action works on; `None` for every
     /// system.
     pub platforms: Option<Vec<Platform>>,
-    /// When set (and `form` is not), activating the item opens this custom
-    /// view instead of running its action.
-    pub custom_view: Option<CustomViewInfo>,
     /// How the item looks beyond its title and subtitle: its icon,
     /// tooltips and accessories (#139).
     pub look: ItemLook,
@@ -379,8 +376,6 @@ struct WireItem {
     /// Names of systems; a name Pane does not know is ignored.
     #[serde(default)]
     platforms: Option<Vec<String>>,
-    #[serde(default)]
-    custom_view: Option<WireCustomView>,
     /// Read leniently by [`icons::read`]: an icon Pane cannot draw leaves
     /// the item without one, never the tree unreadable.
     #[serde(default)]
@@ -414,13 +409,6 @@ fn item(item: WireItem) -> Result<Item, String> {
                 .iter()
                 .filter_map(|name| Platform::from_id(name))
                 .collect()
-        }),
-        custom_view: item.custom_view.map(|view| CustomViewInfo {
-            title: view.title,
-            label: view.label,
-            role: match view.role {
-                WireRole::ColorWell => CustomViewRole::ColorWell,
-            },
         }),
         look,
     })
@@ -662,19 +650,6 @@ struct WireChoice {
     label: String,
 }
 
-#[derive(Deserialize)]
-struct WireCustomView {
-    title: String,
-    label: String,
-    role: WireRole,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "kebab-case")]
-enum WireRole {
-    ColorWell,
-}
-
 /// An answer object. The first version's `status` text is no longer
 /// shown, so it is ignored with any other unknown field.
 #[derive(Deserialize)]
@@ -699,8 +674,7 @@ mod tests {
                     {"id": "n", "label": "Name", "kind": "text", "placeholder": "Ada"},
                     {"id": "c", "label": "Pick", "kind": "choice",
                      "choices": [{"id": "x", "label": "X"}]}]}},
-                {"id": "c", "title": "C", "subtitle": null, "actions": null,
-                 "customView": {"title": "Color", "label": "Color", "role": "color-well"}}
+                {"id": "c", "title": "C", "subtitle": null, "actions": null}
             ]}}"#,
         )
         .unwrap();
@@ -724,10 +698,6 @@ mod tests {
         assert!(matches!(&form.fields[1].kind, FieldKind::Choice(choices) if choices.len() == 1));
         let c = &view.items[2];
         assert_eq!(c.actions, []);
-        assert_eq!(
-            c.custom_view.as_ref().map(|view| view.role),
-            Some(CustomViewRole::ColorWell)
-        );
     }
 
     #[test]

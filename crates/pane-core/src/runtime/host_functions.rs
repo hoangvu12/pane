@@ -10,7 +10,11 @@
 //! on the same way ([`super::Runtime::set_view_asks`]): a designed view
 //! asking to be drawn again, from inside a call or between them (see
 //! `Host::park_guest`) — the drawing it asks for is the launcher's, never
-//! the instance's, so the ask is recorded and answered at once.
+//! the instance's, so the ask is recorded and answered at once. Its
+//! `measure-text` (#242) is answered by the fonts the window drew the
+//! view with, which the launcher installs
+//! ([`super::Runtime::set_text_measures`]); a runtime no window drives
+//! answers no extent.
 //!
 //! Stopped code does nothing more: a window function then answers that no
 //! window was shown, a toast or HUD is shown nowhere, and a subtitle is
@@ -155,6 +159,15 @@ impl view_host::Host for GuestState {
         if let Some(asks) = lock(&self.view_asks).clone() {
             asks(view);
         }
+    }
+
+    fn measure_text(&mut self, text: String, style: String) -> view_host::TextExtent {
+        let _host = self.host();
+        let measures = lock(&self.text_measures).clone();
+        let (width, height) = measures
+            .map(|measures| measures(&text, &style))
+            .unwrap_or((0., 0.));
+        view_host::TextExtent { width, height }
     }
 }
 

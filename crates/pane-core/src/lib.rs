@@ -112,17 +112,17 @@ pub use runtime::Timers;
 pub use runtime::memory_peak;
 pub use runtime::{
     Action, ActionKind, ActionStyle, ActionSubmenu, Align, Answer, Badge, Border, Button,
-    ButtonTone, COMPONENT_SET, COMPUTE_LIMIT, CallError, Checkbox, Choice, CustomViewInfo,
-    CustomViewRole, DesignedEvent, DesignedHandler, DesignedNext, DesignedRendered, DesignedTree,
-    EmptyState, Field, FieldKind, FieldValue, Finite, Fit, Form, FormError, Frame, GUEST_MEMORY,
-    IconExtent, IconNode, Image, Item, Justify, Key, KeySequence, Keycap, Layout, Length, Link,
-    Loading, MAX_DEPTH, MAX_FRAME_SHAPES, MAX_FRAME_SIZE, MAX_INLINE_IMAGE, MAX_MARKDOWN_CHARS,
-    MAX_NAVIGATION_DEPTH, MAX_NODES, MAX_PX, MAX_TREE_BYTES, Markdown, MetadataItem, MetadataList,
-    Node, NodeKind, Offset, Orientation, Padding, Paint, PathKind, Place, Point, Progress,
-    RadiusLength, Rgb, RichRow, RowAccessory, Runtime, RuntimeFailure, RuntimeStatus,
-    SectionHeader, Segment, Segmented, Select, Shape, Sizing, Slider, Space, Span, Style,
-    SubmenuEntries, Surface, TREE_VERSION, Tag, Text, TextContent, TextInput, TextLevel, TextStyle,
-    Toggle, UNRESPONSIVE_LIMIT, View, ViewEvent, ViewId, WARN_AFTER, key_problems,
+    ButtonTone, Canvas, CanvasA11y, CanvasHandlers, CanvasOp, CanvasRole, CanvasStroke, CanvasText,
+    COMPONENT_SET, COMPUTE_LIMIT, CallError, Checkbox, Choice, DesignedEvent, DesignedHandler,
+    DesignedNext, DesignedRendered, DesignedTree, EmptyState, Field, FieldKind, FieldValue, Finite,
+    Fit, Form, FormError, GUEST_MEMORY, IconExtent, IconNode, Image, Item, Justify, KeySequence,
+    Keycap, Layout, Length, Link, Loading, MAX_CANVAS_OPS, MAX_CANVAS_TEXT_CHARS, MAX_DEPTH,
+    MAX_INLINE_IMAGE, MAX_MARKDOWN_CHARS, MAX_NAVIGATION_DEPTH, MAX_NODES, MAX_PX, MAX_TREE_BYTES,
+    Markdown, MetadataItem, MetadataList, Node, NodeKind, Offset, Orientation, Padding, Paint,
+    PathKind, Place, Progress, RadiusLength, RichRow, RowAccessory, Runtime, RuntimeFailure,
+    RuntimeStatus, SectionHeader, Segment, Segmented, Select, Sizing, Slider, Space, Span, StrokeCap,
+    StrokeJoin, Style, SubmenuEntries, Surface, TREE_VERSION, Tag, Text, TextContent, TextInput,
+    TextLevel, TextStyle, Toggle, UNRESPONSIVE_LIMIT, View, ViewId, WARN_AFTER, key_problems,
 };
 pub use search::{SettingsEntry, settings_matches, title_matches};
 pub use tokens::{IconSize, Radius};
