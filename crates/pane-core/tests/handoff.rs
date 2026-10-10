@@ -648,10 +648,10 @@ fn the_open_screen_of_a_package_that_does_not_opt_in_reopens() {
     select_title(&launcher, "Choose a color");
     // The root list's selection as the view is pushed: the row the user
     // chose, which the reopened screen keeps by key.
-    let selected = launcher
-        .view()
+    let view = launcher.view();
+    let selected = view
         .selected
-        .and_then(|at| launcher.view().rows.get(at))
+        .and_then(|at| view.rows.get(at))
         .map(|row| row.id.clone())
         .unwrap_or_default();
     block_on(launcher.activate_selected());
