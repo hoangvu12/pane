@@ -50,7 +50,6 @@ fn opened(cx: &mut TestAppContext) -> (Entity<LauncherWindow>, &mut VisualTestCo
         subtitle: None,
         component,
         takes_query: false,
-        search: false,
     };
     let launcher = Launcher::new(Runtime::start(), vec![command]);
     cx.executor().allow_parking();

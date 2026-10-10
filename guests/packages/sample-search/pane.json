@@ -9,7 +9,7 @@
       "title": "Package search",
       "subtitle": "Searches the fixture package registry as you type",
       "component": "sample_search.wasm",
-      "search": true
+      "mode": "designed"
     }
   ]
 }

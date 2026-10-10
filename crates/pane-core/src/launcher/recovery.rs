@@ -300,7 +300,6 @@ mod tests {
             subtitle: None,
             component,
             takes_query: false,
-            search: false,
         };
         let launcher = Launcher::new(Ok(runtime.clone()), vec![command]);
         block_on(launcher.activate_selected());

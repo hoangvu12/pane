@@ -36,7 +36,7 @@
 import { askToRender } from "pane:extension/view@0.1.0";
 
 /** The version of the UI component set this SDK writes. */
-const COMPONENT_SET = "1.2";
+const COMPONENT_SET = "1.3";
 
 /** The empty outcome: what a handler that navigates nowhere answers. */
 const NOTHING_NEXT = { push: null, replace: null, pop: null };
@@ -126,9 +126,47 @@ export const PasswordInput = builtin("password-input");
 export const TextArea = builtin("text-area");
 /** A select, its choice changed by its `onChange`. */
 export const Select = builtin("select");
+/** A standard List (#240): items in sections, its search field and
+ * selection Pane's. Its children are `List.Section` and `List.Item` (or
+ * `Grid.Item` for the Grid), a `List.Dropdown` and an `EmptyView`. */
+export const List = builtin("list");
+/** A standard Grid (#240): a List's behaviour with cells. */
+export const Grid = builtin("grid");
+/** A section of a List's or Grid's items (see `List.Section`). */
+export const Section = builtin("list-section");
+/** One item of a List (see `List.Item`). */
+export const Item = builtin("list-item");
+/** One cell of a Grid (see `Grid.Item`). */
+export const Cell = builtin("grid-item");
+/** A List's search-bar dropdown (see `List.Dropdown`). */
+export const Dropdown = builtin("list-dropdown");
+/** A Detail (#240): a scrolled column of Markdown, metadata, actions. */
+export const Detail = builtin("detail");
+
+// The Raycast-style nesting: List.Section, List.Item, List.Dropdown and
+// Grid.Item are the components themselves.
+List.Section = Section;
+List.Item = Item;
+List.Dropdown = Dropdown;
+Grid.Section = Section;
+Grid.Item = Cell;
 
 /** A fragment: its children are drawn where it sits, unwrapped. */
 export const Fragment = Symbol.for("pane.extension.fragment");
+
+/** The selected item's key of the List or Grid the view renders, as its
+ * render context names it (#240): the item the detail pane's content is
+ * built for. `null` when no item is selected; read during a render. */
+let selected = null;
+
+/**
+ * The selected item's key of the view's List or Grid, as this render's
+ * context names it: the item the detail pane's content is built for
+ * (`null` when no item is selected). Read during a render.
+ */
+export function selectedKey() {
+  return selected;
+}
 
 /** The render in progress, where the hooks write; `null` outside one. */
 let rendering = null;
@@ -325,7 +363,11 @@ function writeChild(child, index, parentPath, callbacks, cells, used, into) {
 function builtinNode(name, props, path, callbacks, cells, used) {
   const given = props ?? {};
   const children = [];
-  write(given.children, path, callbacks, cells, used, children);
+  // A dropdown's children are its items, given as objects rather than
+  // elements; every other component's are written as nodes.
+  if (name !== "list-dropdown") {
+    write(given.children, path, callbacks, cells, used, children);
+  }
   const node = { type: name };
   if (given.key !== undefined) node.key = given.key;
   if (given.name !== undefined) node.name = given.name;
@@ -545,6 +587,114 @@ function builtinNode(name, props, path, callbacks, cells, used) {
       node.children = children;
       return node;
     }
+    case "list":
+    case "grid": {
+      for (const field of [
+        "searchPlaceholder",
+        "searchText",
+        "selectedKey",
+        "isLoading",
+        "isShowingDetail",
+        "hasMore",
+        "pageSize",
+      ]) {
+        if (given[field] !== undefined) node[field] = given[field];
+      }
+      if (typeof given.onSearchText === "function") {
+        const id = callbacks.size + 1;
+        callbacks.set(id, given.onSearchText);
+        node.onSearchText = id;
+      }
+      if (typeof given.onSelectionChange === "function") {
+        const id = callbacks.size + 1;
+        callbacks.set(id, given.onSelectionChange);
+        node.onSelectionChange = id;
+      }
+      if (typeof given.onLoadMore === "function") {
+        const id = callbacks.size + 1;
+        callbacks.set(id, given.onLoadMore);
+        node.onLoadMore = id;
+      }
+      node.children = children;
+      return node;
+    }
+    case "list-section": {
+      if (given.title !== undefined) node.title = given.title;
+      if (given.subtitle !== undefined) node.subtitle = given.subtitle;
+      if (given.columns !== undefined) node.columns = given.columns;
+      if (given.aspectRatio !== undefined) node.aspectRatio = given.aspectRatio;
+      if (given.fit !== undefined) node.fit = given.fit;
+      if (given.inset !== undefined) node.inset = given.inset;
+      node.children = children;
+      return node;
+    }
+    case "list-item": {
+      node.title = textOf(given.children);
+      if (given.title !== undefined) node.title = given.title;
+      if (given.subtitle !== undefined) node.subtitle = given.subtitle;
+      if (given.icon !== undefined) node.icon = given.icon;
+      if (given.accessories !== undefined) node.accessories = given.accessories;
+      if (given.keywords !== undefined) node.keywords = given.keywords;
+      if (typeof given.onClick === "function") {
+        const id = callbacks.size + 1;
+        callbacks.set(id, given.onClick);
+        node.onPress = id;
+      }
+      if (Array.isArray(given.actions)) {
+        node.actions = given.actions.map((action) => {
+          const held = { onPress: 0 };
+          if (action.title !== undefined) held.title = action.title;
+          if (typeof action.onClick === "function") {
+            const id = callbacks.size + 1;
+            callbacks.set(id, action.onClick);
+            held.onPress = id;
+          }
+          return held;
+        });
+      }
+      if (given.detail != null) {
+        const detail = [];
+        write(given.detail, path, callbacks, cells, used, detail);
+        node.detail = detail[0];
+      }
+      node.children = children;
+      return node;
+    }
+    case "grid-item": {
+      if (given.title !== undefined) node.title = given.title;
+      if (given.subtitle !== undefined) node.subtitle = given.subtitle;
+      if (given.image !== undefined) node.image = given.image;
+      if (given.color !== undefined) node.color = given.color;
+      if (typeof given.onClick === "function") {
+        const id = callbacks.size + 1;
+        callbacks.set(id, given.onClick);
+        node.onPress = id;
+      }
+      node.children = children;
+      return node;
+    }
+    case "list-dropdown": {
+      if (given.value !== undefined) node.value = given.value;
+      if (given.placeholder !== undefined) node.placeholder = given.placeholder;
+      if (typeof given.onChange === "function") {
+        const id = callbacks.size + 1;
+        callbacks.set(id, given.onChange);
+        node.onChange = id;
+      }
+      node.items = asList(given.children).map((child) => {
+        const held = isElement(child) ? (child.props ?? {}) : child ?? {};
+        return {
+          value: held.value ?? textOf(held.children),
+          ...(held.title !== undefined ? { title: held.title } : {}),
+          ...(held.label !== undefined && held.title === undefined ? { title: held.label } : {}),
+        };
+      });
+      return node;
+    }
+    case "detail": {
+      node.children = children;
+      return node;
+    }
     case "text-input":
     case "password-input":
     case "text-area": {
@@ -684,10 +834,12 @@ export function createView(component, props = {}) {
       const collected = { ticks: [], view };
       const root = [];
       collecting = collected;
+      selected = selectedOf(context);
       try {
         write({ type: component, props, key: undefined }, "", callbacks, cells, used, root);
       } finally {
         collecting = null;
+        selected = null;
       }
       for (const path of cells.keys()) {
         if (!used.has(path)) cells.delete(path);
@@ -828,6 +980,16 @@ function whyOf(context) {
     return JSON.parse(context)?.why ?? "";
   } catch {
     return "";
+  }
+}
+
+/** The selected item's key `context` names, or `null` when it says none. */
+function selectedOf(context) {
+  try {
+    const named = JSON.parse(context)?.selected;
+    return typeof named === "string" ? named : null;
+  } catch {
+    return null;
   }
 }
 

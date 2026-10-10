@@ -1813,25 +1813,18 @@ export const command: Command = {
 
 ## Searching inside a command
 
-A command that searches an online service as the user types sets
-`"search": true` on its entry in `pane.json` and exports
-`pane:extension/command-search` ([wit/search.wit](../wit/search.wit)) beside
-`command`. Pane gives it a search field of its own once the user opens it
-and calls `search(command, query)` with the text typed there (trimmed,
-never empty); the results (`id`, `title`, optional `subtitle`) replace the
-command's list, and activating one runs it by its id: the SDKs call the
-command's `run_search_result` (Rust) or `runSearchResult` (JS/TS). Root
-search never calls it, so nothing typed there reaches the command or its
-service. Pane waits 150 ms before it starts a search, and stops one it no
-longer needs (the text changed, the user left) where it waits, dropping the
-instance with its web request: code after that `await` never runs and
-in-memory state is lost, so make result ids say which result they are. An
-error it answers with (a service down or unreachable) is shown in place of
-results and never pauses the extension. A result may name an entry of
-[Pane's file index](#panes-file-index) or a file of the package's
-[granted folder](#files-of-a-granted-folder) by its id instead (`file`,
-#150): Pane then lists that file and performs its file actions itself. A command may set both `"search"` and `"rootResults"`; root search
-then asks it too. See [docs/command-search.md](../docs/command-search.md).
+A command's own search is the designed List's search-text event (#240,
+`command-search` retired): a view whose List sets `onSearchText` handles
+the search itself — the header's search field Pane draws, its text told to
+the view throttled (250 ms by default) — and answers the items it found
+([docs/designed-tree.md](../docs/designed-tree.md), the "standard views"
+section). Without `onSearchText`, Pane filters the list's items locally
+with the root-search matcher. Root search never asks the command, so
+nothing typed there reaches it or its service. The search sample
+(sample-search, in Rust, JavaScript and TypeScript) searches the fixture
+service this way. Pane's registered Files command keeps its host-side
+search of the file index (#177): no command of a package opens a search
+field of its own.
 
 **Web requests** go through `wasi:http@0.3.0`'s client, which Pane links for
 every command and sends from the host (`http` and `https` over HTTP/1.1,

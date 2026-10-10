@@ -495,7 +495,7 @@ impl Launcher {
             if root_query_typed(state) {
                 drop(self.search(state, ""));
             } else if command_search {
-                self.clear_search_in_command(state);
+                self.clear_files_search(state);
             }
         }
         self.changed();
@@ -853,7 +853,6 @@ mod tests {
                 subtitle: Some("Your notes".into()),
                 component: PathBuf::from(COMPONENT),
                 takes_query: false,
-                search: false,
             }],
         );
         let window = Arc::new(Recording::default());

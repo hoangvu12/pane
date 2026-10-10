@@ -136,8 +136,9 @@ impl ItemLook {
 
 /// Reads one accessory: `{"text": …}`, `{"date": <ms>}` or `{"tag": …}`,
 /// with an optional `icon`, `color` and `tooltip`, or an icon alone.
-/// `None` for one Pane cannot read.
-fn read_accessory(value: &Value) -> Option<Accessory> {
+/// `None` for one Pane cannot read. Read for a designed List's items as
+/// for a list tree's (#240).
+pub(crate) fn read_accessory(value: &Value) -> Option<Accessory> {
     let Value::Object(fields) = value else {
         return None;
     };

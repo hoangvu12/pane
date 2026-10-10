@@ -72,12 +72,14 @@ pub(crate) use deadlines::{HostCall, Hosted, Watch};
 
 pub use designed::{
     Align, Badge, Border, Button, COMPONENT_SET, Checkbox, DesignedHandler, DesignedTree,
-    EmptyState, Finite, Fit, IconExtent, IconNode, Image, Justify, KeySequence, Keycap, Layout,
-    Length, Link, Loading, MAX_DEPTH, MAX_INLINE_IMAGE, MAX_MARKDOWN_CHARS, MAX_NODES, MAX_PX,
-    MAX_TREE_BYTES, Markdown, MetadataItem, MetadataList, Node, NodeKind, Offset, Orientation,
-    Padding, Paint, Place, Progress, RadiusLength, RichRow, RowAccessory, SectionHeader, Segment,
-    Segmented, Select, Sizing, Slider, Span, Style, Surface, Tag, Text, TextContent, TextInput,
-    Toggle, Tone as ButtonTone, key_problems,
+    DropdownItem, EmptyState, Finite, Fit, GRID_COLUMNS, GridItem, IconExtent, IconNode, Image,
+    Justify, KeySequence, Keycap, Layout, Length, Link, ListAction, ListDropdown, ListItem,
+    ListNode, ListSection, Loading, MAX_DEPTH, MAX_GRID_COLUMNS, MAX_INLINE_IMAGE,
+    MAX_MARKDOWN_CHARS, MAX_NODES, MAX_PAGE_SIZE, MAX_PX, MAX_TREE_BYTES, Markdown,
+    MetadataItem, MetadataList, Node, NodeKind, Offset, Orientation, Padding, Paint, Place,
+    Progress, RadiusLength, RichRow, RowAccessory, SectionHeader, Segment, Segmented, Select,
+    Sizing, Slider, Span, Style, Surface, Tag, Text, TextContent, TextInput, Toggle,
+    Tone as ButtonTone, key_problems,
 };
 #[cfg(any(test, debug_assertions))]
 #[doc(hidden)]
@@ -143,16 +145,6 @@ mod indexed_bindings {
     });
 }
 
-/// The `command-search` export of a command that searches as the user types
-/// into its own search field.
-mod search_bindings {
-    wasmtime::component::bindgen!({
-        path: "../../wit",
-        world: "command-search-provider",
-        exports: { default: async | store },
-    });
-}
-
 /// The `service` export of a command that runs a continuing service.
 mod service_bindings {
     wasmtime::component::bindgen!({
@@ -213,83 +205,22 @@ const INDEXED_RESULTS_INTERFACE: &str = "pane:extension/indexed-results@0.1.0";
 /// The interface a component serving published operations also exports.
 const OPERATIONS_INTERFACE: &str = "pane:extension/published-operations@0.1.0";
 
-/// The interface a command that searches as the user types also exports.
-const COMMAND_SEARCH_INTERFACE: &str = "pane:extension/command-search@0.1.0";
-
 /// The interface a command that runs a continuing service also exports.
 const SERVICE_INTERFACE: &str = "pane:extension/service@0.1.0";
 
 /// What a result a command answers with shows as a row: the fields its
-/// computed root results, indexed results and search results share (each
-/// interface's WIT declares its own record, as a WIT record cannot extend
-/// another).
+/// computed root results and indexed results share (each interface's WIT
+/// declares its own record, as a WIT record cannot extend another).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ResultListing {
-    /// Identifies the result among the command's results; a search result's
-    /// is the callback id passed to the command's `handle-event` when its
-    /// row is activated.
+    /// Identifies the result among the command's results.
     pub id: String,
     pub title: String,
     pub subtitle: Option<String>,
 }
-
-/// One thing a command's search found, listed as a row of the command.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct SearchResult {
-    pub listing: ResultListing,
-    /// The id of the file of the package's granted folder the result is,
-    /// when it is one (Search Files): Pane lists it as that file, with its
-    /// own actions.
-    pub file: Option<String>,
-}
-
-/// Stops a search that is no longer needed: when it is stopped or dropped,
-/// the search is not started if it has not been, and stopped where its guest
-/// waits if it has (see [`Runtime::search_with`]).
-pub(crate) struct StopSearch(#[allow(dead_code)] oneshot::Sender<()>);
-
-/// Tells the runtime that a search was stopped.
-struct SearchStopped(oneshot::Receiver<()>);
-
-impl SearchStopped {
-    /// Whether the search has been stopped.
-    fn stopped(&mut self) -> bool {
-        !matches!(self.0.try_recv(), Err(oneshot::error::TryRecvError::Empty))
-    }
-
-    /// Waits until the search is stopped or `wait` ends, whichever comes
-    /// first; whether it was stopped (also when both are).
-    async fn stopped_before(&mut self, wait: impl Future<Output = ()>) -> bool {
-        let mut wait = std::pin::pin!(wait);
-        std::future::poll_fn(|context| {
-            if std::pin::Pin::new(&mut self.0).poll(context).is_ready() {
-                return std::task::Poll::Ready(true);
-            }
-            wait.as_mut().poll(context).map(|()| false)
-        })
-        .await
-    }
-}
-
-/// What a search waits on before it starts, given [`SEARCH_DEBOUNCE`]: the
-/// clock's sleep, unless a test sets another
-/// (`Runtime::set_search_timer`, in debug builds).
-#[cfg(any(test, debug_assertions))]
-type SearchTimer = Arc<
-    dyn Fn(std::time::Duration) -> std::pin::Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync,
->;
-
-/// How long the runtime waits before it starts a search: one the user
-/// replaces by typing on within it is stopped before its command is asked
-/// (and before its instance could be dropped for it), so fast typing asks
-/// only for the text the user stops at. The runtime serves other calls
-/// meanwhile.
-pub(crate) const SEARCH_DEBOUNCE: std::time::Duration = std::time::Duration::from_millis(150);
-
-/// A way to stop a search, and what the runtime watches for it.
-fn stoppable() -> (StopSearch, SearchStopped) {
-    let (stop, stopped) = oneshot::channel();
-    (StopSearch(stop), SearchStopped(stopped))
+    pub id: String,
+    pub title: String,
+    pub subtitle: Option<String>,
 }
 
 /// A result a command computed from root search's query.
@@ -345,9 +276,6 @@ pub(crate) struct Exports {
     pub indexed_results: bool,
     /// `published-operations`: it serves published operations.
     pub operations: bool,
-    /// `command-search`: it searches as the user types into its own search
-    /// field.
-    pub search: bool,
     /// `service`: it runs a continuing service while the package's code
     /// may run.
     pub service: bool,
@@ -908,14 +836,6 @@ enum Request {
         data: Option<PackageData>,
         reply: oneshot::Sender<Result<Vec<RootResult>, CallError>>,
     },
-    Search {
-        component: PathBuf,
-        command: String,
-        query: String,
-        data: Option<PackageData>,
-        stopped: SearchStopped,
-        reply: oneshot::Sender<Result<Vec<SearchResult>, CallError>>,
-    },
     Forget {
         components: Vec<PathBuf>,
     },
@@ -974,6 +894,14 @@ enum Request {
     CloseDesignedView {
         view: ViewId,
     },
+    /// Names the selected item of a designed view's List or Grid (#240):
+    /// its key, or `None` when no item is selected. The view's render
+    /// context carries the key, so the view builds the detail pane's
+    /// content for the item it names.
+    SetViewSelection {
+        view: ViewId,
+        key: Option<String>,
+    },
     DesignedViewCount {
         reply: oneshot::Sender<Result<usize, CallError>>,
     },
@@ -992,8 +920,8 @@ impl Request {
     /// The component this request's call runs in, when it is a call the
     /// user asked the package for — opening (or drawing again) a command,
     /// handling an event of its list, running an item, running a no-view
-    /// command the user launched, a command's search, a form submission,
-    /// opening a custom view or opening a designed view. Not the background
+    /// command the user launched, a form submission, opening a custom view
+    /// or opening a designed view. Not the background
     /// and ambient ones (a scheduled run, a background launch, a service
     /// cycle, a root search's ask), which a replacement of the package's
     /// code ends and its new code restarts or re-asks, nor a view's event
@@ -1006,7 +934,6 @@ impl Request {
             Request::Render { component, .. }
             | Request::HandleEvent { component, .. }
             | Request::RunItem { component, .. }
-            | Request::Search { component, .. }
             | Request::SubmitForm { component, .. }
             | Request::OpenView { component, .. }
             | Request::OpenDesignedView { component, .. } => Some(component),
@@ -1163,22 +1090,6 @@ impl Runtime {
         self.shared.network.set_limits(limits);
     }
 
-    /// Has every search the runtime starts from now on wait for the future
-    /// `timer` returns (given [`SEARCH_DEBOUNCE`]) instead of the clock, so
-    /// a test decides when the wait ends, and sees each search reach it,
-    /// however slow the machine is. For tests only; debug builds only.
-    #[cfg(any(test, debug_assertions))]
-    #[doc(hidden)]
-    pub fn set_search_timer(
-        &self,
-        timer: impl Fn(std::time::Duration) -> std::pin::Pin<Box<dyn Future<Output = ()> + Send>>
-        + Send
-        + Sync
-        + 'static,
-    ) {
-        *lock(&self.shared.search_timer) = Some(Arc::new(timer));
-    }
-
     /// The runtime's web requests: their limits and what each package
     /// reached, which Pane's downloads of extensions' web images share
     /// (#142).
@@ -1304,8 +1215,8 @@ impl Runtime {
     }
 
     /// Has the command in `component` handle the user's choice of
-    /// `callback`, a callback id its tree named (or a search result's id),
-    /// with `details`, a JSON object (`handle-event`). The caller asks for
+    /// `callback`, a callback id its tree named, with `details`, a JSON
+    /// object (`handle-event`). The caller asks for
     /// the tree again afterwards. The command has no extension data.
     pub async fn handle_event(
         &self,
@@ -1580,44 +1491,6 @@ impl Runtime {
         .await
     }
 
-    /// Searches for `query` with the command with manifest id `command` in
-    /// `component`, which searches as the user types; the command reads and
-    /// saves `data`. Starts its instance if it has none.
-    ///
-    /// The search is sent at once; the returned future waits for its
-    /// answer. Stopping or dropping the returned [`StopSearch`] stops it:
-    /// a search queued behind other calls is then never started, and one
-    /// waiting inside the guest (on a web request, say) is dropped with its
-    /// instance, as when a generation ends; either answers
-    /// [`CallError::Cancelled`], and so does a search that completes
-    /// once it was stopped, whose results are discarded. A stopped search is
-    /// not a failure of the extension.
-    pub(crate) fn search_with(
-        &self,
-        component: &Path,
-        command: &str,
-        query: &str,
-        data: Option<PackageData>,
-    ) -> (
-        StopSearch,
-        impl Future<Output = Result<Vec<SearchResult>, CallError>> + Send + 'static,
-    ) {
-        let (stop, watched) = stoppable();
-        let (reply, response) = oneshot::channel();
-        let answer = self.call(
-            Request::Search {
-                component: component.to_path_buf(),
-                command: command.to_owned(),
-                query: query.to_owned(),
-                data,
-                stopped: watched,
-                reply,
-            },
-            response,
-        );
-        (stop, answer)
-    }
-
     /// Submits the form of `item_id` in the command in `component`. A
     /// rejection by the guest is [`CallError::Form`]. The command has no
     /// extension data.
@@ -1800,6 +1673,16 @@ impl Runtime {
             },
             response,
         )
+    }
+
+    /// Names the selected item of the designed view `view`'s List or Grid
+    /// (#240): its key, or `None` when no item is selected. The key is
+    /// carried in the view's render context — the view builds the detail
+    /// pane's content for the item it names — and moves with the
+    /// selection, which the launcher owns.
+    pub fn set_view_selection(&self, view: ViewId, key: Option<String>) {
+        // A stopped runtime holds no views.
+        let _ = self.send(Request::SetViewSelection { view, key });
     }
 
     /// Closes the designed view `view`: the guest's view is dropped, after
@@ -2634,14 +2517,25 @@ impl Why {
 /// callbacks, ask for a drawing again through `pane:extension/view`
 /// (#243), run an interval's work only where it is due, and refuse trees
 /// of a component set it cannot target. It can grow without WIT changes.
-fn render_context(view: ViewId, render: u64, why: Why) -> String {
+fn render_context(view: ViewId, render: u64, why: Why, selected: Option<&str>) -> String {
+    // The selected item's key of the view's List or Grid (#240): the view
+    // builds the detail pane's content for the item it names; absent when
+    // no item is selected.
+    let selected = selected
+        .map(|selected| format!(",\"selected\":\"{}\"", escaped(selected)))
+        .unwrap_or_default();
     format!(
-        "{{\"render\":{render},\"view\":{},\"why\":\"{}\",\"ui\":\"{}.{}\"}}",
+        "{{\"render\":{render},\"view\":{},\"why\":\"{}\"{selected},\"ui\":\"{}.{}\"}}",
         view.id,
         why.as_str(),
         designed::COMPONENT_SET.0,
         designed::COMPONENT_SET.1
     )
+}
+
+/// `text` as a JSON string's content, its quotes and backslashes escaped.
+fn escaped(text: &str) -> String {
+    text.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
 impl GuestState {
@@ -2843,8 +2737,6 @@ struct Instance {
     indexed_results: Option<indexed_bindings::IndexedResultsProvider>,
     /// Its published operations export, if it has one.
     operations: Option<operations_bindings::OperationsProvider>,
-    /// Its search export, if it searches as the user types.
-    command_search: Option<search_bindings::CommandSearchProvider>,
     /// Its continuing-service export, if it runs one.
     service: Option<service_bindings::ServiceProvider>,
     /// The operation calls its guest makes, which the call it runs serves
@@ -2893,6 +2785,10 @@ struct LiveDesignedView {
     /// tree that re-renders with the same problem reports it once, not
     /// once per refresh.
     reported: RefCell<HashSet<String>>,
+    /// The selected item's key of the view's List or Grid (#240), named in
+    /// its render context: the view builds the detail pane's content for
+    /// the item it names. Set by the launcher, which owns the selection.
+    selected: RefCell<Option<String>>,
 }
 
 /// The engine and the host interfaces guests link against, shared by the
@@ -3059,10 +2955,6 @@ struct Host {
     network: Arc<http::Network>,
     /// The granted folders and their listings.
     files: FileAccess,
-    /// What a search waits on before it starts, if a test replaced the
-    /// clock. A release build has none.
-    #[cfg(any(test, debug_assertions))]
-    search_timer: Arc<Mutex<Option<SearchTimer>>>,
     /// Keeps clipboard history for guests' packages.
     clipboard: SharedClipboard,
 }
@@ -3283,14 +3175,6 @@ impl Code {
                 ))
             })?;
         }
-        if exports.search {
-            search_bindings::CommandSearchProviderPre::new(pre.clone()).map_err(|error| {
-                CallError::Interface(format!(
-                    "its manifest says it searches as the user types, but it does not export \
-                     {COMMAND_SEARCH_INTERFACE} with the functions Pane calls: {error:#}"
-                ))
-            })?;
-        }
         if exports.service {
             service_bindings::ServiceProviderPre::new(pre.clone()).map_err(|error| {
                 CallError::Interface(format!(
@@ -3340,8 +3224,6 @@ impl Host {
             applications: shared.applications.clone(),
             network: shared.network.clone(),
             files: shared.files.clone(),
-            #[cfg(any(test, debug_assertions))]
-            search_timer: shared.search_timer.clone(),
             clipboard: shared.clipboard.clone(),
         }
     }
@@ -3478,18 +3360,6 @@ impl Host {
                 let result = self.root_results(&component, query, data, &mut reply).await;
                 let _ = reply.send(result);
             }),
-
-            Request::Search {
-                component,
-                command,
-                query,
-                data,
-                stopped,
-                reply,
-            } => Box::pin(async move {
-                let result = self.search(&component, command, query, data, stopped).await;
-                let _ = reply.send(result);
-            }),
             Request::Forget { components } => {
                 self.forget(&components);
                 return;
@@ -3618,6 +3488,12 @@ impl Host {
                         lane.parking = false;
                     }
                 })
+            }
+            Request::SetViewSelection { view, key } => {
+                if let Some(open) = self.designed_views.borrow().get(&view) {
+                    *open.selected.borrow_mut() = key;
+                }
+                return;
             }
             Request::CloseDesignedView { view } => {
                 // Closed at once, for the requests sent after this; its
@@ -4163,6 +4039,7 @@ impl Host {
             rendered: 1,
             depth: 1,
             reported: RefCell::default(),
+            selected: RefCell::default(),
         };
         self.designed_views.borrow_mut().insert(view, open);
         match self.render_designed(view, 1, &chain, Why::Open).await {
@@ -4276,6 +4153,7 @@ impl Host {
                 rendered: 1,
                 depth,
                 reported: RefCell::default(),
+                selected: RefCell::default(),
             },
         );
         match self.render_designed(opened, 1, &chain, Why::Open).await {
@@ -4353,7 +4231,12 @@ impl Host {
         self.live_designed(&open)?;
         let path = &open.component;
         let resource = open.resource;
-        let context = render_context(view, render, why);
+        let selected = self
+            .designed_views
+            .borrow()
+            .get(&view)
+            .and_then(|open| open.selected.borrow().clone());
+        let context = render_context(view, render, why, selected.as_deref());
         let result = self
             .run_guest(path, chain, async |instance| {
                 let view = instance.bindings.pane_extension_command().view();
@@ -4692,137 +4575,6 @@ impl Host {
                 status: cycle.status,
                 next_seconds: cycle.next_seconds,
             })
-    }
-
-    async fn search(
-        &self,
-        path: &Path,
-        id: String,
-        query: String,
-        data: Option<PackageData>,
-        mut stopped: SearchStopped,
-    ) -> Result<Vec<SearchResult>, CallError> {
-        // Replaced while it waited in the queue, or soon after: it is not
-        // started.
-        #[cfg(any(test, debug_assertions))]
-        let wait = match lock(&self.search_timer).clone() {
-            Some(timer) => timer(SEARCH_DEBOUNCE),
-            None => Box::pin(tokio::time::sleep(SEARCH_DEBOUNCE)),
-        };
-        #[cfg(not(any(test, debug_assertions)))]
-        let wait = tokio::time::sleep(SEARCH_DEBOUNCE);
-        if stopped.stopped() || stopped.stopped_before(wait).await {
-            return Err(CallError::Cancelled);
-        }
-        let chain = self.chain();
-        let waited = unless(self.turn_for(path, &chain), async {
-            let _ = (&mut stopped.0).await;
-        })
-        .await;
-        let _turn = match waited {
-            Ok(turn) => turn?,
-            // Replaced while it waited for its turn.
-            Err(()) => return Err(CallError::Cancelled),
-        };
-        self.instance(path, data).await?;
-        self.note_command(path, Some(&id));
-        let search = self
-            .instances
-            .borrow()
-            .get(path)
-            .and_then(|instance| instance.command_search.as_ref())
-            .map(|provider| provider.pane_extension_command_search().clone())
-            .ok_or_else(|| {
-                CallError::Interface(format!("it does not export {COMMAND_SEARCH_INTERFACE}"))
-            })?;
-        let result = self
-            .run_guest_until(
-                path,
-                &chain,
-                async |instance| {
-                    instance
-                        .store
-                        .data_mut()
-                        .set_call(CallFor::in_window(Some(id.clone())));
-                    instance
-                        .store
-                        .run_concurrent(async |store| search.call_search(store, id, query).await)
-                        .await
-                },
-                // Resolves when the search is stopped: its sender sent or
-                // was dropped.
-                async move {
-                    let _ = stopped.0.await;
-                },
-            )
-            .await?;
-        let results = self.settle(path, result, CallError::Guest)?;
-        Ok(results
-            .into_iter()
-            .map(|result| SearchResult {
-                listing: ResultListing {
-                    id: result.id,
-                    title: result.title,
-                    subtitle: result.subtitle,
-                },
-                file: result.file,
-            })
-            .collect())
-    }
-
-    async fn indexed_results(
-        &self,
-        path: &Path,
-        data: Option<PackageData>,
-    ) -> Result<Vec<IndexedResult>, CallError> {
-        let chain = self.chain();
-        let _turn = self.turn_for(path, &chain).await?;
-        self.instance(path, data).await?;
-        let exported = self
-            .instances
-            .borrow()
-            .get(path)
-            .is_some_and(|instance| instance.indexed_results.is_some());
-        if !exported {
-            return Err(CallError::Interface(format!(
-                "it does not export {INDEXED_RESULTS_INTERFACE}"
-            )));
-        }
-        let result = self
-            .run_guest(path, &chain, async |instance| {
-                let provider = instance
-                    .indexed_results
-                    .as_ref()
-                    .expect("checked above")
-                    .pane_extension_indexed_results();
-                instance
-                    .store
-                    .run_concurrent(async |store| provider.call_results(store).await)
-                    .await
-            })
-            .await?;
-        let results = self.settle(path, result, CallError::Guest)?;
-        Ok(results
-            .into_iter()
-            .map(|result| IndexedResult {
-                listing: ResultListing {
-                    id: result.id,
-                    title: result.title,
-                    subtitle: result.subtitle,
-                },
-                alternate_titles: result.alternate_titles,
-                keywords: result.keywords,
-                action: match result.action {
-                    indexed_results::IndexedAction::OpenApplication(id) => {
-                        IndexedAction::OpenApplication(id)
-                    }
-                    indexed_results::IndexedAction::Open(open) => IndexedAction::Open {
-                        target: open.target,
-                        application: open.application,
-                    },
-                },
-            })
-            .collect())
     }
 
     /// Runs `call` on the live instance of `path`, in `chain`, serving the
@@ -5564,9 +5316,6 @@ impl Host {
 
         // Only a component serving published operations exports them.
         let operations = operations_bindings::OperationsProvider::new(&mut store, &instance).ok();
-        // Only a command that searches as the user types exports it.
-        let command_search =
-            search_bindings::CommandSearchProvider::new(&mut store, &instance).ok();
         // Only a command that runs a continuing service exports it.
         let service = service_bindings::ServiceProvider::new(&mut store, &instance).ok();
         // On its generation's undo list: the generation's end has this
@@ -5594,7 +5343,6 @@ impl Host {
                 root_results,
                 indexed_results,
                 operations,
-                command_search,
                 service,
                 calls: Some(calls_received),
                 serial,

@@ -45,10 +45,12 @@ mod argument_form;
 mod choices;
 mod clipboard_settings;
 pub mod clipboard_view;
-mod command_search;
 mod confirmations;
 mod crash_notice;
+mod designed_list;
 mod designed_views;
+
+pub use designed_list::{DesignedDropdown, DesignedList, DesignedRow, GridShape, LOADING_MS};
 mod feedback;
 mod hotkeys;
 mod icon_loads;
@@ -186,9 +188,6 @@ pub struct CommandRegistration {
     /// argument that is text with every other optional): text typed into
     /// root search, sent to it through its alias or as a fallback.
     pub takes_query: bool,
-    /// Whether the command searches as the user types into its own search
-    /// field once it is open (`"search": true`); root search never asks it.
-    pub search: bool,
 }
 
 impl CommandRegistration {
@@ -514,6 +513,11 @@ pub struct DesignedViewSnapshot {
     /// arrived, or the first render. A tree the extension answered with an
     /// error or over a limit never reaches here; the last good one stays.
     pub tree: DesignedTree,
+    /// The List or Grid the tree names, as the launcher presents it (#240),
+    /// with the rows it fills the view with; `None` on a tree that names
+    /// none. The window's list, its header's search field, the empty view,
+    /// the detail pane and the grid's cells draw from it.
+    pub list: Option<designed_list::DesignedList>,
 }
 
 /// A snapshot of what the launcher shows.
@@ -605,6 +609,12 @@ impl Screen {
     pub fn search_field(&self) -> Option<&str> {
         match self {
             Screen::Root { query } | Screen::CommandSearch { query } => Some(query),
+            // A designed view's List owns the header's search field (#240);
+            // a tree that names no list has none.
+            Screen::DesignedView(view) => view
+                .list
+                .as_ref()
+                .map(|list| list.search.as_str()),
             _ => None,
         }
     }
@@ -765,8 +775,11 @@ struct State {
     /// The launch record the open command's screen was opened with: its
     /// `render` receives it again each time the screen is drawn again.
     launch: LaunchRecord,
-    /// The open command's search, when it searches as the user types.
-    searching: Option<command_search::Searching>,
+    /// Search Files' browsing, while Pane's registered Files command is
+    /// open on its own search field (#177): the file index it lists, whose
+    /// pages it asks for as the selection nears the end. A command's own
+    /// search is the designed List's search-text event now (#240).
+    browsing: Option<search_files::Browsing>,
     /// The form on screen, if one is open.
     form: Option<OpenForm>,
     /// The search an alias or hotkey flow returns to when the Actions
@@ -1330,6 +1343,14 @@ enum Pending {
     Run(String),
     CustomView(String, CustomViewInfo),
     OpenUrl(String),
+    /// One event of the open designed view (#240): sent to it by its
+    /// callback id, its answer shown by the designed view's own path.
+    DesignedEvent {
+        handler: DesignedHandler,
+        callback: u32,
+        key: Option<String>,
+        payload: String,
+    },
     /// One of Pane's own actions on a row (see `own_actions`).
     Own(own_actions::Work),
     ClearCache(PackageIdentity),
@@ -1357,9 +1378,6 @@ struct Opening {
     /// Its id in its package manifest, sent with each of its searches and
     /// to its run entry point.
     command: String,
-    /// Whether it searches as the user types into its own search field
-    /// ([`CommandRegistration::search`]).
-    search: bool,
     /// Whether it is a no-view command, which runs instead of opening a
     /// screen.
     no_view: bool,
@@ -1380,7 +1398,6 @@ impl Opening {
         Opening {
             component: command.component.clone(),
             command: command.manifest_id().to_owned(),
-            search: command.search,
             no_view: mode == CommandMode::NoView,
             designed: mode == CommandMode::Designed,
             launch: LaunchRecord::by_user(source),
@@ -1517,7 +1534,7 @@ impl Launcher {
             files: runtime.as_ref().ok().map(Runtime::file_access),
             open: None,
             launch: LaunchRecord::default(),
-            searching: None,
+            browsing: None,
             form: None,
             actions_return: None,
             custom_view: None,
@@ -2052,6 +2069,26 @@ impl Launcher {
     /// Moves the selection by `delta` rows, clamped to the list.
     pub fn move_selection(&self, delta: isize) {
         let mut state = self.lock();
+        // A designed view's List or Grid: the selection's move is told to
+        // the view, which answers the tree for it (#240) — the lazy
+        // detail pane's content among it.
+        if matches!(&state.view.screen, Screen::DesignedView(_)) {
+            let rows = state.view.rows.len();
+            if rows == 0 {
+                return;
+            }
+            let last = rows - 1;
+            let at = match state.view.selected {
+                Some(selected) => {
+                    (selected as isize + delta).clamp(0, last as isize) as usize
+                }
+                // Down chooses the first, Up the last.
+                None => usize::from(delta > 0) * last,
+            };
+            self.designed_list_selected(&mut state, at);
+            self.changed();
+            return;
+        }
         let view = &mut state.view;
         match view.selected {
             Some(selected) => {
@@ -2086,15 +2123,22 @@ impl Launcher {
     /// kept for later queries. Until then the results kept from before are
     /// listed.
     ///
-    /// On an open command that searches as the user types, `query` is the
-    /// text of its own search field instead: see
-    /// [`Launcher::search_in_command`]. Root search's providers are not
-    /// asked then, and the opened command never is from root search.
+    /// On Search Files, which browses the file index on its own field
+    /// (#177), `query` is the text of it instead; and on a designed view
+    /// whose List or Grid owns the field (#240), the text of the list's
+    /// search. Root search's providers are not asked then, and the opened
+    /// command never is from root search.
     pub fn set_query(&self, query: &str) -> impl Future<Output = ()> + Send + 'static {
         let mut state = self.lock();
         let in_command = match &state.view.screen {
             Screen::CommandSearch { query: current } if current != query => {
-                self.search_in_command(&mut state, query)
+                self.ask_files(&mut state, query, 0)
+            }
+            // A designed view's List: the search field's text (#240). A
+            // host-filtered list is filtered at once; a view that handles
+            // the search itself is told the text.
+            Screen::DesignedView(_) if state.view.screen.search_field() != Some(query) => {
+                self.designed_list_searched(&mut state, query)
             }
             _ => None,
         };
@@ -2501,9 +2545,18 @@ impl Launcher {
     /// Selects the row at `index`, if there is one.
     pub fn select(&self, index: usize) {
         let mut state = self.lock();
-        if index < state.view.rows.len() {
-            state.view.selected = Some(index);
+        if index >= state.view.rows.len() {
+            return;
         }
+        // A designed view's List or Grid: the selection's change is told
+        // to the view, which answers the tree for it (#240) — the lazy
+        // detail pane's content among it.
+        if matches!(&state.view.screen, Screen::DesignedView(_)) {
+            self.designed_list_selected(&mut state, index);
+            self.changed();
+            return;
+        }
+        state.view.selected = Some(index);
     }
 
     /// The text activating the selected row copies to the clipboard, if it
@@ -2603,11 +2656,16 @@ impl Launcher {
             }
             Screen::CustomView(_) => self.return_from_custom_view(&mut state, Status::Idle),
             // The designed view is the command's own screen, with a stack
-            // of views: the back key pops the top one, showing the view
-            // below at once and telling it the view above popped. The root
-            // view's own back leaves the command, as leaving its list does.
+            // of views: the back key clears the List's search field first,
+            // as it clears root search's query (#240; the general order is
+            // the launcher polish's, #123), then pops the top view,
+            // showing the view below at once and telling it the view above
+            // popped. The root view's own back leaves the command, as
+            // leaving its list does.
             Screen::DesignedView(_) => {
-                if !self.pop_designed_stack(&mut state) {
+                if designed_list::search_typed(&state) {
+                    self.clear_designed_list_search(&mut state);
+                } else if !self.pop_designed_stack(&mut state) {
                     self.show_root(&mut state, None);
                 }
             }
@@ -2655,10 +2713,11 @@ impl Launcher {
             Screen::RuntimeDetails { .. } => {
                 self.show_extensions_at(&mut state, |entry| matches!(entry, Entry::RuntimeDetails));
             }
-            // Escape clears the command's search before leaving it, as it
-            // clears root search's query.
+            // Escape clears Search Files' field before leaving it, as it
+            // clears root search's query. A designed List's search field
+            // is cleared the same way before the stack pops (#240).
             Screen::CommandSearch { query } if !query.is_empty() => {
-                self.clear_search_in_command(&mut state);
+                self.clear_files_search(&mut state);
             }
             Screen::Command
             | Screen::CommandSearch { .. }
@@ -2709,6 +2768,14 @@ impl Launcher {
     /// reason as the status error without calling the extension.
     pub fn activate_selected(&self) -> impl Future<Output = ()> + Send + 'static {
         let mut state = self.lock();
+        // A designed view's List or Grid: Enter presses the selected item
+        // (the callback its tree named, on its key), as the rows list's
+        // Enter runs the selected row's action (#240).
+        if let Some(pending) = self.designed_list_press(&mut state) {
+            let work = self.pending_work(&state, pending);
+            drop(state);
+            return work;
+        }
         let entry = state
             .view
             .selected
@@ -2766,6 +2833,16 @@ impl Launcher {
                     if let Some(component) = open {
                         launcher.run_action(epoch, component, callback, data).await
                     }
+                }
+                Pending::DesignedEvent {
+                    handler,
+                    callback,
+                    key,
+                    payload,
+                } => {
+                    launcher
+                        .send_designed_seen(handler, callback, key.as_deref(), None, payload)
+                        .await;
                 }
                 Pending::OpenUrl(url) => launcher.open_url(epoch, url).await,
                 Pending::Own(work) => launcher.do_own(epoch, work).await,
@@ -4259,8 +4336,8 @@ impl Launcher {
     fn leave_command(&self, state: &mut State) {
         self.close_custom_view(state);
         self.close_designed_view(state);
-        // Its search in progress, if any, is stopped.
-        state.searching = None;
+        // Its browsing, if any, is dropped.
+        state.browsing = None;
         state.open = None;
         state.open_command = None;
         state.launch = LaunchRecord::default();
@@ -4403,8 +4480,7 @@ impl Launcher {
 
     /// Shows `view`, the open command's tree drawn again, keeping the
     /// selection on the same item when it is still listed (else at the same
-    /// place). While the command's search field holds text, what it found
-    /// stays listed, and `view` is kept for when the text is cleared.
+    /// place).
     fn relist(&self, state: &mut State, component: &Path, view: View) {
         if search_files::browsing(state) {
             // Search Files lists the file index, not the command's own
@@ -4412,21 +4488,13 @@ impl Launcher {
             state.view.title = view.title;
             return;
         }
-        let extra = looks::remember(state, component, &view.items);
-        let list = self.command_list(state, component, view.items);
-        let searching = match &state.view.screen {
-            Screen::Command => false,
-            Screen::CommandSearch { query } => !query.trim().is_empty(),
-            _ => return,
-        };
-        self.report_extra_accessories(state, extra, false);
-        state.view.title = view.title;
-        if searching {
-            if let Some(search) = state.searching.as_mut() {
-                search.keep(list);
-            }
+        if !matches!(&state.view.screen, Screen::Command) {
             return;
         }
+        let extra = looks::remember(state, component, &view.items);
+        let list = self.command_list(state, component, view.items);
+        self.report_extra_accessories(state, extra, false);
+        state.view.title = view.title;
         let shown = state.view.selected;
         let selected_id = shown
             .and_then(|index| state.view.rows.get(index))
@@ -4461,7 +4529,6 @@ impl Launcher {
         let Opening {
             component,
             command,
-            search,
             launch,
             initial_search,
             ..
@@ -4530,6 +4597,12 @@ impl Launcher {
             let mut guard = state;
             let state = &mut *guard;
             let mut searching = None;
+            // Pane's registered Files command alone owns the launcher's
+            // search field (#177): a command's own search is the designed
+            // List's search-text event now (#240), and no command of a
+            // package opens one.
+            let search =
+                search_files::registered(state, &component, command.as_str());
             match result {
                 Ok(view) => {
                     let extra = looks::remember(state, &component, &view.items);
@@ -4537,12 +4610,12 @@ impl Launcher {
                         self.command_list(state, &component, view.items);
                     state.open_command = Some(command.clone());
                     let screen = if search {
-                        state.searching = Some(command_search::Searching::new(command));
+                        state.browsing = None;
                         Screen::CommandSearch {
                             query: String::new(),
                         }
                     } else {
-                        state.searching = None;
+                        state.browsing = None;
                         Screen::Command
                     };
                     state.entries = entries;
@@ -4570,7 +4643,7 @@ impl Launcher {
                     } else if let Some(text) = initial_search.filter(|_| search) {
                         // Opened with text in its field ("Search Files for
                         // “…”"): searched at once, as if typed.
-                        searching = self.search_in_command(state, &text);
+                        searching = self.ask_files(state, &text, 0);
                     } else if files {
                         searching = self.ask_files(state, "", 0);
                     }

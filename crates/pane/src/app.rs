@@ -77,6 +77,9 @@ pub struct LauncherWindow {
     /// The open designed view's button focus; `Some` exactly on the
     /// designed view screen.
     pub(crate) designed: Option<designed::DesignedControls>,
+    /// The changes of the designed list's search field, throttled when
+    /// the view handles the search itself (#240).
+    pub(crate) designed_search: designed::SearchEvents,
     /// The footer menu's button: the leftmost control of the bottom strip
     /// (the open menu's own focus is held by the menu, while it is open).
     pub(crate) menu_button: FocusHandle,
@@ -214,6 +217,7 @@ impl LauncherWindow {
             dates: None,
             custom_view: None,
             designed: None,
+            designed_search: designed::SearchEvents::default(),
             menu_button,
             menu: None,
             actions: None,
@@ -442,7 +446,10 @@ impl LauncherWindow {
     }
 
     pub(crate) fn select_next(&mut self, _: &SelectNext, _: &mut Window, cx: &mut Context<Self>) {
-        self.launcher.move_selection(1);
+        // A Grid's Up and Down move by a whole row of cells (#240); a
+        // list's by one row.
+        let step = self.designed_grid_columns().unwrap_or(1);
+        self.launcher.move_selection(step);
         self.announcer.user_moved();
         cx.notify();
     }
@@ -453,9 +460,30 @@ impl LauncherWindow {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.launcher.move_selection(-1);
+        let step = -self.designed_grid_columns().unwrap_or(1);
+        self.launcher.move_selection(step);
         self.announcer.user_moved();
         cx.notify();
+    }
+
+    /// The columns of the open designed Grid's selected cell's section:
+    /// what Up and Down step by. `None` off a Grid.
+    fn designed_grid_columns(&self) -> Option<isize> {
+        let Screen::DesignedView(view) = self.launcher.screen() else {
+            return None;
+        };
+        let list = view.list.as_ref()?;
+        if !list.grid {
+            return None;
+        }
+        let columns = list
+            .rows
+            .iter()
+            .find(|row| list.selected.as_deref() == Some(row.key.as_str()))
+            .or_else(|| list.rows.first())
+            .map(|row| row.shape.columns)
+            .unwrap_or(pane_core::GRID_COLUMNS);
+        isize::try_from(columns.max(1)).ok()
     }
 
     /// Page Down: the selection moves down by the rows that fit in the
@@ -1052,6 +1080,96 @@ impl LauncherWindow {
         }
     }
 
+    /// The keys the designed view's List and Grid own, taken before the
+    /// search field takes them for its own (#240): Backspace in the empty
+    /// field pops the stack (the general order is the launcher polish's,
+    /// #123), the Grid's Left and Right move the selection by cell — Up
+    /// and Down move by row, the arrows' bindings scaled by the section's
+    /// columns — and Ctrl+Up and Ctrl+Down move it by section, as the
+    /// launcher's own list's do. Not on key repeat: a held key moves
+    /// nothing further.
+    fn designed_list_keys(
+        &mut self,
+        event: &KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if event.is_held {
+            return;
+        }
+        let Screen::DesignedView(view) = self.launcher.screen() else {
+            return;
+        };
+        let Some(list) = view.list else {
+            return;
+        };
+        let keystroke = &event.keystroke;
+        let modifiers = keystroke.modifiers;
+        let plain = modifiers == gpui::Modifiers::default();
+        if plain && keystroke.key == "backspace" && list.search.is_empty() {
+            // An open footer menu or Actions panel keeps its keys: the
+            // back key closes those first.
+            if self.menu.is_none()
+                && self.actions.is_none()
+                && !self.designed_takes_backspace(window)
+                && self.launcher.pop_designed_view()
+            {
+                self.motion.land_at_once();
+                self.sync_screen(window, cx);
+                cx.notify();
+                cx.stop_propagation();
+            }
+            return;
+        }
+        // The Grid's cells: Left and Right move by cell, no wrap (the
+        // launcher clamps the selection at the ends).
+        if list.grid
+            && plain
+            && matches!(keystroke.key.as_str(), "left" | "right")
+        {
+            let step = if keystroke.key == "left" { -1 } else { 1 };
+            self.launcher.move_selection(step);
+            self.announcer.user_moved();
+            cx.notify();
+            cx.stop_propagation();
+            return;
+        }
+        // Ctrl+Up and Ctrl+Down move the selection by section, as the
+        // launcher's own list's do (the launcher polish owns them
+        // generally, #123).
+        if modifiers.control
+            && !modifiers.alt
+            && !modifiers.shift
+            && matches!(keystroke.key.as_str(), "up" | "down")
+        {
+            let sections = &list.sections;
+            let rows = list.rows.len();
+            let selected = self.launcher.view().selected;
+            let Some(at) = selected else {
+                return;
+            };
+            let to = if keystroke.key == "down" {
+                sections
+                    .iter()
+                    .map(|section| section.first)
+                    .filter(|first| *first > at)
+                    .min()
+            } else {
+                sections
+                    .iter()
+                    .map(|section| section.first)
+                    .filter(|first| *first < at)
+                    .max()
+            };
+            if let Some(to) = to.filter(|to| *to < rows) {
+                self.launcher.select(to);
+                self.announcer.user_moved();
+                cx.notify();
+                cx.stop_propagation();
+            }
+        }
+    }
+
     /// On the hotkey screen, a key pressed with its modifiers is the new
     /// hotkey. Keys the launcher binds (Enter, Escape, arrows, Tab) do not
     /// reach here; pressing a modifier alone is not a key press.
@@ -1071,6 +1189,13 @@ impl LauncherWindow {
             && self.menu.is_none()
             && self.actions.is_none()
             && !self.designed_takes_backspace(window)
+            // A screen whose search field holds text keeps Backspace for
+            // the field, which deletes with it.
+            && self
+                .launcher
+                .screen()
+                .search_field()
+                .is_none_or(|field| field.is_empty())
             && self.launcher.pop_designed_view()
         {
             // Popping lands at once, as the back key's pop does: the view
@@ -1780,7 +1905,9 @@ impl Render for LauncherWindow {
         let material = visuals.material;
         let empty = match &view.screen {
             Screen::Root { .. } => "No commands are installed.",
-            Screen::Command | Screen::CommandSearch { .. } => "This command has no items.",
+            Screen::Command
+            | Screen::CommandSearch { .. }
+            | Screen::DesignedView(view) if view.list.is_some() => "This command has no items.",
             Screen::Package { .. } => "Nothing to install.",
             Screen::Form(_) => "",
             Screen::Extensions { .. } => "No extensions are installed.",
@@ -1889,6 +2016,23 @@ impl Render for LauncherWindow {
             Screen::CommandSearch { query } if !query.trim().is_empty() => {
                 result_list::EmptyLine::NoResults(query.trim().to_owned())
             }
+            // A designed List's search, filtered by Pane: nothing found
+            // for it says so (the tree's own empty view, when it names
+            // one, replaces the list the head belongs to).
+            Screen::DesignedView(shown)
+                if shown
+                    .list
+                    .as_ref()
+                    .is_some_and(|list| !list.search.trim().is_empty()) =>
+            {
+                result_list::EmptyLine::NoResults(
+                    shown
+                        .list
+                        .as_ref()
+                        .map(|list| list.search.trim().to_owned())
+                        .unwrap_or_default(),
+                )
+            }
             _ => result_list::EmptyLine::Note(empty),
         });
         // The list draws only its children in view (#165): its rows — a
@@ -1985,10 +2129,30 @@ impl Render for LauncherWindow {
                 motion::arriving(self.render_custom_view(custom_view, cx), arriving)
                     .into_any_element()
             }
-            Screen::DesignedView(designed) => {
-                motion::arriving(self.render_designed_view(designed, cx), arriving)
+            // A designed view whose tree names a List or Grid: the
+            // header's search field above the launcher's own rows list (or
+            // the Grid's cells, or the empty view), the detail pane beside
+            // the rows (#240). The tree alone otherwise.
+            Screen::DesignedView(designed) => match designed.list.as_ref() {
+                Some(list) => {
+                    let results = actions_panel::dimmed(
+                        motion::arriving(list, arriving).into_any_element(),
+                        self.actions.is_some(),
+                        &theme,
+                    );
+                    let body = self.render_designed_list_body(&designed, list, results, cx);
+                    let title = view.title.clone();
+                    motion::arriving(
+                        self.render_designed_search(&designed, list, title, body, cx),
+                        arriving,
+                    )
                     .into_any_element()
-            }
+                }
+                None => {
+                    motion::arriving(self.render_designed_view(designed, cx), arriving)
+                        .into_any_element()
+                }
+            },
             // While the Actions panel is open, its dimmer lies over the
             // results — between the search header and the footer — and
             // takes no input.
@@ -2063,6 +2227,7 @@ impl Render for LauncherWindow {
             // said last (#141).
             .capture_key_down(cx.listener(Self::toast_action_keys))
             .capture_key_down(cx.listener(Self::item_action_keys))
+            .capture_key_down(cx.listener(Self::designed_list_keys))
             .on_action(cx.listener(Self::focus_next))
             .on_action(cx.listener(Self::focus_previous))
             .on_modifiers_changed(cx.listener(Self::modifiers_changed))

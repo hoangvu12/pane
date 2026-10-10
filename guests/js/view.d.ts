@@ -339,6 +339,106 @@ export interface SelectProps extends NodeProps {
   onChange?: () => unknown;
 }
 
+/** One item of a List's search-bar dropdown. */
+export interface DropdownItemProps {
+  /** The item's id, told the dropdown's `onChange` when it is chosen. */
+  value: string;
+  /** What the dropdown calls it; its `value` when it says none. */
+  title?: string;
+  children?: unknown;
+}
+
+/** A search-bar dropdown's properties (a child of `List`). */
+export interface DropdownProps extends NodeProps {
+  value?: string;
+  placeholder?: string;
+  onChange?: () => unknown;
+  children?: DropdownItemProps | DropdownItemProps[];
+}
+
+/** One of a List item's actions: the first is the item's primary action
+ * (Enter), the second its secondary. */
+export interface ItemActionProps {
+  title?: string;
+  onClick?: () => unknown;
+}
+
+/** A List item's properties. */
+export interface ItemProps extends NodeProps {
+  /** The item's key: its stable identity, which the selection and the
+   * detail pane's render context name. */
+  key?: string;
+  title?: string;
+  subtitle?: string;
+  icon?: object;
+  accessories?: object[];
+  keywords?: string[];
+  onClick?: () => unknown;
+  actions?: ItemActionProps[];
+  /** The detail pane's content when this item is selected and the list
+   * shows its detail — built for the selected item through the render
+   * context's `selected`. */
+  detail?: Element;
+  children?: unknown;
+}
+
+/** A List or Grid section's properties. */
+export interface SectionProps extends NodeProps {
+  title?: string;
+  subtitle?: string;
+  /** How many columns the section's cells sit in (a Grid's), 1–8. */
+  columns?: number;
+  /** The section's cells' width over their height (a Grid's). */
+  aspectRatio?: number;
+  fit?: Fit;
+  inset?: boolean;
+  children?: unknown;
+}
+
+/** A List's properties (#240): its items in sections, its search field
+ * and selection Pane's. Pane filters the items by the text typed in the
+ * field with the root-search matcher, unless `onSearchText` handles the
+ * search itself (then the events are throttled). */
+export interface ListProps extends NodeProps {
+  searchPlaceholder?: string;
+  /** The search text the view sets: the field's value, which wins while
+   * the user has not typed a newer one. */
+  searchText?: string;
+  /** The item the view selects, by its key. */
+  selectedKey?: string;
+  isLoading?: boolean;
+  isShowingDetail?: boolean;
+  hasMore?: boolean;
+  pageSize?: number;
+  onSearchText?: () => unknown;
+  /** Hears the selection move, told the selected item's key. */
+  onSelectionChange?: () => unknown;
+  /** Raised as the selection nears the end while `hasMore` says more is
+   * there. */
+  onLoadMore?: () => unknown;
+  children?: unknown;
+}
+
+/** A Grid's properties (#240): a List's, with cells in sections. */
+export interface GridProps extends ListProps {}
+
+/** A Grid cell's properties. */
+export interface CellProps extends NodeProps {
+  key?: string;
+  title?: string;
+  subtitle?: string;
+  image?: object;
+  color?: Paint;
+  onClick?: () => unknown;
+  children?: unknown;
+}
+
+/** A Detail's properties (#240): a scrolled column of Markdown,
+ * metadata, a loading state, actions, as children. */
+export interface DetailProps extends NodeProps {
+  children?: unknown;
+}
+
 /** A slider's properties. */
 export interface SliderProps extends NodeProps {
   value: number;
@@ -519,8 +619,46 @@ export declare const TextArea: (props: TextInputProps) => Element;
 /** A select, its choice changed by its `onChange`. */
 export declare const Select: (props: SelectProps) => Element;
 
+/** A standard List (#240): items in sections, its search field and
+ * selection Pane's. `List.Section`, `List.Item` and `List.Dropdown` are
+ * the components it nests. */
+export declare const List: ((props: ListProps) => Element) & {
+  Section: (props: SectionProps) => Element;
+  Item: (props: ItemProps) => Element;
+  Dropdown: (props: DropdownProps) => Element;
+};
+
+/** A standard Grid (#240): a List's behaviour with cells. `Grid.Section`
+ * and `Grid.Item` are the components it nests. */
+export declare const Grid: ((props: GridProps) => Element) & {
+  Section: (props: SectionProps) => Element;
+  Item: (props: CellProps) => Element;
+};
+
+/** A section of a List's or Grid's items. */
+export declare const Section: (props: SectionProps) => Element;
+
+/** One item of a List. */
+export declare const Item: (props: ItemProps) => Element;
+
+/** One cell of a Grid. */
+export declare const Cell: (props: CellProps) => Element;
+
+/** A List's search-bar dropdown. */
+export declare const Dropdown: (props: DropdownProps) => Element;
+
+/** A Detail (#240): a scrolled column of Markdown, metadata, actions. */
+export declare const Detail: (props: DetailProps) => Element;
+
 /** A fragment: its children are drawn where it sits, unwrapped. */
 export declare const Fragment: unique symbol;
+
+/**
+ * The selected item's key of the view's List or Grid, as this render's
+ * context names it: the item the detail pane's content is built for
+ * (`null` when no item is selected). Read during a render.
+ */
+export declare function selectedKey(): string | null;
 
 /**
  * State the component keeps between renders: `[value, set]`. `set` stores

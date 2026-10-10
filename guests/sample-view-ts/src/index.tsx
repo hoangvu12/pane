@@ -28,14 +28,17 @@ import {
   Card,
   Checkbox,
   Column,
+  Detail,
   Divider,
   EmptyState,
+  Grid,
   Icon,
   IconTile,
   Image,
   KeySequence,
   Keycap,
   Link,
+  List,
   Loading,
   Markdown,
   MetadataList,
@@ -44,6 +47,7 @@ import {
   RichRow,
   Row,
   Scroll,
+  Section,
   SectionHeader,
   Segmented,
   Select,
@@ -57,6 +61,7 @@ import {
   TextInput,
   Toggle,
   createView,
+  selectedKey,
   usePending,
   useState,
 } from "@pane-app/extension/view";
@@ -254,6 +259,131 @@ function LoadingView() {
   );
 }
 
+/** The List sample (#240): sections, keywords, accessories, a
+ * host-filtered search field, the empty view, the detail pane (built for
+ * the selected item, as the render context names it), the search-bar
+ * dropdown, the loading bar and pagination. The first item's press
+ * toggles the loading bar, so its 300 ms threshold can be seen. */
+function NotesView() {
+  const [listLoading, setListLoading] = useState(true);
+  const [pages, setPages] = useState(1);
+  const [pinned, setPinned] = useState(false);
+  const selected = selectedKey();
+  const note = (key: string, title: string, subtitle: string, keyword: string, tag: string, color: string) => (
+    <List.Item
+      key={key}
+      title={title}
+      subtitle={subtitle}
+      icon={{ builtin: "document" }}
+      keywords={[keyword]}
+      accessories={[{ tag, color }, { text: "1" }]}
+      onClick={() => setListLoading(!listLoading)}
+      actions={[{ title: "Copy", onClick: () => {} }]}
+      detail={
+        selected === key ? (
+          <Detail>
+            <Markdown>{`# ${title}\n\n*Selected:* ${key} \u2014 the pane's content is built for it alone.\n\n- [x] The render context names it\n- [ ] No other item's detail is built\n\n| Field | Value |\n| --- | --- |\n| key | ${key} |\n| title | ${title} |\n\n![Pane](data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 12'%3E%3Crect width='24' height='12' rx='3' fill='%233d5afe'/%3E%3C/svg%3E =48x24 "Pane's mark")\n\nSee [the tree](https://example.com/tree).`}</Markdown>
+          </Detail>
+        ) : undefined
+      }
+    >
+      {title}
+    </List.Item>
+  );
+  const sections = [
+    <List.Section key="notes" title="Notes" subtitle="Three notes">
+      {note("first", "First note", "The first of the notes", "opening", "new", "green")}
+      {note("second", "Second note", "The second of the notes", "middle", "kept", "blue")}
+      {note("third", "Third note", "The third of the notes", "closing", "done", "red")}
+    </List.Section>,
+  ];
+  if (pinned) {
+    sections.push(
+      <List.Section key="pinned" title="Pinned">
+        {note("pinned", "Pinned note", "The one that is pinned", "kept", "pinned", "yellow")}
+      </List.Section>,
+    );
+  } else {
+    sections.push(
+      <List.Section key="more" title="More" subtitle="A page at a time">
+        {Array.from({ length: pages * 6 }, (_, at) => (
+          <List.Item
+            key={`more-${at}`}
+            title={`More ${at}`}
+            subtitle="One page of a longer list"
+            keywords={["page"]}
+            onClick={() => {}}
+          >
+            {`More ${at}`}
+          </List.Item>
+        ))}
+      </List.Section>,
+    );
+  }
+  return (
+    <List
+      navigationTitle="Notes"
+      searchPlaceholder="Search notes…"
+      isLoading={listLoading}
+      isShowingDetail={true}
+      hasMore={pages < 3}
+      pageSize={6}
+      onLoadMore={() => setPages(pages + 1)}
+    >
+      <List.Dropdown value={pinned ? "pinned" : "all"} onChange={() => setPinned(!pinned)}>
+        {[{ value: "all", title: "All notes" }, { value: "pinned", title: "Pinned" }]}
+      </List.Dropdown>
+      {sections}
+      <EmptyState title="No notes" description="Nothing matches the search.">
+        <Button onClick={() => {}}>Clear the search</Button>
+      </EmptyState>
+    </List>
+  );
+}
+
+/** The Grid sample (#240): cells of images and colours in two sections,
+ * each with its own columns, aspect ratio, fit and inset. */
+function CellsView() {
+  return (
+    <Grid navigationTitle="Cells" searchPlaceholder="Search cells…">
+      <Grid.Section title="Warm" columns={3} aspectRatio={2} fit="cover">
+        <Grid.Item key="warm-0" title="Amber" subtitle="A colour cell" color="#ffb300" onClick={() => {}} />
+        <Grid.Item key="warm-1" title="Coral" subtitle="A colour cell" color="#ff7043" onClick={() => {}} />
+        <Grid.Item key="warm-2" title="Document" subtitle="An image cell" image={{ builtin: "document" }} onClick={() => {}} />
+      </Grid.Section>
+      <Grid.Section title="Cool" columns={4} aspectRatio={1} inset={true}>
+        <Grid.Item key="cool-0" title="Indigo" subtitle="A colour cell" color="#3d5afe" onClick={() => {}} />
+        <Grid.Item key="cool-1" title="Teal" subtitle="A colour cell" color="#00897b" onClick={() => {}} />
+        <Grid.Item key="cool-2" title="Star" subtitle="An image cell" image={{ builtin: "star" }} onClick={() => {}} />
+        <Grid.Item key="cool-3" title="Typed" subtitle="A subtree cell" onClick={() => {}}>
+          <Text level="secondary">A cell of the author's own</Text>
+        </Grid.Item>
+      </Grid.Section>
+    </Grid>
+  );
+}
+
+/** The Detail sample (#240): Markdown with an image, a task list and a
+ * table, a metadata panel and actions. */
+function AboutView() {
+  return (
+    <Detail navigationTitle="About Pane">
+      <Markdown>{`# Pane\n\nA screen an extension designs as a **tree** Pane renders.\n\n![Pane](data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 12'%3E%3Crect width='24' height='12' rx='3' fill='%233d5afe'/%3E%3C/svg%3E =48x24 "Pane's mark")\n\n- [x] Drawn by Pane\n- [ ] Drawn by the extension\n\n| Field | Value |\n| --- | --- |\n| version | 0.1 |\n| renderer | GPUI |\n\nSee [the tree](https://example.com/tree).`}</Markdown>
+      <MetadataList
+        items={[
+          { label: "Version", value: "0.1.0" },
+          { label: "Tags", tags: ["designed", "tree"] },
+          { separator: true },
+          { label: "Repository", value: "pane", onClick: () => {} },
+        ]}
+      />
+      <Row gap="s">
+        <Button onClick={() => {}}>Done</Button>
+      </Row>
+    </Detail>
+  );
+}
+
 export const command: Command = {
   async openView(commandId: string) {
     if (commandId === "sample") {
@@ -264,6 +394,15 @@ export const command: Command = {
     }
     if (commandId === "loading") {
       return createView(LoadingView);
+    }
+    if (commandId === "list") {
+      return createView(NotesView);
+    }
+    if (commandId === "grid") {
+      return createView(CellsView);
+    }
+    if (commandId === "detail") {
+      return createView(AboutView);
     }
     throw new Error("this command opens no designed view");
   },

@@ -6,22 +6,31 @@
 //! tooltip; opening what it names is the standard views' to do (#240).
 //!
 //! Inline content flows as a wrapping row of runs, as a text node's
-//! spans do: prose, code, emphasis, strong text and links beside each
-//! other, a hard break wrapping the row.
+//! spans do: prose, code, emphasis, strong text, images and links beside
+//! each other, a hard break wrapping the row. An image is the icon model's
+//! — its source resolved and loaded as the tree's icons are (#240), its
+//! size the `=WxH` its source named — and a link is opened by Pane with
+//! the system's handler, as a computed result's is.
 
 use gpui::prelude::*;
-use gpui::{AnyElement, Div, Role, TextAlign, div, px};
+use gpui::{AnyElement, ClickEvent, Context, Div, Role, TextAlign, div, px};
 
 use pane_core::Space;
 use pane_core::markdown::{Alignment, Block, Inline, Item};
 
+use crate::app::LauncherWindow;
 use crate::ui::tokens;
 use crate::ui::tooltip::{TooltipLook, text_tooltip};
 
 use super::tree::Draw;
 
 /// The blocks of one markdown node, drawn.
-pub(super) fn blocks(blocks: &[Block], path: &str, draw: &Draw) -> AnyElement {
+pub(super) fn blocks(
+    blocks: &[Block],
+    path: &str,
+    draw: &Draw,
+    cx: &mut Context<LauncherWindow>,
+) -> AnyElement {
     let mut element = div()
         .id(path.to_owned())
         .flex()
@@ -29,13 +38,18 @@ pub(super) fn blocks(blocks: &[Block], path: &str, draw: &Draw) -> AnyElement {
         .min_w(px(0.))
         .gap(tokens::space(Space::S));
     for (index, block) in blocks.iter().enumerate() {
-        element = element.child(block_element(block, &format!("{path}/{index}"), draw));
+        element = element.child(block_element(block, &format!("{path}/{index}"), draw, cx));
     }
     element.into_any_element()
 }
 
 /// One block, drawn.
-fn block_element(block: &Block, path: &str, draw: &Draw) -> AnyElement {
+fn block_element(
+    block: &Block,
+    path: &str,
+    draw: &Draw,
+    cx: &mut Context<LauncherWindow>,
+) -> AnyElement {
     let theme = draw.theme;
     match block {
         Block::Heading { level, inlines } => {
@@ -55,7 +69,7 @@ fn block_element(block: &Block, path: &str, draw: &Draw) -> AnyElement {
                 .role(Role::Heading)
                 .map(|heading| heading.aria_label(name))
                 .map(|heading| heading.aria_level(*level))
-                .child(inlines_element(inlines, draw))
+                .child(inlines_element(inlines, draw, cx))
                 .into_any_element()
         }
         Block::Paragraph(inlines) => div()
@@ -64,7 +78,7 @@ fn block_element(block: &Block, path: &str, draw: &Draw) -> AnyElement {
             .min_w(px(0.))
             .text_size(theme.typography.row_subtitle_size)
             .text_color(theme.text_body)
-            .child(inlines_element(inlines, draw))
+            .child(inlines_element(inlines, draw, cx))
             .into_any_element(),
         Block::Code { language, text } => div()
             .id(path.to_owned())
@@ -95,9 +109,9 @@ fn block_element(block: &Block, path: &str, draw: &Draw) -> AnyElement {
             .pl(tokens::space(Space::S))
             .border_l_2()
             .border_color(theme.hairline)
-            .child(blocks(inner, &format!("{path}/quote"), draw))
+            .child(blocks(inner, &format!("{path}/quote"), draw, cx))
             .into_any_element(),
-        Block::List { ordered, items } => list(*ordered, items, path, draw),
+        Block::List { ordered, items } => list(*ordered, items, path, draw, cx),
         Block::Rule => div()
             .id(path.to_owned())
             .flex_none()
@@ -105,13 +119,19 @@ fn block_element(block: &Block, path: &str, draw: &Draw) -> AnyElement {
             .h(px(1.))
             .bg(theme.hairline_soft)
             .into_any_element(),
-        Block::Table { aligns, head, rows } => table(aligns, head, rows, path, draw),
+        Block::Table { aligns, head, rows } => table(aligns, head, rows, path, draw, cx),
     }
 }
 
 /// One list: its items, each with its bullet or number, and its task's
 /// checkbox drawn as a mark.
-fn list(ordered: bool, items: &[Item], path: &str, draw: &Draw) -> AnyElement {
+fn list(
+    ordered: bool,
+    items: &[Item],
+    path: &str,
+    draw: &Draw,
+    cx: &mut Context<LauncherWindow>,
+) -> AnyElement {
     let theme = draw.theme;
     let mut element = div()
         .id(path.to_owned())
@@ -150,7 +170,12 @@ fn list(ordered: bool, items: &[Item], path: &str, draw: &Draw) -> AnyElement {
                                 .iter()
                                 .enumerate()
                                 .map(|(at, block)| {
-                                    block_element(block, &format!("{path}/{index}/{at}"), draw)
+                                    block_element(
+                                        block,
+                                        &format!("{path}/{index}/{at}"),
+                                        draw,
+                                        cx,
+                                    )
                                 })
                                 .collect::<Vec<AnyElement>>(),
                         ),
@@ -168,6 +193,7 @@ fn table(
     rows: &[Vec<Vec<Inline>>],
     path: &str,
     draw: &Draw,
+    cx: &mut Context<LauncherWindow>,
 ) -> AnyElement {
     let theme = draw.theme;
     let columns = aligns.len().max(head.len());
@@ -194,7 +220,14 @@ fn table(
                     .zip(aligns.iter().chain(std::iter::repeat(&no_align)))
                     .enumerate()
                     .map(|(at, (cell, align))| {
-                        cell_element(cell, *align, true, &format!("{path}/head/{at}"), draw)
+                        cell_element(
+                            cell,
+                            *align,
+                            true,
+                            &format!("{path}/head/{at}"),
+                            draw,
+                            cx,
+                        )
                     })
                     .collect::<Vec<AnyElement>>(),
             ),
@@ -228,6 +261,7 @@ fn cell_element(
     head: bool,
     path: &str,
     draw: &Draw,
+    cx: &mut Context<LauncherWindow>,
 ) -> AnyElement {
     let theme = draw.theme;
     let element = div()
@@ -249,14 +283,18 @@ fn cell_element(
                 cell.text_color(theme.text_body)
             }
         })
-        .child(inlines_element(cell, draw));
+        .child(inlines_element(cell, draw, cx));
     element.into_any_element()
 }
 
 /// One run of inline content: prose, code, emphasis, strong text and
 /// links, flowing beside each other and wrapping onto lines as the width
 /// runs out.
-fn inlines_element(inlines: &[Inline], draw: &Draw) -> Div {
+fn inlines_element(
+    inlines: &[Inline],
+    draw: &Draw,
+    cx: &mut Context<LauncherWindow>,
+) -> Div {
     let theme = draw.theme;
     let mut element = div()
         .flex()
@@ -281,6 +319,59 @@ fn inlines_element(inlines: &[Inline], draw: &Draw) -> Div {
                     .text_color(theme.text_title)
                     .child(gpui::SharedString::from(text.clone())),
             ),
+            // An image: its icon as the tree resolved it, drawn as the
+            // grid's cells draw theirs, at the size the source named.
+            Inline::Image {
+                alt,
+                source,
+                title,
+                width,
+                height,
+                icon,
+            } => {
+                let pixels = width.or(*height).map_or(px(96.), |px| px(px as f32));
+                let named: gpui::SharedString = source.clone().into();
+                let tooltip = title.clone().or_else(|| {
+                    (!alt.is_empty()).then(|| alt.clone())
+                });
+                let image = match icon {
+                    Some(icon) => super::components::grid_image(
+                        icon,
+                        pane_core::Fit::Contain,
+                        &format!("markdown-image-{source}"),
+                        draw,
+                    ),
+                    // Not resolved yet, or one Pane cannot read: its alt
+                    // names the place it holds.
+                    None => div()
+                        .id(format!("markdown-image-missing-{source}"))
+                        .size(pixels)
+                        .rounded(theme.geometry.row_radius)
+                        .bg(theme.card_fill)
+                        .into_any_element(),
+                };
+                element.child(
+                    div()
+                        .id(format!("markdown-image-{source}"))
+                        .flex_none()
+                        .size(pixels)
+                        .overflow_hidden()
+                        .rounded(theme.geometry.row_radius)
+                        .role(Role::Image)
+                        .map(|image_node| {
+                            image_node.aria_label(named.clone()).when_some(
+                                tooltip,
+                                |image_node, tooltip| {
+                                    image_node.tooltip(text_tooltip(
+                                        gpui::SharedString::from(tooltip),
+                                        TooltipLook::of(theme),
+                                    ))
+                                },
+                            )
+                        })
+                        .child(image),
+                )
+            }
             Inline::Emphasis(inner) => element.child(
                 div()
                     .flex_none()
@@ -298,11 +389,13 @@ fn inlines_element(inlines: &[Inline], draw: &Draw) -> Div {
             ),
             Inline::Link { text, href } => {
                 let label = plain(text);
+                let url = href.clone();
                 element.child(
                     div()
                         .id(format!("markdown-link-{href}"))
                         .flex_none()
                         .min_w(px(0.))
+                        .cursor_pointer()
                         .underline()
                         .text_color(theme.accent_text)
                         .role(Role::Link)
@@ -313,7 +406,14 @@ fn inlines_element(inlines: &[Inline], draw: &Draw) -> Div {
                                 TooltipLook::of(theme),
                             ))
                         })
-                        .child(inlines_element(text, draw)),
+                        // The standard views open what a Markdown link
+                        // names (#240), as a computed result's row does.
+                        .on_click(cx.listener(
+                            move |this, _: &ClickEvent, window, cx| {
+                                this.designed_open_link(&url, window, cx);
+                            },
+                        ))
+                        .child(inlines_element(text, draw, cx)),
                 )
             }
             // A hard break wraps the row: a full-width, no-height run.
@@ -331,6 +431,7 @@ fn plain(inlines: &[Inline]) -> gpui::SharedString {
             Inline::Text(part) | Inline::Code(part) => text.push_str(part),
             Inline::Emphasis(inner) | Inline::Strong(inner) => text.push_str(&plain(inner)),
             Inline::Link { text: inner, .. } => text.push_str(&plain(inner)),
+            Inline::Image { alt, .. } => text.push_str(alt),
             Inline::Break => text.push(' '),
         }
     }

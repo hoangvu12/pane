@@ -60,7 +60,6 @@ fn opened(cx: &mut TestAppContext) -> (Entity<LauncherWindow>, &mut VisualTestCo
         subtitle: None,
         component,
         takes_query: false,
-        search: false,
     };
     let runtime = Runtime::start().unwrap();
     let launcher = Launcher::new(Ok(runtime.clone()), vec![command]);

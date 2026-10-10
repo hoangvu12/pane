@@ -14,7 +14,20 @@
 
 import { showToast } from "@pane-app/extension/feedback";
 import { get as fetchUrl } from "@pane-app/extension/http";
+import {
+  Button,
+  Column,
+  EmptyState,
+  List,
+  Push,
+  TextInput,
+  createView,
+  pop,
+  useRef,
+  useState,
+} from "@pane-app/extension/view";
 import { get, set } from "pane:extension/settings@0.1.0";
+import { jsxs } from "@pane-app/extension/jsx-runtime";
 
 /** The address used until the user sets another. */
 const DEFAULT_SERVICE = "http://127.0.0.1:8740";
@@ -72,13 +85,6 @@ async function fetchJson(path) {
   }
 }
 
-/** @type {import("@pane-app/extension").Form} */
-const SERVICE_FORM = {
-  title: "Service address",
-  fields: [{ id: "address", label: "Address", kind: { tag: "text", val: { placeholder: DEFAULT_SERVICE } } }],
-  submitLabel: "Save",
-};
-
 /**
  * Runs the action `itemId`: the "about" item's, or a search result's
  * ("package:<name>"), which fetches that package's details; it shows a
@@ -86,16 +92,18 @@ const SERVICE_FORM = {
  * @param {string} itemId
  * @returns {Promise<void>}
  */
-async function act(itemId) {
-  showToast({ title: await outcome(itemId) });
-}
-
 /**
  * The text the action `itemId`'s toast shows.
  * @param {string} itemId
  * @returns {Promise<string>}
  */
-async function outcome(itemId) {
+async /** Searches `query` with the service, as the view's List asks for it. */
+async function search(query) {
+  const found = await fetchJson(`/search?q=${encodeURIComponent(query)}`);
+  return found;
+}
+
+function outcome(itemId) {
   if (itemId === "about") {
     return "Type in the search field to search the package registry";
   }
@@ -107,51 +115,103 @@ async function outcome(itemId) {
   return `${details.name} ${details.version} (${details.license}): ${details.summary}`;
 }
 
-/** @type {import("@pane-app/extension").Command} */
-export const command = {
-  async render() {
-    return {
-      title: "Package search",
-      items: [
-        {
-          id: "about",
-          title: "Type to search the package registry",
-          subtitle: "Results come from the service as you type; Enter shows a package's details",
-          onAction: () => act("about"),
-        },
-        { id: "service", title: "Service address", subtitle: service(), form: SERVICE_FORM },
-      ],
-    };
-  },
-  // A search result's id ("package:<name>") names the package to show.
-  async runSearchResult(id) {
-    await act(id);
-  },
-  async submitForm(itemId, values) {
-    if (itemId !== "service") {
-      throw { message: `unknown form: ${itemId}` };
+/** The search view: a List that handles its search itself (#240), the
+ * service's answers as its items. The search the text starts runs in the
+ * event that hears it, and the results are drawn the moment they land;
+ * the loading state shows while it runs. The "Service address" item
+ * pushes a view of a text field and a Save button, the modern replacement
+ * for the typed form the List document carried. */
+function Packages() {
+  const [query, setQuery] = useState("");
+  const [results, setResults] = useState([]);
+  const [failed, setFailed] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const searching = useRef(null);
+  const onSearchText = async (text) => {
+    setQuery(text);
+    if (!text.trim()) {
+      setResults([]);
+      setFailed(null);
+      setLoading(false);
+      return;
     }
-    const address = (values.find(({ id }) => id === "address")?.value ?? "").trim().replace(/\/+$/, "");
-    if (!(address.startsWith("http://") || address.startsWith("https://"))) {
-      throw { field: "address", message: "Enter an address starting with http:// or https://" };
+    setLoading(true);
+    const run = search(text);
+    searching.current = run;
+    try {
+      const found = await run;
+      if (searching.current !== run) return;
+      setResults(found.results);
+      setFailed(null);
+    } catch (error) {
+      if (searching.current !== run) return;
+      setResults([]);
+      setFailed(String(error.message ?? error));
+    } finally {
+      if (searching.current === run) setLoading(false);
     }
-    host(() => set(SERVICE, address));
-    return `Searching ${address} from now on`;
-  },
-  async openCustomView() {
-    throw new Error("Package search has no custom views");
-  },
-};
-
-/** @type {import("@pane-app/extension").CommandSearch} */
-export const commandSearch = {
-  async search(command, query) {
-    if (command !== COMMAND) throw new Error(`unknown command: ${command}`);
-    const found = await fetchJson(`/search?q=${encodeURIComponent(query)}`);
-    return found.results.map((/** @type {{ name: string, summary: string }} */ pkg) => ({
-      id: `package:${pkg.name}`,
+  };
+  const items = results.map((pkg) =>
+    jsxs(List.Item, {
+      key: `package:${pkg.name}`,
       title: pkg.name,
       subtitle: pkg.summary,
-    }));
+      onClick: async () => {
+        showToast({ title: await outcome(`package:${pkg.name}`) });
+      },
+      children: [pkg.name],
+    }),
+  );
+  return jsxs(List, {
+    navigationTitle: "Package search",
+    searchPlaceholder: "Search the registry…",
+    isLoading: loading,
+    onSearchText,
+    children: [
+      ...items,
+      jsxs(EmptyState, {
+        title: failed ?? "Type to search the package registry",
+        description: "Results come from the service as you type; Enter shows a package's details",
+        children: [
+          jsxs(Push(AddressView), { children: ["Service address"] }),
+        ],
+      }),
+    ],
+  });
+}
+
+/** The service address view, pushed above the list: a text field and a
+ * Save button. */
+function AddressView() {
+  const [address, setAddress] = useState(service());
+  return jsxs(Column, {
+    navigationTitle: "Service address",
+    gap: "m",
+    children: [
+      jsxs(TextInput, {
+        key: "address",
+        label: "Address",
+        placeholder: DEFAULT_SERVICE,
+        value: address,
+        onInput: (value) => setAddress(value),
+        children: [address],
+      }),
+      jsxs(Button, {
+        onClick: pop(
+          `Searching ${address.trim().replace(/\/+$/, "")} from now on`,
+        ),
+        children: ["Save"],
+      }),
+    ],
+  });
+}
+
+/** @type {import("@pane-app/extension").Command} */
+export const command = {
+  async openView(commandId) {
+    if (commandId !== COMMAND) {
+      throw new Error(`unknown command: ${commandId}`);
+    }
+    return createView(Packages);
   },
 };

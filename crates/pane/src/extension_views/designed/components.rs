@@ -543,6 +543,61 @@ fn icon_at(icon: &Icon, pixels: f32, path: &str, draw: &Draw) -> Stateful<Div> {
     extension_icon::draw(&drawn, size, path.to_owned(), "designed", theme)
 }
 
+/// One image of a Grid's cell (#240), drawn bare, filling the box the
+/// cell gives it as its `fit` says: the icon model's image, its tint
+/// corrected as the tree's images are.
+pub(super) fn grid_image(icon: &Icon, fit: Fit, path: &str, draw: &Draw) -> AnyElement {
+    let drawn = drawn(icon, draw);
+    let element = match &drawn.image {
+        IconImage::Glyph(markup) => svg()
+            .data(markup)
+            .size_full()
+            .text_color(drawn.color)
+            .into_any_element(),
+        IconImage::File {
+            path: file,
+            tinted: true,
+        } => svg()
+            .external_path(file.to_string_lossy().into_owned())
+            .size_full()
+            .text_color(drawn.color)
+            .into_any_element(),
+        IconImage::Data {
+            image,
+            tinted: true,
+        } => svg()
+            .data(&image.bytes)
+            .size_full()
+            .text_color(drawn.color)
+            .into_any_element(),
+        IconImage::File { path: file, .. } => img(file.clone())
+            .size_full()
+            .object_fit(object_fit(fit))
+            .into_any_element(),
+        IconImage::Data { image, .. } => img(image.clone())
+            .size_full()
+            .object_fit(object_fit(fit))
+            .into_any_element(),
+        IconImage::Letter { letter, background } => div()
+            .size_full()
+            .flex()
+            .items_center()
+            .justify_center()
+            .bg(*background)
+            .text_size(px(24.))
+            .font_weight(gpui::FontWeight::SEMIBOLD)
+            .text_color(drawn.color)
+            .child(letter.to_string())
+            .into_any_element(),
+    };
+    div()
+        .id(path.to_owned())
+        .debug_selector(move || format!("designed-cell-image"))
+        .size_full()
+        .child(element)
+        .into_any_element()
+}
+
 /// One icon, drawn at the size its node names, bare.
 pub(super) fn icon(icon: &IconNode, path: &str, draw: &Draw) -> AnyElement {
     let pixels = extent_of(icon.size, 16., draw.theme);
@@ -1462,8 +1517,13 @@ pub(super) fn loading(loading: &LoadingNode, path: &str, theme: &Theme) -> AnyEl
 // ------------------------------------------------------------ content
 
 /// One markdown node: its blocks, drawn with the theme.
-pub(super) fn markdown(markdown: &MarkdownNode, path: &str, draw: &Draw) -> AnyElement {
-    super::markdown::blocks(&markdown.blocks, path, draw)
+pub(super) fn markdown(
+    markdown: &MarkdownNode,
+    path: &str,
+    draw: &Draw,
+    cx: &mut gpui::Context<LauncherWindow>,
+) -> AnyElement {
+    super::markdown::blocks(&markdown.blocks, path, draw, cx)
 }
 
 /// A section header: a title over a group, with its note beside it.

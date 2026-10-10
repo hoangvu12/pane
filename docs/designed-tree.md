@@ -312,7 +312,10 @@ A document is one JSON object: its version and its root node.
   tokens' colour grammar and Markdown (#237); 1.2 added the keyed state
   — fields that edit, the select's searchable state, scroll by key —
   with the inputs' partial control and the focus, blur and key events
-  (#238).
+  (#238); 1.3 added the standard views — the List with its sections,
+  keywords, host filtering, controlled search text and selection, the
+  search-bar dropdown, pagination, the empty view and the detail pane;
+  the Grid; the Detail, and Markdown images (#240).
 - Every node has a `type`, and may have:
   - `key`: the node's stable identity among its siblings, which Pane
     keeps node state under (the keyed reconciler, below: the focus of a
@@ -510,6 +513,75 @@ download and cache, a system file or application icon, or bounded inline
 which also names it to assistive technology; an icon without one is
 decoration. Web images load as rows' icons do: the fallback shows until
 one arrives, and on failure.
+
+## The standard views
+
+The List, the Grid and the Detail are UI components of the tree whose
+behaviour the host owns (#240), so the common case needs no layout work at
+all. A view names at most one of them — the first in its tree, in document
+order; the screen presents it: the search header's field (with the
+navigation title above it, replacing the footer title #239 drew), the
+launcher's own rows list, virtualised and accessible as root search's is.
+
+- **`list`** — the List document's item vocabulary on the tree
+  ([list-tree.md](list-tree.md)): `list-section` and `list-item` children
+  (a `list-item` may sit in the list directly, an implicit section), a
+  `list-dropdown` child (below), and any other child the empty view drawn
+  when no item is. The list's own properties: `searchPlaceholder`,
+  `searchText` (the field's value, partially controlled as a field's is),
+  `selectedKey`, `is-loading` (the loading bar, drawn once loading has run
+  past 300 ms — `LOADING_MS`; the bar's look is the launcher polish's,
+  #248), `is-showing-detail`, `hasMore`, `pageSize` (clamped 1–100), and
+  the events `onSearchText` (the view handles the search itself: Pane then
+  filters nothing, and the text is told to the view, throttled to 250 ms
+  by default), `onSelectionChange` (told the selected item's key) and
+  `onLoadMore` (raised as the selection nears the end of what is shown
+  while `hasMore` says more is there — once for each growth of the list).
+  Pane filters the items by the field's text with the root-search matcher
+  ([root-search.md](root-search.md)), on the title, the subtitle and the
+  item's `keywords`, unless the view handles the search itself.
+- **`list-section`** — a group of items under its `title` and `subtitle`.
+- **`list-item`** — a key (`key`), a `title`, a `subtitle`, `keywords`, an
+  `icon`, `accessories` (the List document's: text, a date, a tag, each
+  with an icon, a colour and a tooltip), `onPress` (the primary action),
+  `actions` (`{ "title", "onPress" }`; the second is the secondary
+  action, Ctrl+Enter — the Actions panel that lists them all is the
+  action model's, #120), `detail` (the pane's content when the item is
+  selected and the list `is-showing-detail` — built for the selected item
+  alone, the render context's `selected` naming it), and children (the
+  author's own row subtree, drawn in the place of the standard row while
+  Pane still selects and activates it).
+- **`grid`** — the List's behaviour with cells: `grid-item` children in
+  `list-section`s, each section with its own `columns` (1–8, 5 by
+  default), `aspectRatio`, `fit` and `inset`. A cell is an `image`, a
+  `color`, or the author's own subtree in its children, with a `title`
+  and a `subtitle` under it. The arrows move the selection by cell and by
+  row, Ctrl+Up and Ctrl+Down by section, no wrap.
+- **`list-dropdown`** — the search-bar dropdown, beside the search field:
+  `items` (`{ "value", "title" }`), the chosen `value`, a `placeholder`,
+  and `onChange` (told the chosen item's id). It is the searchable select
+  (see `select`), keyed by its place in the tree.
+- **`detail`** — a scrolled column of what a record or an article is:
+  Markdown, a metadata panel, a loading state, actions, as children.
+
+A Markdown image is the icon model's: `![alt](source =WxH "title")`, its
+source a packaged image's path, a web image's URL or inline `data:`, its
+size the `=WxH` its source named (either number may be left out). A
+Markdown link is opened by Pane with the system's handler.
+
+The event set grows with the views: `onSelectionChange` (a selection's
+move, `{"value": "…"}` naming the selected item's key), `onLoadMore`
+(`{}`), and the List's `onSearchText`, an input event (`{"value": "…"}`)
+raised on the list's key. The render context grows with them too: it
+names the selected item's key (`"selected"`) of the view's List or Grid,
+which the detail pane's content is built for.
+
+The command-search export (`pane:extension/command-search`,
+`docs/command-search.md`) is retired: a command's search is the List's
+search-text event, the view handling it itself (throttled) or Pane
+filtering locally. Pane's registered Files command keeps its host-side
+search of the file index (#177) — no command of a package opens a search
+field of its own.
 
 ## Reading a document
 

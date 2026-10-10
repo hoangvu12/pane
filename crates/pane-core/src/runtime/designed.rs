@@ -28,19 +28,24 @@
 //! form and Markdown (#237); 1.2 adds the keyed state the reconciler
 //! keeps — text fields that edit, the select's searchable state, scroll
 //! by key — the inputs' partial control (`onInput`, `throttleMs`, the
-//! `focus` ask) and the focus, blur and key events (#238).
+//! `focus` ask) and the focus, blur and key events (#238). 1.3 adds the
+//! standard views built on the tree (#240): the List with its sections,
+//! item keywords, host filtering, controlled search text and selection,
+//! the search-bar dropdown, pagination, the empty view and the detail
+//! pane; the Grid; the Detail, and Markdown images.
 
 use serde::Deserialize;
 use serde_json::{Map, Value};
 
 use crate::icons::{self, Icon, Tint};
 use crate::markdown;
+use crate::runtime::tree::Accessory;
 use crate::tokens::{IconSize, Radius, Space, TextLevel, TextStyle};
 
-/// The version of the UI component set this Pane renders: major 1, minor 2.
+/// The version of the UI component set this Pane renders: major 1, minor 3.
 /// A document of this major and any minor is read (unknown fields and nodes
 /// degrading); a document of another major is refused naming both versions.
-pub const COMPONENT_SET: (u64, u64) = (1, 2);
+pub const COMPONENT_SET: (u64, u64) = (1, 3);
 
 /// Which handler of a node an event raises — the property of the node the
 /// event names, which the stale-event rule checks before delivering: an
@@ -61,6 +66,12 @@ pub enum DesignedHandler {
     Blur,
     /// `onKey` — a key pressed while the node is focused.
     Key,
+    /// `onSelectionChange` — a List's or Grid's selection moving to
+    /// another of its items.
+    Selection,
+    /// `onLoadMore` — a List's or Grid's selection nearing the end of
+    /// what it shows, while the tree says more is there.
+    More,
 }
 
 /// The most nodes one document may hold, counting `fallback` subtrees.
@@ -109,6 +120,8 @@ impl Node {
             || self.handles(DesignedHandler::Focus)
             || self.handles(DesignedHandler::Blur)
             || self.handles(DesignedHandler::Key)
+            || self.handles(DesignedHandler::Selection)
+            || self.handles(DesignedHandler::More)
             || matches!(
                 &self.kind,
                 NodeKind::TextInput(_)
@@ -120,6 +133,8 @@ impl Node {
                     | NodeKind::Segmented(_)
                     | NodeKind::Slider(_)
                     | NodeKind::Scroll { .. }
+                    | NodeKind::List(_)
+                    | NodeKind::Grid(_)
             )
     }
 
@@ -134,6 +149,8 @@ impl Node {
                 NodeKind::Button(button) => held(button.on_press),
                 NodeKind::Link(link) => held(link.on_press),
                 NodeKind::RichRow(row) => held(row.on_press),
+                NodeKind::ListItem(item) => held(item.on_press) || !item.actions.is_empty(),
+                NodeKind::GridItem(item) => held(item.on_press),
                 NodeKind::Text(text) => match &text.content {
                     TextContent::Plain(_) => false,
                     TextContent::Spans(spans) => spans.iter().any(|span| held(span.on_press)),
@@ -148,10 +165,23 @@ impl Node {
                 NodeKind::Select(control) => held(control.on_change),
                 NodeKind::Slider(slider) => held(slider.on_change),
                 NodeKind::TextInput(input) => held(input.on_change),
+                NodeKind::ListDropdown(dropdown) => held(dropdown.on_change),
                 _ => false,
             },
             DesignedHandler::Input => match &self.kind {
                 NodeKind::TextInput(input) => held(input.on_input),
+                NodeKind::List(list) => held(list.on_search_text),
+                NodeKind::Grid(list) => held(list.on_search_text),
+                _ => false,
+            },
+            DesignedHandler::Selection => match &self.kind {
+                NodeKind::List(list) => held(list.on_selection_change),
+                NodeKind::Grid(list) => held(list.on_selection_change),
+                _ => false,
+            },
+            DesignedHandler::More => match &self.kind {
+                NodeKind::List(list) => held(list.on_load_more),
+                NodeKind::Grid(list) => held(list.on_load_more),
                 _ => false,
             },
             DesignedHandler::Focus => held(self.on_focus),
@@ -262,6 +292,24 @@ pub enum NodeKind {
     PasswordInput(TextInput),
     TextArea(TextInput),
     Select(Select),
+    /// A standard List (#240): the view's items in sections, its search
+    /// field and selection Pane's, its rows the launcher's own.
+    List(ListNode),
+    /// A standard Grid (#240): a List's behaviour with cells of images,
+    /// colours, icons or subtrees.
+    Grid(ListNode),
+    /// A section of a List's or Grid's items, under its title.
+    ListSection(ListSection),
+    /// One item of a List, carrying the action that activates it and the
+    /// detail pane's content when it is selected.
+    ListItem(ListItem),
+    /// One cell of a Grid: an image, a colour or the author's own subtree.
+    GridItem(GridItem),
+    /// A List's search-bar dropdown, beside its search field.
+    ListDropdown(ListDropdown),
+    /// A Detail (#240): a scrolling column of what a record or an article
+    /// is — Markdown, a metadata panel, a loading state, actions.
+    Detail(Layout),
     /// A node whose type Pane does not know, or whose `requires` it does
     /// not meet: its `fallback` and children decide what is drawn.
     Unknown(String),
@@ -632,6 +680,140 @@ pub struct TextInput {
     pub label: Option<String>,
 }
 
+/// The most columns one grid section draws, and the least; the default
+/// when a section names none is [`GRID_COLUMNS`].
+pub const MIN_GRID_COLUMNS: u64 = 1;
+pub const MAX_GRID_COLUMNS: u64 = 8;
+pub const GRID_COLUMNS: u64 = 5;
+
+/// The least and most items one page of a list holds; the default when it
+/// names none is Pane's own.
+pub const MAX_PAGE_SIZE: u64 = 100;
+
+/// A standard List or Grid node (#240, `docs/list-tree.md`'s item
+/// vocabulary on the designed tree): its items in sections, its search
+/// field and selection Pane's. The children are its `list-section` and
+/// `list-item` (or `grid-item`) nodes; a `list-dropdown` child is its
+/// search-bar dropdown; any other child is the empty view drawn when no
+/// item is shown. An item's `detail` is the detail pane's content when it
+/// is selected and `is-showing-detail` names the pane.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ListNode {
+    /// The search field's placeholder.
+    pub search_placeholder: Option<String>,
+    /// The search text the tree sets: the field's value, which wins while
+    /// the user has not typed a newer one (the field's own partial
+    /// control).
+    pub search_text: Option<String>,
+    /// The item the tree selects, by its key.
+    pub selected_key: Option<String>,
+    /// `is-loading`: the loading bar, drawn once loading has run past its
+    /// threshold (300 ms).
+    pub is_loading: bool,
+    /// `is-showing-detail`: the detail pane beside the items.
+    pub is_showing_detail: bool,
+    /// Whether more items follow the ones shown, whose loading the list
+    /// asks for as the selection nears the end.
+    pub has_more: bool,
+    /// How many items a page holds; clamped to 1–100.
+    pub page_size: Option<u64>,
+    /// The callback the search text runs on its every change, when the view
+    /// handles the search itself — the list is then not filtered by Pane
+    /// and the events are throttled (250 ms by default).
+    pub on_search_text: Option<u32>,
+    /// The callback the selection's change runs, told the selected item's
+    /// key.
+    pub on_selection_change: Option<u32>,
+    /// The callback the load of the next page runs, as the selection nears
+    /// the end of what is shown.
+    pub on_load_more: Option<u32>,
+}
+
+/// One section of a List's or Grid's items, under its title and subtitle.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ListSection {
+    pub title: Option<String>,
+    pub subtitle: Option<String>,
+    /// How many columns the section's cells sit in (a Grid's), 1–8;
+    /// 5 when the section names none.
+    pub columns: Option<Finite>,
+    /// The cells' width over their height (a Grid's); a non-positive one
+    /// is left out.
+    pub aspect_ratio: Option<Finite>,
+    /// How the section's images fit their cells (a Grid's).
+    pub fit: Fit,
+    /// Whether the cells sit inset from the grid's edges (a Grid's).
+    pub inset: bool,
+}
+
+/// One item of a List, as the tree gives it: the List document's
+/// vocabulary on the designed tree. Its children are its own row subtree,
+/// drawn in the place of the standard row while Pane still selects and
+/// activates it.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ListItem {
+    pub title: String,
+    pub subtitle: Option<String>,
+    /// Shown while the pointer rests on the item's title.
+    pub title_tooltip: Option<String>,
+    /// Shown while the pointer rests on the item's subtitle.
+    pub subtitle_tooltip: Option<String>,
+    /// Words the search matches as the subtitle is.
+    pub keywords: Vec<String>,
+    pub icon: Option<Icon>,
+    pub accessories: Vec<Accessory>,
+    /// The callback that activates the item (its primary action).
+    pub on_press: Option<u32>,
+    /// Its further actions in order: the second is the item's secondary
+    /// action, Ctrl+Enter. (The Actions panel that lists them all is the
+    /// action model's, #120's; this slice binds no shortcuts.)
+    pub actions: Vec<ListAction>,
+    /// The detail pane's content when this item is selected and the list
+    /// shows the pane.
+    pub detail: Option<Box<Node>>,
+}
+
+/// One of a List item's actions: what runs it (its callback id), and what
+/// the footer calls it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ListAction {
+    pub title: Option<String>,
+    pub on_press: u32,
+}
+
+/// One cell of a Grid: an image, a colour, or the author's own subtree in
+/// its children, with a title and a subtitle under it.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct GridItem {
+    pub title: Option<String>,
+    pub subtitle: Option<String>,
+    pub image: Option<Icon>,
+    /// A colour the cell fills with.
+    pub color: Option<Paint>,
+    /// The callback that activates the cell.
+    pub on_press: Option<u32>,
+}
+
+/// A List's search-bar dropdown, beside its search field: its items and
+/// the one chosen, changed by the user's choice.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ListDropdown {
+    /// The id of the item chosen.
+    pub value: Option<String>,
+    /// The dropdown's placeholder, shown while no choice is made.
+    pub placeholder: Option<String>,
+    /// The callback the choice's change runs, told the chosen item's id.
+    pub on_change: Option<u32>,
+    pub items: Vec<DropdownItem>,
+}
+
+/// One item of a List's search-bar dropdown.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DropdownItem {
+    pub value: String,
+    pub label: Option<String>,
+}
+
 /// The tone of a button.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Tone {
@@ -848,6 +1030,13 @@ fn kind_name(kind: &NodeKind) -> String {
         NodeKind::PasswordInput(_) => "password-input".to_owned(),
         NodeKind::TextArea(_) => "text-area".to_owned(),
         NodeKind::Select(_) => "select".to_owned(),
+        NodeKind::List(_) => "list".to_owned(),
+        NodeKind::Grid(_) => "grid".to_owned(),
+        NodeKind::ListSection(_) => "list-section".to_owned(),
+        NodeKind::ListItem(_) => "list-item".to_owned(),
+        NodeKind::GridItem(_) => "grid-item".to_owned(),
+        NodeKind::ListDropdown(_) => "list-dropdown".to_owned(),
+        NodeKind::Detail(_) => "detail".to_owned(),
         NodeKind::Unknown(kind) => kind.clone(),
     }
 }
@@ -1019,6 +1208,13 @@ fn node(wire: WireNode, depth: usize, nodes: &mut usize) -> Result<Node, ReadErr
             "password-input" => NodeKind::PasswordInput(text_input(&wire)?),
             "text-area" => NodeKind::TextArea(text_input(&wire)?),
             "select" => NodeKind::Select(select(&wire)?),
+            "list" => NodeKind::List(list_node(&wire)?),
+            "grid" => NodeKind::Grid(list_node(&wire)?),
+            "list-section" => NodeKind::ListSection(list_section(&wire)?),
+            "list-item" => NodeKind::ListItem(list_item(&wire, depth, nodes)?),
+            "grid-item" => NodeKind::GridItem(grid_item(&wire)?),
+            "list-dropdown" => NodeKind::ListDropdown(list_dropdown(&wire)?),
+            "detail" => NodeKind::Detail(layout(&wire)?),
             _ => NodeKind::Unknown(wire.kind.clone()),
         }
     };
@@ -1508,6 +1704,214 @@ fn text_input(wire: &WireNode) -> Result<TextInput, ReadError> {
         throttle_ms: number(wire, "throttleMs")?.map(|Finite(ms)| ms.max(0.) as u64),
         label: string(wire, "label")?,
     })
+}
+
+/// A list or grid node's own properties: its search field and selection,
+/// the search-bar dropdown and pagination. Its items, sections, dropdown
+/// and empty view are its children.
+fn list_node(wire: &WireNode) -> Result<ListNode, ReadError> {
+    Ok(ListNode {
+        search_placeholder: string(wire, "searchPlaceholder")?,
+        search_text: string(wire, "searchText")?,
+        selected_key: string(wire, "selectedKey")?,
+        is_loading: boolean(wire, "isLoading")?.unwrap_or(false),
+        is_showing_detail: boolean(wire, "isShowingDetail")?.unwrap_or(false),
+        has_more: boolean(wire, "hasMore")?.unwrap_or(false),
+        page_size: number(wire, "pageSize")?.map(|Finite(size)| {
+            Finite(size.clamp(1., MAX_PAGE_SIZE as f32))
+        }),
+        on_search_text: callback(wire, "onSearchText")?,
+        on_selection_change: callback(wire, "onSelectionChange")?,
+        on_load_more: callback(wire, "onLoadMore")?,
+    })
+}
+
+/// A list section's properties: its title and subtitle, and a grid
+/// section's columns, aspect ratio, fit and inset.
+fn list_section(wire: &WireNode) -> Result<ListSection, ReadError> {
+    Ok(ListSection {
+        title: string(wire, "title")?,
+        subtitle: string(wire, "subtitle")?,
+        columns: number(wire, "columns")?.map(|Finite(columns)| {
+            Finite(
+                columns
+                    .clamp(MIN_GRID_COLUMNS as f32, MAX_GRID_COLUMNS as f32)
+                    .round(),
+            )
+        }),
+        aspect_ratio: number(wire, "aspectRatio")?.filter(|Finite(ratio)| *ratio > 0.),
+        fit: fit_of(wire.rest.get("fit"))?,
+        inset: boolean(wire, "inset")?.unwrap_or(false),
+    })
+}
+
+/// A list item's properties: the List document's vocabulary — a title,
+/// a subtitle, keywords, an icon, accessories and actions — and the
+/// detail pane's content when it is selected.
+fn list_item(wire: &WireNode, depth: usize, nodes: &mut usize) -> Result<ListItem, ReadError> {
+    let rest = &wire.rest;
+    let title = match rest.get("title") {
+        Some(Value::String(title)) => title.clone(),
+        Some(_) => return Err(unreadable("its title is not a string")),
+        None => return Err(unreadable("a list-item node has no title")),
+    };
+    let keywords = match rest.get("keywords") {
+        None | Some(Value::Null) => Vec::new(),
+        Some(Value::Array(keywords)) => keywords
+            .iter()
+            .map(|keyword| match keyword {
+                Value::String(keyword) => Ok(keyword.clone()),
+                _ => Err(unreadable("a keyword of its item is not a string")),
+            })
+            .collect::<Result<Vec<String>, ReadError>>()?,
+        Some(_) => return Err(unreadable("its keywords are not a list")),
+    };
+    let accessories = match rest.get("accessories") {
+        None | Some(Value::Null) => Vec::new(),
+        Some(Value::Array(accessories)) => accessories
+            .iter()
+            .filter_map(crate::runtime::tree::read_accessory)
+            .collect(),
+        Some(_) => return Err(unreadable("its accessories are not a list")),
+    };
+    let actions = match rest.get("actions") {
+        None | Some(Value::Null) => Vec::new(),
+        Some(Value::Array(actions)) => actions
+            .iter()
+            .map(|action| {
+                let Value::Object(fields) = action else {
+                    return Err(unreadable("an action of its item is not an object"));
+                };
+                let action_wire = WireNode {
+                    kind: "action".into(),
+                    key: None,
+                    name: None,
+                    navigation_title: None,
+                    requires: None,
+                    fallback: None,
+                    children: None,
+                    focus: None,
+                    on_focus: None,
+                    on_blur: None,
+                    on_key: None,
+                    rest: fields.clone(),
+                };
+                Ok(ListAction {
+                    title: string(&action_wire, "title")?,
+                    on_press: callback(&action_wire, "onPress")?.ok_or_else(|| {
+                        unreadable("an action of its item has no onPress")
+                    })?,
+                })
+            })
+            .collect::<Result<Vec<ListAction>, ReadError>>()?,
+        Some(_) => return Err(unreadable("its actions are not a list")),
+    };
+    let detail = wire
+        .rest
+        .get("detail")
+        .filter(|value| !matches!(value, Value::Null))
+        .map(|detail| child_node(detail, depth, nodes))
+        .transpose()?;
+    Ok(ListItem {
+        title,
+        subtitle: string(wire, "subtitle")?,
+        title_tooltip: string(wire, "titleTooltip")?,
+        subtitle_tooltip: string(wire, "subtitleTooltip")?,
+        keywords,
+        icon: icon_of(rest.get("icon"), "icon")?,
+        accessories,
+        on_press: callback(wire, "onPress")?,
+        actions,
+        detail,
+    })
+}
+
+/// A grid cell's properties: its title and subtitle, and the image,
+/// colour or subtree it shows.
+fn grid_item(wire: &WireNode) -> Result<GridItem, ReadError> {
+    let rest = &wire.rest;
+    Ok(GridItem {
+        title: string(wire, "title")?,
+        subtitle: string(wire, "subtitle")?,
+        image: icon_of(rest.get("image"), "image")?,
+        color: paint(rest.get("color"), "color")?,
+        on_press: callback(wire, "onPress")?,
+    })
+}
+
+/// A search-bar dropdown's properties: its items and the one chosen.
+fn list_dropdown(wire: &WireNode) -> Result<ListDropdown, ReadError> {
+    let rest = &wire.rest;
+    let items = match rest.get("items") {
+        None | Some(Value::Null) => Vec::new(),
+        Some(Value::Array(items)) => items
+            .iter()
+            .map(|item| {
+                let Value::Object(fields) = item else {
+                    return Err(unreadable("an item of its dropdown is not an object"));
+                };
+                let item_wire = WireNode {
+                    kind: "item".into(),
+                    key: None,
+                    name: None,
+                    navigation_title: None,
+                    requires: None,
+                    fallback: None,
+                    children: None,
+                    focus: None,
+                    on_focus: None,
+                    on_blur: None,
+                    on_key: None,
+                    rest: fields.clone(),
+                };
+                Ok(DropdownItem {
+                    value: string(&item_wire, "value")?.ok_or_else(|| {
+                        unreadable("an item of its dropdown has no value")
+                    })?,
+                    label: fields
+                        .get("title")
+                        .or_else(|| fields.get("label"))
+                        .map(|label| match label {
+                            Value::String(label) => Ok(Some(label.clone())),
+                            _ => Err(unreadable("an item's title is not a string")),
+                        })
+                        .transpose()?
+                        .flatten(),
+                })
+            })
+            .collect::<Result<Vec<DropdownItem>, ReadError>>()?,
+        Some(_) => return Err(unreadable("its items are not a list")),
+    };
+    Ok(ListDropdown {
+        value: string(wire, "value")?,
+        placeholder: string(wire, "placeholder")?,
+        on_change: callback(wire, "onChange")?,
+        items,
+    })
+}
+
+/// One node held as another's property (a list item's `detail`), read at
+/// `depth` and counting toward the document's nodes.
+fn child_node(value: &Value, depth: usize, nodes: &mut usize) -> Result<Box<Node>, ReadError> {
+    let wire: WireNode = serde_json::from_value(value.clone())
+        .map_err(|error| ReadError::Unreadable(format!("its tree: {error}")))?;
+    Ok(Box::new(node(wire, depth + 1, nodes)?))
+}
+
+/// A fit property, as an image's is; `contain` when the tree gives none.
+fn fit_of(value: Option<&Value>) -> Result<Fit, ReadError> {
+    match value {
+        None | Some(Value::Null) => Ok(Fit::Contain),
+        Some(Value::String(fit)) => match fit.as_str() {
+            "contain" => Ok(Fit::Contain),
+            "cover" => Ok(Fit::Cover),
+            "fill" => Ok(Fit::Fill),
+            other => Err(unreadable(&format!(
+                "its fit is {other}; a fit is \"contain\", \"cover\" or \"fill\""
+            ))),
+        },
+        Some(_) => Err(unreadable("its fit is not a fit")),
+    }
 }
 
 /// The style every node carries: its sizing, its surface, and its hover

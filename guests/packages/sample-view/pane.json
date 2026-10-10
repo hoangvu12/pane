@@ -24,6 +24,27 @@
       "subtitle": "Data arriving drawn the moment it lands, with no timer",
       "component": "sample_view.wasm",
       "mode": "designed"
+    },
+    {
+      "id": "list",
+      "title": "List sample",
+      "subtitle": "A List with sections, search, an empty view, a detail pane and pagination",
+      "component": "sample_view.wasm",
+      "mode": "designed"
+    },
+    {
+      "id": "grid",
+      "title": "Grid sample",
+      "subtitle": "A Grid of images and colours in sections",
+      "component": "sample_view.wasm",
+      "mode": "designed"
+    },
+    {
+      "id": "detail",
+      "title": "Detail sample",
+      "subtitle": "A Detail of Markdown with images and a metadata panel",
+      "component": "sample_view.wasm",
+      "mode": "designed"
     }
   ]
 }

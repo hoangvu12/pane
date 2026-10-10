@@ -30,7 +30,6 @@ fn command(id: &str, component: PathBuf) -> CommandRegistration {
         subtitle: None,
         component,
         takes_query: false,
-        search: false,
     }
 }
 

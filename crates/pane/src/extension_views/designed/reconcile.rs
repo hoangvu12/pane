@@ -151,6 +151,24 @@ impl DesignedControls {
                 path.push_str("/action");
                 self.children(node, path, render, walk, window, cx);
             }
+            // A List item's children are its own row subtree, drawn in
+            // the place of the standard row; its `detail` is the pane's
+            // content when it is selected (#240). Both keep their state
+            // by key as the rest of the tree does.
+            NodeKind::ListItem(_) | NodeKind::GridItem(_) => {
+                self.hold(node, path, render, walk, window, cx);
+                let own = path.len();
+                path.push_str("/row");
+                self.children(node, path, render, walk, window, cx);
+                if let NodeKind::ListItem(item) = &node.kind
+                    && let Some(detail) = item.detail.as_deref()
+                {
+                    path.truncate(own);
+                    path.push_str("/detail");
+                    self.node(detail, path, render, walk, window, cx);
+                }
+                path.truncate(own);
+            }
             _ => {
                 self.hold(node, path, render, walk, window, cx);
                 self.children(node, path, render, walk, window, cx);
@@ -216,11 +234,12 @@ impl DesignedControls {
                         place(editing, events, &input.value, cx);
                     }
                 }
-                Held::Select { on_change, .. } => {
-                    if let NodeKind::Select(select) = &node.kind {
-                        *on_change = select.on_change;
-                    }
-                }
+                Held::Select { on_change, .. } => match &node.kind {
+                    NodeKind::Select(select) => *on_change = select.on_change,
+                    // A List's search-bar dropdown: its own change handler.
+                    NodeKind::ListDropdown(dropdown) => *on_change = dropdown.on_change,
+                    _ => {}
+                },
                 _ => {}
             }
             // The focus and blur events, subscribed while the node names
@@ -604,6 +623,11 @@ fn held(node: &Node) -> Option<HeldKind> {
             Some(HeldKind::Field)
         }
         NodeKind::Select(select) => (!select.options.is_empty()).then_some(HeldKind::Select),
+        // A List's search-bar dropdown is the searchable select, keyed by
+        // its place in the tree (#240).
+        NodeKind::ListDropdown(dropdown) => {
+            (!dropdown.items.is_empty()).then_some(HeldKind::Select)
+        }
         NodeKind::Scroll { .. } => Some(HeldKind::Scroll),
         _ if focusable(node)
             || node.on_focus.is_some()
