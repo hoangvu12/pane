@@ -55,7 +55,7 @@ impl lifecycle::Guest for Handoff {
     /// The state handed to the new code: the counter and the draft, as the
     /// SDK serialises them. `None` would hand nothing over.
     async fn snapshot() -> Option<Vec<u8>> {
-        Some(state::save(&*KEPT.borrow()))
+        state::save(&*KEPT.borrow())
     }
 
     /// Restores what a replaced instance handed over. An error discards the

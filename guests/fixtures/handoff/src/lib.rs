@@ -61,7 +61,7 @@ impl lifecycle::Guest for Fixture {
                 None
             }
             Some("oversized") => Some(vec![0; (1 << 20) + 1]),
-            _ => Some(state::save(&*COUNTER.borrow())),
+            _ => state::save(&*COUNTER.borrow()),
         }
     }
 

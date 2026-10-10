@@ -82,7 +82,7 @@ impl pane_extension::lifecycle::Guest for Watching {
 
     /// The task's count of cycles this run, handed to the new code.
     async fn snapshot() -> Option<Vec<u8>> {
-        Some(state::save(&THIS_RUN.load(Ordering::Relaxed)))
+        state::save(&THIS_RUN.load(Ordering::Relaxed))
     }
 
     /// Restores the count, so the new instance's first cycle carries the

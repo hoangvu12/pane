@@ -2232,7 +2232,7 @@ impl pane_extension::lifecycle::Guest for Handoff {
     async fn activate() {} // this package declares no activation entry point
 
     async fn snapshot() -> Option<Vec<u8>> {
-        Some(pane_extension::state::save(&KEPT))
+        pane_extension::state::save(&KEPT)
     }
 
     async fn restore(bytes: Vec<u8>) -> Result<(), String> {
