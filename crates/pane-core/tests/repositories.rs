@@ -1866,7 +1866,7 @@ fn a_collection_named_by_its_address_opens_the_choice_and_installs_the_ticked_on
     let view = launcher.view();
     assert!(matches!(view.screen, Screen::Package { .. }), "{view:?}");
     assert_eq!(view.title, "Timers from Git");
-    let details = details(&launcher);
+    let details = self::details(&launcher);
     for line in [
         format!(
             "Source: Git repository {}#timers",
@@ -1914,7 +1914,7 @@ fn a_collection_named_by_its_address_opens_the_choice_and_installs_the_ticked_on
             Some(ChoiceOutcome::Installed)
         ]
     );
-    assert!(has(&details(&launcher), "Commands: Notes from Git"));
+    assert!(has(&self::details(&launcher), "Commands: Notes from Git"));
     // Each ticked extension is a package of its own, with its own record:
     // the choice itself is never recorded as a unit.
     assert_eq!(installed(&launcher), ["Clock from Git", "Notes from Git"]);

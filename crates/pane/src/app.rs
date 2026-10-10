@@ -1731,45 +1731,47 @@ impl LauncherWindow {
         };
         let description = row.subtitle.clone();
         let debug_title = row.title.clone();
-        result_row_with(
-            RowContent {
-                title: row.title.clone().into(),
-                subtitle: row.subtitle.clone().map(SharedString::from),
-                unavailable_reason: refused,
-                selected,
-                unavailable_id: ("choice-reason", index).into(),
-                icon: Some(crate::ui::extension_icon::RowIcon::Drawn(icon)),
-            },
-            RowMeta {
-                accessories,
-                ..RowMeta::default()
-            },
-            theme,
-        )
-        .id(("row", index))
-        .active({
-            let press = crate::ui::result_row::pressed_wash(selected, theme);
-            move |row| row.bg(press)
-        })
-        // The check mark, inside the row at its right end: its own click
-        // target, taking the click from the row's.
-        .child(tick)
-        .debug_selector(move || format!("row-{debug_title}"))
-        .role(Role::ListBoxOption)
-        .aria_label(row.title.clone())
-        .aria_selected(selected)
-        .when_some(description, |row, description| {
-            row.aria_description(description)
-        })
-        .on_click(
-            cx.listener(move |this, event: &gpui::ClickEvent, window, cx| {
-                if event.click_count() <= 1 {
-                    this.launcher.select(index);
-                    this.announcer.user_moved();
-                    this.activate_selected(window, cx);
-                    this.motion.pointer_open();
-                }
-            }),
+        Some(
+            result_row_with(
+                RowContent {
+                    title: row.title.clone().into(),
+                    subtitle: row.subtitle.clone().map(SharedString::from),
+                    unavailable_reason: refused,
+                    selected,
+                    unavailable_id: ("choice-reason", index).into(),
+                    icon: Some(crate::ui::extension_icon::RowIcon::Drawn(icon)),
+                },
+                RowMeta {
+                    accessories,
+                    ..RowMeta::default()
+                },
+                theme,
+            )
+            .id(("row", index))
+            .active({
+                let press = crate::ui::result_row::pressed_wash(selected, theme);
+                move |row| row.bg(press)
+            })
+            // The check mark, inside the row at its right end: its own click
+            // target, taking the click from the row's.
+            .child(tick)
+            .debug_selector(move || format!("row-{debug_title}"))
+            .role(Role::ListBoxOption)
+            .aria_label(row.title.clone())
+            .aria_selected(selected)
+            .when_some(description, |row, description| {
+                row.aria_description(description)
+            })
+            .on_click(
+                cx.listener(move |this, event: &gpui::ClickEvent, window, cx| {
+                    if event.click_count() <= 1 {
+                        this.launcher.select(index);
+                        this.announcer.user_moved();
+                        this.activate_selected(window, cx);
+                        this.motion.pointer_open();
+                    }
+                }),
+            ),
         )
     }
 

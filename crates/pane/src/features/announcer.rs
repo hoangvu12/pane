@@ -546,8 +546,9 @@ impl LauncherWindow {
     /// The screen's list as the announcer follows it: root search opens
     /// silently, a command's list and the extension list with their title
     /// and count, and every other screen, whose rows are choices (a
-    /// confirmation, a package before installing it, the details of a
-    /// pause, a build or a crash), with its title alone.
+    /// confirmation, a package before installing it, the choice of a
+    /// collection's extensions, the details of a pause, a build or a
+    /// crash), with its title alone.
     fn screen_listing(
         &self,
         view: &LauncherView,
@@ -571,6 +572,7 @@ impl LauncherWindow {
             | Screen::BuildDetails { .. }
             | Screen::Confirm { .. }
             | Screen::RuntimeDetails { .. }
+            | Screen::Choice { .. }
             | Screen::Hotkey { .. } => Opening::Titled(view.title.clone()),
         };
         let selected = view
