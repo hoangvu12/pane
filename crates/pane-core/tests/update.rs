@@ -2551,6 +2551,13 @@ fn a_pass_the_user_asked_for_updates_off_disabled_and_paused_defaults() {
         release(&repo, &files, "0.2.0");
     }
     block_on(launcher.check_extension_updates());
+    // The ending toast is the pass's summary, read as the pass ends: a
+    // toast a command shows later — the run below — takes the footer's
+    // place, so the record's rows are what stays of the pass.
+    assert_eq!(
+        launcher.toast().map(|toast| toast.toast.title),
+        Some("Updated 4 extensions".into())
+    );
 
     // All four updated. An update keeps a disabled one disabled, and
     // unpauses a paused one, as the preview's Update row does.
@@ -2578,8 +2585,7 @@ fn a_pass_the_user_asked_for_updates_off_disabled_and_paused_defaults() {
     );
 
     // The record: every one updated, its rows in the installed list's
-    // order, saying the old and the new version — and the ending toast is
-    // the pass's summary.
+    // order, saying the old and the new version.
     let recorded = launcher.update_results();
     assert_eq!(recorded.updated.len(), 4, "{recorded:#?}");
     assert_eq!(
@@ -2598,10 +2604,6 @@ fn a_pass_the_user_asked_for_updates_off_disabled_and_paused_defaults() {
     for row in &recorded.updated {
         assert_eq!(row.detail, "0.1.0 → 0.2.0", "{row:?}");
     }
-    assert_eq!(
-        launcher.toast().map(|toast| toast.toast.title),
-        Some("Updated 4 extensions".into())
-    );
 }
 
 #[test]
