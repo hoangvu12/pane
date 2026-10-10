@@ -863,6 +863,9 @@ Send "{ENTER}"; Start-Sleep -Seconds 2   # Install; Greeting is selected
 Open-Extension "Settings sample"
 Press-Named "Hotkey for Greeting:" -Prefix   # the recorder listens
 Send "^%j"
+# Evidence of where the phase stands before it waits: the recorder's row
+# says whether the keys were captured at all, and what a refusal answered.
+Capture "77-hook-recorder.png"
 Wait-For (Join-Path $data "extensions/hotkeys.json") '"ctrl+alt+j"' $true
 Wait-Shown "Dispatched through Pane's keyboard hook" -Prefix
 Capture "77-hook-assigned.png"   # the row says the binding's dispatch route
