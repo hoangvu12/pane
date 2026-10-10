@@ -81,9 +81,9 @@ use crate::packages::{
 };
 use crate::platform;
 use crate::runtime::{
-    CallError, CustomViewInfo, CustomViewRole, FieldKind, FieldValue, Form, Frame, Item, Point,
-    ResultListing, RootAction, RootResult as ComputedResult, Runtime, ScreenForm, View, ViewEvent,
-    ViewId, WeakRuntime,
+    AnswerDetail as ComputedDetail, CallError, CustomViewInfo, CustomViewRole, FieldKind,
+    FieldValue, Form, Frame, Item, Point, ResultListing, RootAction, RootResult as ComputedResult,
+    Runtime, ScreenForm, View, ViewEvent, ViewId, WallTime, WeakRuntime,
 };
 use crate::search::{self, Keys, Query};
 
@@ -1124,6 +1124,11 @@ struct Computed {
     /// The title of the command that computed it, which labels its
     /// answers in root search ("Calculator").
     command_title: String,
+    /// What the answer's card says beyond its title and action, when the
+    /// result is one (see `runtime::AnswerDetail`): its own section, its
+    /// swatch and further ways to copy it, as the command answered — the
+    /// calculator's colour and date answers (#196).
+    answer: Option<ComputedDetail>,
     row: Row,
     entry: Entry,
     /// A file row, or the row searching all files: listed after what is
@@ -2066,6 +2071,9 @@ impl Launcher {
             // selection.
             _ => (Vec::new(), Vec::new(), None),
         };
+        // When the query is asked about, for a command that answers about
+        // the moment ("now", "today", #196): the whole search shares it.
+        let at = asked_at(&state);
         let query = query.to_owned();
         let epoch = state.screen_epoch;
         let search = state.search_epoch;
@@ -2080,7 +2088,7 @@ impl Launcher {
                 return;
             };
             let listing = launcher
-                .show_root_results(epoch, search, &query, asked, &mut cancelled)
+                .show_root_results(epoch, search, &query, at, asked, &mut cancelled)
                 .await;
             launcher.show_indexed_results(indexing).await;
             // Commands whose granted folder was still being listed are asked
@@ -2090,7 +2098,7 @@ impl Launcher {
                     return;
                 }
                 let asked = launcher
-                    .show_one_root_result(epoch, search, &query, command, data, &mut cancelled)
+                    .show_one_root_result(epoch, search, &query, at, command, data, &mut cancelled)
                     .await;
                 if asked.is_none() {
                     return;
@@ -2322,9 +2330,10 @@ impl Launcher {
             .collect()
     }
 
-    /// Asks each of `commands` in turn for its root results for `query` and
-    /// lists each one's as soon as it answers, unless the query, the search
-    /// or the screen has changed meanwhile.
+    /// Asks each of `commands` in turn for its root results for `query`,
+    /// asked about at `at` (see [`WallTime`]), and lists each one's as
+    /// soon as it answers, unless the query, the search or the screen
+    /// has changed meanwhile.
     ///
     /// Once `cancelled` resolves (the search was replaced, or root search
     /// was left), the pending call is dropped, which cancels it in the
@@ -2337,6 +2346,7 @@ impl Launcher {
         epoch: u64,
         search: u64,
         query: &str,
+        at: WallTime,
         commands: Vec<(CommandRegistration, Option<PackageData>)>,
         cancelled: &mut tokio::sync::oneshot::Receiver<()>,
     ) -> Option<Vec<Listing>> {
@@ -2347,6 +2357,7 @@ impl Launcher {
                     epoch,
                     search,
                     query,
+                    at,
                     command.clone(),
                     data.clone(),
                     cancelled,
@@ -2359,23 +2370,24 @@ impl Launcher {
         Some(listing)
     }
 
-    /// Asks `command` for its root results for `query` and lists them in
-    /// place of any it gave before, unless the query, the search or the
-    /// screen changed meanwhile (then `None`: ask nothing more). Answers
-    /// what resolves once the granted folder its package's answer was still
-    /// waiting for is listed, if it was.
+    /// Asks `command` for its root results for `query`, asked about at
+    /// `at`, and lists them in place of any it gave before, unless the
+    /// query, the search or the screen changed meanwhile (then `None`:
+    /// ask nothing more). Answers what resolves once the granted folder
+    /// its package's answer was still waiting for is listed, if it was.
     async fn show_one_root_result(
         &self,
         epoch: u64,
         search: u64,
         query: &str,
+        at: WallTime,
         command: CommandRegistration,
         data: Option<PackageData>,
         cancelled: &mut tokio::sync::oneshot::Receiver<()>,
     ) -> Option<Option<ListedFuture>> {
         let answer = match self.runtime() {
             Ok(runtime) => {
-                let call = runtime.root_results_with(&command.component, query, data.clone());
+                let call = runtime.root_results_with(&command.component, query, at, data.clone());
                 until_cancelled(call, cancelled).await?
             }
             Err(error) => Err(error),
@@ -4785,6 +4797,19 @@ fn home_folder() -> Option<PathBuf> {
     std::env::var_os(var).map(PathBuf::from)
 }
 
+/// When a query is asked about, by the clock root search's own dates are
+/// shown by (a test's, in a test): the moment the user stopped at the
+/// query, and how far the local time there is from UTC, so a command can
+/// answer about the local date or time (#196). The whole search shares
+/// one moment, whatever a slow command delays.
+fn asked_at(state: &State) -> WallTime {
+    let milliseconds = state.clock.now();
+    WallTime {
+        milliseconds,
+        offset: state.clock.local_offset(milliseconds),
+    }
+}
+
 /// The rows of root search for `query`, and what activating each does: the
 /// results computed from it, then the root results matching it, best match
 /// first, with, for a query that is not blank, those supplied ahead of it
@@ -4889,9 +4914,10 @@ fn computed_results(
     query: &str,
     answer: Result<Vec<ComputedResult>, CallError>,
 ) -> Vec<Computed> {
-    let computed = |row: Row, entry: Entry| Computed {
+    let computed = |row: Row, entry: Entry, detail: Option<ComputedDetail>| Computed {
         component: command.component.clone(),
         command_title: command.title.clone(),
+        answer: detail,
         in_files: matches!(entry, Entry::File(_)),
         row,
         entry,
@@ -4904,7 +4930,14 @@ fn computed_results(
             let mut listed: Vec<Computed> = results
                 .into_iter()
                 .filter_map(|result| {
-                    let ComputedResult { listing, action } = result;
+                    let ComputedResult {
+                        listing,
+                        action,
+                        answer,
+                    } = result;
+                    // Only a result whose action copies is an answer's
+                    // card: a detail on another action is not shown.
+                    let detail = answer.filter(|_| matches!(action, RootAction::Copy(_)));
                     let (listing, entry) = match action {
                         RootAction::Copy(text) => (listing, Entry::Copy(text)),
                         RootAction::OpenUrl(url) => (listing, Entry::OpenUrl(url)),
@@ -4918,10 +4951,14 @@ fn computed_results(
                                 }
                                 indexed += 1;
                             }
-                            return Some(computed(row, Entry::File(file)));
+                            return Some(computed(row, Entry::File(file), None));
                         }
                     };
-                    Some(computed(Row::listed(listing, Some(&command.id)), entry))
+                    Some(computed(
+                        Row::listed(listing, Some(&command.id)),
+                        entry,
+                        detail,
+                    ))
                 })
                 .collect();
             if indexed > 0
@@ -4929,7 +4966,7 @@ fn computed_results(
             {
                 listed.push(Computed {
                     in_files: true,
-                    ..computed(row, entry)
+                    ..computed(row, entry, None)
                 });
             }
             listed
@@ -4942,7 +4979,7 @@ fn computed_results(
                 unavailable: None,
             };
             let problem = format!("{} could not answer “{query}”: {error}", command.title);
-            vec![computed(row, Entry::Broken(problem))]
+            vec![computed(row, Entry::Broken(problem), None)]
         }
     }
 }
