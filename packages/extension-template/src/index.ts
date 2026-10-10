@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 //
-// Extension Template, started from pane-ext's `list` template: a command
-// that opens a list of items, each running an action when chosen. `npm run
-// dev` (after `npm install`) builds it and hands each build to the running
+// Extension Template, started from pane-ext's `list` template: a command that opens
+// a list of items, each running an action when chosen. `npm run dev`
+// (after `npm install`) builds it and hands each build to the running
 // Pane, which reloads it on each save; the items below are the list it
 // opens.
 //
@@ -21,8 +21,8 @@ let opened = "extension-template";
 /** What the "Say hello" item shows in a toast. */
 const GREETING = "Hello from Extension Template";
 
-/** The extension-template command's list: what shows at Enter on its row in
- *  root search. Pane asks for it again after each item's action runs. */
+/** The extension-template command's list: what shows at Enter on its row in root
+ *  search. Pane asks for it again after each item's action runs. */
 async function theList(): Promise<List> {
   return {
     title: "Extension Template",

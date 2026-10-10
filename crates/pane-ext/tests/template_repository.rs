@@ -286,7 +286,7 @@ fn its_release_steps_tag_a_revision_pane_installs() {
     let home = home.path();
     let pane = fs::read_to_string(folder.join("pane.json")).unwrap();
     let manifest: serde_json::Value = serde_json::from_str(&pane).unwrap();
-    assert_eq!(format!("v{}", manifest["version"]), TAG);
+    assert_eq!(format!("v{}", manifest["version"].as_str().unwrap()), TAG);
     git(
         &folder,
         home,

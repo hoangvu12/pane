@@ -37,12 +37,12 @@ function target() {
 /** The pane-ext binary an installed @pane-app/cli holds for this system,
  *  walking the node_modules folders above this package, or null. */
 function installed() {
-  const target = target();
-  if (target === null) return null;
+  const system = target();
+  if (system === null) return null;
   const program = process.platform === "win32" ? "pane-ext.exe" : "pane-ext";
   let folder = path.dirname(fileURLToPath(import.meta.url));
   while (true) {
-    const beside = path.join(folder, "node_modules", `@pane-app/cli-${target}`, program);
+    const beside = path.join(folder, "node_modules", `@pane-app/cli-${system}`, program);
     if (existsSync(beside)) return beside;
     const parent = path.dirname(folder);
     if (parent === folder) return null;
