@@ -154,10 +154,7 @@ impl LauncherWindow {
             // form, custom view or designed view opened from a command's
             // search, has taken focus already: the designed controls cover
             // both.
-            None if was_shown
-                && self.designed.is_none()
-                && self.custom_view.is_none() =>
-            {
+            None if was_shown && self.designed.is_none() && self.custom_view.is_none() => {
                 window.focus(&self.focus_handle, cx)
             }
             None => {}

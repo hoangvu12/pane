@@ -3101,10 +3101,7 @@ impl Code {
         // that still answers it is one built before the Form components of
         // the designed tree replaced it (#241), refused naming the change
         // instead of running a form Pane can no longer submit.
-        if interface
-            .get_export(&self.engine, "submit-form")
-            .is_some()
-        {
+        if interface.get_export(&self.engine, "submit-form").is_some() {
             return Err(older(
                 "it still exports `submit-form`, the typed form of the command \
                  interface that the designed tree's Form components replaced; \

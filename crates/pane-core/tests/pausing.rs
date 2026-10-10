@@ -645,4 +645,3 @@ fn an_uninstall_that_cannot_be_recorded_keeps_the_pause() {
     fs::write(&registry, text).unwrap();
     assert!(is_paused(&dirs.reader()));
 }
-

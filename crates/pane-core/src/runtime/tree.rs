@@ -622,7 +622,10 @@ mod tests {
                     {"id": "name", "label": "Name", "kind": "text"}]}}"#,
         )
         .unwrap_err();
-        assert!(problem.contains("the designed tree's Form components"), "{problem}");
+        assert!(
+            problem.contains("the designed tree's Form components"),
+            "{problem}"
+        );
         // An item's `form` of that shape is an unknown field, ignored as
         // every one is.
         let view = read_view(

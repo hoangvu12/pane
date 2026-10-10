@@ -109,9 +109,7 @@ impl OperationError {
             // A live instance (started just before the call) is never
             // missing, only root search's own calls are cancelled, and
             // only a command's tree and event answers are read.
-            CallError::ViewClosed
-            | CallError::Cancelled
-            | CallError::Unreadable(_) => {
+            CallError::ViewClosed | CallError::Cancelled | CallError::Unreadable(_) => {
                 unreachable!("an operation call cannot end with {error:?}")
             }
         };

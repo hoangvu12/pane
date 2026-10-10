@@ -280,9 +280,7 @@ impl LauncherWindow {
         }
         let kept = matches!(
             self.launcher.screen(),
-            Screen::PaneForm(_)
-            | Screen::CustomView(_)
-            | Screen::DesignedView(_)
+            Screen::PaneForm(_) | Screen::CustomView(_) | Screen::DesignedView(_)
         );
         if !kept && self.files.take().is_some() && self.clipboard.is_none() {
             self.fit_client(shell::LAUNCHER_CLIENT, window, cx);

@@ -54,7 +54,6 @@ const ITEMS: [(&str, &str); 7] = [
     ("wait", "Wait briefly"),
     ("validate", "Validate settings"),
     ("random", "Roll a number"),
-
     ("color", "Choose a color"),
     ("windows-only", "Windows-only action"),
     ("not-windows", "macOS and Linux action"),
@@ -373,9 +372,10 @@ fn an_invalid_field_is_marked_and_the_form_stays_open(sample: &Sample) {
     // A corrected form is accepted.
     sample.submit(&launcher, "Grace", "welcome");
     assert!(
-        sample
-            .form_texts(&launcher)
-            .contains(&format!("Welcome, Grace, from the {} guest", sample.language)),
+        sample.form_texts(&launcher).contains(&format!(
+            "Welcome, Grace, from the {} guest",
+            sample.language
+        )),
         "{:?}",
         sample.form_texts(&launcher)
     );

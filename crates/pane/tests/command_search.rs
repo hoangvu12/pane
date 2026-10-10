@@ -72,7 +72,11 @@ fn the_commands_own_search_field_lists_the_service_results(cx: &mut TestAppConte
     // Its form points it at this test's service.
     cx.simulate_keystrokes("down enter");
     let view = settle(&window, cx);
-    assert!(matches!(view.screen, Screen::PaneForm(_)), "{:?}", view.screen);
+    assert!(
+        matches!(view.screen, Screen::PaneForm(_)),
+        "{:?}",
+        view.screen
+    );
     cx.simulate_input(&service.url());
     cx.simulate_keystrokes("enter");
     let view = settle(&window, cx);

@@ -1069,7 +1069,6 @@ fn an_item_can_be_deleted_on_its_own(fixture: &'static Fixture) {
     assert!(pane.clipboard.copy("later", None));
 }
 
-
 fn turning_off_and_deleting_keeps_nothing_more(fixture: &'static Fixture) {
     let pane = Pane::new(fixture);
     let launcher = pane.installed();

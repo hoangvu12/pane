@@ -917,7 +917,11 @@ fn return_to_root_leaves_whatever_screen_is_open(cx: &mut TestAppContext) {
     settle(&window, cx);
     cx.simulate_keystrokes("down down down down enter");
     let view = settle(&window, cx);
-    assert!(matches!(view.screen, Screen::PaneForm(_)), "{:?}", view.screen);
+    assert!(
+        matches!(view.screen, Screen::PaneForm(_)),
+        "{:?}",
+        view.screen
+    );
 
     // The root binding returns to root search from wherever it is, with
     // the search ready to type.
@@ -1107,7 +1111,11 @@ fn the_rebound_back_key_clears_a_command_search_before_leaving_it(cx: &mut TestA
     settle(&window, cx);
     cx.simulate_keystrokes("down enter");
     let view = settle(&window, cx);
-    assert!(matches!(view.screen, Screen::PaneForm(_)), "{:?}", view.screen);
+    assert!(
+        matches!(view.screen, Screen::PaneForm(_)),
+        "{:?}",
+        view.screen
+    );
     cx.simulate_input(&service.url());
     cx.simulate_keystrokes("enter");
     settle(&window, cx);

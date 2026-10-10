@@ -239,7 +239,11 @@ fn the_keyboard_fills_in_and_submits_the_form(cx: &mut TestAppContext, sample: &
     let view = settle(&window, cx);
     let (nodes, _) = accessibility_tree(cx);
     assert!(
-        nodes.contains(&("Label".into(), format!("Good morning, Ada, from the {} guest", sample.language).into(), "".into())),
+        nodes.contains(&(
+            "Label".into(),
+            format!("Good morning, Ada, from the {} guest", sample.language).into(),
+            "".into()
+        )),
         "{nodes:?}"
     );
     cx.simulate_keystrokes("escape");
@@ -269,7 +273,11 @@ fn a_rejected_field_shows_its_error_and_takes_focus(cx: &mut TestAppContext, sam
     settle(&window, cx);
     let (nodes, _) = accessibility_tree(cx);
     assert!(
-        nodes.contains(&("Label".into(), format!("Hello, Grace, from the {} guest", sample.language).into(), "".into())),
+        nodes.contains(&(
+            "Label".into(),
+            format!("Hello, Grace, from the {} guest", sample.language).into(),
+            "".into()
+        )),
         "{nodes:?}"
     );
 }
@@ -382,7 +390,11 @@ fn focused_label(cx: &mut VisualTestContext) -> Option<String> {
 /// The open form's value of field `id`: the keyed state's live text
 /// (#241).
 fn field_value(window: &Entity<LauncherWindow>, cx: &mut VisualTestContext, id: &str) -> String {
-    window.update(cx, |window, cx| window.designed_field_text(id, cx).expect("the field exists"))
+    window.update(cx, |window, cx| {
+        window
+            .designed_field_text(id, cx)
+            .expect("the field exists")
+    })
 }
 
 #[gpui::test]

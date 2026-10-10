@@ -75,8 +75,8 @@ use gpui::{
 use gpui_elements::editable_text::{EditableTextState, StringStorage, TextChanged, text_input};
 use pane_core::{
     ExtensionMark, ExtensionOperation, InstalledPackage, Launcher, LauncherView, OperationKind,
-    PackageIdentity, PackagePreferences, PreferenceField, PreferenceKind, Screen,
-    ShortcutCommand, Status,
+    PackageIdentity, PackagePreferences, PreferenceField, PreferenceKind, Screen, ShortcutCommand,
+    Status,
 };
 
 use super::{Page, SettingsWindow, search};

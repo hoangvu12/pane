@@ -1041,9 +1041,7 @@ fn a_call_by_dependency_id_reaches_only_the_operations_declared_for_it() {
     block_on(launcher.activate_selected());
     select_title(&launcher, "Wait in another extension");
     block_on(launcher.activate_selected());
-    block_on(launcher.submit_pane_form(vec![
-        ("source".to_owned(), ("greeter").to_owned()),
-    ]));
+    block_on(launcher.submit_pane_form(vec![("source".to_owned(), ("greeter").to_owned())]));
 
     assert_eq!(
         launcher.view().status,
