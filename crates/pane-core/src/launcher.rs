@@ -3566,14 +3566,14 @@ impl Launcher {
         // the row is gone while one is being acquired, or once it is
         // installed.
         if self.defaults.is_some() {
-            for (id, title, why) in state.acquisitions.retryable() {
+            for failed in state.acquisitions.retryable() {
                 let row = Row {
-                    id: format!("acquire:{id}"),
-                    title: format!("Set up {title}"),
-                    subtitle: Some(why),
+                    id: format!("acquire:{}", failed.id),
+                    title: format!("Set up {}", failed.title),
+                    subtitle: Some(failed.why.clone()),
                     unavailable: None,
                 };
-                add(row, Entry::Acquire(id), None, None);
+                add(row, Entry::Acquire(failed.id.clone()), None, None);
             }
         }
         // Pane's own update, when a check found one the user can choose to

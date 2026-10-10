@@ -44,9 +44,9 @@ impl Defaults {
 
 /// A default extension Pane could not acquire.
 pub(in crate::launcher) struct FailedAcquisition {
-    id: String,
-    title: String,
-    why: String,
+    pub(in crate::launcher) id: String,
+    pub(in crate::launcher) title: String,
+    pub(in crate::launcher) why: String,
 }
 
 /// What the status line says of acquiring Pane's default extensions, and
@@ -100,15 +100,12 @@ impl Acquisitions {
     }
 
     /// The default extensions that can be tried again, while none is being
-    /// acquired: each as (id, title, why).
-    pub(in crate::launcher) fn retryable(&self) -> Vec<(String, String, String)> {
+    /// acquired, each with its id, title and why it failed.
+    pub(in crate::launcher) fn retryable(&self) -> Vec<&FailedAcquisition> {
         if self.in_flight {
             Vec::new()
         } else {
-            self.failed
-                .iter()
-                .map(|failed| (failed.id.clone(), failed.title.clone(), failed.why.clone()))
-                .collect()
+            self.failed.iter().collect()
         }
     }
 }

@@ -399,10 +399,9 @@ fn acquire(pin: &DefaultExtension, downloads: &Path) -> Result<Fetched, Failure>
     let fetched = crate::git::fetch(&spec, downloads).map_err(|why| {
         // A connection that failed, or a server that failed, may work on
         // another try; a revision the repository refused is explained
-        // once. The Git client wraps a connection failure wherever it met
-        // it — connecting, listing the references, fetching the pack —
-        // with "Could not reach the Git repository …".
-        if why.contains("Could not reach the Git repository") {
+        // once. The Git client says which it was wherever it met one
+        // (crate::git::is_connection_failure).
+        if crate::git::is_connection_failure(&why) {
             interrupted(why)
         } else {
             failed(why)
