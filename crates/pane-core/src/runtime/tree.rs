@@ -540,7 +540,6 @@ fn keys(value: &Value) -> Result<Binding, String> {
     Binding::new(control, alt, shift, platform, false, &keys.key)
 }
 
-
 /// An answer object. The first version's `status` text is no longer
 /// shown, so it is ignored with any other unknown field.
 #[derive(Deserialize)]

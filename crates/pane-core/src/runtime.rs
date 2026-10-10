@@ -77,11 +77,11 @@ pub use designed::{
     GRID_COLUMNS, GridItem, IconExtent, IconNode, Image, Justify, KeySequence, Keycap, Layout,
     Length, Link, ListAction, ListDropdown, ListItem, ListNode, ListSection, Loading,
     MAX_CANVAS_OPS, MAX_CANVAS_TEXT_CHARS, MAX_DEPTH, MAX_GRID_COLUMNS, MAX_INLINE_IMAGE,
-    MAX_MARKDOWN_CHARS, MAX_NODES, MAX_PAGE_SIZE, MAX_PX, MAX_TREE_BYTES, Markdown,
-    MetadataItem, MetadataList, Node, NodeKind, Offset, Orientation, Padding, Paint, Place,
-    Progress, RadiusLength, RichRow, RowAccessory, SectionHeader, Segment, Segmented, Select,
-    Sizing, Slider, Span, StrokeCap, StrokeJoin, Style, Surface, Tag, TagPicker, Text,
-    TextContent, TextInput, Toggle, Tone as ButtonTone, key_problems,
+    MAX_MARKDOWN_CHARS, MAX_NODES, MAX_PAGE_SIZE, MAX_PX, MAX_TREE_BYTES, Markdown, MetadataItem,
+    MetadataList, Node, NodeKind, Offset, Orientation, Padding, Paint, Place, Progress,
+    RadiusLength, RichRow, RowAccessory, SectionHeader, Segment, Segmented, Select, Sizing, Slider,
+    Span, StrokeCap, StrokeJoin, Style, Surface, Tag, TagPicker, Text, TextContent, TextInput,
+    Toggle, Tone as ButtonTone, key_problems,
 };
 #[cfg(any(test, debug_assertions))]
 #[doc(hidden)]
@@ -2268,7 +2268,10 @@ fn render_context(
         let sizes = canvases
             .iter()
             .map(|(key, (width, height))| {
-                format!("\"{}\":{{\"width\":{width},\"height\":{height}}}", escaped(key))
+                format!(
+                    "\"{}\":{{\"width\":{width},\"height\":{height}}}",
+                    escaped(key)
+                )
             })
             .collect::<Vec<_>>()
             .join(",");
