@@ -2059,6 +2059,7 @@ impl ListedExtension {
                 .and_then(|icon| icon.resolved(&subfolder)),
         }
     }
+}
 
 /// The extension `id` of the collection at `folder`, as an install
 /// resolves one (#307): its identity — the collection's resolved folder
