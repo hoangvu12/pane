@@ -244,12 +244,7 @@ fn the_package_is_the_list_template_as_pane_ext_new_writes_it() {
     ];
     let (passed, printed) = pane_ext(&given);
     assert!(passed, "{printed}");
-    for file in [
-        "src/index.ts",
-        "tsconfig.json",
-        "biome.json",
-        ".gitignore",
-    ] {
+    for file in ["src/index.ts", "tsconfig.json", "biome.json", ".gitignore"] {
         let scaffolded = fs::read_to_string(folder.join(file)).unwrap();
         let held = fs::read_to_string(content().join(file)).unwrap();
         assert_eq!(scaffolded, held, "{file} differs from the template's");
