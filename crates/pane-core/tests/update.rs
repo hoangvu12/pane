@@ -652,7 +652,10 @@ fn tools_files(clock_path: &str, clock: &str, timers: &str, api: &str) -> Vec<(S
                                  "component": "sample_settings_js.wasm" }}] }}"#
         );
         files.push((format!("{path}/pane.json"), manifest.into_bytes()));
-        files.push((format!("{path}/sample_settings_js.wasm"), sample_component()));
+        files.push((
+            format!("{path}/sample_settings_js.wasm"),
+            sample_component(),
+        ));
     }
     files
 }
@@ -1532,8 +1535,8 @@ fn a_newer_release_tag_of_one_extension_of_a_collection_updates_it_by_itself() {
     // Pane updates by itself has: what it says is replaced is a newer
     // release of clock's own.
     manage(&launcher);
-    let row = launcher
-        .view()
+    let view = launcher.view();
+    let row = view
         .rows
         .iter()
         .find(|row| row.title == "Update Clock automatically")
@@ -1569,7 +1572,11 @@ fn a_newer_release_tag_of_one_extension_of_a_collection_updates_it_by_itself() {
         "clock",
         "0.3.0-beta.1",
     );
-    release(&tools.repo, &tools_files("extensions/clock", "9.9.9", "1.0.0", "0.1"), "9.9.9");
+    release(
+        &tools.repo,
+        &tools_files("extensions/clock", "9.9.9", "1.0.0", "0.1"),
+        "9.9.9",
+    );
     release_extension(
         &tools.repo,
         &tools_files("extensions/clock", "0.1.0", "2.0.0", "0.1"),
@@ -1583,7 +1590,10 @@ fn a_newer_release_tag_of_one_extension_of_a_collection_updates_it_by_itself() {
     // fields; the row says the old and the new commit, as a Git package's
     // does.
     let record = dirs.extension_record("tools", "clock");
-    assert_eq!(record["git"], format!("{}#clock", dirs.git_identity("tools")).as_str());
+    assert_eq!(
+        record["git"],
+        format!("{}#clock", dirs.git_identity("tools")).as_str()
+    );
     assert_eq!(record["gitRef"], "refs/tags/clock/v0.2.0");
     assert_eq!(record["gitCommit"], released.as_str());
     assert_eq!(record["pinned"], serde_json::json!(true));
@@ -1593,7 +1603,11 @@ fn a_newer_release_tag_of_one_extension_of_a_collection_updates_it_by_itself() {
     assert_eq!(recorded.updated[0].title, "Clock");
     assert_eq!(
         recorded.updated[0].detail,
-        format!("{} → {}", short_commit(&tools.clock), short_commit(&released))
+        format!(
+            "{} → {}",
+            short_commit(&tools.clock),
+            short_commit(&released)
+        )
     );
     // The new copy runs: its manifest's version is the new release's.
     assert_eq!(
@@ -1706,7 +1720,10 @@ fn a_tracked_reference_moving_the_extension_s_folder_updates_it_by_itself() {
     // the collection's index, so the extension — whose folder moved —
     // still updated, keeping its identity and its tracked reference.
     let record = dirs.extension_record("tools", "clock");
-    assert_eq!(record["git"], format!("{}#clock", dirs.git_identity("tools")).as_str());
+    assert_eq!(
+        record["git"],
+        format!("{}#clock", dirs.git_identity("tools")).as_str()
+    );
     assert_eq!(record.get("gitRef"), None);
     assert_eq!(record.get("pinned"), None);
     assert_eq!(record["gitCommit"], moved.as_str());
@@ -1875,7 +1892,11 @@ fn check_for_update_previews_one_extension_of_a_collection_at_its_newest_release
     // previews the extension as it is installed — by its repository and
     // id, never the repository's root, which is the collection — from its
     // release tag's revision.
-    block_on(launcher.check_for_update(&identity).expect("a source to check"));
+    block_on(
+        launcher
+            .check_for_update(&identity)
+            .expect("a source to check"),
+    );
     assert_eq!(launcher.view().title, "Clock");
     let details = launcher.view().details().to_vec();
     assert!(has(
@@ -1885,9 +1906,15 @@ fn check_for_update_previews_one_extension_of_a_collection_at_its_newest_release
     ));
     assert!(has(
         &details,
-        &format!("Source: Git repository {}#clock", dirs.git_identity("tools"))
+        &format!(
+            "Source: Git repository {}#clock",
+            dirs.git_identity("tools")
+        )
     ));
-    assert!(has(&details, "Extension: clock, one of the extensions its collection lists"));
+    assert!(has(
+        &details,
+        "Extension: clock, one of the extensions its collection lists"
+    ));
     assert_eq!(titles(&launcher), ["Update"]);
 
     // A newer release of clock's: the preview names it, and its Update row
@@ -1899,7 +1926,11 @@ fn check_for_update_previews_one_extension_of_a_collection_at_its_newest_release
         "clock",
         "0.2.0",
     );
-    block_on(launcher.check_for_update(&identity).expect("a source to check"));
+    block_on(
+        launcher
+            .check_for_update(&identity)
+            .expect("a source to check"),
+    );
     assert_eq!(launcher.view().title, "Clock");
     let details = launcher.view().details().to_vec();
     assert!(has(

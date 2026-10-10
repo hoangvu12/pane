@@ -1402,7 +1402,9 @@ fn git_updatable(identity: &PackageIdentity, git: &git::InstalledGit) -> bool {
 /// follows one extension of a collection's own release tags, rather than
 /// a branch (see [`git_updatable`]).
 fn follows_release_tags(identity: &PackageIdentity, git: &git::InstalledGit) -> bool {
-    identity.extension_id().is_some_and(|id| git.revision.is_own_release_tag(id))
+    identity
+        .extension_id()
+        .is_some_and(|id| git.revision.is_own_release_tag(id))
 }
 
 /// Whether the only reason a pass did not look at `package` is the

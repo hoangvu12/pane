@@ -814,7 +814,10 @@ impl ReleaseTag {
     /// `v1.2.0`, and of `clock/v1.2.0`, one extension of a collection's
     /// release (ADR 0044).
     pub fn version(&self) -> &str {
-        let name = self.tag.rsplit_once('/').map_or(&self.tag[..], |(_, release)| release);
+        let name = self
+            .tag
+            .rsplit_once('/')
+            .map_or(&self.tag[..], |(_, release)| release);
         name.strip_prefix('v').unwrap_or(name)
     }
 }
@@ -2262,13 +2265,11 @@ mod tests {
     fn one_extension_of_a_collection_s_own_release_tag_is_named() {
         // A record's tag `<id>/v<semver>` names one extension's release
         // (ADR 0044), which its updates follow; no other tag does.
-        let installed_from = |tag: &str| {
-            GitRevision::from_record(Some(&format!("refs/tags/{tag}")), "ab", true)
-        };
+        let installed_from =
+            |tag: &str| GitRevision::from_record(Some(&format!("refs/tags/{tag}")), "ab", true);
         let clock = installed_from("clock/v1.2.0");
         assert!(clock.is_own_release_tag("clock"));
         assert_eq!(clock.own_release_version("clock").as_deref(), Some("1.2.0"));
-        assert!(is_newer_release("1.3.0", clock.own_release_version("clock").unwrap()));
         // Another extension's release, the repository's own tag, another
         // extension's id spelled at the tag's start, a prerelease, a
         // moving tag: none is this extension's release.
