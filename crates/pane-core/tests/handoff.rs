@@ -623,8 +623,17 @@ fn the_open_screen_of_a_package_that_does_not_opt_in_reopens() {
     let identity = PackageIdentity::local(&folder).unwrap();
 
     // The sample's screen, with a view it pushed: the command's root view
-    // is reopened, not the pushed one.
+    // is reopened, not the pushed one. The row the user had selected is
+    // selected again where the new list has it: the host-owned state kept
+    // by key.
     open(&launcher, "Say hello");
+    launcher.select(1);
+    let selected = launcher
+        .view()
+        .rows
+        .get(1)
+        .map(|row| row.id.clone())
+        .unwrap_or_default();
     select_title(&launcher, "Choose a color");
     block_on(launcher.activate_selected());
     assert!(matches!(launcher.view().screen, Screen::CustomView(_)));
@@ -641,4 +650,7 @@ fn the_open_screen_of_a_package_that_does_not_opt_in_reopens() {
         Status::Result("Reloaded Rust sample".into())
     );
     assert_eq!(title(&launcher), "Rust sample");
+    let view = launcher.view();
+    let at = view.selected.unwrap_or_default();
+    assert_eq!(view.rows[at].id, selected, "the selection is kept by key");
 }
