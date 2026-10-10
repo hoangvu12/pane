@@ -23,11 +23,11 @@ needs:
 - **`view.render(context) -> result<rendered, string>`** draws the view:
   `rendered` carries the tree as JSON, naming the version of the UI
   component set it uses, and `refresh-after-ms`, how long Pane waits
-  before asking again (read and carried, but nothing acts on it until
-  timers land, #236). `context` is JSON too: the sequence number of this
-  render (`{"render": 1, "ui": "1.1"}`), so the extension can name each
-  render's callbacks, and the version of the component set Pane
-  supports; it can grow without WIT changes.
+  before asking again (#236, see [Refreshes](#refreshes)). `context` is
+  JSON too: the sequence number of this render (`{"render": 1, "ui":
+  "1.1"}`), so the extension can name each render's callbacks, and the
+  version of the component set Pane supports; it can grow without WIT
+  changes.
 - **`view.handle-event(event) -> result<outcome, string>`** handles the
   user's input: `ui-event` carries the callback id the tree named
   (`callback`), the sequence number of the render whose tree the user saw
@@ -134,6 +134,54 @@ The sample is a navigation sample, in
 [JavaScript](../guests/sample-nav-js/src/index.js) and
 [TypeScript](../guests/sample-nav-ts/src/index.tsx), held alike by
 `crates/pane-core/tests/navigation_stack.rs`.
+
+## Refreshes
+
+A render's answer may ask Pane to draw the view again after some
+milliseconds (`refresh-after-ms`), which is how a screen changes by
+itself — a timer, a clock, a progress bar, a poll of a service — with no
+change to the extension runtime (#236). The ask is clamped to a floor of
+100 ms and a ceiling of 24 hours; each refresh is an ordinary guest call
+(`render` again, with no event), so it holds other extensions' calls
+while it computes, exactly as any call does. Pane sends it numbered with
+the view's events — at most one refresh in flight at a time, and a late
+answer never replaces a newer tree — and wakes the window for each
+answer through the change channel the continuing services use.
+
+- Each answer's own ask paces the view: the refresh happens the delay
+  after the answer that asked for it (the period is the delay plus the
+  render's own time, as "draw me again after this" reads). Time that
+  passes while a refresh runs, or in one jump of the clock, is served by
+  the next refresh, not replayed.
+- Refreshes run only while the view is on top of its stack — the view
+  the screen shows; a view below another, or one whose screen the user
+  left, refreshes nothing — and while the launcher's window is shown
+  expanded, not
+  hidden or collapsed to its search field, where no view is drawn: a
+  hidden screen refreshes nothing, so it uses no CPU or battery. A
+  refresh that fell due otherwise waits for the next showing, which runs
+  it at once — one refresh from the clock's current time, not the ticks
+  it missed. Leaving the view cancels its refresh; a view opened afresh
+  asks anew.
+- An answer that asks for no refresh — one that failed, or the view's
+  done — ends any asked before it: the ask belongs to the answer, and
+  every answer rules.
+
+The SDKs build their asynchronous helpers on this until the real-push
+slice (#243) lands. The JavaScript and TypeScript SDK has `useInterval`
+(run once each time `ms` passes while the view is open) and `usePending`
+(data awaited in the prompt refresh a loading state asks for); the Rust
+SDK has `.refresh_after(Duration)` on the render's root, `loading(tree)`
+for the loading state, `Pending` for the data, and `cx.refreshed()`, true
+on the render that answers the view's own ask, where an interval's work
+runs. A view with pending data renders its loading state at once, asks
+for a prompt refresh, and in it awaits the pending work — one refresh's
+worth of loading state, so fast screens never flicker; the await is
+bounded by the call's limits, as any guest compute is. The sample is a
+timer, in [Rust](../guests/sample-timer/src/lib.rs),
+[JavaScript](../guests/sample-timer-js/src/index.js) and
+[TypeScript](../guests/sample-timer-ts/src/index.tsx), held by
+`crates/pane-core/tests/view_refresh.rs`.
 
 ## The document
 

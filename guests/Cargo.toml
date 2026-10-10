@@ -9,6 +9,7 @@ members = [
     "sample-settings",
     "sample-view",
     "sample-nav",
+    "sample-timer",
     "calculator",
     "applications",
     "quicklinks",

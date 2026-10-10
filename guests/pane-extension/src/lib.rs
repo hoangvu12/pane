@@ -58,8 +58,8 @@ pub use exports::pane::extension::command::{
 pub use list::{Action, Command, Item, List, Modifier, Shortcut, Submenu};
 pub mod view;
 pub use view::{
-    Align, Cx, IntoNode, Justify, Listener, Node, Space, TextLevel, TextStyle, View, button,
-    column, row, text,
+    Align, Answer, Cx, IntoAnswer, IntoNode, Justify, Listener, Node, Pending, Space, TextLevel,
+    TextStyle, View, button, column, loading, row, text,
 };
 /// The designed view type of a command that opens none: `type DesignedView
 /// = view::NoDesignedView;` in its [`Command`] implementation.

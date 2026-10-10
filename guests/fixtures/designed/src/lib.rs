@@ -4,9 +4,11 @@
 //! (see `crates/pane-core/tests/designed_views.rs` and
 //! `crates/pane-core/tests/navigation_stack.rs`).
 //!
-//! Its screen is a counter — a column of a text ("Count: N") and a row of
-//! the buttons below, each naming its own callback id — whose presses
-//! answer what the next drawing is, once, then the counter again:
+//! Its screen is a counter — a column of a text ("Count: N"), a text
+//! naming how many times the view was drawn ("Renders: N", which a
+//! refresh raises) and a row of the buttons below, each naming its own
+//! callback id — whose presses answer what the next drawing is, once,
+//! then the counter again:
 //!
 //! - "Increment" counts one up, and only when the event's `key` names the
 //!   button, so the test checks that Pane sends the node's key;
@@ -27,6 +29,16 @@
 //! "Replace this view" replaces it with a pushed view. The pop event —
 //! the event with callback id 0 — is recorded and drawn ("Popped: …",
 //! or "Popped" when it carried no result), so a test can see it arrive.
+//!
+//! Every render also answers `refresh-after-ms` as the state's
+//! `refresh_ms` says, so the tests of #236 drive Pane's refreshing of a
+//! view through it — each button below sets it, its presses' answers
+//! asking from then on, and the hand-written values ride outside any SDK:
+//!
+//! - "Answer refresh 10ms" asks for 10 ms, below the 100 ms floor;
+//! - "Answer refresh 25h" asks for 25 hours, above the 24 h ceiling;
+//! - "Answer refresh 1s" asks for a second;
+//! - "Stop refreshing" asks for none.
 //!
 //! It cannot use `pane-extension`, which writes the tree itself, so it
 //! supplies the allocator, panic handler, byte comparisons and
@@ -85,6 +97,11 @@ struct State {
     /// Whether the components tree's toggle is on, flipped by the change
     /// event's payload.
     flipped: Cell<bool>,
+    /// How many times the view was drawn, refreshes included.
+    renders: Cell<u32>,
+    /// What every render answers `refresh-after-ms` as, which the refresh
+    /// buttons below set: None until one is pressed.
+    refresh_ms: Cell<Option<u32>>,
 }
 
 // SAFETY: a component's code runs on one thread.
@@ -104,13 +121,15 @@ struct Designed {
 
 impl GuestView for Designed {
     async fn render(&self, _context: String) -> Result<Rendered, String> {
+        let renders = STATE.renders.get();
+        STATE.renders.set(renders + 1);
         let popped = popped_text(&self.popped.borrow());
         // A pushed view draws its own tree, with the navigation buttons
         // only; the root draws the counter, with every case's button.
         if !self.root {
             return Ok(Rendered {
                 tree: pushed(popped),
-                refresh_after_ms: None,
+                refresh_after_ms: STATE.refresh_ms.get(),
             });
         }
         let next = STATE.next.replace(Next::Counter);
@@ -149,7 +168,7 @@ impl GuestView for Designed {
         };
         Ok(Rendered {
             tree,
-            refresh_after_ms: None,
+            refresh_after_ms: STATE.refresh_ms.get(),
         })
     }
 
@@ -163,16 +182,6 @@ impl GuestView for Designed {
         match event.callback {
             1 if event.key == "increment" => {
                 STATE.count.set(STATE.count.get() + 1);
-            }
-            10 => STATE.next.set(Next::Components),
-            11 => {
-                // The toggle's change: the payload names the value the
-                // user chose, so the fixture flips with it.
-                if event.payload.contains("true") {
-                    STATE.flipped.set(true);
-                } else {
-                    STATE.flipped.set(false);
-                }
             }
             2 => STATE.next.set(Next::Error),
             3 => STATE.next.set(Next::OverLimit),
@@ -205,6 +214,22 @@ impl GuestView for Designed {
                 })
             }
             13 => STATE.next.set(Next::Components),
+            22 => {
+                // The toggle's change: the payload names the value the
+                // user chose, so the fixture flips with it.
+                if event.payload.contains("true") {
+                    STATE.flipped.set(true);
+                } else {
+                    STATE.flipped.set(false);
+                }
+            }
+            // The refresh buttons: each makes every render from now on ask
+            // Pane to draw the view again as it names (10 ms is below the
+            // floor, 25 hours above the ceiling), or not again.
+            14 => STATE.refresh_ms.set(Some(10)),
+            15 => STATE.refresh_ms.set(Some(25 * 60 * 60 * 1000)),
+            16 => STATE.refresh_ms.set(Some(1000)),
+            17 => STATE.refresh_ms.set(None),
             _ => return Err(format!("unknown callback: {}", event.callback)),
         }
         Ok(outcome())
@@ -259,12 +284,16 @@ static STATE: State = State {
     count: Cell::new(0),
     next: Cell::new(Next::Counter),
     flipped: Cell::new(false),
+    renders: Cell::new(0),
+    refresh_ms: Cell::new(None),
 };
 
 /// The buttons the counter's tree names: (label, key, callback id). The
-/// navigation ones answer the stack (#239), the last the component set
-/// (#237); a pushed view's tree names the navigation ones alone.
-const BUTTONS: [(&str, &str, u32); 13] = [
+/// navigation ones answer the stack (#239), the component set's draws
+/// the component tree (#237), and the last four set what every render
+/// asks `refresh-after-ms` (#236); a pushed view's tree names the
+/// navigation ones alone.
+const BUTTONS: [(&str, &str, u32); 17] = [
     ("Increment", "increment", 1),
     ("Answer an error", "error", 2),
     ("Answer an over-limit tree", "over-limit", 3),
@@ -278,6 +307,10 @@ const BUTTONS: [(&str, &str, u32); 13] = [
     ("Pop with a result", "pop", 11),
     ("Replace this view", "replace", 12),
     ("Draw the component set", "components", 13),
+    ("Answer refresh 10ms", "refresh-10", 14),
+    ("Answer refresh 25h", "refresh-25h", 15),
+    ("Answer refresh 1s", "refresh-1s", 16),
+    ("Stop refreshing", "stop-refresh", 17),
 ];
 
 /// The buttons a pushed view's tree names: the navigation ones.
@@ -299,8 +332,9 @@ fn pushed(popped: Option<String>) -> String {
     view(&PUSHED_BUTTONS, "Pushed", popped)
 }
 
-/// The view's tree: its `title` text, the pop event it last received
-/// (when it received one), and one button per case.
+/// The view's tree: its `title` text, how many times the view was drawn
+/// (refreshes raise it), the pop event it last received (when it
+/// received one), and one button per case.
 fn view(buttons: &[(&str, &str, u32)], title: &str, popped: Option<String>) -> String {
     let drawn: Vec<String> = buttons
         .iter()
@@ -313,8 +347,10 @@ fn view(buttons: &[(&str, &str, u32)], title: &str, popped: Option<String>) -> S
         .collect();
     format!(
         "{{\"version\":\"{COMPONENT_SET}\",\"root\":{{\"type\":\"column\",\"gap\":\"m\",\
-         \"children\":[{{\"type\":\"text\",\"text\":\"{title}\",\"style\":\"title\"}}{},\
+         \"children\":[{{\"type\":\"text\",\"text\":\"{title}\",\"style\":\"title\"}},\
+         {{\"type\":\"text\",\"text\":\"Renders: {}\"}}{},\
          {{\"type\":\"row\",\"gap\":\"s\",\"children\":[{}]}}]}}}}",
+        STATE.renders.get(),
         popped
             .map(|text| format!(",{{\"type\":\"text\",\"text\":\"{text}\"}}"))
             .unwrap_or_default(),
@@ -346,28 +382,28 @@ fn components() -> String {
          {{\"type\":\"card\",\"gap\":\"s\",\"children\":[\
          {{\"type\":\"rich-row\",\"title\":\"Pane\",\"subtitle\":\"A tree\",\
          \"icon\":{{\"builtin\":\"layers\"}},\
-         \"accessories\":[{{\"text\":\"new\",\"tag\":true}}],\"onPress\":13}}]}},\
-         {{\"type\":\"toggle\",\"key\":\"toggle\",\"on\":{on},\"label\":\"Dark mode\",         \"onChange\":11}},\
-         {{\"type\":\"checkbox\",\"checked\":{on},\"label\":\"Remember\",\"onChange\":11}},\
+         \"accessories\":[{{\"text\":\"new\",\"tag\":true}}],\"onPress\":21}}]}},\
+         {{\"type\":\"toggle\",\"key\":\"toggle\",\"on\":{on},\"label\":\"Dark mode\",         \"onChange\":22}},\
+         {{\"type\":\"checkbox\",\"checked\":{on},\"label\":\"Remember\",\"onChange\":22}},\
          {{\"type\":\"segmented\",\"options\":[{{\"value\":\"a\",\"label\":\"A\"}},\
-         {{\"value\":\"b\"}}],\"value\":\"a\",\"onChange\":14}},\
-         {{\"type\":\"slider\",\"value\":0.4,\"min\":0,\"max\":2,\"step\":0.2,\"onChange\":15}},\
+         {{\"value\":\"b\"}}],\"value\":\"a\",\"onChange\":23}},\
+         {{\"type\":\"slider\",\"value\":0.4,\"min\":0,\"max\":2,\"step\":0.2,\"onChange\":24}},\
          {{\"type\":\"progress\",\"value\":0.7}},\
          {{\"type\":\"loading\",\"label\":\"Checking\"}},\
          {{\"type\":\"markdown\",\"markdown\":\"# Title\\n\\nSome *prose*.\",\"grow\":1}},\
          {{\"type\":\"metadata-list\",\"items\":[\
-         {{\"label\":\"Author\",\"value\":\"Vu\",\"onPress\":16}},\
+         {{\"label\":\"Author\",\"value\":\"Vu\",\"onPress\":25}},\
          {{\"label\":\"Tags\",\"tags\":[\"one\",\"two\"]}},\
          {{\"separator\":true}},\
          {{\"label\":\"Kind\",\"value\":\"sample\"}}]}},\
          {{\"type\":\"empty-state\",\"title\":\"Nothing\",\"description\":\"Over\",\
          \"icon\":{{\"builtin\":\"search-minus\"}},\
-         \"children\":[{{\"type\":\"button\",\"label\":\"Start over\",\"onPress\":17}}]}},\
-         {{\"type\":\"text-input\",\"key\":\"name\",\"value\":\"typed\",         \"placeholder\":\"Type here\",\"label\":\"Name\",\"onChange\":18}},\
+         \"children\":[{{\"type\":\"button\",\"label\":\"Start over\",\"onPress\":26}}]}},\
+         {{\"type\":\"text-input\",\"key\":\"name\",\"value\":\"typed\",         \"placeholder\":\"Type here\",\"label\":\"Name\",\"onChange\":27}},\
          {{\"type\":\"password-input\",\"label\":\"Secret\"}},\
          {{\"type\":\"text-area\",\"value\":\"two lines\",\"label\":\"Notes\"}},\
          {{\"type\":\"select\",\"options\":[{{\"value\":\"x\",\"label\":\"X\"}}],\
-         \"value\":\"x\",\"label\":\"Pick\",\"onChange\":19}},\
+         \"value\":\"x\",\"label\":\"Pick\",\"onChange\":28}},\
          {{\"type\":\"divider\"}},{{\"type\":\"spacer\"}},\
          {{\"type\":\"text\",\"text\":\"Surface\",\"level\":\"secondary\",         \"background\":\"danger\",\"radius\":\"m\",\"hover\":{{\"background\":\"accent\"}}}},\
          {{\"type\":\"text\",\"text\":\"Corrected\",\"color\":\"#88ccff\"}},\
@@ -435,6 +471,8 @@ impl Guest for Fixture {
     async fn open_view(_command: String, _launch: LaunchRecord) -> Result<View, String> {
         STATE.count.set(0);
         STATE.next.set(Next::Counter);
+        STATE.renders.set(0);
+        STATE.refresh_ms.set(None);
         Ok(View::new(Designed {
             root: true,
             popped: RefCell::new(None),

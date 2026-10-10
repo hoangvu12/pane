@@ -14,12 +14,12 @@ use core::cell::Cell;
 
 use pane_extension::icon::Tone as Colour;
 use pane_extension::view::{
-    Cx, Color, Fit, Icon, IconSize, IntoNode, Length, Paint, Place, Radius, Space, TextLevel,
-    TextStyle, Tone, View, badge, button, card, checkbox, choice, column, divider, empty_state,
-    icon, icon_tile, image, key_sequence, keycap, link, loading, markdown, metadata_list,
-    metadata, metadata_separator, metadata_tags, password_input, progress, rich_row, row, scroll,
-    section_header, select, slider, spacer, span, spans, stack, tag, text, text_area, text_input,
-    toggle,
+    Cx, Color, Fit, Icon, IconSize, IntoAnswer, IntoNode, Length, Paint, Place, Radius, Space,
+    TextLevel, TextStyle, Tone, View, badge, button, card, checkbox, choice, column, divider,
+    empty_state, icon, icon_tile, image, key_sequence, keycap, link, loading, markdown,
+    metadata_list, metadata, metadata_separator, metadata_tags, password_input, progress, rich_row,
+    row, scroll, section_header, select, slider, spacer, span, spans, stack, tag, text, text_area,
+    text_input, toggle,
 };
 use pane_extension::{Command, LaunchRecord};
 
@@ -32,7 +32,7 @@ struct Screen {
 }
 
 impl View for Screen {
-    fn render(&mut self, cx: &mut Cx<Self>) -> impl IntoNode {
+    fn render(&mut self, cx: &mut Cx<Self>) -> impl IntoAnswer {
         if self.counter {
             return column()
                 .gap(Space::M)

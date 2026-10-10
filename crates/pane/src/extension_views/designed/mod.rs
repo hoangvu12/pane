@@ -18,7 +18,8 @@
 //! Shift+Tab move through them, and Enter and Space press the focused
 //! one (bound in [`bind_keys`], under each control's key context, which
 //! sits below the launcher's window context). Escape stays with Pane, as
-//! it does for a custom view: it leaves the screen. Each control's focus
+//! it does for a custom view: it pops the navigation stack (#239), leaving
+//! the screen when only the root view is on it. Each control's focus
 //! handle is kept by its path in the tree ([`DesignedControls`]), so a
 //! re-render whose tree still draws that control keeps the keyboard on
 //! it — the shape-keyed reconciliation of `form.rs`, until #238's keyed

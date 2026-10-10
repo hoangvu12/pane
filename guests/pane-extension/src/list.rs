@@ -542,7 +542,7 @@ impl Item {
 ///
 /// ```ignore
 /// impl pane_extension::view::View for Counter {
-///     fn render(&mut self, cx: &mut Cx<Self>) -> impl IntoNode {
+///     fn render(&mut self, cx: &mut Cx<Self>) -> impl IntoAnswer {
 ///         column()
 ///             .gap(Space::M)
 ///             .child(text("Count").style(TextStyle::Title))
