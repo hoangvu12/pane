@@ -672,14 +672,9 @@ fn fix_of(
             // It waits for another: the chain's root is what to fix.
             None => {
                 let path = [package.identity.clone(), unmet.identity.clone()];
-                match root_of(packages, able, provisions, paused, title_of, &path) {
-                    Some(Root::Package(identity, Unmet::Disabled)) => Fix::Enable(identity),
-                    Some(Root::Package(identity, Unmet::Paused)) => Fix::Retry(identity),
-                    Some(Root::Package(identity, Unmet::NotInstalled)) => Fix::Install(identity),
-                    // The chain ends at a capability: its fix is a provider.
-                    Some(root @ Root::Capability(..)) => root.fix(),
-                    None => Fix::Manage,
-                }
+                root_of(packages, able, provisions, paused, title_of, &path)
+                    .map(|root| root.fix())
+                    .unwrap_or(Fix::Manage)
             }
         },
         // The capability is what is actually missing: a provider of it.

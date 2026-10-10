@@ -510,7 +510,7 @@ query.
 
 ### What Manage extensions shows
 
-Added for [#157](https://github.com/hoangvu12/pane/issues/157). The
+Added for [#157](https://github.com/pane-app/pane/issues/157). The
 extension list and an extension's page in Settings say what waits and
 what it needs; the rows are data read from the waiting model and the
 manifests, never running anything.
@@ -535,9 +535,9 @@ manifests, never running anything.
   cannot run, and Disable all or Uninstall all affects them together."
 
 Required capabilities join the requirement rows and their fix rows with
-[#156](https://github.com/hoangvu12/pane/issues/156) — "Install
+[#156](https://github.com/pane-app/pane/issues/156) — "Install
 <default> (named by <title>)", "Choose a provider in Settings"
-([#154](https://github.com/hoangvu12/pane/issues/154)) or "Install an
+([#154](https://github.com/pane-app/pane/issues/154)) or "Install an
 extension that provides <capability>", which opens the install forms —
 and the status line's narrowing. An optional requirement never shows as
 unmet.
