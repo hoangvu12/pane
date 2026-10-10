@@ -210,7 +210,8 @@ impl DefaultExtension {
     /// platform and a system [`Platform::current`] does not know counts
     /// as another system's.
     pub fn runs_here(&self) -> bool {
-        self.platform.is_none_or(|platform| Platform::current() == Some(platform))
+        self.platform
+            .is_none_or(|platform| Platform::current() == Some(platform))
     }
 }
 
@@ -655,7 +656,10 @@ mod tests {
         // and on a system `Platform::current` does not know, not even
         // there.
         assert!(pins[0].runs_here());
-        assert_eq!(pins[1].runs_here(), Platform::current() == Some(Platform::Windows));
+        assert_eq!(
+            pins[1].runs_here(),
+            Platform::current() == Some(Platform::Windows)
+        );
         // The fetch names the repository at the pinned commit: a commit id
         // pins the bytes, so the tag is recorded, never asked for.
         let spec = pins[0].spec().unwrap();
