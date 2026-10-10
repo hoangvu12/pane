@@ -80,13 +80,23 @@ pub(crate) fn read(folder: &Path) -> Result<Option<Collection>, String> {
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(format!("it cannot be read: {error}")),
     };
+    parse(&text).map(Some)
+}
+
+/// The index `text` writes (`pane-collection.json`'s contents), read and
+/// checked exactly as [`read`] checks the file a folder holds: the same
+/// ways it cannot be taken, with the same words, so a collection fetched
+/// from Git is refused as one read from a folder is wherever its index is
+/// checked (#311: the partial fetch reads the index from the blob it
+/// fetched, before anything is written).
+pub(crate) fn parse(text: &str) -> Result<Collection, String> {
     if text.len() as u64 > MAX_INDEX {
         return Err(format!(
             "it is larger than the {} KiB Pane reads",
             MAX_INDEX >> 10
         ));
     }
-    let json: CollectionJson = serde_json::from_str(&text).map_err(|error| error.to_string())?;
+    let json: CollectionJson = serde_json::from_str(text).map_err(|error| error.to_string())?;
     let renamed = json.renamed.unwrap_or_default();
     let mut extensions = Vec::new();
     for entry in json.extensions {

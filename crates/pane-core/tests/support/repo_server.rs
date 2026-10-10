@@ -108,6 +108,14 @@ impl Repo {
         self.git(&["tag", "--annotate", "-m", name, name]);
     }
 
+    /// Allows the partial-clone filter (`uploadpack.allowFilter`), so the
+    /// server advertises `filter` and answers `filter blob:none`: a host
+    /// that serves partial clones, as GitHub's and GitLab's servers do
+    /// (#311, ADR 0044).
+    pub fn allow_filter(&self) {
+        self.git(&["config", "uploadpack.allowFilter", "true"]);
+    }
+
     /// Adds a tree entry of `mode` (`120000` a link, `160000` a submodule)
     /// named `path` pointing to `target`'s contents or commit, without a
     /// file in the work tree.
@@ -324,6 +332,10 @@ pub enum Mode {
 struct Served {
     repositories: BTreeMap<String, PathBuf>,
     requests: Vec<String>,
+    /// Each `fetch` command received, as its argument lines (`want …`,
+    /// `filter …`, `deepen …`, `done`): what a test asks a partial fetch
+    /// to have taken, read from what the server was asked for (#311).
+    fetches: Vec<Vec<String>>,
     mode: Mode,
     /// Answer the next fetch (`command=fetch`) by closing the connection
     /// partway through its answer: a fetch interrupted.
@@ -348,6 +360,7 @@ impl Server {
         let served = Arc::new(Mutex::new(Served {
             repositories: BTreeMap::new(),
             requests: Vec::new(),
+            fetches: Vec::new(),
             mode: Mode::Normal,
             drop_next: false,
         }));
@@ -414,6 +427,15 @@ impl Server {
     pub fn requests(&self) -> Vec<String> {
         self.served.lock().unwrap().requests.clone()
     }
+
+    /// Each `fetch` command received, as the lines it was sent (its `want`
+    /// lines, `filter blob:none` where it filtered, `deepen 1`, `done`):
+    /// what was asked of the server, so a test checks that a partial fetch
+    /// took the trees and the chosen extensions' folders' blobs, and
+    /// nothing else of the repository (#311).
+    pub fn fetches(&self) -> Vec<Vec<String>> {
+        self.served.lock().unwrap().fetches.clone()
+    }
 }
 
 impl Drop for Server {
@@ -466,6 +488,9 @@ fn answer(stream: TcpStream, served: &Mutex<Served>, home: &Path) {
     let (mode, repositories, interrupt) = {
         let mut served = served.lock().unwrap();
         served.requests.push(format!("{method} {target}"));
+        if is_fetch {
+            served.fetches.push(arguments_of(&body));
+        }
         (
             served.mode,
             served.repositories.clone(),
@@ -591,4 +616,39 @@ fn respond(mut stream: TcpStream, status: &str, headers: &[(&str, String)], body
     head.push_str("Connection: close\r\n\r\n");
     let _ = stream.write_all(head.as_bytes());
     let _ = stream.write_all(body);
+}
+
+/// The argument lines of the protocol version 2 command in `body` (a
+/// `fetch`): the pkt-lines after its delimiter, each without its newline —
+/// `want <id>`, `filter blob:none`, `deepen 1`, `no-progress`, `done`.
+fn arguments_of(body: &[u8]) -> Vec<String> {
+    let mut arguments = Vec::new();
+    let mut at = 0;
+    let mut past = false;
+    while at + 4 <= body.len() {
+        let length = std::str::from_utf8(&body[at..at + 4])
+            .ok()
+            .and_then(|head| usize::from_str_radix(head, 16).ok());
+        let Some(length) = length else {
+            break;
+        };
+        match length {
+            0 => at += 4,
+            1 => {
+                at += 4;
+                past = true;
+            }
+            4.. => {
+                let Some(line) = body.get(at + 4..at + length) else {
+                    break;
+                };
+                if past {
+                    arguments.push(String::from_utf8_lossy(line).trim_end().into_owned());
+                }
+                at += length;
+            }
+            _ => break,
+        }
+    }
+    arguments
 }

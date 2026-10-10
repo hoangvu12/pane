@@ -317,7 +317,7 @@ The version of the interface an extension is built against, which its package ma
 _Avoid_: SDK version, manifest version (the format of `pane.json` itself)
 
 **Collection**:
-A Git repository or folder whose root lists several extension packages, each in a folder of its own under an extension id. The user installs some or all of them, and each one installed is a package of its own.
+A Git repository or folder whose root lists several extension packages, each in a folder of its own under an extension id. The user installs some or all of them, and each one installed is a package of its own. Where its host serves Git's partial-clone filter, Pane fetches the revision without its file contents and then only the chosen extensions' folders, so a large collection downloads only what is installed; a host without the filter is fetched whole.
 _Avoid_: Monorepo, bundle, extension pack, marketplace
 
 **Extension id**:

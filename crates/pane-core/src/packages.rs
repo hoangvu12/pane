@@ -1678,8 +1678,15 @@ impl SourcePackage {
         fetched: crate::git::Fetched,
         extension: Option<&str>,
     ) -> Result<SourcePackage, PackageError> {
-        let crate::git::Fetched { download, origin } = fetched;
-        Self::read_git_revision(std::sync::Arc::new(download), origin, extension)
+        let crate::git::Fetched {
+            download,
+            origin,
+            // The whole of the one extension this address named was
+            // fetched, where the server filters (#311): nothing is left to
+            // fetch, so no handle is kept.
+            partial: _,
+        } = fetched;
+        Self::read_git_revision(download, origin, extension)
     }
 
     /// Reads a revision Pane fetched from Git and still holds, exactly as
@@ -1893,7 +1900,7 @@ impl SourcePackage {
             git: None,
             default: Some(origin),
             extension: None,
-            _download: Some(std::sync::Arc::new(download)),
+            _download: Some(download),
             network: false,
             programs: false,
         })
