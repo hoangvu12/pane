@@ -16,7 +16,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use gpui::{Entity, TestAppContext, VisualTestContext, prelude::*};
+use gpui::{Entity, EntityInputHandler as _, TestAppContext, VisualTestContext, px, prelude::*};
 use pane::LauncherWindow;
 use pane_core::{Launcher, Runtime, Screen};
 
@@ -378,7 +378,7 @@ fn input_method_composition_survives_re_renders(cx: &mut TestAppContext) {
 fn scrolled(
     window: &Entity<LauncherWindow>,
     cx: &mut VisualTestContext,
-) -> gpui::ScrollHandle {
+) -> gpui::Point<gpui::Pixels> {
     cx.read_entity(window, |window, _| window.designed_scroll("gallery"))
         .expect("the gallery's scroll is keyed")
 }
@@ -390,7 +390,7 @@ fn the_scroll_position_survives_re_renders_and_reorders(cx: &mut TestAppContext)
     // The gallery's scroll region is keyed: its position is kept by its
     // key, so the re-renders the extension's answers draw never jump it.
     assert_eq!(
-        scrolled(&window, cx).offset().y,
+        scrolled(&window, cx).y,
         px(0.),
         "the gallery starts at its top"
     );
@@ -403,7 +403,7 @@ fn the_scroll_position_survives_re_renders_and_reorders(cx: &mut TestAppContext)
         modifiers: gpui::Modifiers::none(),
         touch_phase: gpui::TouchPhase::Moved,
     });
-    let at = scrolled(&window, cx).offset();
+    let at = scrolled(&window, cx);
     assert!(at.y > px(0.), "the gallery scrolled: {at:?}");
 
     // A re-render keeps the position: "Reorder" redraws the tree with
@@ -411,7 +411,7 @@ fn the_scroll_position_survives_re_renders_and_reorders(cx: &mut TestAppContext)
     let reorder = bounds(cx, "designed-button-Reorder");
     cx.simulate_click(reorder.center(), gpui::Modifiers::none());
     until(&window, cx, |view| view.status != pane_core::Status::Running);
-    let after = scrolled(&window, cx).offset();
+    let after = scrolled(&window, cx);
     assert_eq!(after, at, "the scroll position survived the re-render");
 }
 
