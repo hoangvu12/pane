@@ -453,6 +453,13 @@ fn kinds_of(node: &Node) -> Vec<String> {
             NodeKind::PasswordInput(_) => "password-input".to_owned(),
             NodeKind::TextArea(_) => "text-area".to_owned(),
             NodeKind::Select(_) => "select".to_owned(),
+            NodeKind::List(_) => "list".to_owned(),
+            NodeKind::Grid(_) => "grid".to_owned(),
+            NodeKind::ListSection(_) => "list-section".to_owned(),
+            NodeKind::ListItem(_) => "list-item".to_owned(),
+            NodeKind::GridItem(_) => "grid-item".to_owned(),
+            NodeKind::ListDropdown(_) => "list-dropdown".to_owned(),
+            NodeKind::Detail(_) => "detail".to_owned(),
             NodeKind::Unknown(kind) => kind.to_owned(),
         }
     };

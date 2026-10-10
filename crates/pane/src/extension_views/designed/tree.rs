@@ -194,10 +194,7 @@ pub(super) fn list_paths(
                 }
             }
             NodeKind::ListItem(_) | NodeKind::GridItem(_) => {
-                let key = child
-                    .key
-                    .clone()
-                    .unwrap_or_else(|| index.to_string());
+                let key = child.key.clone().unwrap_or_else(|| index.to_string());
                 items.push((key, path));
             }
             NodeKind::ListDropdown(_) => dropdown = Some(path),
@@ -472,12 +469,8 @@ pub(super) fn draw_node(
         NodeKind::List(_) | NodeKind::Grid(_) => {
             let own = path.clone();
             let drawn = children(node, path, inner, cx);
-            let div = apply(
-                div().id(own).flex().flex_col().min_w(px(0.)),
-                node,
-                &draw,
-            )
-            .children(drawn);
+            let div = apply(div().id(own).flex().flex_col().min_w(px(0.)), node, &draw)
+                .children(drawn);
             named(div, name.as_deref()).into_any_element()
         }
         NodeKind::ListSection(_) => {
@@ -512,8 +505,9 @@ pub(super) fn draw_node(
             // The presented list's dropdown draws in its header; one
             // nested elsewhere draws its choices as a plain column.
             let own = path.clone();
-            let children = children(node, path, inner, cx);
-            let div = apply(div().id(own).flex().flex_col().min_w(px(0.)), node, &draw);
+            let drawn = children(node, path, inner, cx);
+            let div = apply(div().id(own).flex().flex_col().min_w(px(0.)), node, &draw)
+                .children(drawn);
             named(div, name.as_deref()).into_any_element()
         }
         NodeKind::Detail(_) => {

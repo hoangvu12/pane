@@ -50,7 +50,7 @@ fn use_service(window: &Entity<LauncherWindow>, cx: &mut VisualTestContext, addr
     let saved = window.update(cx, |window, _| {
         window
             .launcher()
-            .set_preference(&identity, "service", Some(address.to_owned()))
+            .set_preference(&identity, "service", Some(address))
     });
     cx.foreground_executor().block_on(saved).expect("saved");
     settle(&window, cx);
@@ -81,7 +81,7 @@ fn the_commands_own_search_field_lists_the_service_results(cx: &mut TestAppConte
     assert_eq!(service.requests(), Vec::<String>::new());
 
     // Enter opens it: the designed List owns the header's search field,
-    /// empty and focused, with the view's navigation title above it.
+    // empty and focused, with the view's navigation title above it.
     cx.simulate_keystrokes("enter");
     let view = settle(&window, cx);
     assert!(
@@ -99,7 +99,7 @@ fn the_commands_own_search_field_lists_the_service_results(cx: &mut TestAppConte
     );
 
     // Typing searches the service; its results are the rows, and the
-    /// field holds the text typed.
+    // field holds the text typed.
     cx.simulate_input("aurora");
     let view = settle(&window, cx);
     assert_eq!(titles(&view), ["aurora-charts", "aurora-cli"]);
@@ -171,7 +171,7 @@ fn backspace_in_the_empty_search_field_pops_the_view(cx: &mut TestAppContext) {
     assert_eq!(field_text(&window, cx), "auror");
 
     // The field empty: Backspace leaves the command (#240, the general
-    /// order the launcher polish's, #123).
+    // order the launcher polish's, #123).
     for _ in "auror".chars() {
         cx.simulate_keystrokes("backspace");
     }
