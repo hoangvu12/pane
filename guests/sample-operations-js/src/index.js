@@ -79,9 +79,13 @@ export const command = {
   },
 };
 
-/** Opens the form command `which`, as the user would. */
-function openForm(which) {
-  return launch({ command: which }, "user-initiated", [], null);
+/**
+ * Opens the form command `which`, as the user would.
+ * @param {string} which
+ * @returns {Promise<void>}
+ */
+async function openForm(which) {
+  launch({ command: which }, "user-initiated", [], null);
 }
 
 /**
