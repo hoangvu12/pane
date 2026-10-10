@@ -39,13 +39,13 @@
 //!   half of `ci` that runs no tests and builds no guest but the Rust SDK.
 //!   The prebuilt-samples check needs no toolchain at all (#218): it
 //!   verifies digests and staleness in `js_guests`.
-//! - `sdks`: check that the SDKs and the CLI package as they would be
+//! - `sdks`: check that the SDKs and the CLI packages as they would be
 //!   published, publishing nothing: the Rust SDK's copy of the WIT is
 //!   `wit/`, `cargo publish --dry-run` packages `pane-extension` and builds
-//!   it from the package alone, `npm pack` packs `@pane-app/extension` and
-//!   `@pane-app/cli` into `target/sdks/`, and the CLI's platform package
-//!   templates match the targets pane-build looks for. Publishing them is a
-//!   person's step, never CI's (#128).
+//!   it from the package alone, `npm pack` packs `@pane-app/extension`,
+//!   `@pane-app/cli` and `@pane-app/create` into `target/sdks/`, and the
+//!   CLI's platform package templates match the targets pane-build looks
+//!   for. Publishing them is a person's step, never CI's (#128).
 //! - `ci-tests`: build the guests, then run the workspace's tests with
 //!   cargo-nextest, which retries a failing test twice before the run
 //!   fails for it, so one flaky failure costs time, not the run. Options
@@ -629,11 +629,35 @@ fn ci_lints() -> Result<(), String> {
         "guests/fixtures/mixed-p2",
         "guests/helpers/echo",
         "guests/hello-rust",
+        // The Rust templates pane-ext new writes, each a package of its
+        // own that no workspace holds (#221).
+        "crates/pane-core/templates/rust/list",
+        "crates/pane-core/templates/rust/detail",
+        "crates/pane-core/templates/rust/form",
+        "crates/pane-core/templates/rust/no-view",
     ] {
         run(cargo()
             .current_dir(root.join(dir))
             .args(["fmt", "--all", "--check"]))?;
     }
+    // The command files pane-ext new command writes are no package's
+    // source, so rustfmt checks them directly.
+    let rustfmt = if cfg!(windows) {
+        "rustfmt.exe"
+    } else {
+        "rustfmt"
+    };
+    run(Command::new(rustfmt)
+        .current_dir(&root)
+        .arg("--check")
+        .arg("--edition")
+        .arg("2024")
+        .args([
+            "crates/pane-core/templates/rust/command/list.rs",
+            "crates/pane-core/templates/rust/command/detail.rs",
+            "crates/pane-core/templates/rust/command/form.rs",
+            "crates/pane-core/templates/rust/command/no-view.rs",
+        ]))?;
     // The committed pane.json schema is the one Pane's manifest types
     // generate, before anything slower runs.
     schema(false)?;
@@ -656,12 +680,13 @@ fn ci_lints() -> Result<(), String> {
         .args(clippy))
 }
 
-/// Checks that the SDKs and the CLI package as they would be published,
+/// Checks that the SDKs and the CLI packages as they would be published,
 /// publishing nothing: the WIT the Rust SDK carries, and is generated from,
 /// is a copy of `wit/`; `cargo publish --dry-run` packages `pane-extension`
 /// and builds it from its package alone, as crates.io would; `npm pack`
-/// packs `@pane-app/extension` and `@pane-app/cli` into `target/sdks/`; and
-/// the CLI's platform package templates match each other and the targets
+/// packs `@pane-app/extension`, `@pane-app/cli` and `@pane-app/create` (the
+/// package `npm create @pane-app` runs, #221) into `target/sdks/`; and the
+/// CLI's platform package templates match each other and the targets
 /// pane-build looks for (`cli_packages::check`). Publishing any of them is
 /// a person's step, never CI's (#128).
 fn sdks() -> Result<(), String> {
@@ -682,7 +707,7 @@ fn sdks() -> Result<(), String> {
     std::fs::create_dir_all(&out).map_err(|error| error.to_string())?;
     // npm is a batch file on Windows, which is started by its full name.
     let npm = if cfg!(windows) { "npm.cmd" } else { "npm" };
-    for package in ["guests/js", "packages/cli"] {
+    for package in ["guests/js", "packages/cli", "packages/create"] {
         run(Command::new(npm)
             .current_dir(root.join(package))
             .arg("pack")
