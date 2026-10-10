@@ -242,7 +242,7 @@ fn the_loading_sample_shows_its_loading_state_then_its_data_without_a_timer() {
         // view's opening render.
         assert_eq!(
             pane.texts(),
-            ["Loading\u2026"],
+            ["Loading…"],
             "the {language} sample's loading state"
         );
 

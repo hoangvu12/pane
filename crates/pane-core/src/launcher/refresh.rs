@@ -259,7 +259,9 @@ impl Refresh {
         // another command's — are dropped; with none open, one whose view
         // is still opening is kept: its first render may be asking still.
         if let Some(stack) = state.designed_view.as_ref() {
-            refreshing.pushed.retain(|view| stack.views.iter().any(|open| open.id.id == *view));
+            refreshing
+                .pushed
+                .retain(|view| stack.views.iter().any(|open| open.id.id == *view));
         }
         if refreshing.in_flight {
             return None;

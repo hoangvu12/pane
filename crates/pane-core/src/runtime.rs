@@ -5128,10 +5128,7 @@ impl Host {
                     }
                     Err(Halt::Unresponsive(why)) => {
                         let error = CallError::Unresponsive(why);
-                        crate::diagnostic!(
-                            "pane: {} stopped responding: {error}",
-                            path.display()
-                        );
+                        crate::diagnostic!("pane: {} stopped responding: {error}", path.display());
                         self.report(path, data.as_ref(), Health::Unresponsive(error));
                     }
                     Err(Halt::GivenUp) => {}
