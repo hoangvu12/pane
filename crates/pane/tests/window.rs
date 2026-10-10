@@ -276,7 +276,7 @@ fn the_keyboard_fills_in_and_submits_the_form(cx: &mut TestAppContext, sample: &
 
     // The answer draws over the form, in the tree the view answers with
     // (#241).
-    let view = settle(&window, cx);
+    settle(&window, cx);
     let (nodes, _) = accessibility_tree(cx);
     assert!(
         nodes.contains(&(
@@ -286,10 +286,11 @@ fn the_keyboard_fills_in_and_submits_the_form(cx: &mut TestAppContext, sample: &
         )),
         "{nodes:?}"
     );
+    // Escape leaves the form's view for the command's list, the selection
+    // kept on the row that launched it.
     cx.simulate_keystrokes("escape");
     let view = settle(&window, cx);
     assert_eq!((view.screen, view.selected), (Screen::Command, Some(4)));
-    let _ = view;
 }
 
 fn a_rejected_field_shows_its_error_and_takes_focus(cx: &mut TestAppContext, sample: &Sample) {
@@ -526,7 +527,7 @@ fn input_method_composition_commits_into_the_text_field(cx: &mut TestAppContext)
     let (window, _data, cx) = open_installed(cx, &RUST.component.replace("_", "-"));
     open_form(&window, cx);
     let input = cx
-        .read_entity(&window, |window, cx| window.designed_field("name"))
+        .read_entity(&window, |window, _| window.designed_field("name"))
         .expect("the name field has an editing state");
     let focused = cx.update(|window, cx| input.focus_handle(cx).is_focused(window));
     assert!(focused, "the name field has keyboard focus");
@@ -1167,7 +1168,7 @@ fn an_extension_view_has_no_heading_and_the_footer_names_it(cx: &mut TestAppCont
 /// either; the footer's left names it (#162).
 #[gpui::test]
 fn a_designed_view_has_no_heading_and_the_footer_names_it(cx: &mut TestAppContext) {
-    let (window, _data, cx) = open_color(cx, &RUST);
+    let (_window, _data, cx) = open_color(cx, &RUST);
     assert_named_in_the_footer(cx, "the color view");
 }
 

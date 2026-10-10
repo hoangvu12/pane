@@ -1872,7 +1872,6 @@ pub(super) fn field_well(
     theme: &Theme,
     cx: &gpui::App,
 ) -> gpui::Stateful<gpui::Div> {
-    let controls = &theme.geometry.controls;
     let ring = controls::well_shadows(true, theme);
     let live = editing.read(cx).as_str().to_owned();
     let label: SharedString = input
@@ -2146,7 +2145,7 @@ pub(super) fn select(
     select: &SelectNode,
     path: &str,
     draw: &Draw,
-    cx: &mut gpui::Context<LauncherWindow>,
+    _cx: &mut gpui::Context<LauncherWindow>,
 ) -> AnyElement {
     let theme = draw.theme;
     if select.options.is_empty() {

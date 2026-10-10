@@ -306,12 +306,10 @@ impl Launcher {
         let alias_change = match (&state.view.screen, &state.form) {
             (
                 super::Screen::PaneForm(_),
-                Some(
-                    open @ super::OpenForm {
-                        purpose: super::FormPurpose::Alias(command),
-                        ..
-                    },
-                ),
+                Some(super::OpenForm {
+                    purpose: super::FormPurpose::Alias(command),
+                    ..
+                }),
             ) => {
                 let command = command.clone();
                 let alias = alias_of(&values).unwrap_or_default();

@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use futures::executor::block_on;
 use std::future::Future;
 
-use pane_core::{CallError, CommandRegistration, Launcher, Runtime, Screen, Status, Unavailable};
+use pane_core::{CallError, CommandRegistration, Launcher, Runtime, Screen, Status};
 
 #[path = "support/platforms.rs"]
 mod platforms;

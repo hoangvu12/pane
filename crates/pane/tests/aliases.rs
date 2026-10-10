@@ -78,9 +78,9 @@ fn an_alias_and_a_fallback_set_in_the_window_send_the_typed_text_to_the_command(
     // Its form starts with the alias.
     cx.simulate_keystrokes("enter");
     settle(&window, cx);
-    let field = cx.read_entity(&window, |window, cx| {
-        window.designed_field("alias").expect("the field")
-    });
+    let field = cx
+        .read_entity(&window, |window, _| window.designed_field("alias"))
+        .expect("the field");
     let text = cx.read_entity(&field, |field, _| field.as_str().to_owned());
     assert_eq!(text, "ec");
     cx.simulate_keystrokes("escape");

@@ -832,7 +832,7 @@ impl LauncherWindow {
     fn designed_paths_arrived(
         &mut self,
         path: &str,
-        key: &str,
+        _key: &str,
         paths: Vec<std::path::PathBuf>,
         window: &mut gpui::Window,
         cx: &mut Context<Self>,
