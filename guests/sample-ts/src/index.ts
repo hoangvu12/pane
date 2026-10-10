@@ -135,6 +135,7 @@ function ColorPicker() {
     { op: "rect", x: column * STEP, y: row * STEP, width: STEP, height: STEP, fill: FRAME },
   ];
   for (let x = 0; x < COLUMNS; x += 1) {
+    const shades = COLORS[x].slice(1);
     for (let y = 0; y < ROWS; y += 1) {
       ops.push({
         op: "rect",
@@ -142,7 +143,7 @@ function ColorPicker() {
         y: y * STEP + 2,
         width: SWATCH,
         height: SWATCH,
-        fill: swatch(COLORS[x][y + 1]),
+        fill: swatch(shades[y]),
       });
     }
   }
@@ -160,8 +161,8 @@ function ColorPicker() {
   const key = (name: string) => {
     if (name === "home") setChoice({ column: 0, row });
     else if (name === "end") setChoice({ column: COLUMNS - 1, row });
-    else if (MOVES[name]) {
-      const [dx, dy] = MOVES[name];
+    else if (Object.hasOwn(MOVES, name)) {
+      const [dx, dy] = MOVES[name as "left" | "right" | "up" | "down"];
       setChoice({
         column: clamp(column + dx, COLUMNS - 1),
         row: clamp(row + dy, ROWS - 1),
@@ -171,15 +172,16 @@ function ColorPicker() {
   // Only a press on the grid chooses a swatch and starts a drag; a move
   // during one chooses under the pointer.
   const pointed = (event: CanvasEvent, press: boolean) => {
-    const onGrid =
-      event.x >= 0 && event.x < COLUMNS * STEP && event.y >= 0 && event.y < ROWS * STEP;
+    if (event.event !== "pointer-down" && event.event !== "pointer-move") return;
+    const { x, y } = event;
+    const onGrid = x >= 0 && x < COLUMNS * STEP && y >= 0 && y < ROWS * STEP;
     if (press) {
       if (onGrid) {
         dragging.current = true;
-        setChoice(at(event.x, event.y));
+        setChoice(at(x, y));
       }
     } else if (dragging.current) {
-      setChoice(at(event.x, event.y));
+      setChoice(at(x, y));
     }
   };
   return jsxs(Column, {
@@ -262,7 +264,7 @@ async function render(): Promise<List> {
         id: "color",
         title: "Choose a color",
         subtitle: "Pick a color in a view the guest draws",
-        onAction: () => launch({ command: "color" }, "user-initiated", [], null),
+        onAction: async () => launch({ command: "color" }, "user-initiated", [], null),
       },
       // Elsewhere Pane lists these as unavailable, says why, and never runs
       // their actions.

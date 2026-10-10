@@ -807,7 +807,7 @@ impl CanvasHandlers {
 /// state the painting that follows paints in. Coordinates are logical
 /// pixels in the canvas's own space, its origin its top-left corner; a
 /// position outside its size is clipped away when it is drawn.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum CanvasOp {
     /// A rectangle, filled and/or stroked, `radius` rounding its corners.
     Rect {
@@ -890,7 +890,7 @@ pub enum CanvasOp {
 
 /// One stroke: its colour, its width, and the shapes of its ends and
 /// corners.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct CanvasStroke {
     pub color: Paint,
     /// One pixel when the tree gives none.
@@ -918,7 +918,7 @@ pub enum StrokeJoin {
 /// One line of text a canvas draws: its position, its content, and how it
 /// is drawn — a token style and level, or a raw size, a weight, and its
 /// colour, corrected as a text's is.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct CanvasText {
     pub x: f32,
     pub y: f32,
@@ -1874,8 +1874,8 @@ fn canvas_op(value: &Value) -> Result<Option<CanvasOp>, ReadError> {
         "rect" => CanvasOp::Rect {
             x: at("x")?,
             y: at("y")?,
-            width: size("width")?,
-            height: size("height")?,
+            width: at("width")?,
+            height: at("height")?,
             radius: optional_measure(fields, "radius")?,
             fill: paint("fill")?,
             stroke: paint("stroke")?.is_some().then(|| stroked()).transpose()?,

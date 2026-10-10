@@ -654,7 +654,7 @@ impl GuestView for CanvasView {
             format!("{size}; {received}")
         };
         let ops = format!(
-            "[{{\"op\":\"text\",\"x\":4,\"y\":4,\"text\":\"{value}\"}}"
+            "[{{\"op\":\"text\",\"x\":4,\"y\":4,\"text\":\"{value}\"}}]"
         );
         let tree = format!(
             "{{\"version\":\"{COMPONENT_SET}\",\"root\":{{\"type\":\"column\",\"children\":[\

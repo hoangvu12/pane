@@ -29,7 +29,7 @@
 //! service itself answers with, each cycle a call into the generation
 //! current when the services thread asked for it.
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
@@ -378,7 +378,7 @@ impl CommandList {
                     (Some(reason), ..) => Entry::Unavailable(reason.clone()),
                     (None, Some(form)) => Entry::Form(item.id.clone(), form),
                     (None, None) if item.actions.is_empty() => Entry::NoActions,
-                    (None, None, None) => Entry::Actions(item_actions::Listed {
+                    (None, None) => Entry::Actions(item_actions::Listed {
                         id: item.id.clone(),
                         title: item.title.clone(),
                         actions: item.actions,
@@ -3294,6 +3294,20 @@ impl Launcher {
     /// Shows root search with an empty query: this build's commands, then
     /// the installed packages' commands, then the install row. Selects the
     /// command with component `select` if given, else the first row.
+    /// Leaves the open command, and any form or designed view of it, for
+    /// another screen, which the caller then shows: the view is closed in
+    /// the runtime, and replies for the old screen are discarded.
+    fn leave_command(&self, state: &mut State) {
+        self.close_designed_view(state);
+        // Its search in progress, if any, is stopped.
+        state.searching = None;
+        state.open = None;
+        state.open_command = None;
+        state.launch = LaunchRecord::default();
+        state.form = None;
+        state.next_screen();
+    }
+
     fn show_root(&self, state: &mut State, select: Option<PathBuf>) {
         state.list_entered = false;
         self.note_setup_needed(state);

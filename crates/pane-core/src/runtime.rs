@@ -77,7 +77,8 @@ pub use designed::{
     Loading, MAX_CANVAS_OPS, MAX_CANVAS_TEXT_CHARS, MAX_DEPTH, MAX_INLINE_IMAGE,
     MAX_MARKDOWN_CHARS, MAX_NODES, MAX_PX, MAX_TREE_BYTES, Markdown, MetadataItem, MetadataList,
     Node, NodeKind, Offset, Orientation, Padding, Paint, Place, Progress, RadiusLength, RichRow,
-    SectionHeader, Segment, Segmented, Select, Sizing, Slider, Span, StrokeCap, StrokeJoin, Style,
+    RowAccessory, SectionHeader, Segment, Segmented, Select, Sizing, Slider, Span, StrokeCap,
+    StrokeJoin, Style,
     Surface, Tag, Text, TextContent, TextInput, Toggle, Tone as ButtonTone, key_problems,
 };
 #[cfg(any(test, debug_assertions))]
@@ -3197,6 +3198,7 @@ impl Host {
             launches: shared.launches.clone(),
             host_functions: shared.host_functions.clone(),
             view_asks: shared.view_asks.clone(),
+            text_measures: shared.text_measures.clone(),
             helpers: shared.helpers.clone(),
             health: shared.health.clone(),
             logs: shared.logs.clone(),
@@ -5195,6 +5197,7 @@ impl Host {
                 launches: self.launches.clone(),
                 host_functions: self.host_functions.clone(),
                 view_asks: self.view_asks.clone(),
+                text_measures: self.text_measures.clone(),
                 call: CallFor::default(),
                 log_command,
                 owner: self.helpers.new_owner(),

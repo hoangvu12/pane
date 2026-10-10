@@ -77,7 +77,7 @@ pub use launcher::clipboard_view;
 pub use launcher::search_files;
 pub use launcher::{
     AliasOutcome, ApplicationUpdate, BuildFailure, CommandPreferences, CommandRegistration,
-    ComputedAnswer, CustomViewSnapshot, DISMISS_NOTICE, DesignedViewSnapshot, Development,
+    ComputedAnswer, DISMISS_NOTICE, DesignedViewSnapshot, Development,
     ExtensionMark, ExtensionOperation, FormField, FormView, HotkeyOutcome, ItemAction, ItemActions,
     Launcher, LauncherView, ListPresentation, LogNotice, MANAGE_EXTENSIONS, OpenSubmenu,
     OperationKind, PackagePreferences, PinTarget, PreferenceField, PreferencesTarget, Presentation,

@@ -484,7 +484,7 @@ fn key(key: &str) -> String {
 
 /// A pointer event for the open color view's canvas, at `x`, `y`.
 fn pointer(event: &str, x: i32, y: i32) -> String {
-    format!("{{\"event\":\"{event}\",\"x\":{x},\"y\":{y}}"")
+    format!("{{\"event\":\"{event}\",\"x\":{x},\"y\":{y}}}")
 }
 
 /// The canvas's key handler, which rides its node.

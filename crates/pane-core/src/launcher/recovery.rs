@@ -74,7 +74,7 @@ impl Launcher {
         let held = state
             .designed_view
             .as_ref()
-            .is_some_and(|stack| stack.top().id.thread() == thread);
+            .is_some_and(|stack| stack.top_id_thread() == thread);
         if held {
             // Its guest instance, and the view with it, is gone: the
             // command's screen went with it, back to root search.
@@ -310,7 +310,7 @@ mod tests {
             std::fs::copy(from, source.join(name)).unwrap();
         }
         let launcher = Launcher::with_packages(
-            runtime.clone(),
+            Ok(runtime.clone()),
             Vec::new(),
             data.path().join("extensions"),
         );
