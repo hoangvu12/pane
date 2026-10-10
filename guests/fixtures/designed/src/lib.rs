@@ -244,6 +244,10 @@ impl GuestView for Designed {
             18 => STATE.next.set(Next::Fields),
             19 => STATE.next.set(Next::KeyProblems),
             20 => STATE.next.set(Next::Counter),
+            // The fields' input and change handlers: the event is
+            // recorded above, drawn in the fields' tree; nothing next.
+            29 => {}
+            30 => {}
             22 => {
                 // The toggle's change: the payload names the value the
                 // user chose, so the fixture flips with it.
@@ -325,7 +329,7 @@ static STATE: State = State {
 /// asks `refresh-after-ms` (#236); the fields' and the key problems'
 /// trees answer the keyed state (#238); a pushed view's tree names the
 /// navigation ones alone.
-const BUTTONS: [(&str, &str, u32); 20] = [
+const BUTTONS: [(&str, &str, u32); 19] = [
     ("Increment", "increment", 1),
     ("Answer an error", "error", 2),
     ("Answer an over-limit tree", "over-limit", 3),
