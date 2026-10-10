@@ -2301,6 +2301,7 @@ fn appended(listed: &str, file: &str) -> String {
 /// Setup screen.
 /// What a path preference's "Choose…" chooses: a file, a folder, or an
 /// application (a program's file, or on macOS its bundle, a folder).
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum PathKind {
     File,
     Folder,

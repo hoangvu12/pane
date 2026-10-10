@@ -559,9 +559,14 @@ impl Held {
                 let debug = format!("designed-select-{}", super::components::short(&name));
                 let searching = !matches!(&node.kind, NodeKind::Select(select) if !select.search);
                 let select = cx.new(|cx| {
-                    crate::ui::select::Select::new(name, "", debug, model, commit, window, cx)
-                        .on_query(query)
-                        .when(!searching, |select| select.unfiltered())
+                    let select =
+                        crate::ui::select::Select::new(name, "", debug, model, commit, window, cx)
+                            .on_query(query);
+                    if searching {
+                        select
+                    } else {
+                        select.unfiltered()
+                    }
                 });
                 let focus = select.read(cx).trigger_focus();
                 Held::Select {

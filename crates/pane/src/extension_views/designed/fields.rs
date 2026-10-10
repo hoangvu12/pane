@@ -345,7 +345,7 @@ pub(super) fn path_field(
             multiple: picker.multiple,
         },
     );
-    let (well, choose) = if picker.multiple {
+    let (well, choose): (AnyElement, Rc<dyn Fn(&mut LauncherWindow, &mut gpui::Window, &mut gpui::Context<LauncherWindow>)>) = if picker.multiple {
         let Some(entry) = draw.state.get(path) else {
             return div().into_any_element();
         };

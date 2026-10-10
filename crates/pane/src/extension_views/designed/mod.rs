@@ -55,6 +55,7 @@ use pane_core::{DesignedHandler, DesignedViewSnapshot};
 
 use crate::app::LauncherWindow;
 
+use pane_core::Node;
 use reconcile::{FieldEvents, Held};
 use tree::Draw;
 
@@ -369,7 +370,7 @@ impl LauncherWindow {
     /// runs this, as Ctrl+Enter does in a text area and the form's submit
     /// button and the footer's primary action do.
     pub(crate) fn submit_designed_form(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some((form, values)) = self.collect_form() else {
+        let Some((form, values)) = self.collect_form(cx) else {
             return;
         };
         if matches!(self.launcher.screen(), pane_core::Screen::PaneForm(_)) {
@@ -390,7 +391,7 @@ impl LauncherWindow {
     /// field edits, the state a checkbox or toggle last told the
     /// extension, the tags or paths a picker chose. `None` when no form
     /// is on screen.
-    fn collect_form(&self) -> Option<(String, Vec<(String, pane_core::FormValue)>)> {
+    fn collect_form(&self, cx: &gpui::App) -> Option<(String, Vec<(String, pane_core::FormValue)>)> {
         let tree = match self.launcher.screen() {
             pane_core::Screen::DesignedView(view) => Some(view.tree),
             pane_core::Screen::PaneForm(form) => Some(form.tree),
@@ -543,7 +544,7 @@ impl LauncherWindow {
             let options = fields::matching(&picker.options, &text);
             let at = highlighted.filter(|at| *at < options.len()).unwrap_or(0);
             let chosen = options.get(at).map(|option| option.value.clone())?;
-            let (callback, key, seen) = (picker.on_change, picker.key.clone()?, entry.render);
+            let (callback, key, seen) = (picker.on_change, entry.key.clone(), entry.render);
             Some((chosen, callback, key, seen))
         })
         else {
@@ -667,7 +668,7 @@ impl LauncherWindow {
             cx.notify();
             return;
         }
-        let picked = self
+        let _ = self
             .designed
             .as_mut()
             .and_then(|controls| {
@@ -676,36 +677,20 @@ impl LauncherWindow {
                     return None;
                 };
                 let before = paths.len();
-                for arrived in &paths {
-                    let text = arrived.to_string_lossy().into_owned();
+                let arrived: Vec<String> = paths
+                    .iter()
+                    .map(|picked| picked.to_string_lossy().into_owned())
+                    .collect();
+                for text in arrived {
                     if !paths.contains(&text) {
                         paths.push(text);
                     }
                 }
                 (paths.len() != before).then(|| paths.clone())
             });
-        if let Some(picked) = picked
-            && let Some((callback, seen)) = self.designed.as_ref().and_then(|controls| {
-                let entry = controls.state.get(path)?;
-                match &entry.held {
-                    Held::Paths { .. } => Some((path_node_of(self, path)?.on_change, entry.render)),
-                    _ => None,
-                }
-            })
-            && let Some(callback) = callback
-        {
-            let payload = list_payload(&picked);
-            self.designed_event(
-                DesignedHandler::Change,
-                callback,
-                key.to_owned(),
-                seen,
-                payload,
-                window,
-                cx,
-            );
-            return;
-        }
+        // The picker's chosen paths are its submission's value; the tree
+        // the extension answers names what it draws of them.
+        let _ = window;
         cx.notify();
     }
 
@@ -1093,7 +1078,8 @@ impl LauncherWindow {
             let Held::Select { on_input, .. } = &entry.held else {
                 return None;
             };
-            Some((*on_input?, entry.render, entry.key.clone()))
+            let callback = *on_input;
+            Some((callback?, entry.render, entry.key.clone()))
         });
         let Some((callback, render, key)) = send else {
             return;
@@ -1322,21 +1308,6 @@ pub(super) fn payload(value: &str) -> String {
 /// boolean or a number.
 pub(super) fn plain_payload(value: impl std::fmt::Display) -> String {
     format!("{{\"value\":{value}}}")
-}
-
-/// The file or folder picker node at `path` of the screen's tree.
-fn path_node_of<'a>(window: &'a LauncherWindow, path: &str) -> Option<&'a pane_core::FilePicker> {
-    let tree = match window.launcher.screen() {
-        pane_core::Screen::DesignedView(view) => Some(view.tree),
-        pane_core::Screen::PaneForm(form) => Some(form.tree),
-        _ => None,
-    }?;
-    match &tree::node_at(&tree, path)?.kind {
-        pane_core::NodeKind::FilePicker(picker) | pane_core::NodeKind::FolderPicker(picker) => {
-            Some(picker)
-        }
-        _ => None,
-    }
 }
 
 /// The value a change event's payload names, as a string: a string as it
