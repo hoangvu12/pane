@@ -1086,7 +1086,7 @@ fn the_form_in_root_search_asks_for_the_repository() {
     block_on(launcher.activate_selected());
     let form = launcher.view().form().cloned().expect("the Git form");
     assert_eq!(launcher.view().title, "Install extension from Git");
-    assert_eq!(form.submit_label, "Show package");
+    assert_eq!(form.submit, "Show package");
     launcher.back();
     assert!(matches!(launcher.view().screen, Screen::Root { .. }));
 

@@ -72,12 +72,6 @@ async function fetchJson(path) {
   }
 }
 
-/** @type {import("@pane-app/extension").Form} */
-const SERVICE_FORM = {
-  title: "Service address",
-  fields: [{ id: "address", label: "Address", kind: { tag: "text", val: { placeholder: DEFAULT_SERVICE } } }],
-  submitLabel: "Save",
-};
 
 /**
  * Runs the action `itemId`: the "about" item's, or a search result's
@@ -119,24 +113,13 @@ export const command = {
           subtitle: "Results come from the service as you type; Enter shows a package's details",
           onAction: () => act("about"),
         },
-        { id: "service", title: "Service address", subtitle: service(), form: SERVICE_FORM },
+        { id: "service", title: "Service address", subtitle: service() },
       ],
     };
   },
   // A search result's id ("package:<name>") names the package to show.
   async runSearchResult(id) {
     await act(id);
-  },
-  async submitForm(itemId, values) {
-    if (itemId !== "service") {
-      throw { message: `unknown form: ${itemId}` };
-    }
-    const address = (values.find(({ id }) => id === "address")?.value ?? "").trim().replace(/\/+$/, "");
-    if (!(address.startsWith("http://") || address.startsWith("https://"))) {
-      throw { field: "address", message: "Enter an address starting with http:// or https://" };
-    }
-    host(() => set(SERVICE, address));
-    return `Searching ${address} from now on`;
   },
   async openCustomView() {
     throw new Error("Package search has no custom views");

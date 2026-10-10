@@ -112,10 +112,6 @@ export const command: Command = {
     };
   },
 
-  async submitForm(itemId: string): Promise<string> {
-    throw { message: `unknown form: ${itemId}` };
-  },
-
   async openCustomView(itemId: string): Promise<CustomView> {
     throw new Error(`unknown view: ${itemId}`);
   },

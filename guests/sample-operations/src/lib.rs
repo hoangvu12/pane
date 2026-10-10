@@ -47,21 +47,31 @@ async fn greet(source: &str, name: &str) -> Result<String, String> {
 
 impl Command for Operations {
     type CustomView = NoCustomView;
-    type DesignedView = pane_extension::view::NoDesignedView;
+    type DesignedView = Calling;
 
     async fn render() -> Result<List, String> {
         Ok(List::new("Call from Rust").items([
             Item::new("greet", "Greet through another extension")
                 .subtitle("Calls its greet operation through Pane")
-                .form(greet_form()),
+                .on_action(|| async { open_form("greet") }),
             Item::new("wait", "Wait in another extension")
                 .subtitle("Calls its wait operation, which takes ten seconds")
-                .form(wait_form()),
+                .on_action(|| async { open_form("wait") }),
         ]))
     }
 
     async fn open_custom_view(item_id: String) -> Result<CustomView, String> {
         Err(format!("unknown view: {item_id}"))
+    }
+
+    async fn open_designed_view(
+        command: String,
+        _launch: LaunchRecord,
+    ) -> Result<Calling, String> {
+        match command.as_str() {
+            "greet" | "wait" => Ok(Calling::new(command == "wait")),
+            _ => Err("this command opens no designed view".into()),
+        }
     }
 }
 

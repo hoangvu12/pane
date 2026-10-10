@@ -177,8 +177,9 @@ fn the_alias_action_opens_the_alias_form_and_saving_returns_to_the_search() {
 
     assert!(launcher.open_result_action(&target, ResultAction::Alias));
     let form = launcher.view().form().cloned().expect("the alias form");
+    let _ = &form;
     block_on(launcher.submit_pane_form(vec![
-        (&form.fields[0].id.to_owned(), ("gr").to_owned()),
+        ("alias".to_owned(), ("gr").to_owned()),
     ]));
 
     let view = launcher.view();

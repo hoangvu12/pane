@@ -23,7 +23,7 @@ use pane_extension::feedback::{Toast, show_toast};
 use pane_extension::http;
 use pane_extension::search::SearchResult;
 use pane_extension::{
-    Command, CustomView, Field, FieldKind, Form, Item, List, NoCustomView,
+    Command, CustomView, Item, List, NoCustomView,
     TextField, settings};
 use serde::Deserialize;
 
@@ -132,14 +132,7 @@ impl Command for Packages {
                 "Results come from the service as you type; Enter shows a package's details".into(),
             )
             .on_action(|| act("about")),
-            item("service", "Service address", service()?).form(Form {
-                title: "Service address".into(),
-                fields: vec![Field {
-                    id: "address".into(),
-                    label: "Address".into(),
-                    kind: FieldKind::Text(TextField {
-                        placeholder: Some(DEFAULT_SERVICE.into())})}],
-                submit_label: "Save".into()}),
+            item("service", "Service address", service()?).on_action(|| async { Ok(()) }),
         ]))
     }
 

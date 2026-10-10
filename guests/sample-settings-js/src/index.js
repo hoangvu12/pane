@@ -183,11 +183,6 @@ export const command = {
     };
   },
 
-  async submitForm(itemId) {
-    // Any Error thrown from submitForm is a message about the whole form.
-    throw new Error(`unknown form: ${itemId}`);
-  },
-
   async openCustomView(itemId) {
     throw new Error(`unknown view: ${itemId}`);
   },
