@@ -461,7 +461,9 @@ fn a_run_time_provision_makes_the_package_a_provider_only_while_held() {
     // fan-out's answers.
     open_and_run(&launcher, SAMPLES[0].command, "Sign in to the provision");
     pane.until("the provision's undo entry", true, || {
-        launcher.undo_list(&identity).contains(&"run-time provision")
+        launcher
+            .undo_list(&identity)
+            .contains(&"run-time provision")
     });
     assert!(
         every_provider(&launcher).contains("Rust registrations sample"),
@@ -474,7 +476,11 @@ fn a_run_time_provision_makes_the_package_a_provider_only_while_held() {
         !every_provider(&launcher).contains("registrations sample"),
         "the provider answered after the provision was dropped"
     );
-    assert!(!launcher.undo_list(&identity).contains(&"run-time provision"));
+    assert!(
+        !launcher
+            .undo_list(&identity)
+            .contains(&"run-time provision")
+    );
 }
 
 /// A consumer that requires the capability waits while no provider holds
@@ -669,7 +675,10 @@ fn a_trapping_activation_counts_towards_pausing() {
     // The activation traps, is started again, traps again: three within
     // the window pause the package.
     pane.until("the pause", true, || {
-        matches!(fixture_row(&launcher).unavailable, Some(Unavailable::Paused(_)))
+        matches!(
+            fixture_row(&launcher).unavailable,
+            Some(Unavailable::Paused(_))
+        )
     });
     assert!(
         matches!(
@@ -830,7 +839,9 @@ fn a_reload_undoes_the_registrations_and_activates_again() {
         launcher.undo_list(&identity)
     );
     assert!(
-        !launcher.undo_list(&identity).contains(&"run-time provision"),
+        !launcher
+            .undo_list(&identity)
+            .contains(&"run-time provision"),
         "the provision was not undone by the reload"
     );
     let _ = folder;
