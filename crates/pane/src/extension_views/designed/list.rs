@@ -307,10 +307,7 @@ impl LauncherWindow {
             let selected = list.selected.as_deref() == Some(row.key.as_str());
             cells.push(self.render_designed_cell(view, list, titles, index, selected, cx));
         }
-        let shape = rows
-            .first()
-            .map(|row| row.shape)
-            .unwrap_or_default();
+        let shape = rows.first().map(|row| row.shape).unwrap_or_default();
         let label = (!section.label.is_empty()).then(|| {
             crate::ui::shell::section_label(
                 SharedString::from(section.label.clone()),
