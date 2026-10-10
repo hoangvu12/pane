@@ -10,7 +10,6 @@
 import type {
   Command,
   CustomView,
-  FormError,
   IndexedResult,
   IndexedResults,
   List,
