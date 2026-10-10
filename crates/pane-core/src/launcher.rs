@@ -88,6 +88,7 @@ use crate::waiting::{Fix, Waiting};
 
 mod dependents;
 mod developing;
+mod dynamic;
 mod extensions;
 mod file_search;
 mod files;
@@ -103,8 +104,10 @@ mod setup;
 mod shortcuts;
 mod subtitles;
 mod system;
+mod timers;
 mod uninstall;
 mod updates;
+mod watchers;
 
 use acquire::{Acquisitions, Defaults};
 use actions::selected_action;
@@ -640,6 +643,12 @@ pub struct Launcher {
     /// ([`Launcher::with_clock`]). Only a launcher that installs packages
     /// runs any.
     services: Option<Arc<Services>>,
+    /// Fires the timers the packages' code registered at run time (#158),
+    /// by the launcher's clock ([`Launcher::with_clock`]).
+    timers: Option<Arc<timers::Timers>>,
+    /// Watches the folders the packages' code registered at run time
+    /// (#158), through the native watcher development mode uses.
+    watchers: Option<Arc<watchers::Watchers>>,
     /// Checks for newer versions of the installed npm packages and
     /// updates the eligible ones at a safe boundary (see `updates`).
     /// Only a launcher that installs packages checks anything.
@@ -674,6 +683,12 @@ struct WeakLauncher {
     /// Held weakly, so that Pane stops running continuing services as soon
     /// as the launcher is dropped.
     services: Option<std::sync::Weak<Services>>,
+    /// Held weakly, so that Pane stops firing registered timers as soon as
+    /// the launcher is dropped.
+    timers: Option<std::sync::Weak<timers::Timers>>,
+    /// Held weakly, so that Pane stops watching registered folders as soon
+    /// as the launcher is dropped.
+    watchers: Option<std::sync::Weak<watchers::Watchers>>,
     /// Held weakly, so that Pane stops checking for updates as soon as the
     /// launcher is dropped.
     updates: Option<std::sync::Weak<updates::Updates>>,
@@ -704,6 +719,8 @@ impl WeakLauncher {
             clipboard,
             schedules: self.schedules.as_ref().and_then(std::sync::Weak::upgrade),
             services: self.services.as_ref().and_then(std::sync::Weak::upgrade),
+            timers: self.timers.as_ref().and_then(std::sync::Weak::upgrade),
+            watchers: self.watchers.as_ref().and_then(std::sync::Weak::upgrade),
             updates: self.updates.as_ref().and_then(std::sync::Weak::upgrade),
             sources: self.sources.clone(),
             developing: self.developing.upgrade()?,
@@ -884,6 +901,17 @@ struct State {
     /// `capability_choices`), Pane's own record, which every capability
     /// call's routing reads.
     capability_choices: capability_choices::Kept,
+    /// What the packages' guests registered at run time (see
+    /// `registrations`): the dynamic root items root search lists, the
+    /// timers and watchers the worker threads run, and the run-time
+    /// provisions the operation routing and the waiting model see. `None`
+    /// without a runtime. Its own hooks tell this launcher of changes.
+    registrations: Option<Arc<crate::registrations::Registrations>>,
+    /// The dynamic root items' looks, by their rows' ids (see `dynamic`).
+    dynamic: dynamic::Looks,
+    /// The packages whose activation entry point a thread is calling now,
+    /// by identity key, so it is not begun twice (see `registered`).
+    activating: HashSet<String>,
 }
 
 /// What is happening to a package, which stops another change to it
@@ -954,8 +982,14 @@ impl State {
     /// extension data wake the scheduler and the services thread, which
     /// look again through `runs`.
     fn recheck_waiting(&mut self) {
+        let provisions = self
+            .registrations
+            .as_ref()
+            .map(|registrations| registrations.provisions())
+            .unwrap_or_default();
         let waiting = Waiting::of(
             &self.packages,
+            &provisions,
             &|identity| self.paused.is_paused(identity),
             &|identity| self.title_of(identity),
         );
@@ -1221,6 +1255,10 @@ enum Entry {
     /// Say that this item has no actions, so it cannot be activated
     /// (command view).
     NoActions,
+    /// Run the first action of this dynamic root item, an owned
+    /// registration (#158): its callback goes to the command's `handle-
+    /// event`, in the component whose instance registered it (root).
+    DynamicAction(dynamic::DynamicAction),
     /// Open this form of the open command's item with this id.
     Form(String, Form),
     /// Open the custom view of the open command's item with this id.
@@ -1345,6 +1383,7 @@ enum Pending {
         name: String,
     },
     Run(String),
+    DynamicAction(dynamic::DynamicAction),
     CustomView(String, CustomViewInfo),
     OpenUrl(String),
     /// One of Pane's own actions on a row (see `own_actions`).
@@ -1576,6 +1615,9 @@ impl Launcher {
             provider_forgotten: providers::Forgotten::default(),
             waiting: Waiting::default(),
             capability_choices: provider_choices,
+            registrations: runtime.as_ref().ok().map(Runtime::registrations),
+            dynamic: dynamic::Looks::default(),
+            activating: HashSet::new(),
         };
         if let (Some(installation), Some(files)) = (&installation, &state.files) {
             files.open_record(&installation.dir);
@@ -1615,6 +1657,8 @@ impl Launcher {
             clipboard: None,
             schedules: None,
             services: None,
+            timers: None,
+            watchers: None,
             updates: None,
             sources,
             developing,
@@ -1651,6 +1695,36 @@ impl Launcher {
                 Services::start(Arc::new(crate::clipboard::SystemClock), &installation.data);
             services.run(launcher.downgrade());
             launcher.services = Some(services);
+            // The timers and watchers the packages' code registers at run
+            // time (#158) run only with a runtime to deliver their events.
+            if let Some(registrations) = launcher.runtime.as_ref().ok().map(Runtime::registrations)
+            {
+                let timers = timers::Timers::start(Arc::new(crate::clipboard::SystemClock));
+                let watchers = watchers::Watchers::start();
+                // The registry's hooks: the launcher refreshes root search,
+                // recomputes who waits (a run-time provision makes the
+                // package a provider) and sees to the activation entry
+                // point; the worker threads take their new work.
+                let weak = launcher.downgrade();
+                let wake_timers = timers.clone();
+                let wake_watchers = watchers.clone();
+                registrations.set_changed(Arc::new(move || {
+                    if let Some(launcher) = weak.upgrade() {
+                        launcher.registered();
+                    }
+                    wake_timers.poke();
+                    wake_watchers.poke();
+                }));
+                timers.run(launcher.downgrade());
+                watchers.run(launcher.downgrade());
+                launcher.timers = Some(timers.clone());
+                launcher.watchers = Some(watchers);
+                // The extension data's hooks end generations: the registry
+                // is undone with them, so the threads look again.
+                installation
+                    .data
+                    .set_changed(Arc::new(move || timers.poke()));
+            }
             // Pane checks for newer versions of the installed npm packages
             // in the background (see `updates`), starting shortly after
             // this, once a development build's registry is in place.
@@ -1660,6 +1734,9 @@ impl Launcher {
         }
         launcher.report_failures();
         launcher.show_root(&mut launcher.lock(), None);
+        // Pane starting is one of the moments the activation entry point
+        // runs at (ADR 0041); see `ensure_activated`.
+        launcher.ensure_activated(&mut launcher.lock());
         // Aliases, fallbacks and hotkeys recorded for a command that has
         // become a root provider are forgotten, with a toast saying so
         // (#164); `with_quick_slots` does the same for its pins.
@@ -1727,11 +1804,43 @@ impl Launcher {
         if let Some(services) = &self.services {
             services.follow(clock.clone());
         }
+        if let Some(timers) = &self.timers {
+            timers.follow(clock.clone());
+        }
+        if let Some(watchers) = &self.watchers {
+            watchers.poke();
+        }
         if let Some(updates) = &self.updates {
             updates.follow(clock);
         }
         self
     }
+    /// Waits until the timers the packages' code registered at run time
+    /// looked at every change of the clock, the registry and the packages
+    /// so far, and every firing they started has reported; `false` if they
+    /// did not within `limit`. For tests and development builds, which so
+    /// wait for timers without timing them.
+    #[cfg(any(test, debug_assertions))]
+    #[doc(hidden)]
+    pub fn wait_for_timers(&self, limit: std::time::Duration) -> bool {
+        self.timers
+            .as_ref()
+            .is_some_and(|timers| timers.settled(limit))
+    }
+
+    /// Waits until the folder watchers the packages' code registered at
+    /// run time looked at every change of the registry so far, and every
+    /// change they started to deliver has reported; `false` if they did
+    /// not within `limit`. For tests and development builds, which so wait
+    /// for watchers without timing them.
+    #[cfg(any(test, debug_assertions))]
+    #[doc(hidden)]
+    pub fn wait_for_watchers(&self, limit: std::time::Duration) -> bool {
+        self.watchers
+            .as_ref()
+            .is_some_and(|watchers| watchers.settled(limit))
+    }
+
     /// Waits until Pane's clipboard history expiry thread swept after every
     /// change of the history and of the clock so far; `false` if it did not
     /// within `limit`. For tests and development builds, which so wait for
@@ -1872,6 +1981,8 @@ impl Launcher {
             clipboard: self.clipboard.as_ref().map(Arc::downgrade),
             schedules: self.schedules.as_ref().map(Arc::downgrade),
             services: self.services.as_ref().map(Arc::downgrade),
+            timers: self.timers.as_ref().map(Arc::downgrade),
+            watchers: self.watchers.as_ref().map(Arc::downgrade),
             updates: self.updates.as_ref().map(Arc::downgrade),
             sources: self.sources.clone(),
             developing: Arc::downgrade(&self.developing),
@@ -2707,6 +2818,9 @@ impl Launcher {
                 opening: Opening { component, .. },
                 ..
             }) => Some(component),
+            // A dynamic root item's action is a call into the package's
+            // component (#158), with its generation as of now.
+            Pending::DynamicAction(action) => Some(&action.component),
             Pending::Run(_) | Pending::CustomView(..) => open.as_ref(),
             _ => None,
         };
@@ -2731,6 +2845,9 @@ impl Launcher {
                     if let Some(component) = open {
                         launcher.run_action(epoch, component, callback, data).await
                     }
+                }
+                Pending::DynamicAction(action) => {
+                    launcher.run_dynamic_action(epoch, action, data).await
                 }
                 Pending::OpenUrl(url) => launcher.open_url(epoch, url).await,
                 Pending::Own(work) => launcher.do_own(epoch, work).await,
@@ -2992,6 +3109,10 @@ impl Launcher {
             Entry::NoActions => {
                 state.view.status = Status::Error(item_actions::NO_ACTIONS.into());
                 Pending::Nothing
+            }
+            Entry::DynamicAction(action) => {
+                state.view.status = Status::Running;
+                Pending::DynamicAction(action)
             }
             Entry::CustomView(item_id, info) => {
                 state.view.status = Status::Running;
@@ -3349,6 +3470,7 @@ impl Launcher {
         state.list_entered = false;
         self.note_setup_needed(state);
         state.root = self.root_results(state);
+        state.dynamic.keep(dynamic::rows(state).1);
         state.sent_from = None;
         state.computed.clear();
         state.indexes.stale();
@@ -3429,6 +3551,7 @@ impl Launcher {
     /// Updates root search or the extension list on screen after a package
     /// changed; other screens show no package state.
     fn refresh(&self, state: &mut State) {
+        self.ensure_activated(state);
         // The file index runs while a package that uses it may run.
         self.sync_file_index(state);
         match &state.view.screen {
@@ -3496,6 +3619,100 @@ impl Launcher {
         }
     }
 
+    /// What the registry of owned registrations told this launcher (#158):
+    /// a registration was made or undone (the guest dropped its handle,
+    /// its instance went, its generation ended) or an activation entry
+    /// point began. As a package's own change does, root search and the
+    /// extension list are refreshed and who waits recomputed — a run-time
+    /// provision makes the package a provider — and the activation entry
+    /// points are seen to. The hooks run on the runtime thread, with the
+    /// registry unlocked, so the state may be locked here.
+    fn registered(&self) {
+        {
+            let mut state = self.lock();
+            state.recheck_waiting();
+            self.refresh(&mut state);
+        }
+        self.changed();
+    }
+
+    /// Sees to the activation entry points (ADR 0041): every package
+    /// whose code may run and is not waiting, whose `pane.json` declares
+    /// `activate`, has it called in its current generation — at install,
+    /// enable, start, reload, update, Retry and on coming back from
+    /// waiting — and again when the instance that ran it is dropped while
+    /// the generation continues unpaused. One that has run in this
+    /// generation, in an instance that still lives, or whose call a thread
+    /// is making now, is not begun again; one whose package is being
+    /// reloaded or updated is left to the reload's own start, which treats
+    /// a trap in it as a startup failure.
+    fn ensure_activated(&self, state: &mut State) {
+        let Some(installation) = &self.installation else {
+            return;
+        };
+        let Some(registrations) = state.registrations.clone() else {
+            return;
+        };
+        let mut begun: Vec<(PackageIdentity, PathBuf, PackageData)> = Vec::new();
+        for package in state.packages.iter() {
+            // Only code that may run is activated: not a disabled or
+            // paused package, and not one waiting as a whole.
+            if !state.runs(package) || state.waiting.reason(&package.identity).is_some() {
+                continue;
+            }
+            // Its replacement runs its own activation as it starts.
+            if matches!(
+                state.changing.get(&package.identity),
+                Some(Changing::Reloading | Changing::Updating | Changing::BackgroundUpdating)
+            ) {
+                continue;
+            }
+            let Ok(manifest) = &package.manifest else {
+                continue;
+            };
+            let Some(activate) = &manifest.activate else {
+                continue;
+            };
+            let data = installation.data.owned_by(&package.identity);
+            if registrations.is_activated(&package.identity.key(), data.generation())
+                || state.activating.contains(&package.identity.key())
+            {
+                continue;
+            }
+            state.activating.insert(package.identity.key());
+            begun.push((
+                package.identity.clone(),
+                package.location.join(activate),
+                data,
+            ));
+        }
+        for (identity, component, data) in begun {
+            let launcher = self.clone();
+            let key = identity.key();
+            let in_flight = key.clone();
+            let started = std::thread::Builder::new()
+                .name("pane-activate".into())
+                .spawn(move || {
+                    if let Ok(runtime) = launcher.runtime() {
+                        let runtime = runtime.clone();
+                        // The runtime records the activation as the call
+                        // begins, in the instance it runs in; a trap in it
+                        // is a crash of the package like any call's,
+                        // counted towards pausing it.
+                        let _ = futures::executor::block_on(
+                            runtime.activate_with(&component, Some(data)),
+                        );
+                    }
+                    launcher.lock().activating.remove(&in_flight);
+                    launcher.changed();
+                });
+            if let Err(error) = started {
+                eprintln!("Pane could not activate an extension: {error}");
+                state.activating.remove(&key);
+            }
+        }
+    }
+
     /// Updates the rows of the root search on screen after the installed
     /// packages changed in the background. Unlike navigating, it keeps the
     /// screen epoch, so an action the user started from root still
@@ -3508,6 +3725,7 @@ impl Launcher {
             .map(|row| row.id.clone());
         self.note_setup_needed(state);
         state.root = self.root_results(state);
+        state.dynamic.keep(dynamic::rows(state).1);
         // A command that was disabled, paused, replaced or narrowed into
         // waiting contributes nothing more; one enabled again answers from
         // the next change of the query.
@@ -3728,6 +3946,15 @@ impl Launcher {
                 unavailable: None,
             };
             add(row, Entry::Settings, None, None);
+        }
+        // What the packages registered at run time: their items' rows,
+        // ranked with everything else root search lists, matched by their
+        // titles and subtitles as an indexed result is, and by their
+        // aliases as any row is (see `dynamic`).
+        for result in dynamic::rows(state).0 {
+            let alias = state.aliases.chosen.active_alias(&result.row.id);
+            let keys = result.keys.with_alias(alias);
+            results.push(RootResult { keys, ..result });
         }
         results
     }
@@ -4498,6 +4725,69 @@ impl Launcher {
         self.list_again(epoch, component, data).await;
     }
 
+    /// Runs the first action of the dynamic root item `action` belongs
+    /// to (#158): its callback goes to the command's
+    /// `handle-event`, in the component whose instance registered it.
+    /// The answer shows nothing (the command says what it has to through
+    /// a toast or a HUD); an error it answers with is a failure toast,
+    /// and anything else is shown as the status line's error. Root search
+    /// stays; the registry's hooks relist it if the action changes the
+    /// item.
+    async fn run_dynamic_action(
+        &self,
+        epoch: u64,
+        action: dynamic::DynamicAction,
+        data: Option<PackageData>,
+    ) {
+        let dynamic::DynamicAction {
+            component,
+            command,
+            callback,
+        } = action;
+        if let Some(problem) = self.updating(&component) {
+            let mut state = self.lock();
+            if state.screen_epoch == epoch {
+                state.view.status = Status::Error(problem);
+            }
+            return;
+        }
+        let result = match self.runtime() {
+            Ok(runtime) => {
+                runtime
+                    .handle_event_with(
+                        &component,
+                        Some(command.as_str()),
+                        &callback,
+                        "{}",
+                        data.clone(),
+                    )
+                    .await
+            }
+            Err(error) => Err(error),
+        };
+        {
+            let Some(mut state) = self.lock_if_current(epoch) else {
+                return;
+            };
+            let state = &mut *state;
+            let ended = stopped(state, &component, &data);
+            state.view.status = match (ended, result) {
+                // Stopped while it was running: its answer is not shown.
+                (Some(problem), _) => Status::Error(problem),
+                // The answer shows nothing: the command said what it had
+                // to through a toast or a HUD (#141).
+                (None, Ok(_)) => Status::Idle,
+                // An error it answered with is a failure toast.
+                (None, Err(CallError::Guest(message))) => {
+                    self.show_failure(state, &component, Some(command.as_str()), message);
+                    Status::Idle
+                }
+                (None, Err(error)) => Status::Error(error.to_string()),
+            };
+        }
+        self.changed();
+    }
+
     /// Asks the open command in `component` for its tree again, after it
     /// handled an event, and lists it while its screen is still the one on
     /// display, keeping the selection on the same item. The status stays the
@@ -5097,6 +5387,11 @@ fn installed_of(state: &State, data: Option<ExtensionData>) -> Installed {
         waiting: state.waiting.clone(),
         paused: state.paused.identities(),
         chosen: state.capability_choices.chosen.clone(),
+        provisions: state
+            .registrations
+            .as_ref()
+            .map(|registrations| registrations.provisions())
+            .unwrap_or_default(),
         data,
     }
 }

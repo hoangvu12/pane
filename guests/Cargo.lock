@@ -323,6 +323,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "registrations-fixture"
+version = "0.1.0"
+dependencies = [
+ "pane-extension",
+]
+
+[[package]]
 name = "refusing-view"
 version = "0.1.0"
 dependencies = [
@@ -427,6 +434,15 @@ name = "sample-query"
 version = "0.1.0"
 dependencies = [
  "pane-extension",
+]
+
+[[package]]
+name = "sample-registrations"
+version = "0.1.0"
+dependencies = [
+ "pane-extension",
+ "serde_json",
+ "wasip3",
 ]
 
 [[package]]

@@ -180,6 +180,7 @@ impl Waiting {
     /// under, or its identity).
     pub(crate) fn of(
         packages: &[InstalledPackage],
+        provisions: &[(String, String)],
         paused: &dyn Fn(&PackageIdentity) -> bool,
         title_of: &dyn Fn(&PackageIdentity) -> String,
     ) -> Waiting {
@@ -196,7 +197,9 @@ impl Waiting {
         loop {
             let mut removed = false;
             for (index, package) in packages.iter().enumerate() {
-                if !able[index] || unmet_of(packages, &able, paused, title_of, package).is_empty() {
+                if !able[index]
+                    || unmet_of(packages, &able, provisions, paused, title_of, package).is_empty()
+                {
                     continue;
                 }
                 able[index] = false;
@@ -217,7 +220,7 @@ impl Waiting {
             .map(|(_, package)| {
                 (
                     package.identity.clone(),
-                    reason(packages, &able, paused, title_of, package),
+                    reason(packages, &able, provisions, paused, title_of, package),
                 )
             })
             .collect();
@@ -236,10 +239,13 @@ impl Waiting {
                     .uses
                     .iter()
                     .filter(|used| used.required && !used.use_all && used.commands.is_some())
-                    .filter_map(|used| unmet_capability(packages, &able, paused, package, used))
+                    .filter_map(|used| {
+                        unmet_capability(packages, &able, provisions, paused, package, used)
+                    })
                     .flat_map(|unmet| {
-                        let why =
-                            capability_reason(packages, &able, paused, title_of, package, &unmet);
+                        let why = capability_reason(
+                            packages, &able, provisions, paused, title_of, package, &unmet,
+                        );
                         unmet
                             .commands
                             .iter()
@@ -341,6 +347,7 @@ enum Cannot {
 fn unmet_of(
     packages: &[InstalledPackage],
     able: &[bool],
+    provisions: &[(String, String)],
     paused: &dyn Fn(&PackageIdentity) -> bool,
     title_of: &dyn Fn(&PackageIdentity) -> String,
     package: &InstalledPackage,
@@ -405,7 +412,8 @@ fn unmet_of(
             .iter()
             .filter(|used| used.required && !used.use_all && used.commands.is_none())
             .filter_map(|used| {
-                unmet_capability(packages, able, paused, package, used).map(Missing::Capability)
+                unmet_capability(packages, able, provisions, paused, package, used)
+                    .map(Missing::Capability)
             }),
     );
     requirements
@@ -420,6 +428,7 @@ fn unmet_of(
 fn unmet_capability(
     packages: &[InstalledPackage],
     able: &[bool],
+    provisions: &[(String, String)],
     paused: &dyn Fn(&PackageIdentity) -> bool,
     package: &InstalledPackage,
     used: &ManifestUse,
@@ -442,6 +451,16 @@ fn unmet_capability(
         else {
             continue;
         };
+        // A package provides a capability its manifest marks `atRunTime`
+        // only while its code holds a provision for it (#158): while it
+        // does not, it is no provider at all, not one that cannot serve.
+        if entry.at_run_time
+            && !provisions.iter().any(|(owner, provided)| {
+                *provided == used.capability && *owner == other.identity.key()
+            })
+        {
+            continue;
+        }
         let cannot = if !other.enabled {
             Cannot::Disabled
         } else if paused(&other.identity) {
@@ -480,13 +499,14 @@ fn unmet_capability(
 fn root_of(
     packages: &[InstalledPackage],
     able: &[bool],
+    provisions: &[(String, String)],
     paused: &dyn Fn(&PackageIdentity) -> bool,
     title_of: &dyn Fn(&PackageIdentity) -> String,
     path: &[PackageIdentity],
 ) -> Option<Root> {
     let last = path.last()?;
     let package = packages.iter().find(|package| &package.identity == last)?;
-    let first = unmet_of(packages, able, paused, title_of, package)
+    let first = unmet_of(packages, able, provisions, paused, title_of, package)
         .into_iter()
         .next()?;
     match first {
@@ -500,14 +520,14 @@ fn root_of(
                     return None;
                 }
                 path.push(unmet.identity);
-                root_of(packages, able, paused, title_of, &path)
+                root_of(packages, able, provisions, paused, title_of, &path)
             }
         },
         // The capability is what is actually missing: a provider the user
         // can enable or retry, or the capability itself, whose fix row
         // installs a provider.
         Missing::Capability(unmet) => Some(root_of_capability(
-            packages, able, paused, title_of, path, &unmet,
+            packages, able, provisions, paused, title_of, path, &unmet,
         )),
     }
 }
@@ -519,6 +539,7 @@ fn root_of(
 fn root_of_capability(
     packages: &[InstalledPackage],
     able: &[bool],
+    provisions: &[(String, String)],
     paused: &dyn Fn(&PackageIdentity) -> bool,
     title_of: &dyn Fn(&PackageIdentity) -> String,
     path: &[PackageIdentity],
@@ -534,7 +555,8 @@ fn root_of_capability(
                 let mut path = path.to_vec();
                 if !path.contains(&provider.identity) {
                     path.push(provider.identity.clone());
-                    if let Some(root) = root_of(packages, able, paused, title_of, &path) {
+                    if let Some(root) = root_of(packages, able, provisions, paused, title_of, &path)
+                    {
                         return root;
                     }
                 }
@@ -543,7 +565,7 @@ fn root_of_capability(
     }
     Root::Capability(
         unmet.capability.clone(),
-        providers_say(packages, able, paused, title_of, path, unmet),
+        providers_say(packages, able, provisions, paused, title_of, path, unmet),
         unmet.default.clone(),
     )
 }
@@ -595,19 +617,20 @@ impl Root {
 fn reason(
     packages: &[InstalledPackage],
     able: &[bool],
+    provisions: &[(String, String)],
     paused: &dyn Fn(&PackageIdentity) -> bool,
     title_of: &dyn Fn(&PackageIdentity) -> String,
     package: &InstalledPackage,
 ) -> Reason {
-    let unmets = unmet_of(packages, able, paused, title_of, package);
+    let unmets = unmet_of(packages, able, provisions, paused, title_of, package);
     let path = [package.identity.clone()];
     let requirements: Vec<Requirement> = unmets
         .iter()
         .map(|unmet| {
-            let what = what_of(packages, able, paused, title_of, &path, unmet);
+            let what = what_of(packages, able, provisions, paused, title_of, &path, unmet);
             Requirement {
                 what,
-                fix: fix_of(packages, able, paused, title_of, package, unmet),
+                fix: fix_of(packages, able, provisions, paused, title_of, package, unmet),
             }
         })
         .collect();
@@ -634,6 +657,7 @@ fn reason(
 fn fix_of(
     packages: &[InstalledPackage],
     able: &[bool],
+    provisions: &[(String, String)],
     paused: &dyn Fn(&PackageIdentity) -> bool,
     title_of: &dyn Fn(&PackageIdentity) -> String,
     package: &InstalledPackage,
@@ -648,7 +672,7 @@ fn fix_of(
             // It waits for another: the chain's root is what to fix.
             None => {
                 let path = [package.identity.clone(), unmet.identity.clone()];
-                match root_of(packages, able, paused, title_of, &path) {
+                match root_of(packages, able, provisions, paused, title_of, &path) {
                     Some(Root::Package(identity, Unmet::Disabled)) => Fix::Enable(identity),
                     Some(Root::Package(identity, Unmet::Paused)) => Fix::Retry(identity),
                     Some(Root::Package(identity, Unmet::NotInstalled)) => Fix::Install(identity),
@@ -662,7 +686,7 @@ fn fix_of(
         Missing::Capability(unmet) => {
             let path = [package.identity.clone()];
             capability_fix(
-                root_of_capability(packages, able, paused, title_of, &path, unmet),
+                root_of_capability(packages, able, provisions, paused, title_of, &path, unmet),
                 unmet,
             )
         }
@@ -688,15 +712,16 @@ fn capability_fix(root: Root, unmet: &UnmetCapability) -> Fix {
 fn capability_reason(
     packages: &[InstalledPackage],
     able: &[bool],
+    provisions: &[(String, String)],
     paused: &dyn Fn(&PackageIdentity) -> bool,
     title_of: &dyn Fn(&PackageIdentity) -> String,
     package: &InstalledPackage,
     unmet: &UnmetCapability,
 ) -> Reason {
     let path = [package.identity.clone()];
-    let what = capability_what(packages, able, paused, title_of, &path, unmet);
+    let what = capability_what(packages, able, provisions, paused, title_of, &path, unmet);
     let fix = capability_fix(
-        root_of_capability(packages, able, paused, title_of, &path, unmet),
+        root_of_capability(packages, able, provisions, paused, title_of, &path, unmet),
         unmet,
     );
     Reason {
@@ -718,6 +743,7 @@ fn capability_reason(
 fn what_of(
     packages: &[InstalledPackage],
     able: &[bool],
+    provisions: &[(String, String)],
     paused: &dyn Fn(&PackageIdentity) -> bool,
     title_of: &dyn Fn(&PackageIdentity) -> String,
     path: &[PackageIdentity],
@@ -731,7 +757,7 @@ fn what_of(
                 // cycle.
                 let mut path = path.to_vec();
                 path.push(unmet.identity.clone());
-                return match root_of(packages, able, paused, title_of, &path) {
+                return match root_of(packages, able, provisions, paused, title_of, &path) {
                     Some(root) => {
                         format!("{}, which waits for {}", unmet.title, root.what(title_of))
                     }
@@ -741,7 +767,8 @@ fn what_of(
             format!("{}, which is {}", unmet.title, state.state())
         }
         Missing::Capability(unmet) => {
-            capability_what(packages, able, paused, title_of, path, unmet)
+            capability_what(packages, able, provisions, paused, title_of, path, unmet)
+        }
         }
     }
 }
@@ -751,12 +778,13 @@ fn what_of(
 fn capability_what(
     packages: &[InstalledPackage],
     able: &[bool],
+    provisions: &[(String, String)],
     paused: &dyn Fn(&PackageIdentity) -> bool,
     title_of: &dyn Fn(&PackageIdentity) -> String,
     path: &[PackageIdentity],
     unmet: &UnmetCapability,
 ) -> String {
-    let says = providers_say(packages, able, paused, title_of, path, unmet);
+    let says = providers_say(packages, able, provisions, paused, title_of, path, unmet);
     format!("{}: {says}", unmet.capability)
 }
 
@@ -766,6 +794,7 @@ fn capability_what(
 fn providers_say(
     packages: &[InstalledPackage],
     able: &[bool],
+    provisions: &[(String, String)],
     paused: &dyn Fn(&PackageIdentity) -> bool,
     title_of: &dyn Fn(&PackageIdentity) -> String,
     path: &[PackageIdentity],
@@ -787,16 +816,18 @@ fn providers_say(
                 // It waits for another: what is actually missing is at the
                 // end of its chain, or beyond naming if the chain is a
                 // cycle.
-                Cannot::Waiting => match root_of(packages, able, paused, title_of, &path) {
-                    Some(root) => {
-                        format!(
-                            "{}, which waits for {}",
-                            provider.title,
-                            root.what(title_of)
-                        )
+                Cannot::Waiting => {
+                    match root_of(packages, able, provisions, paused, title_of, &path) {
+                        Some(root) => {
+                            format!(
+                                "{}, which waits for {}",
+                                provider.title,
+                                root.what(title_of)
+                            )
+                        }
+                        None => format!("{}, which is waiting for something else", provider.title),
                     }
-                    None => format!("{}, which is waiting for something else", provider.title),
-                },
+                }
             }
         })
         .collect();

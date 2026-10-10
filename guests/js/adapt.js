@@ -55,6 +55,7 @@
 
 import { logThrown } from "./console.js";
 import { look } from "./look.js";
+import { registered } from "./registrations.js";
 
 /** The version of the tree the adapter writes (docs/list-tree.md). */
 const TREE_VERSION = 1;
@@ -299,8 +300,16 @@ export function adaptCommand(command) {
         await draw(drawnFor);
       }
       const found = actions.get(callback);
+      // An action of a dynamic root item this component registered
+      // (#158): kept while the item is, not cleared when the list is
+      // drawn, and not taken when it runs.
+      const dynamic = found === undefined ? registered(callback) : undefined;
       let value;
       try {
+        if (dynamic?.run !== undefined) {
+          value = await dynamic.run();
+          return answer(value);
+        }
         if (found?.open !== undefined) {
           // A lazy submenu opens: its entries, named after it.
           const entries = await found.open();

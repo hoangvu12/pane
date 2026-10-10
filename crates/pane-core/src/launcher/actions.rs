@@ -280,6 +280,21 @@ fn result_actions(launcher: &Launcher, state: &State) -> Option<ResultActions> {
                 items.push(configuration(ResultAction::ConfigureExtension, false));
             }
         }
+    } else if matches!(
+        quick_slots::pin_of_selected(state),
+        Some(super::quick_slots::PinTarget::Dynamic { .. })
+    ) {
+        // A dynamic command's row, one a package registered at run time
+        // (#158): its hotkey and its alias are held by its row id, and it
+        // is configured as a command is.
+        items.push(configuration(
+            ResultAction::Hotkey,
+            state.bindings.hotkey_of(&row.id).is_some(),
+        ));
+        items.push(configuration(
+            ResultAction::Alias,
+            state.aliases.chosen.active_alias(&row.id).is_some(),
+        ));
     }
     Some(ResultActions {
         target: row.id.clone(),
@@ -375,6 +390,8 @@ pub(in crate::launcher) fn selected_action(state: &State) -> SelectedAction {
         // the launcher, acts; see [`Launcher::selected_opens_settings`]).
         (_, Some(Entry::Settings)) => acting("Open settings"),
         (_, Some(Entry::Run(_))) => acting("Run item"),
+        // A dynamic root item's row runs its first action (#158).
+        (_, Some(Entry::DynamicAction(_))) => acting("Run item"),
         // An item of a command's list: its primary action, by the title the
         // extension gave it (#137).
         (_, Some(Entry::Actions(listed))) => acting(&listed.primary()),

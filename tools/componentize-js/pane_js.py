@@ -58,6 +58,8 @@ EXPORT_OPTIONS = {
     "operations": "pane:extension/published-operations@0.1.0",
     "search": "pane:extension/command-search@0.1.0",
     "service": "pane:extension/service@0.1.0",
+    "events": "pane:extension/events@0.1.0",
+    "activate": "pane:extension/lifecycle@0.1.0",
 }
 # `"pane"` option -> the interface a command setting it also imports, beyond
 # what every command may import (`js-extension`): a command that sets none
@@ -81,6 +83,8 @@ SAMPLES = [
     ("sample_greet_ts.wasm", "guests/sample-greet-ts"),
     ("sample_capabilities_js.wasm", "guests/sample-capabilities-js"),
     ("sample_capabilities_ts.wasm", "guests/sample-capabilities-ts"),
+    ("sample_registrations_js.wasm", "guests/sample-registrations-js"),
+    ("sample_registrations_ts.wasm", "guests/sample-registrations-ts"),
     ("sample_applications_js.wasm", "guests/sample-applications-js"),
     ("sample_applications_ts.wasm", "guests/sample-applications-ts"),
     ("sample_query_js.wasm", "guests/sample-query-js"),
@@ -114,7 +118,7 @@ SAMPLES = [
 # Pane's WIT, copied beside the world in guests/js/wit.
 PANE_WIT = ["extension.wit", "commands.wit", "feedback.wit", "system.wit", "data.wit", "preferences.wit", "root-results.wit",
             "operations.wit", "applications.wit", "search.wit", "helpers.wit", "files.wit", "clipboard.wit", "service.wit",
-            "programs.wit", "file-index.wit"]
+            "programs.wit", "file-index.wit", "registrations.wit"]
 # WASI's WIT (clocks, and `wasi:http` with the packages it names), copied from
 # wit/deps into the world's deps/.
 WASI_WIT = sorted((REPO / "wit" / "deps").glob("*.wit"))
@@ -519,6 +523,8 @@ ADAPTED_PROVIDERS = {
     "operations": ("publishedOperations", "runOperation"),
     "search": ("commandSearch", "search"),
     "service": ("service", "runCycle"),
+    "events": ("events", "handleEvent"),
+    "activate": ("lifecycle", "activate"),
 }
 
 

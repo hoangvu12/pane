@@ -376,6 +376,14 @@ pub struct Manifest {
     /// The capabilities the package uses (`"uses"`): the operations its
     /// code calls through Pane by each capability's name.
     pub uses: Vec<ManifestUse>,
+    /// The package's activation entry point (`"activate"`): the component,
+    /// relative to the package folder, that exports `activate` (ADR 0041),
+    /// which Pane calls when the package's code may run and is not
+    /// waiting, and again when the instance that ran it is dropped while
+    /// the generation continues. `None` without one: a package's code
+    /// first runs when the user asks for one of its commands (lazy
+    /// activation, ADR 0005).
+    pub activate: Option<PathBuf>,
 }
 
 /// A native helper a package ships: a prebuilt program per target (operating
@@ -492,6 +500,13 @@ pub struct ManifestProvides {
     /// package supports. Elsewhere the package does not provide the
     /// capability.
     pub platforms: Option<Vec<Platform>>,
+    /// Whether the package provides it only at run time (`"atRunTime"`):
+    /// only while its code holds a provision for it, as an owned
+    /// registration (#158). The capability is still known from the
+    /// manifest, so install plans, cycles and Settings work from the
+    /// manifest alone; a provision the manifest does not declare and
+    /// mark is refused.
+    pub at_run_time: bool,
 }
 
 /// A capability a package uses (`"uses"` in its `pane.json`): the operations
@@ -669,6 +684,8 @@ struct ManifestJson {
     provides: Vec<ProvidesJson>,
     #[serde(default)]
     uses: Vec<UsesJson>,
+    #[serde(default)]
+    activate: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -715,6 +732,8 @@ struct ProvidesJson {
     operations: Vec<String>,
     #[serde(default)]
     platforms: Option<Vec<String>>,
+    #[serde(default)]
+    at_run_time: bool,
 }
 
 #[derive(Deserialize)]
@@ -909,7 +928,14 @@ impl Manifest {
                 provides.component.as_path(),
             )
         });
-        commands.chain(operations).chain(capabilities)
+        let activate = self
+            .activate
+            .as_deref()
+            .map(|component| ("the package's activation entry point".to_owned(), component));
+        commands
+            .chain(operations)
+            .chain(capabilities)
+            .chain(activate)
     }
 
     /// What `component` exports besides `command`, as the manifest says.
@@ -932,6 +958,7 @@ impl Manifest {
                     .provides
                     .iter()
                     .any(|provides| provides.component == component),
+            activate: self.activate.as_deref() == Some(component),
         }
     }
 
@@ -1129,6 +1156,12 @@ impl Manifest {
         let dependencies = parse_dependencies(json.dependencies)?;
         let provides = parse_provides(json.provides)?;
         let uses = parse_uses(json.uses, &commands)?;
+        let activate = json
+            .activate
+            .as_deref()
+            .filter(|component| !component.trim().is_empty())
+            .map(|component| inside_package(component, "activate"))
+            .transpose()?;
         Ok(Manifest {
             title: json.title,
             description: json
@@ -1148,6 +1181,7 @@ impl Manifest {
             preferences: package_preferences,
             provides,
             uses,
+            activate,
         })
     }
 
@@ -1515,6 +1549,7 @@ fn parse_provides(json: Vec<ProvidesJson>) -> Result<Vec<ManifestProvides>, Pack
             component: inside_package(&entry.component, "component")?,
             operations,
             platforms,
+            at_run_time: entry.at_run_time,
         });
     }
     Ok(provides)

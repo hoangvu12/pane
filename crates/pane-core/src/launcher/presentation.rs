@@ -237,8 +237,39 @@ pub(super) fn row_presentation(state: &State, index: usize) -> RowPresentation {
     };
     let command = matches!(
         entry,
-        Entry::Open(_) | Entry::Unavailable(_) | Entry::Waiting { .. }
+        Entry::Open(_) | Entry::Unavailable(_) | Entry::Waiting { .. } | Entry::DynamicAction(_)
     );
+    // A dynamic root item draws what its item says: its own icon and
+    // accessories, resolved in its package's managed copy (#158).
+    if let Some(look) = state.dynamic.of(&row.id) {
+        let presented = RowPresentation {
+            kind: kind(entry),
+            alias: state
+                .aliases
+                .chosen
+                .active_alias(&row.id)
+                .map(str::to_owned),
+            hotkey: state.bindings.registered_of(&row.id),
+            matched: title_matches(&row.title, query),
+            answer: answer(state, row, entry, query),
+            icon: look
+                .icon
+                .as_ref()
+                .map(|icon| looks::shown_icon(state, icon)),
+            accessories: looks::shown_accessories(look, state.clock.now())
+                .into_iter()
+                .map(|accessory| ShownAccessory {
+                    icon: accessory
+                        .icon
+                        .as_ref()
+                        .map(|icon| looks::shown_icon(state, icon)),
+                    ..accessory
+                })
+                .collect(),
+            ..RowPresentation::default()
+        };
+        return presented;
+    }
     RowPresentation {
         kind: kind(entry),
         alias: command
@@ -270,6 +301,18 @@ pub(super) fn want_row_icons(state: &State, index: usize) {
         return;
     }
     if !matches!(state.view.screen, Screen::Root { .. }) {
+        return;
+    }
+    // A dynamic root item's row loads what its item's look needs (#158);
+    // its packaged images are already resolved to the package's copy.
+    if let Some(look) = state.dynamic.of(&row.id) {
+        for icon in look.icon.iter().chain(
+            look.accessories
+                .iter()
+                .filter_map(|accessory| accessory.icon.as_ref()),
+        ) {
+            looks::want_icon(state, None, icon);
+        }
         return;
     }
     // A file row loads its system icon, not the stand-in it shows until
@@ -380,7 +423,10 @@ fn file_icon(entry: &Entry) -> Option<Icon> {
 /// What kind of thing activating `entry` from root search reaches.
 pub(super) fn kind(entry: &Entry) -> Option<RowKind> {
     match entry {
-        Entry::Open(_) | Entry::Unavailable(_) | Entry::Waiting { .. } => Some(RowKind::Command),
+        Entry::Open(_)
+        | Entry::Unavailable(_)
+        | Entry::Waiting { .. }
+        | Entry::DynamicAction(_) => Some(RowKind::Command),
         Entry::Send(Sending {
             via: Via::Fallback, ..
         }) => Some(RowKind::Fallback),

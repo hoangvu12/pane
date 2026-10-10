@@ -210,6 +210,7 @@ fn guests() -> Result<(), String> {
                 "sample_dependencies",
                 "sample_greet",
                 "sample_capabilities",
+                "sample_registrations",
                 "sample_query",
                 "sample_no_view",
                 "sample_search",
@@ -226,6 +227,7 @@ fn guests() -> Result<(), String> {
                 "folder_files",
                 "operations_fixture",
                 "capabilities_fixture",
+                "registrations_fixture",
                 "old_api",
                 "mismatched_api",
                 "failing_start",
@@ -421,7 +423,7 @@ fn git_sample(root: &Path, out: &Path) -> Result<(), String> {
 /// (package folder in `guests/packages`, component) of each sample package,
 /// and of the default extensions (the calculator, applications and
 /// quicklinks).
-const SAMPLE_PACKAGES: [(&str, &str); 65] = [
+const SAMPLE_PACKAGES: [(&str, &str); 68] = [
     ("sample-rust", "sample_rust"),
     ("sample-settings", "sample_settings"),
     ("sample-js", "sample_js"),
@@ -440,6 +442,9 @@ const SAMPLE_PACKAGES: [(&str, &str); 65] = [
     ("sample-greet-js", "sample_greet_js"),
     ("sample-greet-ts", "sample_greet_ts"),
     ("sample-capabilities", "sample_capabilities"),
+    ("sample-registrations", "sample_registrations"),
+    ("sample-registrations-js", "sample_registrations_js"),
+    ("sample-registrations-ts", "sample_registrations_ts"),
     ("sample-capabilities-js", "sample_capabilities_js"),
     ("sample-capabilities-ts", "sample_capabilities_ts"),
     ("sample-dependencies", "sample_dependencies"),
