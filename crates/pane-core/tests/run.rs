@@ -1503,14 +1503,7 @@ mod windows {
             let repos = tempfile::tempdir().unwrap();
             let files = package_files();
             let tag = format!("v{}", defaults::version_of(&files));
-            let pin = defaults::pinned(
-                &server,
-                repos.path(),
-                "run",
-                "Run",
-                &tag,
-                &files,
-            );
+            let pin = defaults::pinned(&server, repos.path(), "run", "Run", &tag, &files);
             Pane {
                 data: tempfile::tempdir().unwrap(),
                 _repos: repos,
