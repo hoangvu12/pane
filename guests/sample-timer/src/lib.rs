@@ -15,7 +15,7 @@ use core::time::Duration;
 
 use pane_extension::alloc::{format, string::String};
 use pane_extension::view::{
-    Cx, IntoAnswer, Pending, Space, TextLevel, TextStyle, View, column, loading, text,
+    Cx, IntoAnswer, IntoNode, Pending, Space, TextLevel, TextStyle, View, column, loading, text,
 };
 use pane_extension::{Command, LaunchRecord};
 
