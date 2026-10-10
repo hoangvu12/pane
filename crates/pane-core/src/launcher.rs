@@ -1207,9 +1207,6 @@ enum Entry {
     /// Open Pane's log folder with the system's file manager, after Pane
     /// quit unexpectedly last time (root; see `crash_notice`).
     OpenLogFolder,
-    /// Have the open command handle this callback, a search result's id
-    /// (`handle-event`), then list it again.
-    Run(String),
     /// Run the first of this item's actions (Enter), or another of them
     /// (see `item_actions`): the open command handles its callback, then
     /// lists it again.
@@ -2824,11 +2821,6 @@ impl Launcher {
                     application,
                     name,
                 } => launcher.open_target(epoch, target, application, name).await,
-                Pending::Run(callback) => {
-                    if let Some(component) = open {
-                        launcher.run_action(epoch, component, callback, data).await
-                    }
-                }
                 Pending::DesignedEvent {
                     handler,
                     callback,
@@ -3076,10 +3068,6 @@ impl Launcher {
                     state.view.status = Status::Running;
                 }
                 Pending::Open(opening)
-            }
-            Entry::Run(callback) => {
-                state.view.status = Status::Running;
-                Pending::Run(callback)
             }
             Entry::Actions(listed) => match listed.actions[0].callback() {
                 Some(callback) => {

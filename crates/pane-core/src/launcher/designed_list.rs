@@ -195,7 +195,7 @@ struct Group<'a> {
 
 /// The groups of the list or grid `node`'s children, its search-bar
 /// dropdown, and its empty view's subtree.
-fn groups(node: &Node) -> (Vec<Group>, Option<&Node>, Option<&Node>) {
+fn groups(node: &Node) -> (Vec<Group<'_>>, Option<&Node>, Option<&Node>) {
     let mut groups = Vec::new();
     let mut dropdown = None;
     let mut empty = None;
@@ -707,15 +707,6 @@ struct Built {
     looks: Vec<(String, ItemLook)>,
     selected: Option<usize>,
     view: crate::ViewId,
-}
-
-impl Built {
-    /// The selected item's key, as the runtime's render context names it.
-    fn selected_key(&self) -> Option<String> {
-        self.selected
-            .and_then(|index| self.rows.get(index))
-            .map(|row| row.id.clone())
-    }
 }
 
 /// The designed row the item `node` is, with its section's `shape`: its

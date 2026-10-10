@@ -469,8 +469,8 @@ pub(super) fn draw_node(
         NodeKind::List(_) | NodeKind::Grid(_) => {
             let own = path.clone();
             let drawn = children(node, path, inner, cx);
-            let div = apply(div().id(own).flex().flex_col().min_w(px(0.)), node, &draw)
-                .children(drawn);
+            let div =
+                apply(div().id(own).flex().flex_col().min_w(px(0.)), node, &draw).children(drawn);
             named(div, name.as_deref()).into_any_element()
         }
         NodeKind::ListSection(_) => {
@@ -506,8 +506,8 @@ pub(super) fn draw_node(
             // nested elsewhere draws its choices as a plain column.
             let own = path.clone();
             let drawn = children(node, path, inner, cx);
-            let div = apply(div().id(own).flex().flex_col().min_w(px(0.)), node, &draw)
-                .children(drawn);
+            let div =
+                apply(div().id(own).flex().flex_col().min_w(px(0.)), node, &draw).children(drawn);
             named(div, name.as_deref()).into_any_element()
         }
         NodeKind::Detail(_) => {

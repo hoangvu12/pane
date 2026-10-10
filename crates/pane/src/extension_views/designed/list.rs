@@ -173,7 +173,7 @@ impl LauncherWindow {
         selected: bool,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
-        let ScreenList { list, .. } = screen_list_of(self)?;
+        let list = screen_list_of(self)?;
         let row = list.rows.iter().find(|row| row.key == key)?;
         let content = row.content.as_ref()?;
         if content.is_empty() {
@@ -517,7 +517,7 @@ impl LauncherWindow {
         view: &DesignedViewSnapshot,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
-        let ScreenList { list, .. } = screen_list_of(self)?;
+        let list = screen_list_of(self)?;
         list.dropdown.as_ref()?;
         let controls = self.designed.as_ref()?;
         let (_, dropdown_path, _) = self.designed_list_paths(view);
@@ -541,20 +541,12 @@ impl LauncherWindow {
     }
 }
 
-/// The launcher's current screen as a designed view with its list.
-pub(super) struct ScreenList {
-    view: DesignedViewSnapshot,
-    list: DesignedList,
-}
-
-/// The current screen's designed view and its presented list, when it
-/// names one.
-pub(super) fn screen_list_of(window: &LauncherWindow) -> Option<ScreenList> {
+/// The current screen's presented list, when it names one.
+pub(super) fn screen_list_of(window: &LauncherWindow) -> Option<DesignedList> {
     let pane_core::Screen::DesignedView(view) = window.launcher.screen() else {
         return None;
     };
-    let list = view.list.clone()?;
-    Some(ScreenList { view, list })
+    view.list.clone()
 }
 
 /// The keys the children share with a sibling, as `tree::duplicate_keys`
