@@ -208,6 +208,9 @@ impl Launcher {
                     );
                 }
                 runtime.forget(all);
+                // Any state the old code handed to a replacement it never
+                // ran (ADR 0041) goes with the package.
+                runtime.drop_restores(&identity.key());
             }
             components.extend(commands);
             // Its pause goes with it, in memory only: if the uninstall cannot

@@ -8,8 +8,10 @@
 // — its "Add an event" item adds one — and counts its cycles, in its
 // content for all time and in this module for this run: the second count
 // is the state of the task the service manages, which lives as long as
-// the code's generation and is dropped with it, so a disable, a reload or
-// a pause ends it and enabling or retrying starts a fresh one. Items,
+// the code's generation and is dropped with it — except that the state
+// handoff (ADR 0041) carries it to the new code on a reload or an update,
+// so the new instance's first cycle finds it; a disable, a pause, a retry
+// or a restart starts a fresh one. Items,
 // titles, results and errors match the Rust service sample
 // (guests/sample-service) and the JavaScript one. "Wait on the next
 // cycle" makes the next cycle note in its settings that it started, wait
@@ -28,6 +30,7 @@ import * as content from "pane:extension/content@0.1.0";
 import { waitFor } from "wasi:clocks/monotonic-clock@0.3.0";
 import type { Cycle, Item, List, Service } from "@pane-app/extension";
 import { showToast } from "@pane-app/extension/feedback";
+import { load, save } from "@pane-app/extension/state";
 
 /** The content key holding how many cycles the service has run, ever. */
 const CYCLES = "cycles";
@@ -133,6 +136,23 @@ export const command = {
 
   async openView(itemId: string): Promise<never> {
     throw new Error(`The service sample has no custom views: ${itemId}`);
+  },
+};
+
+/** The state handoff's entry points, beside the command's own export: the
+ * task's count of cycles this run is handed to the code that replaces
+ * it, so its first cycle finds it. */
+export const lifecycle = {
+  // No activation entry point: the interface is exported for the state
+  // handoff, so the task's own state survives a replacement of the code.
+  async activate(): Promise<void> {},
+
+  async snapshot(): Promise<Uint8Array> {
+    return save({ thisRun });
+  },
+
+  async restore(bytes: Uint8Array): Promise<void> {
+    thisRun = (load(bytes) as { thisRun: number }).thisRun;
   },
 };
 

@@ -148,7 +148,9 @@ the user asked for that has not answered, nor while one of its screens is
 on display, retrying every second until the package is quiet — and
 applying as the preview's Update row does: the identity, saved data,
 disabled state, hotkeys and aliases are kept, the old generation ends,
-managed background work restarts with the new code, and the outcome says
+managed background work restarts with the new code — and a component
+that opts in to the [state handoff](generations.md#the-state-handoff)
+(ADR 0041, #159) keeps what it had in memory — and the outcome says
 so in the status line of root search or the extension list ("Updated
 Greeter from Git to 0.2.0").
 

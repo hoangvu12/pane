@@ -371,6 +371,39 @@ fn saving_builds_and_reloads_only_that_package() {
 }
 
 #[test]
+fn a_successful_build_hands_the_state_over_and_reopens_the_screen() {
+    let dev = Dev::new();
+    let (folder, identity) = dev.developing("Dev", "sample_handoff");
+
+    // The command's screen, with the state it keeps in memory: two counts.
+    assert_eq!(
+        run(&dev.launcher, "Open Dev", "Add one (0 so far)"),
+        Status::Result("Counted one more".into())
+    );
+    run(&dev.launcher, "Open Dev", "Add one (1 so far)");
+
+    // A save that builds reloads it (ADR 0041's state handoff): the old
+    // code is asked for its state, the new code restores it, and the
+    // screen that was open opens again — the author is back where they
+    // were, with what they had.
+    save(&folder, "sample_handoff");
+    dev.finished(&identity, 1);
+    assert_eq!(dev.launcher.view().status, Status::Result("Reloaded Dev".into()));
+    assert!(
+        matches!(dev.launcher.view().screen, Screen::Command),
+        "the screen that was open reopens: {:?}",
+        dev.launcher.view()
+    );
+    assert_eq!(dev.launcher.view().title, "Handoff: 2 counted, draft nothing");
+
+    // The new code carries on from the handed-over state.
+    assert_eq!(
+        run(&dev.launcher, "Open Dev", "Add one (2 so far)"),
+        Status::Result("Counted one more".into())
+    );
+}
+
+#[test]
 fn a_build_that_fails_keeps_the_working_code_and_shows_its_diagnostics() {
     let dev = Dev::new();
     let (folder, identity) = dev.developing("Dev", "sample_rust");

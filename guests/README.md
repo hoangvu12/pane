@@ -2198,6 +2198,65 @@ export const lifecycle = {
 };
 ```
 
+### The state handoff
+
+A component whose code is replaced — by Reload, by an update or by a
+development-mode reload — can hand what it kept in memory to its new
+code: it opts in by exporting `snapshot` and `restore` in the lifecycle
+interface above (`pane_extension::lifecycle` in Rust,
+`"pane": { "snapshot": true }` and `export const lifecycle = { … }` in
+JavaScript and TypeScript), whatever its `pane.json` says. Pane asks each
+idle instance for a snapshot before the old generation ends — within one
+second and one megabyte, kept in memory only — and the new code's first
+instance restores it before anything else is asked of it, so a user's
+counter, draft or running task carries on where it was. It never happens
+after a crash, a pause, a failure to start, Retry, a disable followed by
+an enable, or a restart of Pane. The screen that was open opens again for
+every package, opted in or not, with its original launch record (only the
+command's root view).
+
+The bytes are opaque and yours to version; the SDK's helpers serialise a
+value (`pane_extension::state` in Rust, `@pane-app/extension/state` in
+JavaScript and TypeScript — serde and JSON). A `restore` that cannot read
+what an older release wrote should answer an error: the state is
+discarded and the extension starts fresh, which is not a failure. In
+development mode, a snapshot that was dropped, late, oversized or rejected
+is reported in the package's log. The full contract is in
+[docs/generations.md](../docs/generations.md#the-state-handoff). The
+handoff sample, in [Rust](sample-handoff/src/lib.rs), [JavaScript](sample-handoff-js/src/index.js)
+and [TypeScript](sample-handoff-ts/src/index.ts), keeps a counter and a
+draft:
+
+```rust
+impl pane_extension::lifecycle::Guest for Handoff {
+    async fn activate() {} // this package declares no activation entry point
+
+    async fn snapshot() -> Option<Vec<u8>> {
+        Some(pane_extension::state::save(&KEPT))
+    }
+
+    async fn restore(bytes: Vec<u8>) -> Result<(), String> {
+        KEPT = pane_extension::state::load(&bytes)?;
+        Ok(())
+    }
+}
+```
+
+```ts
+// package.json: "pane": { "snapshot": true }
+import { load, save } from "@pane-app/extension/state";
+
+export const lifecycle = {
+  async activate() {},
+  async snapshot() {
+    return save(kept);
+  },
+  async restore(bytes) {
+    kept = load(bytes);
+  },
+};
+```
+
 ### Dependencies on other extensions
 
 A package that calls other packages' operations declares them, so that

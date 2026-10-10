@@ -441,7 +441,44 @@ pub mod applications {
 /// what the copying application marked as not to be kept or what came from
 /// a program the user excluded. [`clipboard_history::set_capture`] turns it
 /// on, off or pauses it; [`clipboard_history::entries`] lists what is kept.
+/// The lifecycle of a package's code, as a component opts into it
+/// (ADR 0041): the activation entry point its `pane.json` may declare
+/// (`"activate": "<component>"`, #158), and the state handoff to the code
+/// that replaces it (#159). A component exports the lifecycle interface
+/// beside its `command` with [`lifecycle::export!`], implementing
+/// [`lifecycle::Guest`]; Pane calls `activate` only for the component its
+/// `pane.json` names, while the state handoff serves any component that
+/// exports the interface:
+///
+/// ```ignore
+/// pane_extension::export!(Handoff);
+/// pane_extension::lifecycle::export!(Handoff);
+///
+/// impl pane_extension::lifecycle::Guest for Handoff {
+///     async fn activate() { /* register what it registers */ }
+///     async fn snapshot() -> Option<Vec<u8>> {
+///         pane_extension::state::save(&MY_STATE)
+///     }
+///     async fn restore(state: Vec<u8>) -> Result<(), String> {
+///         MY_STATE.set(state::load(&state)?);
+///         Ok(())
+///     }
+/// }
+/// ```
+///
+/// `snapshot` and `restore` have defaults that keep nothing and restore
+/// nothing, so a component only declaring the activation entry point is
+/// unchanged. The state is opaque bytes the author versions
+/// ([`crate::state`] serialises a value); it is asked of each idle
+/// instance before the old generation ends — on Reload, an Update and a
+/// development-mode reload, never after a crash, a pause, a failure to
+/// start, Retry, a disable followed by an enable, or a restart of Pane —
+/// within Pane's 1-second deadline and 1-megabyte limit, and restored on
+/// the new code's first start, before any other call into it.
 pub mod lifecycle {
+    use alloc::string::String;
+    use alloc::vec::Vec;
+
     wit_bindgen::generate!({
         path: "wit",
         world: "lifecycle-provider",
@@ -449,7 +486,83 @@ pub mod lifecycle {
         default_bindings_module: "pane_extension::lifecycle",
     });
 
-    pub use exports::pane::extension::lifecycle::Guest;
+    /// The lifecycle of a component: the activation entry point, and the
+    /// state handoff to the code that replaces this one. Implement it and
+    /// call [`lifecycle::export!`] beside [`crate::export!`].
+    pub trait Guest {
+        /// Activates the package: registers what it registers. Pane calls
+        /// it when the package's code may run and it is not waiting, and
+        /// again when the instance that ran it is dropped while the
+        /// generation continues. Without an `activate` in its `pane.json`,
+        /// Pane never calls this.
+        async fn activate();
+
+        /// The state this instance hands to its replacement: opaque bytes
+        /// the author versions, `None` for nothing. Asked of each idle
+        /// instance before the old generation ends, within Pane's
+        /// 1-second deadline and 1-megabyte limit, and kept in memory
+        /// only. [`crate::state::save`] serialises a value.
+        async fn snapshot() -> Option<Vec<u8>> {
+            None
+        }
+
+        /// Restores the state a replaced instance handed over, on this
+        /// instance's first start and before any other call into it. An
+        /// error discards the state and the extension starts fresh, which
+        /// is not a failure. [`crate::state::load`] deserialises what
+        /// [`crate::state::save`] wrote.
+        async fn restore(state: Vec<u8>) -> Result<(), String> {
+            let _ = state;
+            Err("this component keeps no state across a replacement".into())
+        }
+    }
+
+    impl<T: Guest> exports::pane::extension::lifecycle::Guest for T {
+        async fn activate() {
+            <T as Guest>::activate().await
+        }
+
+        async fn snapshot() -> Option<Vec<u8>> {
+            <T as Guest>::snapshot().await
+        }
+
+        async fn restore(state: Vec<u8>) -> Result<(), String> {
+            <T as Guest>::restore(state).await
+        }
+    }
+}
+
+/// The state handoff's serialization helpers (ADR 0041): what a component
+/// that opts in ([`crate::lifecycle`]) hands to the code that replaces it,
+/// as opaque bytes it versions itself. `save` serialises a value as JSON
+/// and `load` reads it back; the bytes are Pane's to bound (1 second to
+/// answer, 1 MiB at most) and never reach a disk. Version the state
+/// yourself: a `restore` that cannot read what an older release wrote
+/// answers an error, and the extension starts fresh.
+pub mod state {
+    use alloc::format;
+    use alloc::string::String;
+    use alloc::vec::Vec;
+    use serde::Serialize;
+    use serde::de::DeserializeOwned;
+
+    /// The state `value` hands to the new code, as
+    /// [`lifecycle::Guest::snapshot`](crate::lifecycle::Guest::snapshot)
+    /// answers it: JSON, `None` when it cannot be written, which hands
+    /// nothing over.
+    pub fn save<T: Serialize>(value: &T) -> Option<Vec<u8>> {
+        serde_json::to_vec(value).ok()
+    }
+
+    /// The state a replaced instance handed over, as
+    /// [`lifecycle::Guest::restore`](crate::lifecycle::Guest::restore)
+    /// receives it: what [`save`] wrote for a value of `T`, or an error
+    /// that says why it cannot be read — a new shape of the state, or
+    /// bytes another version wrote.
+    pub fn load<T: DeserializeOwned>(state: &[u8]) -> Result<T, String> {
+        serde_json::from_slice(state)
+            .map_err(|error| format!("the state handed over cannot be read: {error}"))
+    }
 }
 
 pub mod clipboard_history {

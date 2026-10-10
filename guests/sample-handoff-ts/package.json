@@ -1,13 +1,12 @@
 {
-  "name": "pane-sample-service-js",
+  "name": "pane-sample-handoff-ts",
   "version": "0.1.0",
   "private": true,
-  "description": "Pane's service sample in JavaScript",
+  "description": "Pane's handoff sample in TypeScript",
   "license": "Apache-2.0 OR MIT",
   "type": "module",
-  "main": "src/index.js",
+  "main": "src/index.ts",
   "pane": {
-    "service": true,
     "snapshot": true
   },
   "devDependencies": {

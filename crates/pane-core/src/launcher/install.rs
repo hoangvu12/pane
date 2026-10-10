@@ -581,12 +581,47 @@ impl Launcher {
                 }
                 let package = outcome.package;
                 let first = package.commands().first().map(|c| c.component.clone());
-                let replaced_is_open = self.put_installed(&mut state, package);
-                if current || replaced_is_open {
+                let was_open = self.put_installed(&mut state, package);
+                // A command screen of the replaced copy that was on display
+                // is reopened on the new code, as a reload reopens it
+                // (ADR 0041): an update the user chose replaces as a reload
+                // does. One whose command the new code no longer has goes to
+                // root search, as it did before; an update Pane applies by
+                // itself never finds a screen on display.
+                let reopen = if was_open {
+                    match &mode {
+                        Mode::Update(identity) => {
+                            let reopen = self.take_reopen(&mut state, identity);
+                            if reopen.is_none() {
+                                self.show_root(&mut state, first);
+                            }
+                            reopen
+                        }
+                        // Only an update replaces installed code, so only
+                        // one can have had a screen of it open.
+                        _ => {
+                            self.show_root(&mut state, first);
+                            None
+                        }
+                    }
+                } else if current {
                     self.show_root(&mut state, first);
-                    state.view.status = Status::Result(message);
+                    None
                 } else {
                     self.refresh(&mut state);
+                    None
+                };
+                if reopen.is_none() && (current || was_open) {
+                    state.view.status = Status::Result(message);
+                }
+                let at = state.screen_epoch;
+                drop(state);
+                if let Some(reopen) = reopen {
+                    let at = self.reopen(at, reopen).await;
+                    let mut state = self.lock();
+                    if state.screen_epoch == at {
+                        state.view.status = Status::Result(message);
+                    }
                 }
             }
             Err(Stopped::Changed(changed_plan)) => {
@@ -667,6 +702,11 @@ impl Launcher {
             .collect();
         let install = plan.install;
         let mode = mode.clone();
+        // The state the old code hands to the new one (ADR 0041, #159),
+        // taken now that every check above passed and before the old
+        // generation ends: an update the user chose or one Pane applies by
+        // itself replaces as a reload does.
+        let handoff = self.take_handoff(&package.identity, &package.manifest).await;
         let retire = self.retire(&package.identity);
         let (installed, package) = off_thread(move || {
             let mut store = store.lock().unwrap_or_else(|p| p.into_inner());
@@ -677,6 +717,9 @@ impl Launcher {
         })
         .await
         .map_err(Stopped::Failed)?;
+        // Staged for the new code's first start, before anything is asked
+        // of it: the old generation ended with the replacement above.
+        self.stage_handoff(&package.identity, &package, handoff);
         // The default providers of uses are installed with the rest; the
         // message says which is which.
         let mut dependencies = Vec::new();

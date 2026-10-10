@@ -219,6 +219,10 @@ pub(super) struct Shared {
     /// What the packages' guests register at run time, shared with every
     /// runtime thread and read by the launcher (see `registrations`).
     pub(super) registrations: Arc<crate::registrations::Registrations>,
+    /// Snapshots staged for the new code of a replaced package to restore
+    /// (the state handoff, ADR 0041): shared by every runtime thread, so a
+    /// restarted one restores them too.
+    pub(super) snapshots: super::SharedSnapshots,
     /// What a search waits on before it starts, if a test replaced the
     /// clock's [`super::SEARCH_DEBOUNCE`]; a restarted thread keeps it.
     /// A release build has none.
@@ -349,6 +353,7 @@ impl Shared {
             next_view: Arc::default(),
             network: Arc::default(),
             registrations: Arc::default(),
+            snapshots: Arc::default(),
             #[cfg(any(test, debug_assertions))]
             search_timer: Arc::default(),
             crashes: Mutex::new(None),
