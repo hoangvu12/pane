@@ -466,7 +466,7 @@ fn input_method_composition_commits_into_the_text_field(cx: &mut TestAppContext)
     let (window, cx) = open(cx, &RUST);
     open_form(&window, cx);
     let input = cx
-        .read_entity(&window, |window, _| window.text_field("name"))
+        .read_entity(&window, |window, cx| window.designed_field("name"))
         .expect("the name field has an editing state");
     let focused = cx.update(|window, cx| input.focus_handle(cx).is_focused(window));
     assert!(focused, "the name field has keyboard focus");

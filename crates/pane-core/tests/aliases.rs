@@ -202,7 +202,8 @@ fn form_error(launcher: &Launcher, key: &str) -> Option<String> {
         }
         node.children.iter().find_map(|child| at(child, key))
     }
-    let form = launcher.view().form().expect("a form is open");
+    let view = launcher.view();
+    let form = view.form().expect("a form is open");
     at(&form.tree.root, key)
 }
 
