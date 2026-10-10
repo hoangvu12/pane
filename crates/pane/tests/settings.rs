@@ -8,7 +8,9 @@
 //! General page's launch-at-login toggle is driven the same way, through a fake
 //! login system the tests script — no test ever touches the real login
 //! configuration of the machine running it; and the Extensions page
-//! manages extensions through the launcher's own operations.
+//! manages extensions through the launcher's own operations. The About
+//! page's diagnostics copy holds the state of Pane's keyboard hook (#259),
+//! read through a fake hotkeys system the tests script.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -24,6 +26,7 @@ use pane_core::autostart::{Autostart, Registration};
 use pane_core::changes;
 use pane_core::defaults::ArtifactSource;
 use pane_core::develop::{Build, BuildJob, BuildOutcome, Builder, Toolchains};
+use pane_core::hotkeys::{HookHealth, HotkeyError, Hotkeys, Shortcut};
 use pane_core::{Launcher, PackageIdentity, Runtime, Screen, Status, Target};
 use tempfile::TempDir;
 
@@ -42,6 +45,12 @@ mod paint;
 mod artifacts;
 
 use artifacts::Artifacts;
+
+// The default extensions' repositories, pane-core's test support.
+#[path = "../../pane-core/tests/support/defaults.rs"]
+mod defaults;
+#[path = "../../pane-core/tests/support/repo_server.rs"]
+mod repo_server;
 
 use paint::paints_fill_at;
 use settle::settle;
@@ -136,6 +145,45 @@ impl Autostart for FakeLogin {
     }
 }
 
+/// A fake hotkeys system, standing where the pane binary puts the
+/// platform's own: its keyboard hook's state as the tests script it
+/// (#259), which the diagnostics copy holds. No shortcut is ever
+/// refused, and none is dispatched through the hook — the health is the
+/// whole of the answer.
+struct FakeHotkeys {
+    /// The hook's state, as the launcher's query reads it.
+    health: std::sync::Mutex<Option<HookHealth>>,
+}
+
+impl Hotkeys for FakeHotkeys {
+    fn unavailable(&self) -> Option<String> {
+        None
+    }
+
+    fn kind_unavailable(&self, shortcut: &Shortcut) -> Option<String> {
+        // This fake models a system without Pane's own keyboard hook, as
+        // macOS' and X11's adapters are: the kinds only the hook
+        // recognizes are explained (macOS stands in where the test
+        // binary runs on Windows, so a fresh data folder keeps today's
+        // Open Pane default rather than taking the Windows key).
+        let modeled = match pane_core::Platform::current() {
+            Some(pane_core::Platform::Windows) => Some(pane_core::Platform::Macos),
+            platform => platform,
+        };
+        pane_core::hotkeys::kinds_unavailable(shortcut, modeled)
+    }
+
+    fn register(&self, _shortcut: &Shortcut) -> Result<(), HotkeyError> {
+        Ok(())
+    }
+
+    fn unregister(&self, _shortcut: &Shortcut) {}
+
+    fn hook_health(&self) -> Option<HookHealth> {
+        self.health.lock().unwrap().clone()
+    }
+}
+
 type Opened<'a> = (
     gpui::Entity<LauncherWindow>,
     Arc<RecordedLinks>,
@@ -166,6 +214,34 @@ fn open_refusing(
     cx.update(pane::bind_keys);
     let (window, cx) = cx.add_window_view(|window, cx| LauncherWindow::new(launcher, window, cx));
     (window, cx)
+}
+
+/// Writes the settings sample as a package that declares what it does and
+/// where its issues go: the metadata a published package carries, whose
+/// description the Extensions group lists (#224).
+fn described_package(folder: &Path) -> PathBuf {
+    let assembled = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../target/guests/packages/sample-settings");
+    assert!(
+        assembled.exists(),
+        "{} is missing; run `cargo xtask guests`",
+        assembled.display()
+    );
+    fs::create_dir_all(folder).unwrap();
+    for file in ["pane.json", "sample_settings.wasm"] {
+        fs::copy(assembled.join(file), folder.join(file)).unwrap();
+    }
+    let manifest = fs::read_to_string(folder.join("pane.json")).unwrap();
+    let described = manifest.replace(
+        "\"title\": \"Settings sample\",",
+        "\"title\": \"Described sample\",\n  \"description\": \"Keeps a chosen greeting style in Pane's settings\",\n  \"author\": \"Ada Lovelace\",\n  \"repository\": \"https://github.com/pane-app/pane\",\n  \"issues\": \"https://github.com/pane-app/pane/issues\",\n  \"license\": \"Apache-2.0 OR MIT\",\n  \"keywords\": [\"sample\", \"settings\"],",
+    );
+    assert!(
+        described.contains("\"description\""),
+        "the settings sample's manifest changed"
+    );
+    fs::write(folder.join("pane.json"), described).unwrap();
+    folder.to_path_buf()
 }
 
 /// The assembled Rust settings sample, copied into `folder` as a package
@@ -1683,6 +1759,44 @@ fn the_page_copies_the_diagnostics_to_the_clipboard_locally(cx: &mut TestAppCont
         report.contains("Update check: Pane 99.0.0 is available"),
         "{report}"
     );
+    // No keyboard hook is in use — this launcher has no adapter that
+    // uses one — and the report says so cleanly rather than nothing
+    // (#259).
+    assert!(report.contains("Keyboard hook: not in use"), "{report}");
+}
+
+#[gpui::test]
+fn the_diagnostics_hold_the_keyboard_hook_s_state(cx: &mut TestAppContext) {
+    // The hook's state, as a Windows adapter would answer while a
+    // binding needs it (#259): two reinstallations, its pages pinned.
+    let system = Arc::new(FakeHotkeys {
+        health: std::sync::Mutex::new(Some(HookHealth {
+            reinstalls: 2,
+            pinned: true,
+            given_up: None,
+        })),
+    });
+    let launcher = Launcher::new(Runtime::start(), samples::sample_commands()).with_hotkeys(system);
+    cx.executor().allow_parking();
+    cx.update(pane::bind_keys);
+    let (_window, cx) = cx.add_window_view(|window, cx| LauncherWindow::new(launcher, window, cx));
+
+    // The copy holds the hook's state beside the installation's own
+    // facts, as plain text on this computer's clipboard.
+    let (_settings, mut settings_cx) = open_about(cx);
+    click_row(&mut settings_cx, "about-diagnostics");
+    until_text(&mut settings_cx, "Copied to the clipboard");
+    let report = settings_cx
+        .read_from_clipboard()
+        .and_then(|item| item.text())
+        .expect("the report was copied");
+    assert!(
+        report.contains(
+            "Keyboard hook: Installed, its pages are pinned in memory; Windows removed it \
+             2 times and Pane installed it again"
+        ),
+        "{report}"
+    );
 }
 
 /// Runs the window until its accessibility tree contains `text`, so what
@@ -1797,6 +1911,30 @@ fn has_node(cx: &mut VisualTestContext, role: &str, label: &str) -> bool {
         .unwrap()
         .values()
         .any(|node| node["aria"]["role"] == role && node["aria"]["label"] == label)
+}
+
+#[gpui::test]
+fn the_extensions_group_lists_each_package_with_its_description(cx: &mut TestAppContext) {
+    let (sources, data) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    let folder = described_package(&sources.path().join("described"));
+    let (_launcher, cx) = open_installed(cx, &data, &folder);
+    let (_settings, mut settings_cx) = open_extensions(cx);
+
+    // The group's page lists the extension with what it does, one line
+    // under its source, cut like it (#224); the description itself is on
+    // the extension's page.
+    assert!(
+        settings_cx
+            .debug_bounds("extension-item-Described sample")
+            .is_some(),
+        "the extension is listed"
+    );
+    assert!(
+        settings_cx
+            .debug_bounds("extension-item-description")
+            .is_some(),
+        "its description is drawn"
+    );
 }
 
 #[gpui::test]
@@ -1936,6 +2074,173 @@ fn a_paused_extension_is_marked_in_the_sidebar_and_on_its_page(cx: &mut TestAppC
 }
 
 #[gpui::test]
+fn an_official_extension_is_marked_as_panes_own_wherever_settings_lists_it(
+    cx: &mut TestAppContext,
+) {
+    let (sources, data) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    // Three extensions: the Rust sample, pinned as a default extension
+    // Pane installs at first setup from a repository served over Git's
+    // smart HTTP protocol from 127.0.0.1 (pane-core's test support; a
+    // stand-in for a default's own repository, which lives outside this
+    // one, #285 — nothing reaches the network or a real Git host); the
+    // settings sample, its package given the record an install by hand
+    // from a repository under pane-app writes, as a restart of Pane
+    // reads it; and the Hello sample, installed from a folder. The first
+    // two are Pane's own; the last is not (ADR 0045).
+    let server = repo_server::Server::start();
+    let repos = tempfile::tempdir().unwrap();
+    let sample = defaults::from_sample(
+        &server,
+        repos.path(),
+        "sample-rust",
+        "Rust sample",
+        "sample-rust",
+    );
+    let from_pane_app = settings_package(&sources.path().join("sample"));
+    let from_folder = hello_package(&sources.path().join("hello"));
+    cx.executor().allow_parking();
+    let installing =
+        Launcher::with_packages(Runtime::start(), vec![], data.path().join("extensions"))
+            .with_defaults(vec![sample]);
+    cx.foreground_executor()
+        .block_on(installing.acquire_defaults());
+    install(&installing, &from_pane_app);
+    install(&installing, &from_folder);
+    drop(installing);
+    installed_from_pane_app(&data, &from_pane_app, "sample-settings");
+    let launcher =
+        Launcher::with_packages(Runtime::start(), vec![], data.path().join("extensions"));
+    cx.update(pane::bind_keys);
+    let (_window, cx) = cx.add_window_view(|window, cx| LauncherWindow::new(launcher, window, cx));
+    let (_settings, mut settings_cx) = open_extensions(cx);
+
+    // The group's list and the sidebar's entries mark Pane's own — the
+    // acquired default and the package from pane-app — in the word; only
+    // those.
+    for drawn in [
+        "extension-entry-official-Rust sample",
+        "extension-entry-official-Settings sample",
+        "extension-item-official-Rust sample",
+        "extension-item-official-Settings sample",
+    ] {
+        assert!(
+            settings_cx.debug_bounds(drawn).is_some(),
+            "{drawn} is drawn"
+        );
+    }
+    assert!(
+        settings_cx
+            .debug_bounds("extension-entry-official-Hello")
+            .is_none()
+    );
+    for label in ["Rust sample, Official", "Settings sample, Official"] {
+        assert!(has_node(&mut settings_cx, "ListBoxOption", label));
+    }
+
+    // Their pages carry the mark beside their titles; a folder's page
+    // carries none.
+    for title in ["Rust sample", "Settings sample"] {
+        open_page(&mut settings_cx, title);
+        assert!(
+            settings_cx
+                .debug_bounds("extension-page-official")
+                .is_some(),
+            "{title}'s page marks it as Pane's own"
+        );
+    }
+    open_page(&mut settings_cx, "Hello");
+    assert!(
+        settings_cx
+            .debug_bounds("extension-page-official")
+            .is_none()
+    );
+}
+
+#[gpui::test]
+fn a_default_extension_s_page_has_the_update_automatically_switch(cx: &mut TestAppContext) {
+    let data = tempfile::tempdir().unwrap();
+    // A default extension, set up at first setup from a repository served
+    // over Git's smart HTTP protocol from 127.0.0.1 (pane-core's test
+    // support; a stand-in for a default's own repository, which lives
+    // outside this one, #285 — nothing reaches the network or a real Git
+    // host), its record keeping the repository the updater updates it
+    // from (#269).
+    let server = repo_server::Server::start();
+    let repos = tempfile::tempdir().unwrap();
+    let sample = defaults::from_sample(
+        &server,
+        repos.path(),
+        "sample-rust",
+        "Rust sample",
+        "sample-rust",
+    );
+    cx.executor().allow_parking();
+    let installing =
+        Launcher::with_packages(Runtime::start(), vec![], data.path().join("extensions"))
+            .with_defaults(vec![sample]);
+    cx.foreground_executor()
+        .block_on(installing.acquire_defaults());
+    drop(installing);
+    let launcher =
+        Launcher::with_packages(Runtime::start(), vec![], data.path().join("extensions"));
+    cx.update(pane::bind_keys);
+    let (window, cx) = cx.add_window_view(|window, cx| LauncherWindow::new(launcher, window, cx));
+    let (_settings, mut settings_cx) = open_extensions(cx);
+
+    // Its page has the switch npm and Git packages have, as the default's
+    // own (#269): clicking it turns its automatic updates off, the
+    // launcher saying so, and the per-package record the updater reads
+    // holding the choice.
+    open_page(&mut settings_cx, "Rust sample");
+    assert!(
+        settings_cx.debug_bounds("extension-auto-update").is_some(),
+        "the switch is drawn on the default's page"
+    );
+    click_row(&mut settings_cx, "extension-auto-update");
+    let off = Status::Result("Automatic updates of Rust sample are off".into());
+    until(&mut settings_cx, |_| {
+        let shown = cx.read_entity(&window, |window, _| window.launcher().view().status);
+        (shown == off).then_some(())
+    });
+    let controls: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(data.path().join("extensions/updates.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        controls["off"],
+        serde_json::json!(["default:sample-rust"]),
+        "the choice is recorded for the default's own identity"
+    );
+}
+
+/// Gives the record of the package installed from the local `folder` the
+/// source `github.com/pane-app/<name>`, the record an install of that
+/// repository by hand at its release tag writes, so a restart of Pane
+/// reads the package as one from the pane-app organization (ADR 0045).
+fn installed_from_pane_app(data: &TempDir, folder: &Path, name: &str) {
+    let path = data.path().join("extensions").join("installed.json");
+    let mut registry: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+    let local = PackageIdentity::local(folder)
+        .expect("a local package")
+        .key();
+    let local = local.strip_prefix("local:").expect("the local identity");
+    let record = registry["packages"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|record| record["local"] == local)
+        .expect("the package's record");
+    record.as_object_mut().unwrap().remove("local");
+    record["git"] = serde_json::json!(format!("github.com/pane-app/{name}"));
+    record["gitUrl"] = serde_json::json!(format!("https://github.com/pane-app/{name}"));
+    record["gitRef"] = serde_json::json!("refs/tags/v1.0.0");
+    record["gitCommit"] = serde_json::json!("0000000000000000000000000000000000000000");
+    record["pinned"] = serde_json::json!(true);
+    fs::write(&path, registry.to_string()).unwrap();
+}
+
+#[gpui::test]
 fn disabling_a_required_extension_from_its_page_confirms_and_disables_all(cx: &mut TestAppContext) {
     let (sources, data) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
     operations_package(&sources.path().join("greeter"), "Greeter", "");
@@ -2006,6 +2311,9 @@ fn disabling_a_required_extension_from_its_page_confirms_and_disables_all(cx: &m
             "Install extension from folder…",
             "Install extension from npm…",
             "Install extension from Git…",
+            "Create Extension…",
+            "Import Extension…",
+            "Check for Extension Updates",
             "Manage Extensions",
             "Settings…"
         ]
@@ -3129,7 +3437,9 @@ fn all_six_pages_are_listed_reachable_and_searchable(cx: &mut TestAppContext) {
 /// launcher rows: its own settings rows stand in a card, one under the
 /// other past the card's 1px rule, each at least 48 high; the Open Pane
 /// hotkey's recorder is a 36px well (black 24%) at its row's end, 14px
-/// in, with the Reset button inside it, and the launch-at-login choice is
+/// in, with the Reset button inside it, the "Use the Windows key" choice
+/// a plain settings row under it (#268, explained while this fake cannot
+/// take the tap), and the launch-at-login choice is
 /// the board's 40x24 switch at its row's end — white 16% with its knob at
 /// the left while off, the accent with the knob at the right once taken.
 /// No root-row wash is painted on the rows, and nothing fades.
@@ -3151,13 +3461,18 @@ fn the_general_page_draws_the_settings_control_families(cx: &mut TestAppContext)
 
     let card = rect_of(sc, "general-card");
     let row = rect_of(sc, "general-open-pane-row");
+    let choice_row = rect_of(sc, "general-use-windows-key");
     let login_row = rect_of(sc, "general-launch-at-login-row");
     assert_eq!(row[1], card[1], "the card's first row");
     assert!(
-        (login_row[1] - (row[1] + row[3] + 1.)).abs() < 0.5,
-        "the next row past the card's rule: {login_row:?} under {row:?}"
+        (choice_row[1] - (row[1] + row[3] + 1.)).abs() < 0.5,
+        "the \"Use the Windows key\" choice under it: {choice_row:?} under {row:?}"
     );
-    for bounds in [row, login_row] {
+    assert!(
+        (login_row[1] - (choice_row[1] + choice_row[3] + 1.)).abs() < 0.5,
+        "the next row past the card's rule: {login_row:?} under {choice_row:?}"
+    );
+    for bounds in [row, choice_row, login_row] {
         assert!(bounds[3] >= 48., "a settings row's floor: {bounds:?}");
     }
 
@@ -4521,4 +4836,117 @@ fn an_unreadable_record_refuses_the_login_choice(cx: &mut TestAppContext) {
     assert!(!login_chosen(&mut settings_cx), "the choice was refused");
     assert_eq!(login.registration(), Registration::Disabled);
     assert_eq!(record_of(data.path()), garbage);
+}
+
+/// The taskbar the tests attach, as the binary attaches Windows' own
+/// (#268): what the window asked it to do, in order — a show while the
+/// launcher is open, a restore when it hides or the choice turns off —
+/// and whether a show is in effect a restore would end.
+#[derive(Default)]
+struct FakeTaskbar {
+    asked: std::sync::Mutex<Vec<&'static str>>,
+    shown: std::sync::Mutex<bool>,
+}
+
+impl pane::taskbar::Taskbar for FakeTaskbar {
+    fn show_while_open(&self) {
+        let mut shown = self.shown.lock().unwrap();
+        if !*shown {
+            *shown = true;
+            self.asked.lock().unwrap().push("show");
+        }
+    }
+
+    fn restore(&self) {
+        let mut shown = self.shown.lock().unwrap();
+        if *shown {
+            *shown = false;
+            self.asked.lock().unwrap().push("restore");
+        }
+    }
+}
+
+impl FakeTaskbar {
+    /// What the window asked, in order.
+    fn asked(&self) -> Vec<&'static str> {
+        self.asked.lock().unwrap().clone()
+    }
+}
+
+#[gpui::test]
+fn the_taskbar_follows_the_launcher_while_the_choice_is_on(cx: &mut TestAppContext) {
+    let data = tempfile::tempdir().unwrap();
+    // The fake taskbar is attached before the window opens, as the binary
+    // attaches Windows' at startup; the launcher's hotkeys are the
+    // fake whose hook reports the health, as the other tests' are.
+    let taskbar = Arc::new(FakeTaskbar::default());
+    let launcher = Launcher::new(Runtime::start(), samples::sample_commands()).with_hotkeys(
+        Arc::new(FakeHotkeys {
+            health: std::sync::Mutex::new(None),
+        }),
+    );
+    // Guest replies arrive from the real runtime thread, outside the test
+    // scheduler's deterministic control.
+    cx.executor().allow_parking();
+    cx.update(|cx| {
+        pane::settings::init_with_overrides(
+            Some(data.path().to_owned()),
+            pane::settings::Overrides::default(),
+            cx,
+        );
+        pane::settings::attach_taskbar(Some(taskbar.clone()), cx);
+        pane::bind_keys(cx);
+    });
+    let (window, cx) = cx.add_window_view(|window, cx| LauncherWindow::new(launcher, window, cx));
+
+    // The choice starts off: hiding the launcher — Escape at an empty
+    // root search — and showing it again — the Open Pane hotkey — ask
+    // nothing of the taskbar.
+    cx.simulate_keystrokes("escape");
+    cx.run_until_parked();
+    let default = Shortcut::open_pane_default();
+    window.update_in(cx, |window, w, cx| window.hotkey_pressed(&default, w, cx));
+    cx.run_until_parked();
+    assert!(taskbar.asked().is_empty(), "{:?}", taskbar.asked());
+
+    // The choice is on the General page, explained; the launcher is open,
+    // so turning it on shows the taskbar at once (#268).
+    let mut settings_cx = open_settings(cx);
+    assert!(
+        settings_cx.debug_bounds("general-show-taskbar").is_some(),
+        "the taskbar row is drawn"
+    );
+    choose(&mut settings_cx, "general-show-taskbar");
+    settings_cx.run_until_parked();
+    assert_eq!(taskbar.asked(), ["show"]);
+
+    // Hiding the launcher puts the taskbar back as the user had it; the
+    // Settings window closes first, so the launcher has the keys again.
+    settings_cx.update(|window, _| window.remove_window());
+    cx.run_until_parked();
+    cx.simulate_keystrokes("escape");
+    cx.run_until_parked();
+    assert_eq!(taskbar.asked(), ["show", "restore"]);
+
+    // The Open Pane hotkey shows the launcher again, and the taskbar with
+    // it.
+    cx.executor().advance_clock(Duration::from_millis(700));
+    window.update_in(cx, |window, w, cx| window.hotkey_pressed(&default, w, cx));
+    cx.run_until_parked();
+    assert_eq!(taskbar.asked(), ["show", "restore", "show"]);
+
+    // Turning the choice off while the launcher is open puts the taskbar
+    // back at once, and hiding again asks nothing more.
+    let mut settings_cx = open_settings(cx);
+    choose(&mut settings_cx, "general-show-taskbar");
+    settings_cx.run_until_parked();
+    assert_eq!(taskbar.asked(), ["show", "restore", "show", "restore"]);
+    settings_cx.update(|window, _| window.remove_window());
+    cx.run_until_parked();
+    cx.simulate_keystrokes("escape");
+    cx.run_until_parked();
+    assert_eq!(taskbar.asked(), ["show", "restore", "show", "restore"]);
+
+    // The record holds the choice the page leaves.
+    until_record_holds(cx, data.path(), "\"showTaskbar\": false");
 }

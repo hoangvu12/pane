@@ -554,7 +554,7 @@ fn shown_bytes(bytes: &[u8]) -> String {
 }
 
 /// Whether `text` is a full SHA-1 commit id.
-fn is_commit_id(text: &str) -> bool {
+pub fn is_commit_id(text: &str) -> bool {
     text.len() == 40 && text.chars().all(|c| c.is_ascii_hexdigit())
 }
 
@@ -722,6 +722,82 @@ pub(crate) fn resolve_reference(
     let remote = Remote::connect(repository)?;
     let (revision, _) = remote.resolve(reference)?;
     Ok(revision)
+}
+
+/// One release tag of a repository, as ADR 0044 writes one: `v` followed
+/// by dotted numbers, such as `v1.2.0`, with the commit it points to
+/// (peeled of any tag object, as `ls-refs` peels it). A tag whose name
+/// writes no version — `v1.2.0-beta.1`, `v-` — is not a release tag, as
+/// [`crate::defaults::parse_pins`] says of a pin's.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ReleaseTag {
+    /// The tag's name, `v1.2.0`.
+    pub tag: String,
+    /// The commit the tag points to, which pins the bytes of the release
+    /// it names (ADR 0021).
+    pub commit: String,
+}
+
+impl ReleaseTag {
+    /// The version the tag's name writes after its `v`.
+    pub fn version(&self) -> &str {
+        self.tag.strip_prefix('v').unwrap_or(&self.tag)
+    }
+}
+
+/// The release tags of `repository`, newest first, with the commit each
+/// points to: the tags a default extension's repository offers as
+/// releases, which the updater of an installed default extension reads to
+/// find the newest one above the version installed
+/// ([`crate::defaults`]). Nothing is fetched. `None` when the listing is
+/// longer than the [`MAX_REFS`] Pane reads (as for a repository with very
+/// many tags). Blocks on the network.
+pub fn release_tags(repository: &Repository) -> Result<Option<Vec<ReleaseTag>>, String> {
+    let remote = Remote::connect(repository)?;
+    let Some(listed) = remote.list_refs(&["refs/tags/v"])? else {
+        return Ok(None);
+    };
+    let mut tags: Vec<(Vec<u64>, ReleaseTag)> = listed
+        .into_iter()
+        .filter_map(|(name, commit, _)| {
+            let tag = name.strip_prefix("refs/tags/")?;
+            let version = release_version(tag.strip_prefix('v')?)?;
+            Some((
+                version,
+                ReleaseTag {
+                    tag: tag.to_owned(),
+                    commit,
+                },
+            ))
+        })
+        .collect();
+    // Newest first, by the version each tag's name writes, so the first
+    // one above the version installed is the newest release above it.
+    tags.sort_by(|left, right| right.0.cmp(&left.0));
+    let tags: Vec<ReleaseTag> = tags.into_iter().map(|(_, release)| release).collect();
+    Ok(Some(tags))
+}
+
+/// Whether the release version `version` is a newer one than
+/// `installed`: dotted numbers compared by number, `v` optional (a tag's
+/// name against a manifest's version). A version that is not dotted
+/// numbers is never newer: it is not a release version.
+pub fn is_newer_release(version: &str, installed: &str) -> bool {
+    match (release_version(version), release_version(installed)) {
+        (Some(version), Some(installed)) => version > installed,
+        _ => false,
+    }
+}
+
+/// The dotted numbers a release version is: `1.2.0` is `[1, 2, 0]`;
+/// `None` for a text that is not dotted numbers (empty, signed, a
+/// prerelease's dash, a name that is no version at all).
+fn release_version(version: &str) -> Option<Vec<u64>> {
+    let mut numbers = Vec::new();
+    for part in version.split('.') {
+        numbers.push(part.parse::<u64>().ok()?);
+    }
+    Some(numbers)
 }
 
 pub(crate) fn fetch_within(
@@ -1166,8 +1242,10 @@ fn pack_in(answer: &[u8]) -> Result<Vec<u8>, NoPack> {
 /// to.
 type Listed = (String, String, Option<String>);
 
-/// The error text of an answer larger than asked for.
-const TOO_LARGE: &str = "its answer is too large";
+/// The error text of an answer larger than asked for: a fragment the
+/// wordings that meet one end with, as the updater's check of a default
+/// extension's release tags does too.
+pub(crate) const TOO_LARGE: &str = "its answer is too large";
 
 /// Explains an answer that is not `200`.
 fn answered(repository: &Repository, url: &str, answer: Answer) -> Result<Answer, String> {
@@ -1200,6 +1278,18 @@ fn unreachable(repository: &Repository, error: GetError) -> String {
             shown(&why)
         ),
     }
+}
+
+/// Whether `why` is the text of a connection failure this client met —
+/// connecting, listing the references or fetching the pack — wherever it
+/// wrapped one: `unreachable` builds the wording, and the fetch wraps it
+/// again as "Could not fetch commit … of …". Acquiring a default
+/// extension retries one of these where a revision the repository
+/// refused is explained once (crate::defaults), so the classification
+/// lives here, beside the wordings it reads: a reword of either changes
+/// this with them, and the test below pins both forms.
+pub(crate) fn is_connection_failure(why: &str) -> bool {
+    why.contains("Could not reach the Git repository")
 }
 
 fn get(
@@ -2000,6 +2090,36 @@ mod tests {
     }
 
     #[test]
+    fn release_versions_are_compared_by_number() {
+        // A tag's name against a manifest's version, the `v` optional; the
+        // numbers by number, so 0.10.0 is newer than 0.9.0.
+        for (version, installed, newer) in [
+            ("1.2.1", "1.2.0", true),
+            ("0.10.0", "0.9.0", true),
+            ("1.2.0", "1.2.0", false),
+            ("1.2", "1.2.0", false),
+            ("1.1.9", "1.2.0", false),
+            ("0.1", "", false),
+        ] {
+            assert_eq!(is_newer_release(version, installed), newer);
+        }
+        // A tag's version, as `ReleaseTag::version` names it.
+        let tag = ReleaseTag {
+            tag: "v0.2.0".into(),
+            commit: "ab".into(),
+        };
+        assert_eq!(tag.version(), "0.2.0");
+        assert!(is_newer_release(tag.version(), "0.1.0"));
+        // A text that is not dotted numbers is not a release version: a
+        // prerelease's dash, an empty one, a name that is no version at
+        // all.
+        for not in ["1.2.0-beta.1", "", "v", "1..2", "release"] {
+            assert!(!is_newer_release(not, "1.0.0"), "{not}");
+            assert!(!is_newer_release("2.0.0", not), "{not}");
+        }
+    }
+
+    #[test]
     fn pkt_lines_are_written_and_read() {
         assert_eq!(pkt("command=fetch\n"), b"0012command=fetch\n");
         let mut data = pkt("version 2\n");
@@ -2410,6 +2530,28 @@ mod tests {
             "{text}"
         );
         assert!(text.ends_with("x…"), "{text}");
+    }
+
+    #[test]
+    fn connection_failures_are_recognized_wherever_the_client_wrapped_one() {
+        // Where the client met it, the wording is the same.
+        assert!(is_connection_failure(
+            "Could not reach the Git repository github.com/owner/repo: reset by peer"
+        ));
+        // The fetch wraps it again in the commit it was fetching.
+        assert!(is_connection_failure(
+            "Could not fetch commit 0123456789abcdef0123456789abcdef01234567 of \
+             github.com/owner/repo: Could not reach the Git repository \
+             github.com/owner/repo: reset by peer"
+        ));
+        // A repository that answered, or a reference it refused, is not
+        // one: those are explained, not retried.
+        assert!(!is_connection_failure(
+            "The Git repository github.com/owner/repo answered 404 for the reference"
+        ));
+        assert!(!is_connection_failure(
+            "The Git repository github.com/owner/repo has no branch or tag named v1.0.0"
+        ));
     }
 
     #[test]

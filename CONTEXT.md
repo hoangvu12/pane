@@ -17,20 +17,20 @@ An installable addition that contributes functionality to the launcher.
 _Avoid_: Plugin, add-on
 
 **Default extension**:
-An official extension provided by default to supply an everyday feature: offered ticked at first setup and acquired then rather than shipped inside the installer, at the revision the Pane release names. The user can leave it out at first setup or disable it individually.
+An official extension provided by default to supply an everyday feature: installed at first setup, from the commit of its repository's release tag that the Pane release pins, rather than shipped inside the installer. The choice screen is deferred (#283): every default is installed, and disabling one is the opt-out — one the user uninstalled is not installed again.
 _Avoid_: Mandatory feature, core feature
 
 **Official extension**:
-An extension Pane's maintainers publish, each from a repository of its own that anyone may contribute to, and which Pane marks as its own. The default extensions are official extensions.
+An extension Pane's maintainers publish, each from a repository of its own that anyone may contribute to, and which Settings marks as Pane's own wherever it lists extensions, by its default identity or its repository in the pane-app organization. The default extensions are official extensions.
 _Avoid_: Built-in extension, core extension, first-party plugin
 
 **Artifact source**:
-Where Pane reads the index of its default extensions and downloads their payloads from: Pane's own downloads, distinct from npm and the Git hosts. A development build can name one on this computer instead, for tests and smokes; a release build cannot.
-_Avoid_: Registry (npm's), repository (Git's), update server (Pane's application updates)
+Where Pane reads the index of its own application updates: Pane's own downloads, distinct from npm and the Git hosts. Nothing about a default extension is acquired from it — a default is fetched from the commit of its repository's release tag that the Pane release pins. A development build can name an artifact source on this computer instead, for tests and smokes; a release build cannot.
+_Avoid_: Registry (npm's), repository (Git's)
 
 **Acquired artifact**:
-A default extension's payload Pane downloads itself at first setup: a tarball its index names by version, file, size and sha512 integrity, unpacked and checked as an npm package's tarball is and installed through the same path into a managed copy, whose identity is the default extension's own. Pane keeps what it downloaded in its payload cache only while it still matches that integrity.
-_Avoid_: Installer payload (the installer carries none), bundled feature, runtime download (the extension runtime is part of Pane)
+Pane's own application-update package, downloaded only when the user chooses the update: the zip or tarball the artifact source's index names by version, file, size, target and sha512 integrity, checked against that integrity and unpacked by the same strict readers an npm package's tarball is, then swapped for the running program, so the new version is used the next start. It is not cached between attempts.
+_Avoid_: Installer payload (the installer carries none), bundled feature, default extension's payload (a default is fetched from its pinned commit)
 
 **Disabled extension**:
 An installed extension whose execution and contributed functionality are switched off, while its settings and unexpired saved data are retained.
@@ -239,6 +239,14 @@ _Avoid_: File browser, Finder, file manager (Pane only finds and acts on files)
 **Global hotkey**:
 A key combination the user assigns to an installed command in Pane, which opens that command in Pane's window while any application has focus; Pane keeps it as its own record and registers it with the system only while the command's extension is enabled.
 _Avoid_: Shortcut (any key combination, including Pane's own keys), keybinding, alias
+
+**Keyboard hook**:
+Pane's own `WH_KEYBOARD_LL` low-level keyboard hook on Windows, which recognizes the chords `RegisterHotKey` cannot take — another application has the shortcut, or Windows keeps it — so a refused shortcut is never an error: the binding works while Pane runs, does nothing while an elevated application is in front, and its row says it is dispatched through the hook. Installed only while a binding needs it, and kept alive by a watchdog that reinstalls it when Windows removes it (ADR 0039).
+_Avoid_: Keylogger, global hook, event tap (a different mechanism, needing permission on macOS)
+
+**Game mode**:
+An optional setting, Windows only and off by default, that pauses Pane's hotkeys while a game is in front: each foreground change — a system event, never a timer — is decided (Windows reports a full-screen Direct3D application in front through its notification state, or the program of the window is one the user listed, so windowed games are covered), and while a game is in front every hotkey, the Open Pane hotkey included, is released, so the game gets every key; they come back by themselves when the game leaves the front, and the tray icon's tooltip says while they are paused (ADR 0039).
+_Avoid_: Do-not-disturb, focus mode (a different feature), fullscreen detection (one signal the decision uses)
 
 **Alias**:
 A word the user gives an installed command in Pane; typing it in root search lists that command first, and, for a query-taking command, typing it before some text lists a row that sends the text to the command when invoked. Pane keeps it as its own record by command id; a disabled package's commands offer none.
@@ -495,3 +503,11 @@ _Avoid_: Component alone (a package's built WebAssembly component), widget, cust
 **Theme token**:
 A named value of Pane's theme that an extension's UI uses instead of a raw value: a tone, text style, text level, space, radius or icon size. Tokens follow the user's appearance and background image. Raw values (hex colours, pixel sizes) are allowed beside them, and Pane corrects a raw colour's contrast against what it is drawn on.
 _Avoid_: Theme (the user's light or dark choice, part of Appearance), style, CSS variable
+
+**Run history**:
+The command lines the Windows Run dialog (Win+R) keeps in the registry (Explorer's RunMRU format) and Pane's Run default extension shares with it in both directions: what ran in either appears in both, recorded as typed, newest first, at most 26 entries, and deleting an entry removes it from both (ADR 0040).
+_Avoid_: Run's history (as if Pane kept its own), MRU list (the format's value, not the feature), command history
+
+**Switch Windows**:
+Pane's default extension that lists the open windows as Windows' Alt+Tab does — visible, unowned top-level windows that are not helpers, shell surfaces or a Store app's inner core window, with ones on another virtual desktop kept only where Alt+Tab shows all desktops — each with its title and the application it belongs to, in z-order with the front application's window first, and brings one of them to the front through the `windows` host capability (ADR 0040).
+_Avoid_: window switcher (the Alt+Tab replacement Pane is not), task view, window manager

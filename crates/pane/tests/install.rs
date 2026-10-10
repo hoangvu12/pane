@@ -23,9 +23,14 @@ mod packages;
 
 use packages::package;
 
+const CREATE_ROW: &str = "Create Extension…";
+const IMPORT_ROW: &str = "Import Extension…";
 const INSTALL_ROW: &str = "Install extension from folder…";
 const NPM_ROW: &str = "Install extension from npm…";
 const GIT_ROW: &str = "Install extension from Git…";
+/// Root search's row for the pass the user asks for, listed once an
+/// extension is installed (#267).
+const CHECK_ROW: &str = "Check for Extension Updates";
 const MANAGE_ROW: &str = "Manage Extensions";
 const SETTINGS_ROW: &str = "Settings…";
 
@@ -66,7 +71,14 @@ fn a_chosen_package_is_previewed_installed_and_run(cx: &mut TestAppContext) {
     let (window, cx) = open(cx, &data);
     assert_eq!(
         titles(&settle(&window, cx)),
-        [INSTALL_ROW, NPM_ROW, GIT_ROW, SETTINGS_ROW]
+        [
+            INSTALL_ROW,
+            NPM_ROW,
+            GIT_ROW,
+            CREATE_ROW,
+            IMPORT_ROW,
+            SETTINGS_ROW
+        ]
     );
 
     let view = choose_folder(&window, cx, Some(folder));
@@ -91,6 +103,9 @@ fn a_chosen_package_is_previewed_installed_and_run(cx: &mut TestAppContext) {
             INSTALL_ROW,
             NPM_ROW,
             GIT_ROW,
+            CREATE_ROW,
+            IMPORT_ROW,
+            CHECK_ROW,
             MANAGE_ROW,
             SETTINGS_ROW
         ]
@@ -201,7 +216,14 @@ fn an_unsupported_folder_is_explained_and_escape_returns_to_root(cx: &mut TestAp
     cx.simulate_keystrokes("escape");
     assert_eq!(
         titles(&settle(&window, cx)),
-        [INSTALL_ROW, NPM_ROW, GIT_ROW, SETTINGS_ROW]
+        [
+            INSTALL_ROW,
+            NPM_ROW,
+            GIT_ROW,
+            CREATE_ROW,
+            IMPORT_ROW,
+            SETTINGS_ROW
+        ]
     );
 }
 
@@ -219,6 +241,9 @@ fn an_installed_package_is_disabled_and_enabled_from_the_extension_list(cx: &mut
             INSTALL_ROW,
             NPM_ROW,
             GIT_ROW,
+            CREATE_ROW,
+            IMPORT_ROW,
+            CHECK_ROW,
             MANAGE_ROW,
             SETTINGS_ROW
         ]
@@ -259,7 +284,16 @@ fn an_installed_package_is_disabled_and_enabled_from_the_extension_list(cx: &mut
     cx.simulate_keystrokes("escape");
     assert_eq!(
         titles(&settle(&window, cx)),
-        [INSTALL_ROW, NPM_ROW, GIT_ROW, MANAGE_ROW, SETTINGS_ROW]
+        [
+            INSTALL_ROW,
+            NPM_ROW,
+            GIT_ROW,
+            CREATE_ROW,
+            IMPORT_ROW,
+            CHECK_ROW,
+            MANAGE_ROW,
+            SETTINGS_ROW
+        ]
     );
 
     enter_flow(&window, cx);
@@ -276,6 +310,9 @@ fn an_installed_package_is_disabled_and_enabled_from_the_extension_list(cx: &mut
             INSTALL_ROW,
             NPM_ROW,
             GIT_ROW,
+            CREATE_ROW,
+            IMPORT_ROW,
+            CHECK_ROW,
             MANAGE_ROW,
             SETTINGS_ROW
         ]
@@ -646,7 +683,14 @@ fn an_installed_package_is_uninstalled_after_choosing_what_to_keep(cx: &mut Test
     cx.simulate_keystrokes("escape");
     assert_eq!(
         titles(&settle(&window, cx)),
-        [INSTALL_ROW, NPM_ROW, GIT_ROW, SETTINGS_ROW]
+        [
+            INSTALL_ROW,
+            NPM_ROW,
+            GIT_ROW,
+            CREATE_ROW,
+            IMPORT_ROW,
+            SETTINGS_ROW
+        ]
     );
     assert!(folder.join("pane.json").exists(), "the source is kept");
 }
@@ -725,7 +769,14 @@ fn retained_data_is_deleted_from_the_extension_list_after_confirming(cx: &mut Te
     cx.simulate_keystrokes("escape");
     assert_eq!(
         titles(&settle(&window, cx)),
-        [INSTALL_ROW, NPM_ROW, GIT_ROW, SETTINGS_ROW]
+        [
+            INSTALL_ROW,
+            NPM_ROW,
+            GIT_ROW,
+            CREATE_ROW,
+            IMPORT_ROW,
+            SETTINGS_ROW
+        ]
     );
     assert!(folder.join("pane.json").exists(), "the source is kept");
 }

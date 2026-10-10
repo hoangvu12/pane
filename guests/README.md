@@ -5,6 +5,27 @@ contract in [`wit/extension.wit`](../wit/extension.wit). Pane registers only
 WASI 0.3 interfaces; a component that imports WASI 0.2 (for example through
 Rust's standard library on `wasm32-wasip2`) is rejected with an explanation.
 
+This tree holds Pane's **samples** — small extensions that exercise the
+whole contract in Rust, JavaScript and TypeScript, which the tests install
+as fixtures and the smokes drive — and the SDKs and fixtures they build
+against. Pane's five **default extensions** (the Calculator, Applications,
+Quicklinks, Files and Clipboard History) are not here: each lives in its
+own repository under the `pane-app` organization
+(`https://github.com/pane-app/<id>`), and a Pane release installs them
+from the release commits this build pins
+([`crates/pane/defaults.json`](../crates/pane/defaults.json); see
+[ADR 0045](../docs/adr/0045-official-extensions-live-in-their-own-repositories.md)).
+To work on one, clone its repository: its own CI builds the component, and
+`cargo xtask guests` here builds the samples only. Until the Rust SDK is
+published to crates.io (#128), build a default extension's repository
+against the SDK by adding a `[patch.crates-io]` entry for `pane-extension`
+pointing at this checkout's `guests/pane-extension`, and build it with
+`cargo build --release --target wasm32-wasip2`; commit the built component
+under the path its `pane.json` names on its release branch and tag
+`v<version>`, as its repository's own workflow does. To try a default
+without building it, install it from its repository:
+`pane --install git:https://github.com/pane-app/calculator@v0.5.0`.
+
 - `pane-extension`: the Rust SDK, bindings for the contract, made to be
   published on crates.io under that name ([its README](pane-extension/README.md));
   its version follows the extension API. `no_std`, so only WASI 0.3 is
@@ -34,25 +55,9 @@ Rust's standard library on `wasm32-wasip2`) is rejected with an explanation.
   ([pausing](../docs/pausing.md), `crates/pane-core/tests/pausing.rs`); their
   **Stop responding** item computes without waiting until Pane stops it
   (`crates/pane-core/tests/unresponsive.rs`).
-- `calculator`: Pane's calculator, a default extension in Rust: an
-  arithmetic expression typed into root search lists its answer, which Enter
-  copies ([Root results](#root-results-computed-from-the-query),
-  [expression scope](../docs/root-search.md#the-calculator)). Its package
-  is `packages/calculator`; held by `crates/pane-core/tests/calculator.rs`.
-- `applications`: Pane's application launcher, a default extension in
-  Rust: the installed applications, which Pane's host finds, are found by
-  name in root search and Enter opens one
-  ([Root results supplied ahead of the query](#root-results-supplied-ahead-of-the-query),
-  [applications](../docs/applications.md)). Its package is
-  `packages/applications`; held by `crates/pane-core/tests/applications.rs`.
-- `files`: Pane's file search, a default extension in Rust: root search
-  and its Search Files command find the files and folders of the home
-  folder in Pane's file index by name, and Enter opens one
-  ([Pane's file index](#panes-file-index), [files](../docs/files.md)).
-  Its package is `packages/files`; held by
-  `crates/pane-core/tests/file_index.rs` and `file_actions.rs`.
 - `sample-files`, `sample-files-js`, `sample-files-ts`: the same host
-  import and `open-file` results in Rust, JavaScript and TypeScript; held by
+  import and `open-file` results in Rust, JavaScript and TypeScript — the
+  same contract the Files default extension holds; held by
   `crates/pane-core/tests/file_actions.rs`.
 - `fixtures/folder-files`: what Files was before #175, over the folder the
   user grants its package ([Files of a granted folder](#files-of-a-granted-folder)),
@@ -234,19 +239,14 @@ Rust's standard library on `wasm32-wasip2`) is rejected with an explanation.
   language), committed so that tests and
   installing a sample need no JavaScript toolchain, with `manifest.json`
   recording their hashes and build inputs.
-- `packages`: the samples', the calculator's and applications' package manifests (`pane.json`). `cargo xtask
+- `packages`: the samples' package manifests (`pane.json`). `cargo xtask
   guests` puts each one with its built component in
-  `target/guests/packages/<name>/`, a ready-to-install package. The
-  default extensions' packages (`calculator`, `applications`, `files`,
-  `clipboard-history`, `quicklinks`) also hold their tile icons (#163):
-  `icon.svg`, the package's, which a command without an icon of its own
-  shows, and the tiles of Search Files (`files/search.svg`) and of
-  Quicklinks' four commands (`quicklinks/search.svg`, `create.svg`,
-  `import.svg`, `export.svg`). Each is a 28 by 28 SVG, a coloured rounded
-  square (radius 7, the row tile's) with a white symbol, one colour per
-  extension; they read on both themes, so none has `@light` or `@dark`
-  variants. The artwork is Pane's own, under this folder's licences, and
-  is held by `crates/pane/tests/default_icons.rs`.
+  `target/guests/packages/<name>/`, a ready-to-install package; the icons
+  sample's hold the tile icons its rows draw (`icon.png`, the package's,
+  which a command without an icon of its own shows, and `command.svg`, its
+  "Icons" command's), held by `crates/pane/tests/default_icons.rs`. The
+  default extensions' own packages, and the tile icons they ship, live in
+  their repositories.
 - `fixtures/faulty`: test fixture whose actions, form, custom view and root
   results return an error or trap, and whose actions grow its memory to
   just under the 128 MiB cap or past it.
@@ -499,49 +499,60 @@ Build commands, from the repository root:
 
 ```sh
 cargo xtask js-guests        # rebuild guests/prebuilt/ and target/guests/ from the samples
-python3 tools/componentize-js/pane_js.py build <package dir> <out.wasm>   # any command package
-python3 tools/componentize-js/pane_js.py check   # are the prebuilt samples current and their npm licenses permissive?
+cargo run -p pane-ext -- dev <package dir>   # any command package: build it and develop it in Pane
+cargo xtask js-guests --check # are the prebuilt samples current and their npm licenses permissive?
 ```
 
-A build installs the package's locked dependencies into a staging copy,
-type-checks it with TypeScript when it has a `tsconfig.json` (the JS sample is
-checked through JSDoc), bundles it with esbuild and componentizes it. The TS
-sample's `.ts` source is transpiled by esbuild and runs on the same runtime as
-JS. The first run builds the toolchain (about five minutes), later runs take
-seconds. Everything downloaded or built goes to `PANE_JS_TOOLCHAIN_DIR`,
-default `~/.cache/pane/componentize-js` on Linux,
-`~/Library/Caches/pane/componentize-js` on macOS and
-`%LOCALAPPDATA%\pane\componentize-js` on Windows; the source tree is not
-written except for the output. After editing a sample, run
+A build is pane-build's JavaScript build (`crates/pane-build`, #218): it
+installs the package's locked dependencies into a staging copy, type-checks
+it with the package's TypeScript when it has a `tsconfig.json` (the JS
+sample is checked through JSDoc), bundles it with esbuild — both from the
+package's own `node_modules`, so its lockfile pins their versions — and
+componentizes it with the componentizer the repository links (the committed
+`runtime.wasm` and `libc.so` of `tools/componentize-js/wasm-parts`). The TS
+sample's `.ts` source is transpiled by esbuild and runs on the same runtime
+as JS. A build needs Node.js and npm and the repository's Rust, and nothing
+else; the staging copy is kept in the user's cache
+(`pane/js-build/<package>-<hash>`, under `~/.cache` on Linux,
+`~/Library/Caches` on macOS and `%LOCALAPPDATA%` on Windows), so a save
+whose lockfile did not change installs nothing. After editing a sample, run
 `cargo xtask js-guests` and commit the updated `guests/prebuilt/`.
 
 Prerequisites, in addition to the Rust ones in the [README](../README.md):
 
-- Python 3.12 or later (`python3`; on Windows use `python` in the commands
-  above; set `PYTHON` for `cargo xtask` if yours is named differently), git,
-  and Node.js 22 or later with npm. `cargo xtask ci` also runs the `check`
-  subcommand, so it needs Python too.
-- The build installs Rust `nightly-2026-09-27` with `rust-src` through rustup,
-  and downloads wasi-sdk 34 for the host (x86_64 or arm64, all three OSes).
-- **Windows:** `python` from python.org or the Microsoft Store and Node.js
-  from nodejs.org; run from a normal shell. **macOS:** Xcode Command Line
-  Tools already provide git; install Python and Node.js from their installers
-  or Homebrew. **Linux:** the distribution's `python3`, `git`, `nodejs` and
-  `npm` (Node.js 22+, for example through nvm).
+- Node.js 22 or later with npm. Nothing else: no Python, no nightly Rust,
+  no wasi-sdk — the componentizer is linked into the build
+  (`crates/pane-build`'s `componentizer` feature), with the wasm parts the
+  repository commits; the published CLI (`npm install @pane-app/cli`, whose
+  JavaScript shim picks the platform package for the system) is the same
+  build. Rebuilding the wasm parts themselves is a maintainer's step
+  (`cargo xtask wasm-parts`), never part of building a package — see
+  [tools/componentize-js](../tools/componentize-js/README.md).
+- **Windows:** Node.js from nodejs.org; run from a normal shell. **macOS:**
+  Node.js from its installer or Homebrew. **Linux:** the distribution's
+  `nodejs` and `npm` (Node.js 22+, for example through nvm).
 
-Toolchain used: upstream [componentize-qjs](https://github.com/andreiltd/componentize-qjs)
-0.4.5 at `e563c6d6` with the three patches in
-[`tools/componentize-js/patches`](../tools/componentize-js/patches), its
-QuickJS runtime built with `nightly-2026-09-27` for `wasm32-wasip3` against
-wasi-sdk 34, the componentizer built with Rust 1.98.1, esbuild 0.28.2 and
-TypeScript 7.0.2. Every JS component imports the same 20 WASI 0.3 interfaces
+Toolchain used: the vendored
+[componentize-qjs](https://github.com/andreiltd/componentize-qjs) 0.4.5 at
+`e563c6d6`
+([`tools/componentize-js/componentize-qjs`](../tools/componentize-js/componentize-qjs),
+the patch queue applied in its source), its QuickJS runtime built with
+`nightly-2026-09-27` for `wasm32-wasip3` against wasi-sdk 34 (the committed
+`runtime.wasm`), wasi-sdk 34's `libc.so` (also committed), the componentizer
+built with the repository's Rust 1.98.1, esbuild 0.28.2 and TypeScript
+7.0.2. Every JS component imports the same 20 WASI 0.3 interfaces
 through its libc, whatever the source uses, and `wasi:http`'s `types` and
 `client` too if its bundle imports `wasi:http` (itself or through
 `@pane-app/extension/http`), which Pane then lists as using the network; it is
-about 4.4 MB. The whole toolchain build has been run on Linux and Windows x86_64. The componentizer
-itself is built in CI for Windows, macOS and Linux on x64 and arm64, from a runtime built once on
-Linux, and each build's TypeScript sample passes Pane's checks there (`componentizer.yml`). See
-[tools/componentize-js](../tools/componentize-js/README.md) for the patch queue.
+about 4.4 MB. The componentizer and the `pane-ext` that runs it ship as npm
+packages (`@pane-app/cli`, whose JavaScript shim picks the
+`@pane-app/cli-<target>` platform package for the system), built in CI for
+Windows, macOS and Linux on x64 and arm64 from the committed wasm parts; the
+workflow that packs them also installs them into a scratch project with
+only Node.js and npm and builds this sample with them
+(`cli-packages.yml`). See
+[tools/componentize-js](../tools/componentize-js/README.md) for the patch
+queue and the wasm parts.
 
 ## Forms
 
@@ -754,7 +765,9 @@ items are the runnable example, and
 ## Root results computed from the query
 
 A command can answer what the user types into root search, as the
-[calculator](calculator) does: its results are listed above the results
+Rust [sample](sample-rust) does with "reverse <text>" and the
+[Calculator](https://github.com/pane-app/calculator) default extension does
+with arithmetic: its results are listed above the results
 root search finds by title, and Enter on one performs its action:
 copying a text to the clipboard (`copy`) or opening an `http://` or
 `https://` address with the system's handler for web links, normally the
@@ -883,7 +896,8 @@ return search(query, { sort: "relevance", limit: 20, offset: 0 }).map((entry) =>
 }));
 ```
 
-The [Files](files) default extension works this way (its command, Search
+The [Files](https://github.com/pane-app/files) default extension works
+this way (its command, Search
 Files, answers both root search and its own field);
 [`sample-files`](sample-files), [`sample-files-js`](sample-files-js) and
 [`sample-files-ts`](sample-files-ts) do the same in Rust, JavaScript and
@@ -973,7 +987,8 @@ return state.val.files
 ## Root results supplied ahead of the query
 
 A command can also give root search results that do not depend on the
-query, as the [applications](applications) extension gives the installed
+query, as the [Applications](https://github.com/pane-app/applications)
+default extension gives the installed
 applications: Pane asks once root search is used, keeps them, and matches
 and ranks them by title like commands, for a query that is not blank. Set
 `"indexedResults": true` on the command in `pane.json` and export
@@ -1064,8 +1079,9 @@ packages in [`packages/`](packages) set `indexedResults`.
 ## Root providers
 
 A command whose only job is to answer root search, as the
-[calculator](calculator) and [applications](applications) extensions'
-are, declares `"mode": "provider"` in `pane.json` (#164). A **root
+[Calculator](https://github.com/pane-app/calculator) and
+[Applications](https://github.com/pane-app/applications) default
+extensions' are, declares `"mode": "provider"` in `pane.json` (#164). A **root
 provider** has no row of its own: it is never launched, so it cannot be
 pinned, has no alias, fallback or hotkey, and neither the Actions panel nor
 the Shortcuts page offers it; root search learns nothing about it. Its
@@ -1246,8 +1262,9 @@ while the package is disabled. Each item is kept for the retention after
 it was copied (7 days unless `set-retention(seconds)` chose 1 minute to
 365 days), and Pane deletes it then itself, whether the command runs or
 not: `entries()` never lists an expired item, so a command needs no expiry
-of its own. The [Clipboard History](clipboard-history)
-default extension is the example; see [clipboard history](../docs/clipboard-history.md).
+of its own. The [Clipboard
+History](https://github.com/pane-app/clipboard-history) default extension is
+the example; see [clipboard history](../docs/clipboard-history.md).
 It is the one package whose history records from the first start, without
 calling `set-capture` (ADR 0042), and Pane draws its command in a view of
 its own, whose controls (pause, retention, disabled applications, clearing)
@@ -2202,6 +2219,132 @@ its bundle uses it. The programs samples are a
 [TypeScript](sample-programs-ts/src/index.ts) command running `pane-echo`
 by its bare name, which must be on the search path.
 
+## Running what the Run dialog runs
+
+`pane_extension::run` (`pane:extension/run`, wit/run.wit) runs a command
+line as Windows' Run dialog (Win+R) reads it — a program by its bare name,
+found on the search path the registry names at the time of the call and in
+App Paths, or by its path, with arguments; a Control Panel applet through
+the Control Panel program; a document, a folder, a network path or a
+`shell:` or `ms-settings:` address — with environment variables expanded.
+An elevated run goes through Windows' own elevation prompt, which the user
+may decline. The history is the Run dialog's own, in the registry, shared
+in both directions: `run` records the command line that ran, `history`
+lists it newest first and `delete-from-history` removes an entry from
+both. Windows only; elsewhere every call answers `not-available`, which is
+not a failure.
+
+```rust
+use pane_extension::run::{self, RunError};
+
+run::run("notepad.exe C:\Notes\todo.txt", false)?;
+run::run("regedit", true)?; // Windows asks first
+let history = run::history()?; // newest first, as typed
+```
+
+A command that takes a query is the natural shape for it: the text typed
+in root search is the command line, sent when the user invokes it through
+its alias or as a fallback. The [Run](run) default extension does exactly
+that (ADR 0040), with "Run as Administrator" and a "Run History" list
+beside it. The run samples are a
+[Rust](sample-run/src/lib.rs), a
+[JavaScript](sample-run-js/src/index.js) and a
+[TypeScript](sample-run-ts/src/index.ts) command answering the same; a
+JavaScript or TypeScript command's package.json sets
+`"pane": { "run": true }` to import the interface.
+## Session and power commands
+
+A command may also lock the screen, log the user out, restart, shut down,
+sleep, hibernate, turn the displays off, start the screen saver, change
+the volume of the default output device, mute the microphones, open or
+empty the Recycle Bin, switch the system's appearance between light and
+dark, toggle HDR, show the desktop, toggle hidden files in File Explorer,
+eject the removable drives or toggle Bluetooth (#255, #265, #266, ADR
+0040, `pane:extension/system-commands` in
+[wit/system-commands.wit](../wit/system-commands.wit)). Each function
+answers what it ended in — the state the system is in now, or why nothing
+changed ("Restarting", "Volume 52%", "Microphones muted", "Dark mode",
+"HDR on", "Ejected E:", "Hibernation is
+not available on this computer: there is no hibernation file") — never
+an error: show the text in a HUD, as the System Commands default extension
+does (it confirms the destructive ones first, with "Don't ask again",
+emptying the Recycle Bin among them).
+The decisions are Pane's: restart and shut down force applications closed,
+a log out does not; sleep turns the displays off on a computer that enters
+Modern Standby when they turn off, and suspends any other; a volume step
+moves the level as Windows' own volume keys do, and the microphone toggle
+mutes every microphone when any is unmuted and unmutes them all otherwise;
+the HDR and Bluetooth toggles turn every capable display or radio on when
+any is off, and all off when they are all on; an already empty Recycle Bin
+is a success, and ejection names each drive that refused with why.
+Set Volume takes its level, 0 to 100, as the command's argument. Windows
+implements them today; other systems answer that the commands are not
+available there yet.
+
+```rust
+use pane_extension::feedback::{show_hud, ToastStyle};
+use pane_extension::system_commands::{self, Outcome};
+
+match system_commands::lock_screen() {
+    Outcome::Done(text) => show_hud(&text, ToastStyle::Success),
+    Outcome::Explained(text) => show_hud(&text, ToastStyle::Failure),
+}
+```
+
+```ts
+import { lockScreen } from "@pane-app/extension/system-commands";
+import { showHUD } from "@pane-app/extension/feedback";
+
+const outcome = lockScreen();
+showHUD(outcome.text, outcome.state === "done" ? "success" : "failure");
+```
+
+A JavaScript or TypeScript command imports the interface only if its bundle
+uses it. The samples are a [Rust](sample-system-commands/src/lib.rs), a
+[JavaScript](sample-system-commands-js/src/index.js) and a
+[TypeScript](sample-system-commands-ts/src/index.ts) command, one item per
+function, each saying what it answered.
+
+## Listing the open windows
+
+A command may also list the open windows — the ones Alt+Tab would show,
+with their titles, their applications' names and icons, and whether each
+is minimized, maximized, on another virtual desktop or elevated, in
+z-order with the front application's window first — and bring one of them
+to the front, restoring it first if it is minimized (#263, ADR 0040,
+`pane:extension/windows` in [wit/windows.wit](../wit/windows.wit)). A
+window's `id` is opaque and valid for the session alone: give it back to
+`activate` to switch to that window; one that closed is gone, and another
+may have taken its place. Windows only; elsewhere every call answers
+`not-available`, which is not a failure.
+
+```rust
+use pane_extension::windows;
+
+for window in windows::list_windows()? {
+    if window.title.contains("todo") {
+        windows::activate(&window.id)?;
+    }
+}
+```
+
+```ts
+import { activate, listWindows } from "pane:extension/windows@0.1.0";
+
+for (const window of listWindows()) {
+  if (window.title.includes("todo")) activate(window.id);
+}
+```
+
+A JavaScript or TypeScript command's package.json sets
+`"pane": { "windows": true }` to import the interface. The [Switch
+Windows](switch-windows) default extension is the one that lists them
+(ADR 0040); the windows samples are a
+[Rust](sample-switch-windows/src/lib.rs), a
+[JavaScript](sample-switch-windows-js/src/index.js) and a
+[TypeScript](sample-switch-windows-ts/src/index.ts) command answering the
+same, one item per window, each switching to it.
+
 ## Packaging and installing a local extension
 
 A package is a folder with a `pane.json` manifest at its root and the built
@@ -2292,9 +2435,10 @@ rebuild it against the current [`wit/extension.wit`](../wit/extension.wit).
 Where the component comes from is up to your build. A standalone Rust crate
 can point `component` at `target/wasm32-wasip2/release/<name>.wasm` inside
 the crate folder after `cargo build --release --target wasm32-wasip2`. A
-JavaScript or TypeScript package can build into its own folder with
-`python3 tools/componentize-js/pane_js.py build <package dir> <package dir>/dist/<name>.wasm`
-and point at `dist/<name>.wasm`. The repository's samples live in one Cargo
+JavaScript or TypeScript package builds its component wherever its build
+puts it (development mode copies each built component into the folder, so
+`pane.json` can point at `dist/<name>.wasm`); `pane-ext dev <package dir>`
+builds it and hands it to Pane. The repository's samples live in one Cargo
 workspace and a prebuilt folder, so their manifests are in
 [`packages/`](packages) and `cargo xtask guests` assembles each with its
 component into `target/guests/packages/<name>/`.
@@ -2428,11 +2572,15 @@ succeeds:
   component), so `pane.json` names its component under
   `target/wasm32-wasip2/release/`; Pane takes the file of that name cargo
   built this time, even with another target folder.
-- A folder with `package.json` is built with
-  `python3 tools/componentize-js/pane_js.py build <folder> <out>` for each
-  component `pane.json` names, such as `dist/<name>.wasm` (a Pane run from a
-  checkout knows where `pane_js.py` is; otherwise set
-  `PANE_COMPONENTIZE_JS`; `PANE_PYTHON` names the interpreter).
+- A folder with `package.json` is built with Pane's own JavaScript build
+  (`npm ci --ignore-scripts && tsc -p tsconfig.json && esbuild --bundle &&
+  componentize`) for each component `pane.json` names, such as
+  `dist/<name>.wasm`, needing Node.js and npm alone: a `pane-ext` or Pane
+  from a checkout componentizes with its own linked componentizer; an
+  installed Pane with the componentizer of the package's own installed
+  `@pane-app/cli` platform package (`node_modules/@pane-app/cli-<target>`,
+  which `npm install` provides — a package without one is explained), or
+  the folder `PANE_COMPONENTIZER` names.
 
 Each build puts the components in a staging folder under Pane's data
 folder, and runs with Pane's environment (less what `cargo run` set for
