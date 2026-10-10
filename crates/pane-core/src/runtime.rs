@@ -568,9 +568,7 @@ pub enum DesignedNext {
     /// view is dropped, the view below's last tree shows, and it is then
     /// told the view above popped. A pop of the root view leaves the
     /// command with it.
-    Popped {
-        result: String,
-    },
+    Popped { result: String },
 }
 
 /// Identifies a custom view open in a [`Runtime`]. Ids are never reused,
@@ -4143,13 +4141,9 @@ impl Host {
     /// instance's turn. A view whose instance has gone (a crash, a reload,
     /// a generation's end) is already dropped with it.
     async fn drop_designed(&self, path: &Path, serial: u64, resource: ResourceAny) {
-        let live = self
-            .instances
-            .borrow()
-            .get(path)
-            .is_some_and(|instance| {
-                instance.serial == serial && instance.store.data().stopped().is_none()
-            });
+        let live = self.instances.borrow().get(path).is_some_and(|instance| {
+            instance.serial == serial && instance.store.data().stopped().is_none()
+        });
         if !live {
             return;
         }

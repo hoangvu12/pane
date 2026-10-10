@@ -92,11 +92,7 @@ impl DesignedStack {
                 id: top.id,
                 tree: top.tree.clone(),
             },
-            top
-                .tree
-                .navigation_title()
-                .unwrap_or_default()
-                .to_owned(),
+            top.tree.navigation_title().unwrap_or_default().to_owned(),
         )
     }
 }
@@ -207,10 +203,7 @@ impl Launcher {
                 // is: the navigation title its tree names, where a screen's
                 // title is. The footer names the open command.
                 let (screen, title) = stack.shown();
-                let view = super::LauncherView::new(
-                    super::Screen::DesignedView(screen),
-                    title,
-                );
+                let view = super::LauncherView::new(super::Screen::DesignedView(screen), title);
                 state.open = Some(component);
                 state.launch = launch;
                 state.open_command = Some(command);
@@ -293,7 +286,10 @@ impl Launcher {
         if stack.views.len() < 2 {
             return false;
         }
-        let popped = stack.views.pop().expect("the stack holds more than the root");
+        let popped = stack
+            .views
+            .pop()
+            .expect("the stack holds more than the root");
         if let Ok(runtime) = self.runtime() {
             runtime.close_designed_view(popped.id);
         }
@@ -409,8 +405,11 @@ impl Launcher {
                     // it.
                     self.show_root(state, None);
                 } else {
-                    let (screen, title) =
-                        state.designed_view.as_ref().expect("a view is open").shown();
+                    let (screen, title) = state
+                        .designed_view
+                        .as_ref()
+                        .expect("a view is open")
+                        .shown();
                     state.view.screen = super::Screen::DesignedView(screen);
                     state.view.title = title;
                     state.view.status = Status::Idle;

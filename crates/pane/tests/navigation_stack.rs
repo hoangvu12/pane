@@ -41,9 +41,8 @@ fn open<'a>(
     });
     let runtime = Runtime::start().unwrap();
     let (changed, changes) = pane_core::changes::channel();
-    let launcher =
-        Launcher::with_packages(Ok(runtime), Vec::new(), data.path().join("extensions"))
-            .with_development(Arc::new(Toolchains::from_env(None)), changed);
+    let launcher = Launcher::with_packages(Ok(runtime), Vec::new(), data.path().join("extensions"))
+        .with_development(Arc::new(Toolchains::from_env(None)), changed);
     cx.executor().allow_parking();
     cx.update(pane::bind_keys);
     let assembled =
@@ -112,9 +111,7 @@ fn text_of(node: &pane_core::Node) -> Option<String> {
 
 /// How deep the designed view's navigation stack is.
 fn depth(window: &Entity<LauncherWindow>, cx: &mut VisualTestContext) -> usize {
-    cx.read_entity(window, |window, _| {
-        window.launcher().designed_stack_depth()
-    })
+    cx.read_entity(window, |window, _| window.launcher().designed_stack_depth())
 }
 
 #[gpui::test]

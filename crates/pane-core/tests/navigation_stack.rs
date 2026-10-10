@@ -24,7 +24,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use futures::executor::block_on;
-use pane_core::{Launcher, Node, NodeKind, Runtime, Screen, Status, MAX_NAVIGATION_DEPTH};
+use pane_core::{Launcher, MAX_NAVIGATION_DEPTH, Node, NodeKind, Runtime, Screen, Status};
 
 use tempfile::TempDir;
 
@@ -189,7 +189,11 @@ fn starting_with(node: &Node, prefix: &str) -> Option<String> {
             .fallback
             .as_deref()
             .and_then(|fallback| starting_with(fallback, prefix))
-            .or_else(|| node.children.iter().find_map(|child| starting_with(child, prefix))),
+            .or_else(|| {
+                node.children
+                    .iter()
+                    .find_map(|child| starting_with(child, prefix))
+            }),
         _ => node
             .children
             .iter()
@@ -333,11 +337,7 @@ fn a_push_beyond_the_depth_bound_is_the_extensions_error() {
             "{language}: {:?}",
             pane.status()
         );
-        assert_eq!(
-            pane.text(),
-            "Deeper: One",
-            "{language}: the tree stays"
-        );
+        assert_eq!(pane.text(), "Deeper: One", "{language}: the tree stays");
         assert_eq!(
             pane.launcher.designed_stack_depth(),
             MAX_NAVIGATION_DEPTH,
