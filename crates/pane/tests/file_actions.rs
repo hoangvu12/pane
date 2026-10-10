@@ -21,6 +21,8 @@ use std::time::{Duration, Instant};
 use futures::executor::block_on;
 use gpui::{AppContext, Entity, Modifiers, MouseButton, TestAppContext, VisualTestContext};
 use pane::LauncherWindow;
+use pane_core::changes;
+use pane_core::develop::Toolchains;
 use pane_core::file_index::{IndexerConfig, WalkOptions};
 use pane_core::{Launcher, LauncherView, LinkOpener, Runtime, Screen, Status};
 use tempfile::TempDir;
@@ -71,6 +73,11 @@ struct World {
     folder: PathBuf,
     opener: FakeOpener,
     system: Arc<RecordingSystem>,
+    /// The window's end of the changes channel the launcher's background
+    /// work tells, as Pane's own window follows it: a test that waits for
+    /// what arrives in the background (a listing merging after the
+    /// publication's budget) wires it, or the window never draws it.
+    changes: changes::Changes,
 }
 
 impl World {
@@ -97,6 +104,11 @@ impl World {
         let system = Arc::new(RecordingSystem::default());
         runtime.set_applications(system.clone());
         let opener = FakeOpener::default();
+        // The launcher's background work tells the channel the window
+        // follows, as Pane's own does — a listing that merges after the
+        // publication's budget published the list, a pause: a test that
+        // waits for one wires the window to it.
+        let (sender, changes) = changes::channel();
         let index = IndexerConfig {
             first_walk_delay: Duration::ZERO,
             walk: WalkOptions {
@@ -108,7 +120,8 @@ impl World {
         let launcher = Launcher::with_packages(Ok(runtime), vec![], data.path().join("extensions"))
             .with_link_opener(Arc::new(opener.clone()))
             .with_system(system.clone())
-            .with_file_index(index);
+            .with_file_index(index)
+            .with_development(Arc::new(Toolchains::from_env(None)), sender);
         block_on(launcher.install_package(&package));
         assert!(
             matches!(launcher.view().status, Status::Result(_)),
@@ -128,6 +141,7 @@ impl World {
             folder,
             opener,
             system,
+            changes,
         };
         (world, launcher)
     }
@@ -409,7 +423,16 @@ fn query(window: &Entity<LauncherWindow>, cx: &mut VisualTestContext) -> Option<
 fn tab_and_shift_tab_held_for_the_typed_folders_entries_still_browse(cx: &mut TestAppContext) {
     let (world, launcher) = World::launcher(cx);
     cx.update(pane::bind_keys);
-    let (window, cx) = cx.add_window_view(|window, cx| LauncherWindow::new(launcher, window, cx));
+    // The window follows the launcher's background changes, as Pane's own
+    // window does: the listing this test holds merges after the budget
+    // published the list, and only the followed channel tells the window
+    // to draw it — and to apply the keys held for it (#203).
+    let changes = world.changes;
+    let (window, cx) = cx.add_window_view(|window, cx| {
+        let mut pane = LauncherWindow::new(launcher, window, cx);
+        pane.follow_changes(changes, window, cx);
+        pane
+    });
 
     // Typing a path ending in a separator lists the folder it names — but
     // not at once: the Files provider answers while the field already
@@ -478,9 +501,11 @@ fn tab_and_shift_tab_held_for_the_typed_folders_entries_still_browse(cx: &mut Te
     // both are waited for.
     cx.simulate_input("more");
     cx.simulate_keystrokes("shift-tab");
+    // The component is not removed while the query's list is held: the
+    // query stands as it was typed, the path without its separator.
     assert_eq!(
         query(&window, cx).as_deref(),
-        Some(typed_query(&world.folder.join("notes").join("more")).as_str()),
+        Some(format!("{}more", typed_query(&world.folder.join("notes"))).as_str()),
         "the path component is not removed yet"
     );
     let view = until(&window, cx, |view| {
