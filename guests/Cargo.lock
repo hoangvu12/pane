@@ -442,6 +442,7 @@ version = "0.1.0"
 dependencies = [
  "pane-extension",
  "serde_json",
+ "wasip3",
 ]
 
 [[package]]
