@@ -2787,9 +2787,8 @@ impl GuestState {
         seconds: u64,
         tag: String,
     ) -> Result<Resource<crate::registrations::TimerHandle>, String> {
-        if seconds < crate::packages::MIN_SCHEDULE_SECONDS
-            || seconds > crate::packages::MAX_SCHEDULE_SECONDS
-        {
+        let bounds = crate::packages::MIN_SCHEDULE_SECONDS..=crate::packages::MAX_SCHEDULE_SECONDS;
+        if !bounds.contains(&seconds) {
             return Err(format!(
                 "this timer's {seconds} seconds are beyond Pane's timer bounds, 1 second to \
                  30 days; timers run within them"
@@ -4543,9 +4542,7 @@ impl Host {
         // An instance that is not running, or exports no snapshot: nothing
         // to ask. Exporting the interface opts in, whatever the manifest
         // says.
-        let Some(lifecycle) = lifecycle else {
-            return None;
-        };
+        let lifecycle = lifecycle?;
         let answered = self
             .run_guest_until(
                 path,
@@ -4591,9 +4588,7 @@ impl Host {
                 return None;
             }
         };
-        let Some(state) = state else {
-            return None;
-        };
+        let state = state?;
         if state.len() > operations::MAX_OPERATION_JSON {
             self.handoff_report(
                 data.as_ref(),

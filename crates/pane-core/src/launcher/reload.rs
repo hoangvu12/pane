@@ -422,11 +422,11 @@ impl Launcher {
         // elsewhere.
         if let Some(activate) = activate {
             let data = self.data_of(&activate);
-            if let Err(error) = runtime.activate_with(&activate, data).await {
-                if !matches!(error, CallError::Disabled | CallError::Guest(_)) {
-                    runtime.forget(components.iter().cloned());
-                    return Err(error);
-                }
+            if let Err(error) = runtime.activate_with(&activate, data).await
+                && !matches!(error, CallError::Disabled | CallError::Guest(_))
+            {
+                runtime.forget(components.iter().cloned());
+                return Err(error);
             }
         }
         Ok(())

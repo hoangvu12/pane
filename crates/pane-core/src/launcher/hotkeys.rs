@@ -460,8 +460,7 @@ impl Launcher {
         // stops the opening.
         let data = opening
             .as_ref()
-            .map(|opening| self.data_in(&state, &opening.component))
-            .flatten();
+            .and_then(|opening| self.data_in(&state, &opening.component));
         match &opening {
             Some(opening) if !opening.no_view => {
                 self.show_root(&mut state, Some(opening.component.clone()));

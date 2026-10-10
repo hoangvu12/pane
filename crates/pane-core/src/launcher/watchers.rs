@@ -188,13 +188,12 @@ fn look(watchers: &Watchers, launcher: &Launcher) -> Vec<Delivery> {
                 .packages
                 .iter()
                 .find(|package| package.identity.key() == registered.owner)
-                .map(|package| {
+                .and_then(|package| {
                     launcher
                         .installation
                         .as_ref()
                         .map(|installation| installation.data.owned_by(&package.identity))
                 })
-                .flatten()
         };
         (
             wanted.clone(),

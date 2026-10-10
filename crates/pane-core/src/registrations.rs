@@ -94,7 +94,10 @@ struct Entry {
     kind: Kind,
 }
 
-/// What a registration registers.
+/// What a registration registers. One root item's actions make the
+/// largest variant, and a package's registrations are bounded by its
+/// limits.
+#[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Kind {
     /// A dynamic root item under the command with this manifest id.
