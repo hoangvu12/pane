@@ -43,7 +43,6 @@
 //! }
 //!
 //! impl pane_extension::Command for Sample {
-//!     type CustomView = pane_extension::NoCustomView;
 //!     type DesignedView = Counter;
 //!
 //!     async fn open_designed_view(
@@ -3025,8 +3024,8 @@ impl Border {
     }
 }
 
-/// The designed view type of a command that opens none: an empty type, as
-/// [`crate::NoCustomView`] is for custom views.
+/// The designed view type of a command that opens none: no value of it
+/// exists, so its `render` never runs.
 pub enum NoDesignedView {}
 
 impl View for NoDesignedView {
