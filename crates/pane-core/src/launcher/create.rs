@@ -209,8 +209,7 @@ impl Launcher {
             Ok(name) => name,
             Err(problem) => {
                 if let Screen::Form(form) = &mut state.view.screen
-                    && let Some(field) =
-                        form.fields.iter_mut().find(|field| field.id == NAME_FIELD)
+                    && let Some(field) = form.fields.iter_mut().find(|field| field.id == NAME_FIELD)
                 {
                     field.error = Some(problem.clone());
                     let label = field.label.clone();
