@@ -133,10 +133,10 @@ unsafe extern "system" fn foreground(
                 full_screen: full_screen(),
             };
             REPORTING.with(|reporting| {
-                if let Some(slot) = reporting.borrow().as_ref() {
-                    if let Some(told) = crate::util::lock(slot).as_ref() {
-                        told.front(&front);
-                    }
+                if let Some(slot) = reporting.borrow().as_ref()
+                    && let Some(told) = crate::util::lock(slot).as_ref()
+                {
+                    told.front(&front);
                 }
             });
         }

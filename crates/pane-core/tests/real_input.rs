@@ -754,6 +754,23 @@ $form.Add_KeyDown({ param($sender, $event)\n\
         wait("the selection target to be recorded", || {
             named_for(system.as_ref())
         });
+        // A CI runner's session runs elevated, so the target's process is
+        // an administrator's, and the read honestly refuses an elevated
+        // target (Windows would not deliver its keys, so the simulated
+        // copy could not reach it). Where it does, the refusal is what
+        // the test asserts; the reads below need a session that is not
+        // elevated, which a runner never is and a user's desktop is.
+        if let Err(SystemError::Failed(why)) = system.selected_text() {
+            assert!(
+                why.contains("running as administrator"),
+                "the selection read's refusal: {why}"
+            );
+            eprintln!(
+                "skipped the reads: the session is elevated, so the selection \n\
+                 read refused its administrator target — {why}"
+            );
+            return;
+        }
         assert_eq!(
             system.selected_text(),
             Ok(Some(SELECTION.into())),

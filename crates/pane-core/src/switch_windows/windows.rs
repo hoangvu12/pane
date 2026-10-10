@@ -164,11 +164,11 @@ fn listed(scope: &Scope) -> Result<Vec<Facts>, WindowsError> {
     // own is in front (the launcher open), the first window below it in
     // the z-order that counts is: the application the user was in before
     // opening Pane, whatever floats above the two.
-    if let Some(front) = front_of(&facts, &places) {
-        if let Some(at) = facts.iter().position(|facts| facts.window == front) {
-            let first = facts.remove(at);
-            facts.insert(0, first);
-        }
+    if let Some(front) = front_of(&facts, &places)
+        && let Some(at) = facts.iter().position(|facts| facts.window == front)
+    {
+        let first = facts.remove(at);
+        facts.insert(0, first);
     }
     Ok(facts)
 }

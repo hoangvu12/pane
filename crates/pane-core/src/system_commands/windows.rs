@@ -1237,6 +1237,7 @@ fn interface_path(
 
 /// Why a device eject was refused, as the veto the configuration manager
 /// answered says.
+#[allow(non_upper_case_globals)]
 fn veto_why(veto: PNP_VETO_TYPE) -> &'static str {
     match veto {
         PNP_VetoWindowsApp => "a Windows application is using it",

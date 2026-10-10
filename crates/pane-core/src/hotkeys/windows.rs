@@ -182,7 +182,7 @@ struct Report {
 
 /// Changes the shared report, which only the hook thread writes.
 fn update(report: &Mutex<Report>, change: impl FnOnce(&mut Report)) {
-    change(&mut *report.lock().unwrap_or_else(|p| p.into_inner()));
+    change(&mut report.lock().unwrap_or_else(|p| p.into_inner()));
 }
 
 /// The virtual-key code of `key` (see `Shortcut::key`), and whether it
@@ -1352,7 +1352,7 @@ fn decide(event: &KBDLLHOOKSTRUCT) -> (bool, Option<u32>, bool) {
                     post(WM_RECORDED_ENDED, 0);
                     return Some((false, None, false));
                 }
-                return Some(match state.recognizer.step(key) {
+                Some(match state.recognizer.step(key) {
                     Decision::Recorded(report) => {
                         post(WM_RECORDED, pack(report));
                         (true, None, false)

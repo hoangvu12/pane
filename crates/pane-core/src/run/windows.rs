@@ -88,7 +88,7 @@ impl WindowsRun {
     pub fn new() -> WindowsRun {
         WindowsRun {
             mru: EXPLORER_RUN_MRU.into(),
-            search_path: Arc::new(|| search::system_search_path()),
+            search_path: Arc::new(search::system_search_path),
         }
     }
 
@@ -105,7 +105,7 @@ impl WindowsRun {
     fn resolve(&self, name: &str) -> Result<PathBuf, RunError> {
         let search_path = (self.search_path)();
         match search::resolve(name, &search_path) {
-            Ok(found) => return Ok(found),
+            Ok(found) => Ok(found),
             // App Paths is the Run dialog's other source: what a
             // program's installer registered for its name.
             Err(error) if error.kind == ErrorKind::NotFound => match app_paths(name) {
@@ -510,12 +510,10 @@ fn on_path(search_path: &OsStr) -> (Vec<String>, Vec<String>, Vec<String>) {
             } else if extensions
                 .iter()
                 .any(|known| known.eq_ignore_ascii_case(extension))
+                && let Some(stem) = Path::new(&name).file_stem()
+                && !stem.is_empty()
             {
-                if let Some(stem) = Path::new(&name).file_stem() {
-                    if !stem.is_empty() {
-                        programs.push(stem.to_string_lossy().into_owned());
-                    }
-                }
+                programs.push(stem.to_string_lossy().into_owned());
             }
         }
     }
@@ -573,7 +571,7 @@ fn variable_names() -> Vec<String> {
 /// system lists in its own order answers the same every time. The
 /// history keeps its own order, newest first.
 fn sorted(mut names: Vec<String>) -> Vec<String> {
-    names.sort_by(|one, other| one.to_lowercase().cmp(&other.to_lowercase()));
+    names.sort_by_key(|name| name.to_lowercase());
     names
 }
 
