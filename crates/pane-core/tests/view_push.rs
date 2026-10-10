@@ -408,11 +408,8 @@ impl SlowPane {
         });
         fs::create_dir_all(&extensions).unwrap();
         fs::write(extensions.join("settings.json"), settings.to_string()).unwrap();
-        let launcher = Launcher::with_packages(
-            Runtime::start(),
-            Vec::new(),
-            data.path().join("extensions"),
-        );
+        let launcher =
+            Launcher::with_packages(Runtime::start(), Vec::new(), data.path().join("extensions"));
         let pane = Pane { data, launcher };
         pane.install_assembled("designed");
         for name in ["a", "b"] {
