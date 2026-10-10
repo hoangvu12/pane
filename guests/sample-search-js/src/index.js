@@ -97,16 +97,21 @@ async function fetchJson(path) {
  * @param {string} itemId
  * @returns {Promise<string>}
  */
-async /** Searches `query` with the service, as the view's List asks for it. */
+/**
+ * Searches `query` with the service, as the view's List asks for it.
+ * @param {string} query
+ * @returns {Promise<{ results: { name: string, summary: string }[] }>}
+ */
 async function search(query) {
-  const found = await fetchJson(`/search?q=${encodeURIComponent(query)}`);
-  return found;
+  return fetchJson(`/search?q=${encodeURIComponent(query)}`);
 }
 
-function outcome(itemId) {
-  if (itemId === "about") {
-    return "Type in the search field to search the package registry";
-  }
+/**
+ * The text the action `itemId`'s toast shows.
+ * @param {string} itemId
+ * @returns {Promise<string>}
+ */
+async function outcome(itemId) {
   if (!itemId.startsWith("package:")) {
     throw new Error(`unknown item: ${itemId}`);
   }
@@ -122,13 +127,12 @@ function outcome(itemId) {
  * pushes a view of a text field and a Save button, the modern replacement
  * for the typed form the List document carried. */
 function Packages() {
-  const [query, setQuery] = useState("");
-  const [results, setResults] = useState([]);
-  const [failed, setFailed] = useState(null);
+  const [results, setResults] = useState(/** @type {{ name: string, summary: string }[]} */ ([]));
+  const [failed, setFailed] = useState(/** @type {string | null} */ (null));
   const [loading, setLoading] = useState(false);
-  const searching = useRef(null);
+  const searching = useRef(/** @type {{ run: Promise<{ results: { name: string, summary: string }[] }> } | null} */ (null));
+  /** @param {string} text */
   const onSearchText = async (text) => {
-    setQuery(text);
     if (!text.trim()) {
       setResults([]);
       setFailed(null);
@@ -146,12 +150,12 @@ function Packages() {
     } catch (error) {
       if (searching.current !== run) return;
       setResults([]);
-      setFailed(String(error.message ?? error));
+      setFailed(String(/** @type {Error} */ (error).message ?? error));
     } finally {
       if (searching.current === run) setLoading(false);
     }
   };
-  const items = results.map((pkg) =>
+  const items = results.map((/** @type {{ name: string, summary: string }} */ pkg) =>
     jsxs(List.Item, {
       key: `package:${pkg.name}`,
       title: pkg.name,
@@ -170,10 +174,13 @@ function Packages() {
     children: [
       ...items,
       jsxs(EmptyState, {
-        title: failed ?? "Type to search the package registry",
+        title: /** @type {string} */ (failed ?? "Type to search the package registry"),
         description: "Results come from the service as you type; Enter shows a package's details",
         children: [
-          jsxs(Push(AddressView), { children: ["Service address"] }),
+          jsxs(Button, {
+            onClick: Push(jsxs(AddressView, { children: [] })),
+            children: ["Service address"],
+          }),
         ],
       }),
     ],
@@ -183,7 +190,7 @@ function Packages() {
 /** The service address view, pushed above the list: a text field and a
  * Save button. */
 function AddressView() {
-  const [address, setAddress] = useState(service());
+  const [address, setAddress] = useState(/** @type {string} */ (service()));
   return jsxs(Column, {
     navigationTitle: "Service address",
     gap: "m",
@@ -193,7 +200,7 @@ function AddressView() {
         label: "Address",
         placeholder: DEFAULT_SERVICE,
         value: address,
-        onInput: (value) => setAddress(value),
+        onInput: (/** @type {string} */ value) => setAddress(value),
         children: [address],
       }),
       jsxs(Button, {

@@ -83,9 +83,9 @@ use crate::packages::{
 };
 use crate::platform;
 use crate::runtime::{
-    CallError, CustomViewInfo, CustomViewRole, DesignedTree, FieldKind, FieldValue, Form, Frame,
-    Item, Point, ResultListing, RootAction, RootResult as ComputedResult, Runtime, ScreenForm,
-    View, ViewEvent, ViewId, WeakRuntime,
+    CallError, CustomViewInfo, CustomViewRole, DesignedHandler, DesignedTree, FieldKind,
+    FieldValue, Form, Frame, Item, Point, ResultListing, RootAction, RootResult as ComputedResult,
+    Runtime, ScreenForm, View, ViewEvent, ViewId, WeakRuntime,
 };
 use crate::search::{self, Keys, Query};
 
@@ -4601,8 +4601,7 @@ impl Launcher {
             // search field (#177): a command's own search is the designed
             // List's search-text event now (#240), and no command of a
             // package opens one.
-            let search =
-                search_files::registered(state, &component, command.as_str());
+            let search = self.registered(state, &component, command.as_str());
             match result {
                 Ok(view) => {
                     let extra = looks::remember(state, &component, &view.items);

@@ -111,7 +111,7 @@ impl DesignedStack {
     }
 
     /// The top view, changed.
-    fn top_mut(&mut self) -> &mut OpenDesignedView {
+    pub(super) fn top_mut(&mut self) -> &mut OpenDesignedView {
         self.views.last_mut().expect("the stack holds the root")
     }
 
@@ -327,7 +327,7 @@ impl Launcher {
                 state.view = view;
                 // The List or Grid the view's tree names is presented, its
                 // rows filling the view (#240).
-                self.present_designed_list(state);
+                self.present_designed_list(&mut *state);
                 // The first render's own ask schedules the view's refresh
                 // (see `refresh`).
                 self.view_refresh_asked(rendered.refresh_after_ms);
@@ -469,6 +469,8 @@ impl Launcher {
             DesignedHandler::Focus => "a focus",
             DesignedHandler::Blur => "a blur",
             DesignedHandler::Key => "a key",
+            DesignedHandler::Selection => "a selection",
+            DesignedHandler::More => "a load-more",
         };
         self.developing.logs.pane(
             &owner,
@@ -515,7 +517,7 @@ impl Launcher {
         state.view.status = Status::Idle;
         // The view below's list, as it was when the view above it was
         // pushed: shown again with its rows.
-        self.present_designed_list(state);
+        self.present_designed_list(&mut *state);
         let epoch = state.screen_epoch;
         self.deliver_designed_pop(state, epoch, None);
         true
@@ -643,7 +645,7 @@ impl Launcher {
                 state.view.screen = super::Screen::DesignedView(screen);
                 state.view.title = title;
                 state.view.status = Status::Idle;
-                self.present_designed_list(state);
+                self.present_designed_list(&mut *state);
                 // The answer's own ask paces the view's next refresh.
                 self.view_refresh_asked(rendered.refresh_after_ms);
             }
@@ -668,7 +670,7 @@ impl Launcher {
                 state.view.screen = super::Screen::DesignedView(screen);
                 state.view.title = title;
                 state.view.status = Status::Idle;
-                self.present_designed_list(state);
+                self.present_designed_list(&mut *state);
                 self.view_refresh_asked(ask);
             }
             Ok(DesignedNext::Replaced(opened, rendered)) => {
@@ -693,7 +695,7 @@ impl Launcher {
                 state.view.screen = super::Screen::DesignedView(screen);
                 state.view.title = title;
                 state.view.status = Status::Idle;
-                self.present_designed_list(state);
+                self.present_designed_list(&mut *state);
                 self.view_refresh_asked(ask);
             }
             Ok(DesignedNext::Popped { result }) => {
@@ -719,7 +721,7 @@ impl Launcher {
                     state.view.screen = super::Screen::DesignedView(screen);
                     state.view.title = title;
                     state.view.status = Status::Idle;
-                    self.present_designed_list(state);
+                    self.present_designed_list(&mut *state);
                     // The popped view's ask went with it; the view below's
                     // own ask is live again.
                     self.view_refresh_asked(ask);

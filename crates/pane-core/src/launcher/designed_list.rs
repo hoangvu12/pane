@@ -58,18 +58,18 @@ const PAGE: u64 = 10;
 pub(super) struct ListHeld {
     /// The search field's text: the user's, or the tree's own.
     search: String,
-    /// The selected item's key, `None` when no item is selected.
+    // The selected item's key, `None` when no item is selected.
     selected: Option<String>,
-    /// The search text the tree last named: the baseline an unchanged
-    /// value does not move (the field's partial control).
+    // The search text the tree last named: the baseline an unchanged
+    // value does not move (the field's partial control).
     rendered: String,
-    /// The search values reported to the view since the tree was applied,
-    /// which an echo of the field's own value never fights.
+    // The search values reported to the view since the tree was applied,
+    // which an echo of the field's own value never fights.
     reported: Vec<String>,
-    /// How many items were listed when the last load-more was raised: the
-    /// next is raised once the tree has grown since.
+    // How many items were listed when the last load-more was raised: the
+    // next is raised once the tree has grown since.
     asked_at: Option<usize>,
-    /// When the list's loading began, in the clock's milliseconds.
+    // When the list's loading began, in the clock's milliseconds.
     loading_since: Option<u64>,
 }
 
@@ -152,6 +152,13 @@ pub struct DesignedList {
     pub detail: Option<Box<Node>>,
     /// The search-bar dropdown.
     pub dropdown: Option<DesignedDropdown>,
+    /// The callback the search text runs on its change, when the view
+    /// handles the search itself.
+    pub on_search_text: Option<u32>,
+    /// The callback the selection's change runs.
+    pub on_selection_change: Option<u32>,
+    /// The callback the load of the next page runs.
+    pub on_load_more: Option<u32>,
     /// Whether the tree says more items follow the ones shown.
     pub has_more: bool,
     /// How many items a page holds.
@@ -196,10 +203,7 @@ fn groups(node: &Node) -> (Vec<Group>, Option<&Node>, Option<&Node>) {
                 title: section.title.clone(),
                 note: section.subtitle.clone(),
                 shape: GridShape {
-                    columns: section
-                        .columns
-                        .map(|crate::Finite(columns)| columns as u64)
-                        .unwrap_or(crate::GRID_COLUMNS),
+                    columns: section.columns.unwrap_or(crate::GRID_COLUMNS),
                     aspect_ratio: section.aspect_ratio,
                     fit: section.fit,
                     inset: section.inset,
@@ -279,18 +283,29 @@ impl Launcher {
         };
         // The rows, their looks and their entries fill the launcher's
         // view, as a command's own list fills it: the window draws them
-        /// with the launcher's own list.
-        state.view.rows = built.rows;
+        // with the launcher's own list.
+        let Built {
+            rows,
+            looks,
+            selected,
+            view,
+        } = built;
+        state.view.rows = rows;
         state.entries = vec![Entry::NoActions; state.view.rows.len()];
-        state.view.selected = built.selected;
-        super::looks::remember_designed(state, built.looks);
+        state.view.selected = selected;
+        super::looks::remember_designed(state, looks);
         if let Screen::DesignedView(snapshot) = &mut state.view.screen {
             snapshot.list = Some(list);
         }
         // The view's selection, named to the runtime: its render context
-        /// carries the key, and the view builds the detail pane for it.
+        // carries the key, and the view builds the detail pane for it.
+        let key = state
+            .view
+            .selected
+            .and_then(|index| state.view.rows.get(index))
+            .map(|row| row.id.clone());
         if let Ok(runtime) = self.runtime() {
-            runtime.set_view_selection(built.view, built.selected_key());
+            runtime.set_view_selection(view, key);
         }
     }
 
@@ -418,11 +433,11 @@ impl Launcher {
                         .and_then(|index| presented.get(index))
                         .and_then(|row| row.detail.clone()),
                     dropdown: dropdown.map(dropdown_of),
+                    on_search_text: list.on_search_text,
+                    on_selection_change: list.on_selection_change,
+                    on_load_more: list.on_load_more,
                     has_more: list.has_more,
-                    page_size: list
-                        .page_size
-                        .map(|crate::Finite(size)| size as u64)
-                        .unwrap_or(PAGE),
+                    page_size: list.page_size.unwrap_or(PAGE),
                     grid,
                 },
             ))
@@ -704,16 +719,20 @@ impl Built {
 fn designed_row(node: &Node, shape: GridShape) -> DesignedRow {
     let (actions, image, color, detail) = match &node.kind {
         NodeKind::ListItem(item) => {
-            let mut actions = item.on_press.iter().collect::<Vec<u32>>();
+            let mut actions = Vec::new();
+            if let Some(on_press) = item.on_press {
+                actions.push(on_press);
+            }
             actions.extend(item.actions.iter().map(|action| action.on_press));
             (actions, None, None, item.detail.clone())
         }
-        NodeKind::GridItem(item) => (
-            item.on_press.iter().collect(),
-            item.image.clone(),
-            item.color,
-            None,
-        ),
+        NodeKind::GridItem(item) => {
+            let mut actions = Vec::new();
+            if let Some(on_press) = item.on_press {
+                actions.push(on_press);
+            }
+            (actions, item.image.clone(), item.color, None)
+        }
         _ => (Vec::new(), None, None, None),
     };
     DesignedRow {

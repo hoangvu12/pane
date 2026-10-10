@@ -736,7 +736,7 @@ pub struct ListSection {
     pub subtitle: Option<String>,
     /// How many columns the section's cells sit in (a Grid's), 1–8;
     /// 5 when the section names none.
-    pub columns: Option<Finite>,
+    pub columns: Option<u64>,
     /// The cells' width over their height (a Grid's); a non-positive one
     /// is left out.
     pub aspect_ratio: Option<Finite>,
@@ -1718,7 +1718,7 @@ fn list_node(wire: &WireNode) -> Result<ListNode, ReadError> {
         is_showing_detail: boolean(wire, "isShowingDetail")?.unwrap_or(false),
         has_more: boolean(wire, "hasMore")?.unwrap_or(false),
         page_size: number(wire, "pageSize")?.map(|Finite(size)| {
-            Finite(size.clamp(1., MAX_PAGE_SIZE as f32))
+            size.clamp(1., MAX_PAGE_SIZE as f32) as u64
         }),
         on_search_text: callback(wire, "onSearchText")?,
         on_selection_change: callback(wire, "onSelectionChange")?,
@@ -1733,11 +1733,9 @@ fn list_section(wire: &WireNode) -> Result<ListSection, ReadError> {
         title: string(wire, "title")?,
         subtitle: string(wire, "subtitle")?,
         columns: number(wire, "columns")?.map(|Finite(columns)| {
-            Finite(
-                columns
-                    .clamp(MIN_GRID_COLUMNS as f32, MAX_GRID_COLUMNS as f32)
-                    .round(),
-            )
+            columns
+                .clamp(MIN_GRID_COLUMNS as f32, MAX_GRID_COLUMNS as f32)
+                .round() as u64
         }),
         aspect_ratio: number(wire, "aspectRatio")?.filter(|Finite(ratio)| *ratio > 0.),
         fit: fit_of(wire.rest.get("fit"))?,

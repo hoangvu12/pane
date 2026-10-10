@@ -142,7 +142,7 @@ impl Keys {
 
 /// A query as it is matched (see [`normalize`]).
 pub(crate) struct Query {
-    text: String,
+    pub(crate) text: String,
     words: Vec<String>,
 }
 
