@@ -120,12 +120,7 @@ pub(crate) fn bind_keys(cx: &mut App) {
 impl LauncherWindow {
     /// Opens `url` with the system's handler, as a Markdown link of the
     /// open designed view is (#240): the status line says what it did.
-    fn designed_open_link(
-        &mut self,
-        url: &str,
-        window: &mut gpui::Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn designed_open_link(&mut self, url: &str, window: &mut gpui::Window, cx: &mut Context<Self>) {
         let pending = self.launcher.open_link(url.to_owned());
         self.show_until_done(pending, window, cx);
     }
@@ -223,9 +218,9 @@ impl LauncherWindow {
             .child(field);
         // The loading bar: drawn once the list's loading has run past its
         // threshold (300 ms), so a list that answers quickly shows none.
-        let loading = list.loading.filter(|since| {
-            self.launcher.now_ms().saturating_sub(*since) >= pane_core::LOADING_MS
-        });
+        let loading = list
+            .loading
+            .filter(|since| self.launcher.now_ms().saturating_sub(*since) >= pane_core::LOADING_MS);
         let bar = loading.map(|_| {
             let width = geometry.search_text_inset * 40.;
             div()

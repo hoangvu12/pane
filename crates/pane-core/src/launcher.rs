@@ -2809,6 +2809,11 @@ impl Launcher {
         async move {
             match pending {
                 Pending::Nothing => {}
+                Pending::Run(callback) => {
+                    if let Some(component) = open {
+                        launcher.run_action(epoch, &component, callback, data).await;
+                    }
+                }
                 Pending::Open(opening) => launcher.launch_opening(epoch, opening, data).await,
                 Pending::Send(sending) => {
                     launcher.launch_opening(epoch, sending.opening, data).await

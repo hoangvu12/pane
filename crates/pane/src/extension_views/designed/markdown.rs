@@ -417,11 +417,9 @@ fn inlines_element(
                         })
                         // The standard views open what a Markdown link
                         // names (#240), as a computed result's row does.
-                        .on_click(cx.listener(
-                            move |this, _: &ClickEvent, window, cx| {
-                                this.designed_open_link(&url, window, cx);
-                            },
-                        ))
+                        .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                            this.designed_open_link(&url, window, cx);
+                        }))
                         .child(inlines_element(text, draw, cx)),
                 )
             }
