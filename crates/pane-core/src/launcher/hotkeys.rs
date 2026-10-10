@@ -167,9 +167,7 @@ impl Bindings {
     /// the two cannot be bound together, one swallowing the other's
     /// presses.
     fn coexisting_with(&self, shortcut: &Shortcut, except: &str) -> Option<&str> {
-        if shortcut.lone().is_none() {
-            return None;
-        }
+        shortcut.lone()?;
         self.chosen()
             .iter()
             .find(|(command, chosen)| {

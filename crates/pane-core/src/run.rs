@@ -149,9 +149,9 @@ pub fn native() -> Arc<dyn Run> {
 /// The Run dialog's work of a launcher given none: every function says
 /// that this Pane runs nothing and keeps no Run history.
 pub fn none() -> Arc<dyn Run> {
-    Arc::new(Unavailable(RunError::NotAvailable(format!(
-        "Not available: this Pane runs nothing and keeps no Run history"
-    ))))
+    Arc::new(Unavailable(RunError::NotAvailable(
+        "Not available: this Pane runs nothing and keeps no Run history".to_string(),
+    )))
 }
 
 /// Runs nothing, saying why.
