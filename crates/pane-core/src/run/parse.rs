@@ -124,12 +124,16 @@ fn ends_program(head: &str) -> bool {
 }
 
 /// Whether `text` names a rooted path: a drive (`C:\…`, `D:…`), a
-/// network path (`\\server\…`) or an environment variable
-/// (`%NAME%\…`), which expands to one.
+/// network path (`\\server\…`, whose forward-slash spelling
+/// `//server/…` is the same path on Windows) or an environment
+/// variable (`%NAME%\…`), which expands to one. Run is Windows-only,
+/// so these Windows shapes are decided on every system, not by the
+/// platform the binary happens to run on.
 pub fn rooted(text: &str) -> bool {
     let bytes = text.as_bytes();
     (bytes.len() >= 2 && bytes[1] == b':' && bytes[0].is_ascii_alphabetic())
         || text.starts_with('\\')
+        || text.starts_with('/')
         || text.starts_with('%')
 }
 
@@ -160,14 +164,21 @@ mod tests {
         }
 
         fn variable(mut self, name: &str, value: &str) -> Ground {
-            self.variables.insert(name.into(), value.into());
+            // The Run dialog's variables match ignoring case, so the
+            // ground keeps every name as it is looked up.
+            self.variables
+                .insert(name.to_ascii_lowercase(), value.into());
             self
         }
     }
 
     impl Sources for Ground {
         fn exists(&self, path: &str) -> bool {
-            self.files.iter().any(|file| file == path)
+            // Windows takes '/' as '\\': a path the parser spells with
+            // forward separators is the file the ground holds, as the
+            // real adapter's file system takes it.
+            let spelled = |path: &str| path.replace('/', "\\");
+            self.files.iter().any(|file| spelled(file) == spelled(path))
         }
 
         fn expand(&self, text: &str) -> String {
@@ -178,12 +189,13 @@ mod tests {
                     Some((name, tail)) => {
                         expanded.push_str(before);
                         // The Run dialog's variables match ignoring case.
-                        let name = name.to_ascii_lowercase();
-                        if let Some(value) = self.variables.get(&name) {
+                        if let Some(value) = self.variables.get(&name.to_ascii_lowercase()) {
                             expanded.push_str(value);
                         } else {
+                            // A name no variable has stays as it is,
+                            // spelled as typed, as Windows leaves it.
                             expanded.push('%');
-                            expanded.push_str(&name);
+                            expanded.push_str(name);
                             expanded.push('%');
                         }
                         rest = tail;
@@ -309,13 +321,15 @@ mod tests {
                 arguments: "-a".into()
             }
         );
-        // Forward slashes are the same path on Windows, and a variable
-        // that expands to a rooted path is rooted too.
+        // Forward slashes are the same path on Windows — the file the
+        // ground holds is found through them, its head kept as typed for
+        // the run to normalize — and a variable that expands to a rooted
+        // path is rooted too.
         let ground = ground.file(r"C:\Program Files\My Tool\tool.lnk");
         assert_eq!(
             split(r"%PROGRAMFILES%/My Tool/tool.lnk -a", &ground).unwrap(),
             Split {
-                head: r"C:\Program Files\My Tool\tool.lnk".into(),
+                head: r"C:\Program Files/My Tool/tool.lnk".into(),
                 arguments: "-a".into()
             }
         );
@@ -377,14 +391,14 @@ mod tests {
         let ground = Ground::new().variable("TOOL", r"C:\Program Files\Tool");
         // A variable matches ignoring case.
         assert_eq!(
-            split("%tool%\tool.exe -a", &ground).unwrap(),
+            split(r"%tool%\tool.exe -a", &ground).unwrap(),
             Split {
                 head: r"C:\Program Files\Tool\tool.exe".into(),
                 arguments: "-a".into()
             }
         );
         assert_eq!(
-            split("tool.exe %TEMP%\notes.txt", &ground).unwrap(),
+            split(r"tool.exe %TEMP%\notes.txt", &ground).unwrap(),
             Split {
                 head: "tool.exe".into(),
                 arguments: r"%TEMP%\notes.txt".into()

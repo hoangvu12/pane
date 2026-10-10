@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use futures::executor::block_on;
-use pane_core::hotkeys::{HookHealth, HotkeyError, Hotkeys, Route, Shortcut};
+use pane_core::hotkeys::{HookHealth, HotkeyError, Hotkeys, Kind, Route, Shortcut, Side};
 use pane_core::{Launcher, PackageIdentity, Runtime, SavedData, Screen, Status, Unavailable};
 use tempfile::TempDir;
 
@@ -101,26 +101,40 @@ impl Hotkeys for FakeSystem {
     }
 
     // A system whose adapter falls back to its own keyboard hook takes
-    // the binding kinds #260 adds; one without explains them.
+    // the binding kinds #260 adds; one without explains them, as the
+    // systems without one do. It names the platform it models: the
+    // current one where that has no hook, macOS standing in where the
+    // tests run on Windows — a platform whose kinds the pure half says
+    // work — so the kinds are refused wherever the tests run.
     fn kind_unavailable(&self, shortcut: &Shortcut) -> Option<String> {
         if self.hooks {
-            None
-        } else {
-            pane_core::hotkeys::kinds_unavailable(shortcut, pane_core::Platform::current())
+            return None;
         }
+        let modeled = match pane_core::Platform::current() {
+            Some(pane_core::Platform::Windows) => Some(pane_core::Platform::Macos),
+            platform => platform,
+        };
+        pane_core::hotkeys::kinds_unavailable(shortcut, modeled)
     }
 
     fn register(&self, shortcut: &Shortcut) -> Result<(), HotkeyError> {
         if let Some(reason) = &self.unavailable {
             return Err(HotkeyError::Refused(reason.clone()));
         }
-        // The binding the system refuses (another application has it) and
-        // the kinds no registration can express (#260) go through the
+        // The binding the system refuses (another application has it)
+        // and the kinds no registration can express (#260) — the tap
+        // kinds, a side-specific modifier, a numpad key, which a
+        // registration cannot tell from its counterpart — go through the
         // hook where this system's adapter has one, as Windows' does
         // (ADR 0039): not an error, and the row says the route.
         let through_hook = self.hooks
             && (self.taken.lock().unwrap().contains(shortcut)
-                || shortcut.kind() != pane_core::hotkeys::Kind::Chord);
+                || shortcut.kind() != Kind::Chord
+                || shortcut
+                    .sides()
+                    .iter()
+                    .any(|side| matches!(side, Some(Side::Left | Side::Right)))
+                || shortcut.key().starts_with("numpad"));
         if through_hook {
             self.hooked.lock().unwrap().push(shortcut.clone());
             let mut registered = self.registered.lock().unwrap();
@@ -1014,7 +1028,7 @@ fn a_single_and_a_double_tap_of_the_same_modifier_cannot_coexist() {
         refusal.contains("a single tap and a double tap of the same modifier"),
         "{refusal}"
     );
-    assert!(refusal.contains("remove it there first"), "{refusal}");
+    assert!(refusal.contains("Remove it there first"), "{refusal}");
     assert_eq!(
         system.registered(),
         ["tap:win"],
@@ -1043,9 +1057,9 @@ fn a_single_and_a_double_tap_of_the_same_modifier_cannot_coexist() {
         "Pane's double tap is named"
     );
     // Different modifiers coexist, and a chord beside a tap does too.
-    assign(&launcher, "Rust sample", "double:rshift");
-    assert!(system.press(&launcher, "double:rshift"));
-    assert!(system.press(&launcher, "tap:alt"));
+    assign(&launcher, "Rust sample", "double:ctrl");
+    assert!(system.press(&launcher, "double:ctrl"));
+    assert!(system.press(&launcher, "tap:win"));
 }
 
 #[test]
@@ -1059,9 +1073,13 @@ fn the_kinds_unavailable_on_this_system_are_explained_on_their_rows() {
     dirs.install(&launcher, "sample-settings");
 
     assign(&launcher, "Greeting", "tap:win");
-    let here = pane_core::Platform::current()
-        .map(|platform| platform.to_string())
-        .unwrap_or_else(|| "this system".into());
+    // The platform the fake without a hook names, as it explains: the
+    // current one where that has no hook, macOS standing in on Windows.
+    let here = match pane_core::Platform::current() {
+        Some(pane_core::Platform::Windows) => pane_core::Platform::Macos.to_string(),
+        Some(platform) => platform.to_string(),
+        None => "this system".into(),
+    };
     assert_eq!(
         error(&launcher),
         format!("Not available on {here}: lone modifier taps work only on Windows for now")
@@ -1196,10 +1214,14 @@ fn the_fresh_default_registers_through_the_same_path_a_choice_takes() {
 
     // A choice the record holds is applied as it is, never upgraded to
     // the fresh default: the record's reader decides fresh from existing
-    // (#268), and the launcher registers whatever it is handed.
-    let kept = dirs.launcher(&system);
+    // (#268), and the launcher registers whatever it is handed. A new
+    // launcher over a new system, as a restart of Pane is, whose
+    // registrations begin again.
+    drop(launcher);
+    let restart = FakeSystem::hooking();
+    let kept = dirs.launcher(&restart);
     kept.sync_open_pane(key("ctrl+alt+space")).unwrap();
-    assert_eq!(system.registered(), ["ctrl+alt+space"]);
+    assert_eq!(restart.registered(), ["ctrl+alt+space"]);
     assert!(!kept.opens_pane(&key("tap:win")));
 }
 

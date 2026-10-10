@@ -81,13 +81,20 @@ impl Hotkeys for FakeSystem {
     }
 
     // A system whose adapter has a keyboard hook takes the binding kinds
-    // #260 adds; one without explains them, as the default does.
+    // #260 adds; one without explains them, as the systems without one
+    // do. It names the platform it models: the current one where that
+    // has no hook, macOS standing in where the tests run on Windows — a
+    // platform whose kinds the pure half says work — so the kinds are
+    // refused wherever the tests run.
     fn kind_unavailable(&self, shortcut: &Shortcut) -> Option<String> {
         if self.hooks {
-            None
-        } else {
-            pane_core::hotkeys::kinds_unavailable(shortcut, pane_core::Platform::current())
+            return None;
         }
+        let modeled = match pane_core::Platform::current() {
+            Some(pane_core::Platform::Windows) => Some(pane_core::Platform::Macos),
+            platform => platform,
+        };
+        pane_core::hotkeys::kinds_unavailable(shortcut, modeled)
     }
 
     fn recording(&self) -> Option<pane_core::hotkeys::RecordingSession> {

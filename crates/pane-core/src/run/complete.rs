@@ -187,8 +187,23 @@ mod tests {
                 Source::Applet,
                 Source::Console,
                 Source::Scheme,
-                Source::Variable,
             ]
+        );
+        // A variable's line is `%NAME%`, so it completes the text once
+        // the `%` is typed, never the plain name — and a history entry
+        // the user ran can start with one too, as a line the Run dialog
+        // expands, so the two keep their order.
+        let percent = Candidates {
+            history: vec!["%tool -a".into()],
+            variables: vec!["%TOOL%".into()],
+            ..Candidates::default()
+        };
+        assert_eq!(
+            complete(&percent, "%to")
+                .iter()
+                .map(|completion| completion.source)
+                .collect::<Vec<_>>(),
+            [Source::History, Source::Variable]
         );
         // The history's own order, newest first, is kept within it.
         let history = Candidates {

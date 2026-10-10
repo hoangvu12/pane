@@ -292,11 +292,14 @@ enum Held {
 }
 
 impl Held {
-    /// The state after `physical` is pressed.
+    /// The state after `physical` is pressed. Pressing the other key
+    /// while one is held — both keys of the modifier are down — serves
+    /// either side's binding, as [`Held::side`] and the matching take
+    /// `Held::Both`.
     fn pressed(self, physical: Physical) -> Held {
         match (self, physical) {
-            (Held::Neither, Physical::Left) | (Held::Right, Physical::Left) => Held::Left,
-            (Held::Neither, Physical::Right) | (Held::Left, Physical::Right) => Held::Right,
+            (Held::Neither, Physical::Left) => Held::Left,
+            (Held::Neither, Physical::Right) => Held::Right,
             _ => Held::Both,
         }
     }

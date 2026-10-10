@@ -966,9 +966,10 @@ mod tests {
         );
     }
 
-    /// The artifacts describe the default set alone: the six default
-    /// extensions, and no sample (#162), whose payload a first setup
-    /// would otherwise acquire.
+    /// The artifacts describe the default set alone: the eight default
+    /// extensions, the Windows power features' among them (ADR 0040), and
+    /// no sample (#162), whose payload a first setup would otherwise
+    /// acquire.
     #[test]
     fn the_artifacts_describe_the_default_set_without_the_samples() {
         let ids: Vec<&str> = DEFAULTS.iter().map(|(id, _)| *id).collect();
@@ -980,7 +981,9 @@ mod tests {
                 "quicklinks",
                 "files",
                 "clipboard-history",
-                "system-commands"
+                "run",
+                "system-commands",
+                "switch-windows",
             ]
         );
         assert!(

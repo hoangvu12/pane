@@ -481,7 +481,10 @@ fn without_extension(name: &str) -> String {
 /// their programs — each without the extension the search path resolves,
 /// as the Run dialog takes a bare name — their Control Panel applets and
 /// their management consoles, by their file names, which the Run dialog
-/// runs as they are.
+/// runs as they are. An applet and a console are that whatever `PATHEXT`
+/// spells — a machine whose `PATHEXT` names `.MSC`, as Windows' own does,
+/// still completes the console by its file name, never as a bare program
+/// the search path would resolve.
 fn on_path(search_path: &OsStr) -> (Vec<String>, Vec<String>, Vec<String>) {
     let extensions = program_extensions();
     let mut programs = Vec::new();
@@ -500,7 +503,11 @@ fn on_path(search_path: &OsStr) -> (Vec<String>, Vec<String>, Vec<String>) {
             let Some((_, extension)) = name.rsplit_once('.') else {
                 continue;
             };
-            if extensions
+            if extension.eq_ignore_ascii_case("cpl") {
+                applets.push(name);
+            } else if extension.eq_ignore_ascii_case("msc") {
+                consoles.push(name);
+            } else if extensions
                 .iter()
                 .any(|known| known.eq_ignore_ascii_case(extension))
             {
@@ -509,10 +516,6 @@ fn on_path(search_path: &OsStr) -> (Vec<String>, Vec<String>, Vec<String>) {
                         programs.push(stem.to_string_lossy().into_owned());
                     }
                 }
-            } else if extension.eq_ignore_ascii_case("cpl") {
-                applets.push(name);
-            } else if extension.eq_ignore_ascii_case("msc") {
-                consoles.push(name);
             }
         }
     }

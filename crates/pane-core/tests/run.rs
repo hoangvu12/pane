@@ -476,7 +476,7 @@ fn explorers_history_format_decodes_encodes_and_records() {
         ("b".to_owned(), "cmd.exe\u{1}".to_owned()),
         ("c".to_owned(), "NOTEPAD\u{1}".to_owned()),
     ];
-    assert_eq!(decode(&values, "cba"), ["cmd.exe", "NOTEPAD"]);
+    assert_eq!(decode(&values, "cba"), ["NOTEPAD", "cmd.exe"]);
     // The entries take the letters in order, newest first.
     let (written, list) = encode(&["fresh".to_owned(), "cmd.exe".to_owned()]);
     assert_eq!(list, "ab");
@@ -1620,6 +1620,10 @@ mod windows {
         );
         assert_eq!(pane.fake.asked(), [("notepad -a".to_owned(), false)]);
 
+        // The run's HUD closed the launcher, as the Run dialog's does;
+        // the user opens it again for the history.
+        launcher.set_window_presence(pane_core::WindowPresence::Shown);
+
         // The history the fake holds lists through the real extension,
         // and an entry can be deleted from it.
         search(&launcher, "Run history");
@@ -1803,6 +1807,9 @@ mod windows {
             waited(&marker, "-a through the extension").trim(),
             "-a through the extension"
         );
+        // The run's HUD closed the launcher; it opens again for the
+        // history.
+        launcher.set_window_presence(pane_core::WindowPresence::Shown);
         // The Run dialog's history, read through the extension, holds the
         // command line as typed, and deleting it empties the key.
         search(&launcher, "Run history");

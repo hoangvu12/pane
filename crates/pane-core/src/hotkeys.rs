@@ -410,7 +410,8 @@ impl Shortcut {
 
     /// Why Pane does not bind this shortcut on `platform`, if it does
     /// not; the rules are named by platform so every system's are tested
-    /// on every system.
+    /// on every system, and the shortcut is named as that platform names
+    /// it (see [`Shortcut::display_on`]).
     fn refusal_on(&self, platform: Option<Platform>) -> Option<String> {
         // A lone or double tap of a modifier needs no guard: it is a
         // modifier, so it takes over no typing (#260).
@@ -421,13 +422,14 @@ impl Shortcut {
                 _ => "Ctrl, Alt or Super",
             };
             return Some(format!(
-                "{self} needs {modifiers}, so that it does not take over typing"
+                "{} needs {modifiers}, so that it does not take over typing",
+                self.display_on(platform)
             ));
         }
         reserved(platform)
             .iter()
             .find(|(id, _)| Shortcut::parse(id).is_ok_and(|reserved| reserved == *self))
-            .map(|(_, why)| format!("{self} is reserved: {why}"))
+            .map(|(_, why)| format!("{} is reserved: {why}", self.display_on(platform)))
             .or_else(|| self.editing_refusal(platform))
     }
 
@@ -455,8 +457,9 @@ impl Shortcut {
         let character = self.key.len() == 1;
         (single && character).then(|| {
             format!(
-                "{self} is used by applications for their own commands, such as copying; add Alt \
-                 or Shift"
+                "{} is used by applications for their own commands, such as copying; add Alt \
+                 or Shift",
+                self.display_on(platform)
             )
         })
     }
@@ -564,36 +567,49 @@ fn key_name(key: &str) -> String {
 /// (#260), as Windows names them.
 impl fmt::Display for Shortcut {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let names: [&str; 4] = match Platform::current() {
+        f.write_str(&self.display_on(Platform::current()))
+    }
+}
+
+impl Shortcut {
+    /// The shortcut as `platform` names it — [`fmt::Display`]'s names
+    /// with that platform's own for the Windows key — for a message that
+    /// names a platform it is about, as the refusals and warnings a
+    /// shortcut's row shows do: what Windows refuses reads "Win+L" on
+    /// every system, not as the system running the message spells it.
+    fn display_on(&self, platform: Option<Platform>) -> String {
+        let names: [&str; 4] = match platform {
             Some(Platform::Macos) => ["Control", "Option", "Shift", "Command"],
             Some(Platform::Windows) => ["Ctrl", "Alt", "Shift", "Win"],
             _ => ["Ctrl", "Alt", "Shift", "Super"],
         };
+        let mut shown = String::new();
         match self.kind {
             Kind::Chord => {
                 for ((held, _), name) in self.modifiers().into_iter().zip(names) {
                     if let Some(side) = held {
-                        write!(f, "{}{name}+", side_prefix(side))?;
+                        shown.push_str(side_prefix(side));
+                        shown.push_str(name);
+                        shown.push('+');
                     }
                 }
-                f.write_str(&key_name(&self.key))
+                shown.push_str(&key_name(&self.key));
             }
             Kind::Tap => {
                 let (at, side) = self.lone().expect("a tap names one modifier");
-                write!(f, "{}{}", side_prefix(side), names[at])
+                shown.push_str(side_prefix(side));
+                shown.push_str(names[at]);
             }
             Kind::Double => {
                 let (at, side) = self.lone().expect("a double tap names one modifier");
-                write!(
-                    f,
-                    "{}{} {}{}",
-                    side_prefix(side),
-                    names[at],
-                    side_prefix(side),
-                    names[at]
-                )
+                shown.push_str(side_prefix(side));
+                shown.push_str(names[at]);
+                shown.push(' ');
+                shown.push_str(side_prefix(side));
+                shown.push_str(names[at]);
             }
         }
+        shown
     }
 }
 
@@ -722,13 +738,18 @@ fn unshifted(character: &str) -> Option<&'static str> {
 /// if they cannot: they need Pane's own keyboard hook, which only
 /// Windows' adapter has (#260) — a lone tap or a double tap of a
 /// modifier, a side-specific modifier, and a key beyond letters, digits,
-/// F1 to F12 and Space, the numpad's among them. The [`Hotkeys`] trait's
-/// [`Hotkeys::kind_unavailable`] default reads this with the current
-/// system; Windows' adapter overrides that method to say nothing is,
-/// since every kind works there. On Windows the answer is `None` on the
-/// adapter's word, not here, so the test fakes that model a system with
-/// a hook answer `None` too.
+/// F1 to F12 and Space, the numpad's among them. On Windows the answer
+/// is `None`: the hook is that platform's own, and the [`Hotkeys`]
+/// trait's [`Hotkeys::kind_unavailable`] default, which reads this with
+/// the current system, agrees there — Windows' adapter overrides that
+/// method to say nothing is outright all the same. The launcher checks
+/// this before registering, and the binding's row shows the reason where
+/// a record names a kind this system cannot take.
 pub fn kinds_unavailable(shortcut: &Shortcut, platform: Option<Platform>) -> Option<String> {
+    if platform == Some(Platform::Windows) {
+        // Every kind works on Windows, whose adapter has the hook.
+        return None;
+    }
     let here = match platform {
         Some(platform) => platform.to_string(),
         None => format!("this system ({})", std::env::consts::OS),
@@ -855,10 +876,11 @@ pub trait Hotkeys: Send + Sync + 'static {
     /// beyond letters, digits, F1 to F12 and Space, the numpad's among
     /// them — work only where the adapter has one, which is Windows
     /// (#260). `None` when the system can bind it; the default explains
-    /// every such kind, as an adapter without a hook does, and Windows'
-    /// adapter overrides it to say nothing is. The launcher checks this
-    /// before registering, and the binding's row shows the reason where
-    /// a record names a kind this system cannot take.
+    /// every such kind where the platform has no hook, answering `None`
+    /// on Windows, whose adapter says nothing is outright by overriding
+    /// this. The launcher checks this before registering, and the
+    /// binding's row shows the reason where a record names a kind this
+    /// system cannot take.
     fn kind_unavailable(&self, shortcut: &Shortcut) -> Option<String> {
         kinds_unavailable(shortcut, Platform::current())
     }
@@ -1446,9 +1468,10 @@ mod tests {
             shortcut("ctrl+alt+minus").to_string(),
             format!("{ctrl}+{alt}+-")
         );
-        // A chord a side names still shows its other modifiers.
+        // A chord a side names still shows its other modifiers, and a
+        // modifier no side is named for names none.
         assert_eq!(
-            shortcut("lshift+rctrl+g").to_string(),
+            shortcut("shift+rctrl+g").to_string(),
             format!("Right {ctrl}+Shift+G")
         );
     }

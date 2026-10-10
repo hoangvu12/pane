@@ -184,6 +184,8 @@ fn a_stuck_modifier_does_not_fire_a_phantom_chord_once_resynchronized() {
     // re-reads the modifiers' real state.
     recognizer.resync(&[]);
     assert_eq!(recognizer.step(event(G, true)), Decision::Pass);
+    // The key was released, as a press is; the chord is pressed afresh.
+    recognizer.step(event(G, false));
     // The modifiers really held after the re-read: the chord fires.
     recognizer.step(event(CONTROL, true));
     recognizer.step(event(ALT, true));
@@ -378,6 +380,7 @@ fn a_double_tap_beyond_the_window_or_of_another_key_fires_nothing() {
     recognizer.step(at(CONTROL, true, 0));
     recognizer.step(at(CONTROL, false, 100));
     assert_eq!(recognizer.step(at(CONTROL, true, 500)), Decision::Pass);
+    recognizer.step(at(CONTROL, false, 550));
     // The right Ctrl's press is another key between: the double of the
     // left one breaks, and a double bound to either side does not
     // complete across keys.
@@ -441,11 +444,19 @@ fn a_single_and_a_double_tap_of_the_same_modifier_bound_together_each_fire_as_re
 #[test]
 fn a_chord_names_sides_and_only_its_named_modifiers() {
     let mut recognizer = Recognizer::default();
-    recognizer.add(1, chord([false, true, false, false], G));
     // Replacing the Any of a modifier with a side in the binding:
-    // Right Alt+G.
+    // Right Alt+G — and Right Alt+H, its own key, so the two keep apart.
     let mut sides = [None; 4];
     sides[ALT_AT] = Some(Side::Right);
+    recognizer.add(
+        1,
+        Binding {
+            kind: Kind::Chord,
+            modifiers: sides,
+            key: G,
+            numpad: false,
+        },
+    );
     recognizer.add(
         2,
         Binding {
@@ -609,6 +620,9 @@ fn a_recording_session_holds_the_keys_back_and_reports_what_was_pressed() {
         })
     );
     assert_eq!(recognizer.step(event(G, false)), Decision::Swallow);
+    // The modifiers up: what follows is pressed alone.
+    recognizer.step(event(CONTROL, false));
+    recognizer.step(event(ALT, false));
     // A bare key, with no modifiers: reported for the recorder to
     // explain, as the window's own recorder does.
     assert_eq!(
@@ -620,8 +634,6 @@ fn a_recording_session_holds_the_keys_back_and_reports_what_was_pressed() {
         })
     );
     recognizer.step(event(H, false));
-    recognizer.step(event(CONTROL, false));
-    recognizer.step(event(ALT, false));
 
     // A lone tap of the Windows key, recognized by its timing, reported
     // and held back — no mask needed, the release never reaching
@@ -634,9 +646,17 @@ fn a_recording_session_holds_the_keys_back_and_reports_what_was_pressed() {
             side: Side::Left,
         })
     );
-    // A double tap, likewise.
+    // A double tap, likewise: the first press and its release — a lone
+    // tap in its own right — are held back, the release reporting the
+    // tap, and the second press, with nothing between, the double.
     assert_eq!(recognizer.step(at(RCONTROL, true, 200)), Decision::Swallow);
-    assert_eq!(recognizer.step(at(RCONTROL, false, 300)), Decision::Swallow);
+    assert_eq!(
+        recognizer.step(at(RCONTROL, false, 300)),
+        Decision::Recorded(Recorded::Tap {
+            modifier: CTRL_AT,
+            side: Side::Right,
+        })
+    );
     assert_eq!(
         recognizer.step(at(RCONTROL, true, 500)),
         Decision::Recorded(Recorded::Double {
