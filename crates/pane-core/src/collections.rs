@@ -203,15 +203,15 @@ pub(crate) fn read(folder: &Path) -> Result<Option<Collection>, String> {
     // to one the walk has followed is a cycle — a broken index, whose
     // ids resolve to no extension (#310).
     for old in renamed.keys() {
-        let mut walked = vec![old.clone()];
+        let mut chain = vec![old.clone()];
         let mut current = old.clone();
         while let Some(next) = renamed.get(&current).and_then(Option::as_deref) {
-            if walked.contains(next) {
-                walked.push(next.to_owned());
-                let cycle = walked.join(" → ");
+            if chain.iter().any(|id| id == next) {
+                chain.push(next.to_owned());
+                let cycle = chain.join(" → ");
                 return Err(format!("its `renamed` map holds a cycle: {cycle}"));
             }
-            walked.push(next.to_owned());
+            chain.push(next.to_owned());
             current = next.to_owned();
         }
     }
