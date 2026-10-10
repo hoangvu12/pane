@@ -467,9 +467,7 @@ impl Launcher {
             let named: Vec<(PathBuf, PathBuf)> = match &package.manifest {
                 Ok(manifest) => manifest
                     .components()
-                    .map(|(_, component)| {
-                        (component.to_path_buf(), location.join(component))
-                    })
+                    .map(|(_, component)| (component.to_path_buf(), location.join(component)))
                     .collect(),
                 // A package whose manifest cannot be read has no code to
                 // ask.
@@ -527,8 +525,7 @@ impl Launcher {
         if handoff.is_empty() {
             return;
         }
-        let (Some(runtime), Some(installation)) =
-            (self.runtime().ok(), self.installation.as_ref())
+        let (Some(runtime), Some(installation)) = (self.runtime().ok(), self.installation.as_ref())
         else {
             return;
         };

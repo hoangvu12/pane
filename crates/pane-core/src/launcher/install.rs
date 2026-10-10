@@ -612,7 +612,7 @@ impl Launcher {
                     None
                 };
                 if reopen.is_none() && (current || was_open) {
-                    state.view.status = Status::Result(message);
+                    state.view.status = Status::Result(message.clone());
                 }
                 let at = state.screen_epoch;
                 drop(state);
@@ -706,7 +706,9 @@ impl Launcher {
         // taken now that every check above passed and before the old
         // generation ends: an update the user chose or one Pane applies by
         // itself replaces as a reload does.
-        let handoff = self.take_handoff(&package.identity, &package.manifest).await;
+        let handoff = self
+            .take_handoff(&package.identity, &package.manifest)
+            .await;
         let retire = self.retire(&package.identity);
         let (installed, package) = off_thread(move || {
             let mut store = store.lock().unwrap_or_else(|p| p.into_inner());

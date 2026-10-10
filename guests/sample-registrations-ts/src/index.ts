@@ -69,7 +69,9 @@ export const lifecycle = {
   },
   // This sample opts into the state handoff's interface without keeping
   // state: nothing is handed over, so nothing is ever restored.
-  async snapshot(): Promise<Uint8Array | undefined> {},
+  async snapshot(): Promise<Uint8Array | undefined> {
+    return undefined;
+  },
   async restore(): Promise<void> {
     throw new Error("this sample keeps no state across a replacement");
   },

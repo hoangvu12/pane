@@ -896,7 +896,7 @@ enum Request {
     Snapshot {
         component: PathBuf,
         data: Option<PackageData>,
-        reply: oneshot::Sender<Option<Vec<u8>>>,
+        reply: oneshot::Sender<Result<Option<Vec<u8>>, CallError>>,
     },
     /// Delivers one event of what the package of `data` registered (a
     /// timer's firing, a watcher's coalesced changes) to its component's
@@ -3712,7 +3712,7 @@ impl Host {
                 data,
                 reply,
             } => Box::pin(async move {
-                let _ = reply.send(self.snapshot(&component, data).await);
+                let _ = reply.send(Ok(self.snapshot(&component, data).await));
             }),
             Request::Event {
                 component,
@@ -4520,16 +4520,17 @@ impl Host {
         let deadline = tokio::time::Instant::now() + SNAPSHOT_DEADLINE;
         // The turn is waited for within the deadline too: a call that
         // started meanwhile cannot delay the replacement past it.
-        let turn = unless(self.turn_for(path, &chain), tokio::time::sleep_until(deadline)).await;
+        let turn = unless(
+            self.turn_for(path, &chain),
+            tokio::time::sleep_until(deadline),
+        )
+        .await;
         let _turn = match turn {
             Ok(Ok(turn)) => turn,
             // A fresh chain never waits on itself.
             Ok(Err(_)) => return None,
             Err(()) => {
-                self.handoff_report(
-                    data.as_ref(),
-                    "the old code did not answer within 1 second",
-                );
+                self.handoff_report(data.as_ref(), "the old code did not answer within 1 second");
                 return None;
             }
         };
@@ -4565,10 +4566,7 @@ impl Host {
         let answered = match answered {
             Ok(answered) => answered,
             Err(CallError::Cancelled) => {
-                self.handoff_report(
-                    data.as_ref(),
-                    "the old code did not answer within 1 second",
-                );
+                self.handoff_report(data.as_ref(), "the old code did not answer within 1 second");
                 return None;
             }
             Err(_) => return None,
@@ -4659,10 +4657,7 @@ impl Host {
             // An error the new code answers with is not a failure: the
             // state is discarded and it starts fresh.
             Ok(Ok(Err(rejected))) => {
-                self.handoff_report(
-                    Some(data),
-                    &format!("the new code rejected it: {rejected}"),
-                );
+                self.handoff_report(Some(data), &format!("the new code rejected it: {rejected}"));
                 Ok(())
             }
             Ok(Err(trap)) | Err(trap) => {
