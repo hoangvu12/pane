@@ -54,6 +54,14 @@
 //! an older event is dropped. The component set's version is written into
 //! every document; a Pane that renders another major refuses it naming
 //! both versions, and one that knows less draws what it understands.
+//!
+//! A view's answer may navigate (#239): [`Cx::push`] pushes a view above
+//! this one, [`Cx::replace`] replaces this view with one, [`Cx::pop`] and
+//! [`Cx::pop_with`] pop it — with a result answered to the view below,
+//! whose own `on_pop` (given to [`Cx::push_with`]) runs with it. The back
+//! key pops a view without asking, delivering the pop event with no
+//! result. [`Container::navigation_title`] names the view, shown where a
+//! screen's title is.
 
 use alloc::borrow::ToOwned as _;
 use alloc::boxed::Box;
@@ -69,6 +77,12 @@ use wit::{GuestView, Outcome, Rendered, UiEvent};
 /// The version of the UI component set this SDK writes
 /// (`docs/designed-tree.md`).
 const COMPONENT_SET: &str = "1.0";
+
+/// The callback id of the pop event, the event Pane sends a view when the
+/// one above it popped: an id no tree names (this SDK's ids start at 1),
+/// its payload `{"pop": <result>}`, the result the pop answered (`null`
+/// when the back key popped, so no view's result reached the one below).
+const POP_CALLBACK: u32 = 0;
 
 /// A designed view: the screen a `"mode": "designed"` command opens. Pane
 /// asks for its tree when the view opens and after each event, with a
@@ -91,21 +105,97 @@ pub struct Cx<'a, V: View> {
 impl<V: View> Cx<'_, V> {
     /// The listener `run` becomes, which a press of the button it is given
     /// to runs with the view's state mutably: `cx.listener(|this: &mut V|
-    /// ...)`, handed to [`Button::on_click`].
+    /// ...)`, handed to [`Button::on_click`]. The view re-renders after
+    /// the press, as it does after every event.
     pub fn listener(&mut self, run: impl FnOnce(&mut V) + 'static) -> Listener {
         let id = self.listeners.len() as u32 + 1;
-        self.listeners.push(Box::new(run));
+        self.listeners.push(Run::Listener(Box::new(run)));
+        Listener(id)
+    }
+
+    /// A press that pushes a view above this one: `open` builds the
+    /// pushed view's state from this view's, this view staying below it
+    /// (its state kept, its tree shown again when the pushed view pops).
+    /// Handed to [`Button::on_click`], as a listener is.
+    pub fn push(&mut self, open: impl FnOnce(&mut V) -> V + 'static) -> Listener {
+        self.pushed(Box::new(open), None)
+    }
+
+    /// A press that pushes a view above this one, `on_pop` answering this
+    /// view when it pops: with the result the pop answered (or `None`, a
+    /// pop that carried none, as the back key's), this view re-rendering
+    /// after. The Raycast-style `Action.Push`'s `onPop`.
+    pub fn push_with(
+        &mut self,
+        open: impl FnOnce(&mut V) -> V + 'static,
+        on_pop: impl FnOnce(&mut V, Option<&str>) + 'static,
+    ) -> Listener {
+        self.pushed(Box::new(open), Some(Box::new(on_pop)))
+    }
+
+    /// A press that pushes a view above this one, `on_pop` kept to answer
+    /// this view when it pops.
+    fn pushed(
+        &mut self,
+        open: Box<dyn FnOnce(&mut V) -> V>,
+        on_pop: Option<Box<dyn FnOnce(&mut V, Option<&str>)>>,
+    ) -> Listener {
+        let id = self.listeners.len() as u32 + 1;
+        self.listeners.push(Run::Push { open, on_pop });
+        Listener(id)
+    }
+
+    /// A press that replaces this view with the state `open` builds: this
+    /// view is dropped, never used again, the views below it staying.
+    pub fn replace(&mut self, open: impl FnOnce(&mut V) -> V + 'static) -> Listener {
+        let id = self.listeners.len() as u32 + 1;
+        self.listeners.push(Run::Replace(Box::new(open)));
+        Listener(id)
+    }
+
+    /// A press that pops this view: the view below's tree shows again and
+    /// it is told the view above popped, with no result.
+    pub fn pop(&mut self) -> Listener {
+        let id = self.listeners.len() as u32 + 1;
+        self.listeners.push(Run::Pop(None));
+        Listener(id)
+    }
+
+    /// A press that pops this view, answering `result` — built from this
+    /// view's state — to the view below, whose own `on_pop` runs with it
+    /// before it re-renders.
+    pub fn pop_with(&mut self, result: impl FnOnce(&mut V) -> String + 'static) -> Listener {
+        let id = self.listeners.len() as u32 + 1;
+        self.listeners.push(Run::Pop(Some(Box::new(result))));
         Listener(id)
     }
 }
 
-/// A named listener of the tree: what [`Cx::listener`] answers, handed to
+/// A named listener of the tree: what [`Cx::listener`], [`Cx::push`],
+/// [`Cx::replace`], [`Cx::pop`] and their kinds answer, handed to
 /// [`Button::on_click`].
 #[derive(Debug)]
 pub struct Listener(u32);
 
-/// What a listener runs, once, with the view's state mutably.
-type Run<V> = Box<dyn FnOnce(&mut V)>;
+/// What a listener of the tree does when its node is pressed: run it and
+/// answer nothing next (the view re-renders, as it always does), or
+/// answer the navigation one of [`Cx`]'s push, replace and pop listeners
+/// builds.
+enum Run<V> {
+    /// Runs the listener; nothing next.
+    Listener(Box<dyn FnOnce(&mut V)>),
+    /// Builds the state of a view pushed above this one, `on_pop` (when
+    /// given) kept to answer this view when it pops.
+    Push {
+        open: Box<dyn FnOnce(&mut V) -> V>,
+        on_pop: Option<Box<dyn FnOnce(&mut V, Option<&str>)>>,
+    },
+    /// Builds the state of the view replacing this one.
+    Replace(Box<dyn FnOnce(&mut V) -> V>),
+    /// Pops this view, answering the result the closure builds (an empty
+    /// one when there is none).
+    Pop(Option<Box<dyn FnOnce(&mut V) -> String>>),
+}
 
 /// One node of the tree: a layout primitive or UI component, with the
 /// properties it was given. Built with [`column`], [`row`], [`text`] and
@@ -116,11 +206,17 @@ pub enum Node {
     /// A column of children.
     Column {
         layout: Layout,
+        /// The view's navigation title, read when this node is the tree's
+        /// root: what names the view where a screen's title is shown.
+        navigation_title: Option<String>,
         children: Vec<Node>,
     },
     /// A row of children.
     Row {
         layout: Layout,
+        /// The view's navigation title, read when this node is the tree's
+        /// root: what names the view where a screen's title is shown.
+        navigation_title: Option<String>,
         children: Vec<Node>,
     },
     /// One line of text.
@@ -247,6 +343,7 @@ impl IntoNode for Node {
 pub fn column() -> Container {
     Container(Node::Column {
         layout: Layout::default(),
+        navigation_title: None,
         children: Vec::new(),
     })
 }
@@ -255,6 +352,7 @@ pub fn column() -> Container {
 pub fn row() -> Container {
     Container(Node::Row {
         layout: Layout::default(),
+        navigation_title: None,
         children: Vec::new(),
     })
 }
@@ -320,6 +418,23 @@ impl Container {
     /// Whether this container's children wrap onto further lines.
     pub fn wrap(mut self) -> Container {
         self.layout(|layout| layout.wrap = true);
+        self
+    }
+
+    /// The navigation title of the view this container is the root of:
+    /// what names the view where a screen's title is shown. Only the
+    /// tree's root names one; a title on any other node is ignored.
+    pub fn navigation_title(mut self, title: impl Into<String>) -> Container {
+        let title = title.into();
+        if let Node::Column {
+            navigation_title, ..
+        }
+        | Node::Row {
+            navigation_title, ..
+        } = &mut self.0
+        {
+            *navigation_title = Some(title);
+        }
         self
     }
 
@@ -405,14 +520,17 @@ impl View for NoDesignedView {
 }
 
 /// The state of one designed view the extension opened, as Pane's resource
-/// holds it: the view, and the listeners of its last two renders. The SDK
-/// makes it around the state [`Command::open_designed_view`] answers
-/// with; the resource's one type.
+/// holds it: the view, the listeners of its last two renders, and the
+/// `on_pop` of the view it pushed last. The SDK makes it around the state
+/// [`Command::open_designed_view`] answers with; the resource's one type.
 pub struct Open<V: View> {
     state: RefCell<V>,
     /// The listeners of the last two renders, newest last: the render
     /// number and its listeners by callback id.
     tables: RefCell<Vec<(u64, Vec<Run<V>>)>>,
+    /// The `on_pop` this view's last push registered, run when the view it
+    /// pushed pops, with the result that pop answered.
+    on_pop: RefCell<Option<Box<dyn FnOnce(&mut V, Option<&str>)>>>,
 }
 
 impl<V: View> Open<V> {
@@ -421,6 +539,7 @@ impl<V: View> Open<V> {
         Open {
             state: RefCell::new(state),
             tables: RefCell::new(Vec::new()),
+            on_pop: RefCell::new(None),
         }
     }
 }
@@ -452,9 +571,18 @@ impl<V: View> GuestView for Open<V> {
     }
 
     async fn handle_event(&self, event: UiEvent) -> Result<Outcome, String> {
-        let UiEvent {
-            render, callback, ..
-        } = event;
+        // The pop event: the view above this one popped, its payload the
+        // result that pop answered. The view re-renders after it, as after
+        // every event.
+        if event.callback == POP_CALLBACK {
+            let result = pop_result_of(&event.payload);
+            let on_pop = self.on_pop.borrow_mut().take();
+            if let Some(run) = on_pop {
+                run(&mut self.state.borrow_mut(), result.as_deref());
+            }
+            return Ok(nothing_next());
+        }
+        let UiEvent { render, callback, .. } = event;
         // The listener the tree named, taken from the table of the render
         // the user saw: an event of an older render is stale, dropped.
         let id = usize::try_from(callback.saturating_sub(1)).ok();
@@ -473,16 +601,104 @@ impl<V: View> GuestView for Open<V> {
                 _ => None,
             }
         };
-        if let Some(run) = taken {
-            run(&mut self.state.borrow_mut());
-        }
-        Ok(Outcome {
-            // The navigation stack lands with #239.
-            push: None,
-            replace: None,
-            pop: None,
+        // Run what the tree named, answering the navigation it asked for.
+        let next = match taken {
+            Some(Run::Listener(run)) => {
+                run(&mut self.state.borrow_mut());
+                None
+            }
+            Some(Run::Push { open, on_pop }) => {
+                let state = open(&mut self.state.borrow_mut());
+                *self.on_pop.borrow_mut() = on_pop;
+                Some(Next::Push(Open::new(state)))
+            }
+            Some(Run::Replace(open)) => {
+                let state = open(&mut self.state.borrow_mut());
+                Some(Next::Replace(Open::new(state)))
+            }
+            Some(Run::Pop(answer)) => {
+                let result = answer.map(|answer| answer(&mut self.state.borrow_mut()));
+                Some(Next::Pop(result.unwrap_or_default()))
+            }
+            None => None,
+        };
+        Ok(match next {
+            Some(Next::Push(view)) => Outcome {
+                push: Some(wit::View::new(view)),
+                replace: None,
+                pop: None,
+            },
+            Some(Next::Replace(view)) => Outcome {
+                push: None,
+                replace: Some(wit::View::new(view)),
+                pop: None,
+            },
+            Some(Next::Pop(result)) => Outcome {
+                push: None,
+                replace: None,
+                pop: Some(result),
+            },
+            None => nothing_next(),
         })
     }
+}
+
+/// What a listener's run answered the view does next: a view to push
+/// above it or to replace it with, or a result to pop the view with.
+enum Next<V: View> {
+    Push(Open<V>),
+    Replace(Open<V>),
+    Pop(String),
+}
+
+/// The outcome with nothing next: what a listener that asked for no
+/// navigation answers.
+fn nothing_next() -> Outcome {
+    Outcome {
+        push: None,
+        replace: None,
+        pop: None,
+    }
+}
+
+/// The result the pop event's payload carries: `{"pop": "…"}` for a pop
+/// that answered one, `{"pop": null}` for a pop that carried none (the
+/// back key's, so no view's result reached the one below). Read without
+/// parsing the whole document, so a payload that grew a field still gives
+/// its result.
+fn pop_result_of(payload: &str) -> Option<String> {
+    let at = payload.find("\"pop\"")?;
+    let rest = payload[at + 5..].trim_start().strip_prefix(':')?.trim_start();
+    if rest.starts_with("null") {
+        return None;
+    }
+    let rest = rest.strip_prefix('"')?;
+    let end = rest.find('"')?;
+    let escaped = &rest[..end];
+    let mut result = String::new();
+    let mut characters = escaped.chars();
+    while let Some(character) = characters.next() {
+        match character {
+            '\\' => match characters.next() {
+                Some('"') => result.push('"'),
+                Some('\\') => result.push('\\'),
+                Some('/') => result.push('/'),
+                Some('n') => result.push('\n'),
+                Some('r') => result.push('\r'),
+                Some('t') => result.push('\t'),
+                Some('b') => result.push('\u{8}'),
+                Some('f') => result.push('\u{c}'),
+                Some('u') => {
+                    let digits: String = characters.by_ref().take(4).collect();
+                    let code = u32::from_str_radix(&digits, 16).ok()?;
+                    result.push(char::from_u32(code)?);
+                }
+                _ => return None,
+            },
+            other => result.push(other),
+        }
+    }
+    Some(result)
 }
 
 /// The render number `context` names, or 1 when it says none: the context
@@ -507,15 +723,31 @@ fn render_of(context: &str) -> u64 {
 /// id [`Cx::listener`] gave it.
 fn write_node(tree: &mut String, node: &Node) -> Result<(), String> {
     match node {
-        Node::Column { layout, children } => {
+        Node::Column {
+            layout,
+            navigation_title,
+            children,
+        } => {
             tree.push_str("{\"type\":\"column\"");
+            if let Some(title) = navigation_title {
+                tree.push_str(",\"navigationTitle\":");
+                write_string(tree, title)?;
+            }
             write_layout(tree, layout)?;
             tree.push_str(",\"children\":[");
             write_nodes(tree, children)?;
             tree.push_str("]}");
         }
-        Node::Row { layout, children } => {
+        Node::Row {
+            layout,
+            navigation_title,
+            children,
+        } => {
             tree.push_str("{\"type\":\"row\"");
+            if let Some(title) = navigation_title {
+                tree.push_str(",\"navigationTitle\":");
+                write_string(tree, title)?;
+            }
             write_layout(tree, layout)?;
             tree.push_str(",\"children\":[");
             write_nodes(tree, children)?;

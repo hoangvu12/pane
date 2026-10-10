@@ -104,6 +104,8 @@ const PREBUILT: &[&str] = &[
     "sample_programs_ts",
     "sample_view_js",
     "sample_view_ts",
+    "sample_nav_js",
+    "sample_nav_ts",
 ];
 
 fn main() -> ExitCode {
@@ -206,6 +208,7 @@ fn guests() -> Result<(), String> {
                 "sample_rust",
                 "sample_settings",
                 "sample_view",
+                "sample_nav",
                 "calculator",
                 "applications",
                 "quicklinks",
@@ -487,6 +490,9 @@ const SAMPLE_PACKAGES: [(&str, &str); 63] = [
     ("sample-view", "sample_view"),
     ("sample-view-js", "sample_view_js"),
     ("sample-view-ts", "sample_view_ts"),
+    ("sample-nav", "sample_nav"),
+    ("sample-nav-js", "sample_nav_js"),
+    ("sample-nav-ts", "sample_nav_ts"),
     ("designed", "designed_fixture"),
 ];
 

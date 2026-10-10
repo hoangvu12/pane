@@ -33,8 +33,8 @@ which extends the one the list tree uses (`render` and `handle-event`,
   (`render`), the key of the node the event was raised on (`key`, `""`
   when the tree gave it none) and the event's details as JSON
   (`payload`, `"{}"` for a press). Pane then calls `view.render` again
-  and draws the answer. `outcome` (`push`, `replace`, `pop`) is ignored
-  until the navigation stack lands (#239).
+  and draws the answer. `outcome` (`push`, `replace`, `pop`) changes the
+  view's navigation stack, below.
 
 Events of one view are delivered one at a time, in order; an answer that
 arrives after its view left the screen is discarded, and a tree is shown
@@ -68,6 +68,68 @@ The sample is a counter, in [Rust](../guests/sample-view/src/lib.rs),
 [JavaScript](../guests/sample-view-js/src/index.js) and
 [TypeScript](../guests/sample-view-ts/src/index.tsx), held alike by
 `crates/pane-core/tests/designed_views.rs`.
+
+## The navigation stack
+
+A designed view's screen holds a **stack** of views: the root view the
+command opened, and each view a view's answer pushed above it, the top of
+the stack on screen (#239). The stack is Pane's, the extension's state
+living in each view's resource; a popped or replaced view's resource is
+dropped, never used again. One command's stack holds at most 32 views: a
+push that would go beyond it is the extension's error ("the navigation
+stack already holds 32 views; a further push is refused"), the view
+keeping its last good tree, as it does for any error.
+
+What `handle-event` answers changes the stack, at most one field of the
+`outcome` acted on — a `pop` first, then a `replace`, then a `push` (the
+SDKs answer exactly one):
+
+- **`push`**: the view the answer names is pushed above the answering
+  one, and drawn — its first render. The answering view stays below,
+  keeping its state and its tree, which shows again when the pushed view
+  pops.
+- **`replace`**: the view the answer names takes the answering one's
+  place, at its depth; the replaced view is dropped.
+- **`pop`**: the answering view pops itself, dropped with its resource,
+  answering the string as the pop's result to the view below. Popping
+  the root view drops the whole stack, leaving the command as the back
+  key's own pop of the root does. A pop that carried no result answers
+  the empty string.
+
+The back key (Escape, whatever the Keyboard page binds back to) pops the
+top view without asking: the view below's last tree shows **at once**
+first — no guest call — and then the view below is told the view above
+it popped, re-rendering as after any event. Before popping, the back key
+does what it does on every screen: it clears a non-empty search field,
+closes an open dropdown or menu, and cancels an input method's
+composition, in that order (the "Launcher polish" specification, #123,
+owns that order; a designed view shows no search field of its own today,
+the List's arriving with #240). Backspace pops the top view too, but not
+on key repeat. When the stack holds only the root view, the back key
+leaves the command, as it leaves a list command. `window.pop-to-root`
+(wit/feedback.wit, the host function) and Shift+Esc drop the whole stack,
+leaving for root search at once.
+
+The event that tells a view the one above it popped is the **pop event**:
+callback id 0, an id no tree's `onPress` names (the SDKs' ids start at
+1), with the pop's result as its payload — `{"pop": "…"}` for a pop that
+answered one, `{"pop": null}` for a pop that carried none (the back
+key's, so no view's result reached the one below). An answer to it is an
+answer like any other: it may itself push, replace or pop.
+
+Authors write the stack through the SDKs: in Rust `cx.push(open)` (the
+`on_pop` of `cx.push_with` answering the pushed view's pop),
+`cx.replace(open)`, `cx.pop()` and `cx.pop_with(result)`; in JavaScript
+and TypeScript `push(target, onPop)`, `replace(target)`, `pop(result)`
+and the Raycast-style `Push(target, onPop)` as a button's `onClick`. The
+`onPop` handler lives on the pushing side and is never sent over the
+wire.
+
+The sample is a navigation sample, in
+[Rust](../guests/sample-nav/src/lib.rs),
+[JavaScript](../guests/sample-nav-js/src/index.js) and
+[TypeScript](../guests/sample-nav-ts/src/index.tsx), held alike by
+`crates/pane-core/tests/navigation_stack.rs`.
 
 ## The document
 
@@ -105,6 +167,10 @@ A document is one JSON object: its version and its root node.
     button survives a re-render that still draws it);
   - `name`: what assistive technology reads the node by, when the node's
     own content does not name it (a column's or row's);
+  - `navigationTitle`: what names the view, read from the root node only
+    — the screen's title, shown where a screen's title is (the footer's
+    left names it as it names a custom view's; the search header, once
+    the List's search field owns it, #240). Ignored on any other node;
   - `requires`: the minimum minor version of the component set the node
     needs; a node Pane cannot satisfy degrades as an unknown node does;
   - `fallback`: the node drawn instead when Pane does not know the node;
@@ -146,7 +212,8 @@ A button. Its children spell its `label`. It takes:
 
 Buttons are focusable, in tree order: Tab and Shift+Tab move through
 them, and Enter and Space press the focused one. Escape stays with Pane,
-as it does for a custom view: it leaves the screen.
+as it does for a custom view: it pops the navigation stack (above), and
+leaves the screen when only the root view is on it.
 
 ### Tokens
 
@@ -180,5 +247,5 @@ versioning asks for it, as the list tree's is:
 
 One document may hold at most 10,000 nodes (counting `fallback`
 subtrees), be at most 64 levels deep and at most 4 MiB of JSON, and each
-text node at most 64 KiB. Provisional (#121), as the spec's proposed
-defaults.
+text node at most 64 KiB. One command's navigation stack holds at most 32
+views. Provisional (#121), as the spec's proposed defaults.

@@ -49,6 +49,7 @@ mod launcher;
 mod list_tree;
 mod local_channel;
 mod memory;
+mod navigation_stack;
 mod no_view;
 mod npm;
 mod operations;
