@@ -1762,16 +1762,16 @@ impl LauncherWindow {
             .when_some(description, |row, description| {
                 row.aria_description(description)
             })
-            .on_click(
-                cx.listener(move |this, event: &gpui::ClickEvent, window, cx| {
+            .on_click(cx.listener(
+                move |this, event: &gpui::ClickEvent, window, cx| {
                     if event.click_count() <= 1 {
                         this.launcher.select(index);
                         this.announcer.user_moved();
                         this.activate_selected(window, cx);
                         this.motion.pointer_open();
                     }
-                }),
-            ),
+                },
+            )),
         )
     }
 

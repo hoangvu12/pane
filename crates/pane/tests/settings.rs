@@ -2619,7 +2619,7 @@ fn choice_collection(folder: &Path) -> PathBuf {
 
 #[gpui::test]
 fn a_collection_folder_chosen_from_the_plus_menu_opens_the_choice(cx: &mut TestAppContext) {
-    let (sources, data) = (tempfile::tempdir(), tempfile::tempdir());
+    let (sources, data) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
     let folder = choice_collection(&sources.path().join("tools"));
     cx.executor().allow_parking();
     cx.update(pane::bind_keys);
