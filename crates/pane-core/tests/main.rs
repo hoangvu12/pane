@@ -76,6 +76,7 @@ mod stopping;
 mod submenus;
 mod system;
 mod system_icon_adapters;
+mod typed_folders;
 mod typed_queries;
 mod uninstall;
 mod uninstall_dependents;

@@ -90,7 +90,7 @@ pub use tree::{
 pub(crate) mod bindings {
     wasmtime::component::bindgen!({
         path: "../../wit",
-        world: "extension-with-file-index",
+        world: "extension-with-typed-folder",
         imports: {
             "pane:extension/operations": store,
             "pane:extension/helpers": store,
@@ -107,6 +107,9 @@ pub(crate) mod bindings {
             // starting, the clipboard held by another program), off the
             // runtime thread, which awaits them.
             "pane:extension/system": async,
+            // Listing the folder the user typed reads the file system,
+            // which may block, off the runtime thread, which awaits it.
+            "pane:extension/typed-folder": async,
         },
         exports: { default: async | store },
     });
@@ -166,7 +169,8 @@ use bindings::pane::extension::{
     applications, cache, clipboard_history, content, credentials, settings,
 };
 use bindings::pane::extension::{
-    feedback as feedback_host, system as system_host, window as window_host,
+    feedback as feedback_host, system as system_host, typed_folder as typed_folder_host,
+    window as window_host,
 };
 use indexed_bindings::exports::pane::extension::indexed_results;
 use root_bindings::exports::pane::extension::root_results;
@@ -2584,7 +2588,7 @@ impl WasiHttpView for GuestState {
 /// A running guest instance of one component.
 struct Instance {
     store: Store<GuestState>,
-    bindings: bindings::ExtensionWithFileIndex,
+    bindings: bindings::ExtensionWithTypedFolder,
     /// Its root results export, if it has one.
     root_results: Option<root_bindings::RootResultsProvider>,
     /// Its indexed results export, if it has one.
@@ -2812,6 +2816,11 @@ impl Code {
             |state| state,
         )
         .expect("registering the file index in a fresh linker cannot conflict");
+        typed_folder_host::add_to_linker::<_, wasmtime::component::HasSelf<_>>(
+            &mut linker,
+            |state| state,
+        )
+        .expect("registering the typed folder listing in a fresh linker cannot conflict");
         launching::add_to_linker::<_, wasmtime::component::HasSelf<_>>(&mut linker, |state| state)
             .expect("registering launching commands in a fresh linker cannot conflict");
         window_host::add_to_linker::<_, wasmtime::component::HasSelf<_>>(&mut linker, |state| {
@@ -2967,7 +2976,7 @@ impl Code {
                 ))
             })?;
         }
-        bindings::ExtensionWithFileIndexPre::new(pre).map_err(interface)?;
+        bindings::ExtensionWithTypedFolderPre::new(pre).map_err(interface)?;
         Ok(Checked { network, programs })
     }
 }
@@ -4543,7 +4552,7 @@ impl Host {
             started => started?,
         };
         let bindings =
-            bindings::ExtensionWithFileIndex::new(&mut store, &instance).map_err(load)?;
+            bindings::ExtensionWithTypedFolder::new(&mut store, &instance).map_err(load)?;
         // Only a command that computes root results exports them.
         let root_results = root_bindings::RootResultsProvider::new(&mut store, &instance).ok();
         // Only a command that supplies results ahead of the query exports
