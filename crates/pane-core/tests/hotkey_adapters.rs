@@ -280,8 +280,10 @@ mod windows {
 
     /// One key event `SendInput` injects, tagged `tag`.
     fn key_event(key: u32, up: bool, tag: usize) -> INPUT {
-        let mut input = INPUT::default();
-        input.r#type = INPUT_KEYBOARD;
+        let mut input = INPUT {
+            r#type: INPUT_KEYBOARD,
+            ..Default::default()
+        };
         input.Anonymous.ki = KEYBDINPUT {
             wVk: VIRTUAL_KEY(key as u16),
             wScan: 0,
@@ -524,20 +526,24 @@ mod windows {
         );
     }
 
+    /// What the test's hook has seen: one entry per event — the
+    /// virtual-key code, whether it was released, and the tag it carried.
+    type Seen = Arc<Mutex<Vec<(u32, bool, usize)>>>;
+
     /// The test's own low-level keyboard hook, installed *before* Pane's
     /// so it sits *below* it in the chain (the last hook installed runs
     /// first): it sees only the events Pane's hook passes through, never
     /// the ones it swallows, and Pane's own tagged injections (the
     /// Start-menu mask) among them (#260).
     struct Below {
-        seen: Arc<Mutex<Vec<(u32, bool, usize)>>>,
+        seen: Seen,
         hook: HHOOK,
     }
 
     thread_local! {
         /// What the test's hook has seen: (virtual-key code, released,
         /// tag).
-        static SEEN: std::cell::RefCell<Option<Arc<Mutex<Vec<(u32, bool, usize)>>>>> =
+        static SEEN: std::cell::RefCell<Option<Seen>> =
             const { std::cell::RefCell::new(None) };
     }
 
@@ -568,7 +574,7 @@ mod windows {
     /// Installs the test's hook below Pane's own, recording what reaches
     /// the system through it. Unhook with [`Below::unhook`].
     fn below() -> Below {
-        let seen: Arc<Mutex<Vec<(u32, bool, usize)>>> = Arc::default();
+        let seen: Seen = Arc::default();
         SEEN.with(|slot| *slot.borrow_mut() = Some(seen.clone()));
         // SAFETY: the procedure is this module's, kept for as long as the
         // test holds the hook; a low-level hook needs no module handle.
