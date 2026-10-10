@@ -189,6 +189,34 @@ fn command_title(package: &InstalledPackage, command: &str) -> String {
         .map_or_else(|| command.to_owned(), |command| command.title.clone())
 }
 
+/// Whether launching `opening` from root search now would be refused for
+/// a blank required argument: the inline fields' refusal, which runs
+/// nothing and shows no form (#205). A use of the row records nothing for
+/// it, since nothing was dispatched (#199, see `learned`);
+/// `ask_for_arguments` makes the same decision when the launch runs.
+pub(super) fn blank_required_inline(state: &State, opening: &Opening) -> bool {
+    // The fields stand in for the form only for the selected row's own
+    // launch, from root search or through its alias.
+    if !matches!(state.view.screen, Screen::Root { .. })
+        || !matches!(
+            opening.launch.source,
+            LaunchSource::RootSearch | LaunchSource::Alias
+        )
+    {
+        return false;
+    }
+    let Some((declared, command, _)) = declared(state, opening) else {
+        return false;
+    };
+    // The values the fields hold, filled as the launch fills them.
+    let mut given = opening.launch.arguments.clone();
+    if let Some(typed) = state.arguments.of(&command) {
+        given = typed.clone();
+    }
+    let filled = arguments::fill(&declared, &given, opening.launch.fallback_text.as_deref());
+    arguments::first_missing(&declared, &filled).is_some()
+}
+
 /// Whether launching `opening` now would show the argument form: a launch
 /// the user started that leaves a required argument without a value. A
 /// no-view command's global hotkey then shows Pane's window

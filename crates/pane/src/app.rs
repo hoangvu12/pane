@@ -1183,6 +1183,9 @@ impl LauncherWindow {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // Tab ends the walk through the recent queries (#206), as any
+        // key but the walking Up does — held or pressed.
+        self.recall = None;
         // Tab waits for the current query's list to be published (#203)
         // and is replayed through this same path, so a Tab held under one
         // query completes the typed folder the published list selects
@@ -1251,6 +1254,9 @@ impl LauncherWindow {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // Shift+Tab ends the walk through the recent queries (#206), as
+        // any key but the walking Up does — held or pressed.
+        self.recall = None;
         // Shift+Tab waits for the query's list as Tab does (#203), and
         // removes the last path component of the published query when
         // replayed (#204).

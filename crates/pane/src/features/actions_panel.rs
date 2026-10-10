@@ -522,6 +522,10 @@ impl LauncherWindow {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // Ctrl+K ends the walk through the recent queries (#206), as any
+        // key but the walking Up does — held or pressed, and the footer's
+        // Actions button as the key.
+        self.recall = None;
         // Both wait for the current query's list to be published (#203):
         // the key is held and replayed through this same path, so the panel
         // opens on the row the published list selects.

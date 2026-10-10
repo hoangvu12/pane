@@ -196,13 +196,6 @@ impl Indexes {
         }
     }
 
-    /// Whether the command with component `component` ever answered.
-    pub(super) fn answered(&self, component: &Path) -> bool {
-        self.commands
-            .iter()
-            .any(|index| index.component == component && index.answered)
-    }
-
     /// The rows explaining why a command could not supply its results.
     pub(super) fn failures(&self) -> impl Iterator<Item = &(Row, Entry)> {
         self.commands

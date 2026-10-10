@@ -2757,11 +2757,13 @@ impl Launcher {
 
     /// How many times root search has ranked its static rows — every row
     /// but the results computed for the query — since the launcher started:
-    /// a diagnostic for tests and logs (#202). A query pays one ranking,
+    /// a diagnostic for tests (#202). A query pays one ranking,
     /// when its list is made at once or published; a provider's answer
     /// that merges into it splices its section in without another, and
     /// the ranking is made again only when the query or what the rows are
     /// ranked from changed.
+    #[cfg(any(test, debug_assertions))]
+    #[doc(hidden)]
     pub fn root_rankings(&self) -> u64 {
         self.lock().rankings
     }
@@ -3002,10 +3004,19 @@ impl Launcher {
             .and_then(|index| state.entries.get(index).cloned());
         // A use of the selected root result, recorded once its action
         // dispatches (#199, see `learned`): read before activation, which
-        // changes the screen.
-        let learned = entry
-            .as_ref()
-            .and_then(|entry| learned::use_of(&state, entry));
+        // changes the screen. The inline fields' refusal (#205) runs
+        // nothing, so a row refused for a blank required argument
+        // records no use.
+        let learned = entry.as_ref().and_then(|entry| {
+            let refused = match entry {
+                Entry::Open(opening) => argument_form::blank_required_inline(&state, opening),
+                Entry::Send(sending) => {
+                    argument_form::blank_required_inline(&state, &sending.opening)
+                }
+                _ => false,
+            };
+            (!refused).then(|| learned::use_of(&state, entry)).flatten()
+        });
         // The status line is about this action from now on.
         state.sent_from = None;
         let pending = match entry {
