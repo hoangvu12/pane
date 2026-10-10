@@ -104,6 +104,15 @@ fn installed(
         view.status,
         Status::Result("Installed Arguments sample".into())
     );
+    // Root search shown afresh leaves the launcher idle (the install's
+    // result owns the status strip until then), so the tests below can
+    // tell that nothing ran from the status line alone. The window is
+    // shown the change as the launcher's own tests redraw it.
+    window.update(cx, |window, cx| {
+        window.launcher().show_root_search();
+        cx.notify();
+    });
+    settle(&window, cx);
     (window, cx, sources, data, folder)
 }
 
@@ -139,6 +148,10 @@ fn with_calculator(
     let greet = format!("{}#greet", PackageIdentity::local(&folder).unwrap().key());
     let set = launcher.set_alias(&greet, "gr");
     block_on(set.expect("the alias is accepted"));
+    // Shown afresh, root search leaves the launcher idle: the last
+    // install's result otherwise owns the status strip, hiding what the
+    // tests below learn from it.
+    launcher.show_root_search();
     let (window, cx) = cx.add_window_view(|window, cx| LauncherWindow::new(launcher, window, cx));
     (window, cx, data, folder)
 }
@@ -348,6 +361,8 @@ fn tab_shift_tab_and_the_arrows_move_between_the_fields_and_the_query(cx: &mut T
     // leaves the field.
     cx.simulate_keystrokes("right");
     cx.simulate_input("Ab");
+    cx.simulate_keystrokes("left");
+    assert_eq!(focused_label(cx).as_deref(), Some("Name"));
     cx.simulate_keystrokes("left");
     assert_eq!(focused_label(cx).as_deref(), Some("Name"));
     cx.simulate_keystrokes("left");
