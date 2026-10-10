@@ -30,7 +30,7 @@
 //! given up on and replaced, as a crashed one is.
 
 use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::future::Future;
 use std::path::{Path, PathBuf};
@@ -71,13 +71,13 @@ pub use deadlines::{COMPUTE_LIMIT, UNRESPONSIVE_LIMIT, WARN_AFTER};
 pub(crate) use deadlines::{HostCall, Hosted, Watch};
 
 pub use designed::{
-    Align, Badge, Border, Button, COMPONENT_SET, Checkbox, DesignedTree, EmptyState, Finite, Fit,
-    IconExtent, IconNode, Image, Justify, KeySequence, Keycap, Layout, Length, Link, Loading,
-    MAX_DEPTH, MAX_INLINE_IMAGE, MAX_MARKDOWN_CHARS, MAX_NODES, MAX_PX, MAX_TREE_BYTES, Markdown,
-    MetadataItem, MetadataList, Node, NodeKind, Offset, Orientation, Padding, Paint, Place,
-    Progress, RadiusLength, RichRow, RowAccessory, SectionHeader, Segment, Segmented, Select,
-    Sizing, Slider, Span, Style, Surface, Tag, Text, TextContent, TextInput, Toggle,
-    Tone as ButtonTone,
+    Align, Badge, Border, Button, COMPONENT_SET, Checkbox, DesignedHandler, DesignedTree,
+    EmptyState, Finite, Fit, IconExtent, IconNode, Image, Justify, KeySequence, Keycap, Layout,
+    Length, Link, Loading, MAX_DEPTH, MAX_INLINE_IMAGE, MAX_MARKDOWN_CHARS, MAX_NODES, MAX_PX,
+    MAX_TREE_BYTES, Markdown, MetadataItem, MetadataList, Node, NodeKind, Offset, Orientation,
+    Padding, Paint, Place, Progress, RadiusLength, RichRow, RowAccessory, SectionHeader, Segment,
+    Segmented, Select, Sizing, Slider, Span, Style, Surface, Tag, Text, TextContent, TextInput,
+    Toggle, Tone as ButtonTone, key_problems,
 };
 #[cfg(any(test, debug_assertions))]
 #[doc(hidden)]
@@ -2786,6 +2786,10 @@ struct LiveDesignedView {
     /// the command opened is 1, each view a push added one deeper. A push
     /// that would go beyond [`MAX_NAVIGATION_DEPTH`] is refused.
     depth: usize,
+    /// The key problems already reported for this view in development: a
+    /// tree that re-renders with the same problem reports it once, not
+    /// once per refresh.
+    reported: RefCell<HashSet<String>>,
 }
 
 /// The engine and the host interfaces guests link against, shared by the
@@ -3965,6 +3969,7 @@ impl Host {
             serial,
             rendered: 1,
             depth: 1,
+            reported: RefCell::default(),
         };
         self.designed_views.borrow_mut().insert(view, open);
         match self.render_designed(view, 1, &chain).await {
@@ -4077,6 +4082,7 @@ impl Host {
                 serial,
                 rendered: 1,
                 depth,
+                reported: RefCell::default(),
             },
         );
         match self.render_designed(opened, 1, &chain).await {
@@ -4164,6 +4170,10 @@ impl Host {
             designed::ReadError::Guest(message) => CallError::Guest(message),
             designed::ReadError::Unreadable(message) => CallError::Unreadable(message),
         })?;
+        // A tree of a developed package reports its key problems — keys
+        // shared by siblings, stateful nodes without one — once each, in
+        // the extension's log; Pane matches both by position.
+        self.report_key_problems(path, view, &tree);
         // `refresh-after-ms` asks for the next drawing: the launcher's
         // refresh thread (see `launcher/refresh`) schedules it through it.
         Ok(DesignedRendered {
@@ -4171,6 +4181,45 @@ impl Host {
             render,
             refresh_after_ms: rendered.refresh_after_ms,
         })
+    }
+
+    /// Reports the key problems of the view `view`'s tree that were not
+    /// already reported for it, in the developed package's log — one line
+    /// each, in development only.
+    fn report_key_problems(&self, path: &Path, view: ViewId, tree: &DesignedTree) {
+        let data = self
+            .instances
+            .borrow()
+            .get(path)
+            .map(|instance| instance.store.data().data.clone());
+        let Some(Some(data)) = data else {
+            return;
+        };
+        if !self.logs.developed(data.owner()) {
+            return;
+        }
+        let problems = designed::key_problems(tree);
+        if problems.is_empty() {
+            return;
+        }
+        let reported = self
+            .designed_views
+            .borrow()
+            .get(&view)
+            .map(|open| open.reported.clone());
+        let Some(reported) = reported else {
+            return;
+        };
+        for problem in problems {
+            if reported.borrow_mut().insert(problem.clone()) {
+                self.logs.pane(
+                    data.owner(),
+                    data.generation().number(),
+                    LogLevel::Warn,
+                    &problem,
+                );
+            }
+        }
     }
 
     /// Whether the instance holding `open` still runs, and its code may:

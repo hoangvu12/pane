@@ -34,6 +34,16 @@
 //! component set — is shown on the screen while the view stays open with
 //! its last good tree. A crash closes it, as it closes a custom view.
 //!
+//! An event is raised on the tree the user saw (#238): the window's
+//! controls carry the render they were drawn from, and an event raised on
+//! a node the user could see is delivered even if the view has rendered
+//! since — while the view holds no render more than one past it (the two
+//! the SDKs keep) and the node with that key still names a handler of the
+//! event's kind; otherwise the event is dropped, and reported in the
+//! extension's log while its package is developed. The same log holds a
+//! developed package's key problems (keys shared by siblings, stateful
+//! nodes without one), reported by the runtime as it reads each tree.
+//!
 //! A render's answer may also ask Pane to draw the view again after some
 //! milliseconds (`refresh-after-ms`, #236): the refresh thread (see
 //! `refresh`) sends that drawing numbered with these events, at most one
@@ -44,11 +54,12 @@ use std::pin::Pin;
 
 use super::{Launcher, Opening, State, Status, stopped};
 use crate::extension_data::PackageData;
+use crate::extension_log::LogLevel;
 use crate::icons::{Icon, IconSource, is_web_url};
 use crate::packages::{InstalledPackage, PackageIdentity};
 use crate::runtime::{
-    CallError, DesignedEvent, DesignedNext, DesignedRendered, DesignedTree, Node, NodeKind,
-    Runtime, ViewId,
+    CallError, DesignedEvent, DesignedHandler, DesignedNext, DesignedRendered, DesignedTree, Node,
+    NodeKind, Runtime, ViewId,
 };
 
 /// The callback id of the pop event, the event that tells a view the one
@@ -110,6 +121,7 @@ impl DesignedStack {
         (
             super::DesignedViewSnapshot {
                 id: top.id,
+                render: top.rendered,
                 tree: top.tree.clone(),
             },
             top.tree.navigation_title().unwrap_or_default().to_owned(),
@@ -300,7 +312,7 @@ impl Launcher {
         callback: u32,
         key: Option<&str>,
     ) -> impl Future<Output = ()> + Send + 'static {
-        self.send_designed_payload(callback, key, "{}".to_owned())
+        self.send_designed_seen(DesignedHandler::Press, callback, key, None, "{}".to_owned())
     }
 
     /// Sends a change of the node the open designed view's tree named with
@@ -313,31 +325,66 @@ impl Launcher {
         key: Option<&str>,
         payload: String,
     ) -> impl Future<Output = ()> + Send + 'static {
-        self.send_designed_payload(callback, key, payload)
+        self.send_designed_seen(DesignedHandler::Change, callback, key, None, payload)
     }
 
-    /// Sends one event to the open designed view, whatever changed.
-    fn send_designed_payload(
+    /// Sends one event of the open designed view, raised on the tree the
+    /// user saw — the tree of the render `seen`, which the node was drawn
+    /// from (the view may have rendered since; `None` names the render on
+    /// screen now). The event is the node's handler of `handler`'s kind,
+    /// run by callback id `callback`, on the node with `key` — or none,
+    /// when the tree gave it none — and its `payload` names what changed.
+    ///
+    /// An event raised on a node the user could see is delivered even if
+    /// the view has rendered since — while the view holds no render more
+    /// than one past `seen` (the two the SDKs keep) and the node with that
+    /// key still names a handler of that kind; otherwise it is dropped,
+    /// logged in development, and its answer never comes. The tree the
+    /// user saw decides the callback id and the render the event carries.
+    pub fn send_designed_seen(
         &self,
+        handler: DesignedHandler,
         callback: u32,
         key: Option<&str>,
+        seen: Option<u64>,
         payload: String,
     ) -> impl Future<Output = ()> + Send + 'static {
         let mut state = self.lock();
         let epoch = state.screen_epoch;
-        // The view as it is now: the event says which render's tree the
-        // user saw, so the view can drop an event older than it drew.
-        let event = state.designed_view.as_ref().map(|stack| {
-            let key = key.unwrap_or_default().to_owned();
-            DesignedEvent {
-                render: stack.top().rendered,
-                key,
+        // The view as it is now: the tree the user saw (named by `seen`,
+        // else the one on screen), the event built from it, and whether
+        // the stale-event rule drops that event.
+        let held = state.designed_view.as_ref().map(|stack| {
+            let top = stack.top();
+            let seen = seen.unwrap_or(top.rendered);
+            let key = key.map(str::to_owned);
+            let dropped = if seen + 1 < top.rendered {
+                Some("the view has rendered twice since")
+            } else if key.as_deref().is_some_and(|key| {
+                !tree_holds(&top.tree, key, handler)
+            }) {
+                Some("the view no longer names a handler for its key")
+            } else {
+                None
+            };
+            let event = DesignedEvent {
+                render: seen,
+                key: key.unwrap_or_default(),
                 callback,
                 payload,
-            }
+            };
+            (event, dropped)
         });
-        let sent = match (event, self.runtime()) {
-            (Some(event), Ok(runtime)) => {
+        // A dropped event never reaches the view: its node went (or its
+        // handler), or the view rendered twice since the user saw it.
+        if let Some((_, Some(why))) = &held {
+            let dropped = held
+                .as_ref()
+                .map(|(event, _)| (event.key.as_str(), event.render));
+            self.note_dropped_event(&mut state, handler, dropped, *why);
+        }
+        let sent = match (held, self.runtime()) {
+            (Some((event, None)), Ok(runtime)) => {
                 let stack = state.designed_view.as_mut().expect("a view is open");
                 Some(stack.top_mut().send(runtime, event))
             }
@@ -351,6 +398,45 @@ impl Launcher {
                 launcher.show_designed_answer(epoch, event.view, event.number, result);
             }
         }
+    }
+
+    /// Notes a dropped designed event in the developed package's log:
+    /// what was raised, on which key of which render, and why it went.
+    fn note_dropped_event(
+        &self,
+        state: &mut State,
+        handler: DesignedHandler,
+        dropped: Option<(&str, u64)>,
+        why: &str,
+    ) {
+        let Some((key, render)) = dropped else {
+            return;
+        };
+        let component = state.open.clone().unwrap_or_default();
+        let owner = super::owner(&state.packages, &component)
+            .map(|package| package.identity.key());
+        let Some(owner) = owner else {
+            return;
+        };
+        if !self.developing.logs.developed(&owner) {
+            return;
+        }
+        let what = match handler {
+            DesignedHandler::Press => "a press",
+            DesignedHandler::Change => "a change",
+            DesignedHandler::Input => "an input",
+            DesignedHandler::Focus => "a focus",
+            DesignedHandler::Blur => "a blur",
+            DesignedHandler::Key => "a key",
+        };
+        self.developing.logs.pane(
+            &owner,
+            0,
+            LogLevel::Warn,
+            &format!(
+                "{what} on the key \"{key}\" of render {render} was dropped: {why}"
+            ),
+        );
     }
 
     /// Pops the open designed view's stack, as the back key does when the
@@ -779,6 +865,22 @@ fn stale(number: u64, shown: u64, result: &Result<DesignedNext, CallError>) -> b
             result,
             Ok(_) | Err(CallError::Guest(_)) | Err(CallError::Unreadable(_))
         )
+}
+
+/// Whether `tree` holds a node with `key` naming a handler of `handler`'s
+/// kind — the stale-event rule's check: an event raised on a node the user
+/// could see is delivered while the node with that key still has a handler
+/// for it, wherever in the tree the node now sits.
+fn tree_holds(tree: &DesignedTree, key: &str, handler: DesignedHandler) -> bool {
+    fn held(node: &Node, key: &str, handler: DesignedHandler) -> bool {
+        (node.key.as_deref() == Some(key) && node.handles(handler))
+            || node
+                .fallback
+                .as_deref()
+                .is_some_and(|fallback| held(fallback, key, handler))
+            || node.children.iter().any(|child| held(child, key, handler))
+    }
+    held(&tree.root, key, handler)
 }
 
 /// A designed view's tree landing on screen: its icons resolved in the

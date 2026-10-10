@@ -507,6 +507,9 @@ pub struct CustomViewSnapshot {
 pub struct DesignedViewSnapshot {
     /// Which opened view this is: a view opened again has another id.
     pub id: ViewId,
+    /// The render whose tree this is: the number the view's events carry
+    /// back, naming the tree the user saw (#238's stale-event rule).
+    pub render: u64,
     /// The latest tree: the answer to the most recent event whose answer has
     /// arrived, or the first render. A tree the extension answered with an
     /// error or over a limit never reaches here; the last good one stays.

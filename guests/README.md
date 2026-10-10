@@ -92,13 +92,15 @@ Rust's standard library on `wasm32-wasip2`) is rejected with an explanation.
   sample too ([Dependencies](#dependencies-on-other-extensions)); held by
   `crates/pane-core/tests/dependencies.rs`.
 - `sample-view`, `sample-view-js`, `sample-view-ts`: the designed view
-  sample in Rust, JavaScript and TypeScript (#235, #237): a counter whose
-  screen the extension describes as a tree Pane renders — a column of a
-  text and a row of buttons — and a second command, `components`, a
+  sample in Rust, JavaScript and TypeScript (#235, #237, #238): a counter
+  whose screen the extension describes as a tree Pane renders — a column
+  of a text and a row of buttons — and a second command, `components`, a
   gallery of every component of the UI component set, from the layout
   primitives and the shared controls to Markdown, the tokens and the raw
-  values, written with the Rust builder, the JSX runtime's elements and
-  JSX itself (`"mode": "designed"` in their `pane.json`,
+  values, whose fields are live and keyed: typing edits at once, the view
+  echoes the value back, "Clear" sets it and "Reorder" moves the fields
+  with their state, written with the Rust builder, the JSX runtime's
+  elements and JSX itself (`"mode": "designed"` in their `pane.json`,
   [designed-tree.md](../docs/designed-tree.md)); held to the same
   three-language parity by `crates/pane-core/tests/designed_views.rs`,
   and drawn by the window tests of `crates/pane/tests/designed_views.rs`

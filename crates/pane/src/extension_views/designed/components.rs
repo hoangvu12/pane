@@ -2,9 +2,10 @@
 //! families: the button from `ui::controls`, the toggle and the segmented
 //! control from the Settings board's, the keycaps from `ui::keycap`, the
 //! icons and images from `ui::extension_icon`, the rows after the
-//! launcher's own. An extension's screen is Pane's design — the same
-//! chrome, the same keyboard behaviour, the same accessibility — not a
-//! copy of it (#237, ADR 0036).
+//! launcher's own, the fields GPUI CE's editable text and the select the
+//! searchable select of `ui::select`. An extension's screen is Pane's
+//! design — the same chrome, the same keyboard behaviour, the same
+//! accessibility — not a copy of it (#237, ADR 0036).
 //!
 //! Each component has one accessibility mapping (role, name, value,
 //! state), owned here: a text is a `Label` named by its content, a button
@@ -12,11 +13,12 @@
 //! so on. What a component cannot be named by, the tree's `name` says.
 //!
 //! A change a control reports (a toggle flipped, a slider adjusted, a
-//! field committed) leaves as an event whose payload names the value: the
-//! value the tree drew for a press, the value the user moved to for an
-//! adjustment. Editing state that survives a re-render arrives with
-//! #238's keyed reconciler; until then a text field draws the value the
-//! tree names.
+//! field committed) leaves as an event whose payload names the value; an
+//! event is raised on the tree the user saw — the render the drawing
+//! carries — and on the node with its key (#238). The fields edit at
+//! once: their text, caret and composition live in the keyed state the
+//! reconciler holds, their input events are sent as the user types, and
+//! their commits go out on Enter and a blur.
 
 use std::cell::Cell;
 use std::rc::Rc;
@@ -24,17 +26,19 @@ use std::rc::Rc;
 use gpui::prelude::*;
 use gpui::{
     AnimationExt as _, AnyElement, ClickEvent, ColorExt as _, Div, FontWeight, ObjectFit, Role,
-    SharedString, Stateful, Toggled, div, img, px, relative, svg,
+    SharedString, Stateful, Toggled, div, img, px, relative, svg, transparent_black,
 };
+use gpui_elements::editable_text::{text_area as area_input, text_input as edit_input};
 
 use pane_core::{
     Badge as BadgeNode, Binding, Button as ButtonNode, Checkbox as CheckboxNode,
-    EmptyState as EmptyStateNode, Finite, Fit, Icon, IconExtent, IconNode, Image as ImageNode,
-    KeySequence as KeySequenceNode, Keycap as KeycapNode, Link as LinkNode, Loading as LoadingNode,
-    Markdown as MarkdownNode, MetadataItem as MetadataItemNode, MetadataList as MetadataListNode,
-    Node, Paint, Progress as ProgressNode, RichRow as RichRowNode, SectionHeader,
-    Segmented as SegmentedNode, Select as SelectNode, Slider as SliderNode, Span, Tag as TagNode,
-    Text as TextNode, TextContent, TextInput as TextInputNode, Toggle as ToggleNode,
+    DesignedHandler, EmptyState as EmptyStateNode, Finite, Fit, Icon, IconExtent, IconNode,
+    Image as ImageNode, KeySequence as KeySequenceNode, Keycap as KeycapNode, Link as LinkNode,
+    Loading as LoadingNode, Markdown as MarkdownNode, MetadataItem as MetadataItemNode,
+    MetadataList as MetadataListNode, Node, Paint, Progress as ProgressNode, RichRow as RichRowNode,
+    SectionHeader, Segmented as SegmentedNode, Select as SelectNode, Slider as SliderNode, Span,
+    Tag as TagNode, Text as TextNode, TextContent, TextInput as TextInputNode,
+    Toggle as ToggleNode,
 };
 use pane_core::{Space, TextLevel};
 
@@ -47,10 +51,10 @@ use crate::ui::keycap::{CapStyle, Key, KeySequence, key_sequence as draw_keys};
 use crate::ui::theme::{Theme, pressed};
 use crate::ui::tokens;
 
-use super::tree::{Draw, push};
+use super::tree::{Draw, duplicate_keys, place_child};
 use super::{
-    BUTTON_CONTEXT, CHECKBOX_CONTEXT, Commit, INPUT_CONTEXT, Move, Press, SEGMENTED_CONTEXT,
-    SELECT_CONTEXT, SLIDER_CONTEXT, TOGGLE_CONTEXT, Toggle, payload, plain_payload,
+    AREA_CONTEXT, BUTTON_CONTEXT, CHECKBOX_CONTEXT, Commit, INPUT_CONTEXT, Move, Press,
+    SEGMENTED_CONTEXT, SLIDER_CONTEXT, TOGGLE_CONTEXT, Toggle, payload, plain_payload,
 };
 
 /// The event a control's change carries: `{"value": …}` for whatever the
@@ -65,15 +69,9 @@ fn plain_change(value: impl std::fmt::Display) -> String {
 }
 
 /// A debug selector's text, kept short: what the tests name a node by.
-fn short(text: &str) -> String {
+pub(super) fn short(text: &str) -> String {
     let end = text.char_indices().nth(48).map_or(text.len(), |(at, _)| at);
     text[..end].replace('\n', " ")
-}
-
-/// The key a node's path ends with: its own segment, the key the event
-/// raised on it names.
-fn path_key(path: &str) -> String {
-    path.rsplit('/').next().unwrap_or_default().to_owned()
 }
 
 // ---------------------------------------------------------------- text
@@ -81,6 +79,7 @@ fn path_key(path: &str) -> String {
 /// One text node: what it says, plain or in spans, with links.
 pub(super) fn text(
     text: &TextNode,
+    key: Option<&str>,
     path: &str,
     draw: &Draw,
     cx: &mut gpui::Context<LauncherWindow>,
@@ -104,11 +103,13 @@ pub(super) fn text(
         }
         TextContent::Spans(spans) => {
             // The spans flow beside each other, wrapping onto lines as the
-            // width runs out; a link span is a link.
+            // width runs out; a link span is a link — raised on the text
+            // node's key, whose handler its spans name.
+            let key = key.unwrap_or_default().to_owned();
             let runs = spans
                 .iter()
                 .enumerate()
-                .map(|(index, span)| span_run(span, index, path, draw, text.truncate, cx))
+                .map(|(index, span)| span_run(span, index, &key, path, draw, text.truncate, cx))
                 .collect::<Vec<AnyElement>>();
             let name: SharedString = spans
                 .iter()
@@ -179,10 +180,11 @@ fn run(
 }
 
 /// One span of a text: a run of its content, a link when it carries
-/// `onPress`.
+/// `onPress` — raised on the text node's `key`.
 fn span_run(
     span: &Span,
     index: usize,
+    key: &str,
     path: &str,
     draw: &Draw,
     truncate: bool,
@@ -208,6 +210,7 @@ fn span_run(
     }
     link_of(
         span.on_press,
+        key,
         &span.text,
         &path,
         span.color.as_ref(),
@@ -297,17 +300,35 @@ pub(super) fn button(
     let hover = hover_fill(button.tone, theme);
     let pill = &theme.geometry.results;
     let line = theme.typography.results.pill;
-    // A press of the button: the callback id its tree named, raised on the
-    // node with `key` (or none when the tree gave it none).
+    // A press of the button: the callback id its tree named, raised on
+    // the node with `key` (or none when the tree gave it none) on the
+    // tree the user saw.
     let key = node.key.clone().unwrap_or_default();
     let (for_press, key_for_press) = (callback, key.clone());
     let (for_click, key_for_click) = (callback, key);
+    let seen = draw.render;
     let (press, click) = (
         cx.listener(move |this, _: &Press, window, cx| {
-            this.send_designed_event(for_press, key_for_press.clone(), "{}".into(), window, cx);
+            this.designed_event(
+                DesignedHandler::Press,
+                for_press,
+                key_for_press.clone(),
+                seen,
+                "{}".into(),
+                window,
+                cx,
+            );
         }),
         cx.listener(move |this, _: &ClickEvent, window, cx| {
-            this.send_designed_event(for_click, key_for_click.clone(), "{}".into(), window, cx);
+            this.designed_event(
+                DesignedHandler::Press,
+                for_click,
+                key_for_click.clone(),
+                seen,
+                "{}".into(),
+                window,
+                cx,
+            );
         }),
     );
     let keys = button
@@ -349,7 +370,7 @@ pub(super) fn button(
         })
         .hover(move |button| button.bg(hover))
         .active(move |button| button.bg(pressed(hover)))
-        .when_some(draw.focus.get(path).cloned(), |button, focus| {
+        .when_some(draw.focus_of(path), |button, focus| {
             button
                 .track_focus(&focus)
                 .focus(move |button| button.shadow(ring))
@@ -408,6 +429,7 @@ pub(super) fn key_sequence(keys: &KeySequenceNode, path: &str, theme: &Theme) ->
 /// click pressing it. Its colour is its own when the tree named one.
 pub(super) fn link(
     link: &LinkNode,
+    key: Option<&str>,
     path: &str,
     draw: &Draw,
     cx: &mut gpui::Context<LauncherWindow>,
@@ -415,6 +437,7 @@ pub(super) fn link(
     let debug = format!("designed-link-{}", short(&link.label));
     link_of(
         link.on_press,
+        key.unwrap_or_default(),
         &link.label,
         path,
         link.color.as_ref(),
@@ -424,10 +447,13 @@ pub(super) fn link(
     )
 }
 
-/// One link, from its parts (a span's, or a metadata row's).
+/// One link, from its parts (a span's, or a metadata row's): raised on
+/// the node with `key` — the text or list the link belongs to, whose
+/// handler the tree names on it.
 #[allow(clippy::too_many_arguments)]
 fn link_of(
     on_press: Option<u32>,
+    key: &str,
     label: &str,
     path: &str,
     color: Option<&Paint>,
@@ -457,21 +483,38 @@ fn link_of(
     let Some(callback) = on_press else {
         return element.cursor_default();
     };
-    let key = path_key(path);
+    let key = key.to_owned();
     let (for_press, key_for_press) = (callback, key.clone());
     let (for_click, key_for_click) = (callback, key);
+    let seen = draw.render;
     let (press, click) = (
         cx.listener(move |this, _: &Press, window, cx| {
-            this.send_designed_event(for_press, key_for_press.clone(), "{}".into(), window, cx);
+            this.designed_event(
+                DesignedHandler::Press,
+                for_press,
+                key_for_press.clone(),
+                seen,
+                "{}".into(),
+                window,
+                cx,
+            );
         }),
         cx.listener(move |this, _: &ClickEvent, window, cx| {
-            this.send_designed_event(for_click, key_for_click.clone(), "{}".into(), window, cx);
+            this.designed_event(
+                DesignedHandler::Press,
+                for_click,
+                key_for_click.clone(),
+                seen,
+                "{}".into(),
+                window,
+                cx,
+            );
         }),
     );
     let ring = focus_ring(theme);
     element
         .key_context(BUTTON_CONTEXT)
-        .when_some(draw.focus.get(path).cloned(), |link, focus| {
+        .when_some(draw.focus_of(path), |link, focus| {
             link.track_focus(&focus)
                 .focus(move |link| link.shadow(ring))
         })
@@ -657,13 +700,14 @@ fn placeholder(
     draw: &Draw,
     cx: &mut gpui::Context<LauncherWindow>,
 ) -> AnyElement {
+    let duplicates = duplicate_keys(node);
     let children: Vec<AnyElement> = node
         .children
         .iter()
         .enumerate()
         .map(|(index, child)| {
             let mut child_path = format!("{path}/placeholder");
-            push(&mut child_path, child.key.as_deref(), index);
+            place_child(&mut child_path, child, index, &duplicates);
             super::tree::draw_node(child, &mut child_path, *draw, cx)
         })
         .collect();
@@ -766,22 +810,40 @@ pub(super) fn rich_row(
     let Some(callback) = row.on_press else {
         return row_element.into_any_element();
     };
-    // A press of the row: the callback id its tree named.
+    // A press of the row: the callback id its tree named, raised on the
+    // node with `key` on the tree the user saw.
     let key = node.key.clone().unwrap_or_default();
     let (for_press, key_for_press) = (callback, key.clone());
     let (for_click, key_for_click) = (callback, key);
+    let seen = draw.render;
     let (press, click) = (
         cx.listener(move |this, _: &Press, window, cx| {
-            this.send_designed_event(for_press, key_for_press.clone(), "{}".into(), window, cx);
+            this.designed_event(
+                DesignedHandler::Press,
+                for_press,
+                key_for_press.clone(),
+                seen,
+                "{}".into(),
+                window,
+                cx,
+            );
         }),
         cx.listener(move |this, _: &ClickEvent, window, cx| {
-            this.send_designed_event(for_click, key_for_click.clone(), "{}".into(), window, cx);
+            this.designed_event(
+                DesignedHandler::Press,
+                for_click,
+                key_for_click.clone(),
+                seen,
+                "{}".into(),
+                window,
+                cx,
+            );
         }),
     );
     let ring = focus_ring(theme);
     row_element
         .key_context(BUTTON_CONTEXT)
-        .when_some(draw.focus.get(path).cloned(), |row, focus| {
+        .when_some(draw.focus_of(path), |row, focus| {
             row.track_focus(&focus).focus(move |row| row.shadow(ring))
         })
         .on_action(press)
@@ -898,6 +960,7 @@ pub(super) fn badge(badge: &BadgeNode, path: &str, draw: &Draw) -> AnyElement {
 /// now is.
 pub(super) fn toggle(
     toggle: &ToggleNode,
+    key: Option<&str>,
     path: &str,
     draw: &Draw,
     cx: &mut gpui::Context<LauncherWindow>,
@@ -906,24 +969,29 @@ pub(super) fn toggle(
     let Some(callback) = toggle.on_change else {
         return controls::toggle(toggle.on, theme).into_any_element();
     };
-    let key = path_key(path);
+    let key = key.unwrap_or_default().to_owned();
     let (for_press, key_for_press) = (callback, key.clone());
     let (for_click, key_for_click) = (callback, key);
     let next = !toggle.on;
+    let seen = draw.render;
     let (press, click) = (
         cx.listener(move |this, _: &Toggle, window, cx| {
-            this.send_designed_event(
+            this.designed_event(
+                DesignedHandler::Change,
                 for_press,
                 key_for_press.clone(),
+                seen,
                 plain_change(next),
                 window,
                 cx,
             );
         }),
         cx.listener(move |this, _: &ClickEvent, window, cx| {
-            this.send_designed_event(
+            this.designed_event(
+                DesignedHandler::Change,
                 for_click,
                 key_for_click.clone(),
+                seen,
                 plain_change(next),
                 window,
                 cx,
@@ -957,7 +1025,7 @@ pub(super) fn toggle(
             )
         })
         .child(controls::toggle(toggle.on, theme))
-        .when_some(draw.focus.get(path).cloned(), |switch, focus| {
+        .when_some(draw.focus_of(path), |switch, focus| {
             switch
                 .track_focus(&focus)
                 .focus(move |switch| switch.shadow(ring))
@@ -971,6 +1039,7 @@ pub(super) fn toggle(
 /// Enter and Space (and a click) telling the extension what it now is.
 pub(super) fn checkbox(
     checkbox: &CheckboxNode,
+    key: Option<&str>,
     path: &str,
     draw: &Draw,
     cx: &mut gpui::Context<LauncherWindow>,
@@ -979,24 +1048,29 @@ pub(super) fn checkbox(
     let Some(callback) = checkbox.on_change else {
         return checkbox_box(checkbox.checked, theme).into_any_element();
     };
-    let key = path_key(path);
+    let key = key.unwrap_or_default().to_owned();
     let (for_press, key_for_press) = (callback, key.clone());
     let (for_click, key_for_click) = (callback, key);
     let next = !checkbox.checked;
+    let seen = draw.render;
     let (press, click) = (
         cx.listener(move |this, _: &Toggle, window, cx| {
-            this.send_designed_event(
+            this.designed_event(
+                DesignedHandler::Change,
                 for_press,
                 key_for_press.clone(),
+                seen,
                 plain_change(next),
                 window,
                 cx,
             );
         }),
         cx.listener(move |this, _: &ClickEvent, window, cx| {
-            this.send_designed_event(
+            this.designed_event(
+                DesignedHandler::Change,
                 for_click,
                 key_for_click.clone(),
+                seen,
                 plain_change(next),
                 window,
                 cx,
@@ -1030,7 +1104,7 @@ pub(super) fn checkbox(
                     .child(label),
             )
         })
-        .when_some(draw.focus.get(path).cloned(), |checkbox, focus| {
+        .when_some(draw.focus_of(path), |checkbox, focus| {
             checkbox
                 .track_focus(&focus)
                 .focus(move |checkbox| checkbox.shadow(ring))
@@ -1068,6 +1142,7 @@ fn checkbox_box(checked: bool, theme: &Theme) -> Div {
 /// too.
 pub(super) fn segmented(
     segmented: &SegmentedNode,
+    key: Option<&str>,
     path: &str,
     draw: &Draw,
     cx: &mut gpui::Context<LauncherWindow>,
@@ -1110,8 +1185,7 @@ pub(super) fn segmented(
     let Some(callback) = segmented.on_change else {
         return track.into_any_element();
     };
-    // The arrows move the choice by one, wrapping; a click steps it too,
-    // until #238's select owns the choosing.
+    // The arrows move the choice by one, wrapping; a click steps it too.
     let values = Rc::new(
         segmented
             .options
@@ -1120,16 +1194,19 @@ pub(super) fn segmented(
             .collect::<Vec<String>>(),
     );
     let current = Rc::new(chosen);
-    let key = path_key(path);
+    let key = key.unwrap_or_default().to_owned();
     let (for_move, key_for_move) = (callback, key.clone());
     let (for_click, key_for_click) = (callback, key);
     let (moved_values, moved_current) = (values.clone(), current.clone());
+    let seen = draw.render;
     let (moved, click) = (
         cx.listener(move |this, _: &Move, window, cx| {
             if let Some(value) = step(&moved_values, *moved_current, 1) {
-                this.send_designed_event(
+                this.designed_event(
+                    DesignedHandler::Change,
                     for_move,
                     key_for_move.clone(),
+                    seen,
                     change(&value),
                     window,
                     cx,
@@ -1138,9 +1215,11 @@ pub(super) fn segmented(
         }),
         cx.listener(move |this, _: &ClickEvent, window, cx| {
             if let Some(value) = step(&values, *current, 1) {
-                this.send_designed_event(
+                this.designed_event(
+                    DesignedHandler::Change,
                     for_click,
                     key_for_click.clone(),
+                    seen,
                     change(&value),
                     window,
                     cx,
@@ -1149,7 +1228,7 @@ pub(super) fn segmented(
         }),
     );
     track
-        .when_some(draw.focus.get(path).cloned(), |track, focus| {
+        .when_some(draw.focus_of(path), |track, focus| {
             track
                 .track_focus(&focus)
                 .focus(move |track| track.shadow(ring))
@@ -1181,6 +1260,7 @@ fn step(options: &[String], current: Option<usize>, step: isize) -> Option<Strin
 /// moves it to where the rail was clicked.
 pub(super) fn slider(
     slider: &SliderNode,
+    key: Option<&str>,
     path: &str,
     draw: &Draw,
     cx: &mut gpui::Context<LauncherWindow>,
@@ -1218,9 +1298,10 @@ pub(super) fn slider(
             |_, _, _, _| {},
         ))
     };
-    let key = path_key(path);
+    let key = key.unwrap_or_default().to_owned();
     let (for_adjust, key_for_adjust) = (callback, key.clone());
     let (for_click, key_for_click) = (callback, key);
+    let seen = draw.render;
     let clicked = cx.listener(move |this, event: &ClickEvent, window, cx| {
         let position = match event {
             ClickEvent::Mouse(click) => click.up.position,
@@ -1230,9 +1311,11 @@ pub(super) fn slider(
         let width = bounds.size.width.as_f32().max(f32::EPSILON);
         let at = ((position.x.as_f32() - bounds.origin.x.as_f32()) / width).clamp(0., 1.);
         let next = min + at * span;
-        this.send_designed_event(
+        this.designed_event(
+            DesignedHandler::Change,
             for_click,
             key_for_click.clone(),
+            seen,
             plain_change(next),
             window,
             cx,
@@ -1256,16 +1339,18 @@ pub(super) fn slider(
         .aria_numeric_value_step(by as f64)
         .child(rail)
         .child(knob_of(theme))
-        .when_some(draw.focus.get(path).cloned(), |slider, focus| {
+        .when_some(draw.focus_of(path), |slider, focus| {
             slider
                 .track_focus(&focus)
                 .focus(move |slider| slider.shadow(ring))
         })
         .on_action(cx.listener(move |this, _: &super::Adjust, window, cx| {
             let next = (value + by).clamp(min, max);
-            this.send_designed_event(
+            this.designed_event(
+                DesignedHandler::Change,
                 for_adjust,
                 key_for_adjust.clone(),
+                seen,
                 plain_change(next),
                 window,
                 cx,
@@ -1417,18 +1502,22 @@ pub(super) fn section_header(header: &SectionHeader, path: &str, theme: &Theme) 
         .into_any_element()
 }
 
-/// A metadata list: rows of a label and its value, link or tags.
+/// A metadata list: rows of a label and its value, link or tags. A row's
+/// link is raised on the list node's `key`, whose handler the tree names
+/// on it.
 pub(super) fn metadata_list(
     list: &MetadataListNode,
+    key: Option<&str>,
     path: &str,
     draw: &Draw,
     cx: &mut gpui::Context<LauncherWindow>,
 ) -> AnyElement {
+    let key = key.unwrap_or_default().to_owned();
     let rows = list
         .items
         .iter()
         .enumerate()
-        .map(|(index, item)| metadata_row(item, index, path, draw, cx))
+        .map(|(index, item)| metadata_row(item, index, &key, path, draw, cx))
         .collect::<Vec<AnyElement>>();
     div()
         .id(path.to_owned())
@@ -1445,6 +1534,7 @@ pub(super) fn metadata_list(
 fn metadata_row(
     item: &MetadataItemNode,
     index: usize,
+    key: &str,
     path: &str,
     draw: &Draw,
     cx: &mut gpui::Context<LauncherWindow>,
@@ -1463,6 +1553,7 @@ fn metadata_row(
         // A value with a callback is a link.
         (Some(value), Some(callback)) => link_of(
             Some(callback),
+            key,
             value,
             &format!("{path}/value"),
             None,
@@ -1544,6 +1635,7 @@ pub(super) fn empty_state(
     let results = &theme.results;
     let notice = &theme.geometry.results;
     let disc = notice.notice_disc;
+    let duplicates = duplicate_keys(node);
     let title: SharedString = empty.title.clone().into();
     let debug = format!("designed-empty-{}", empty.title);
     let glyph = empty
@@ -1556,7 +1648,7 @@ pub(super) fn empty_state(
         .enumerate()
         .map(|(index, child)| {
             let mut child_path = format!("{path}/action");
-            push(&mut child_path, child.key.as_deref(), index);
+            place_child(&mut child_path, child, index, &duplicates);
             super::tree::draw_node(child, &mut child_path, *draw, cx)
         })
         .collect();
@@ -1614,103 +1706,130 @@ pub(super) fn empty_state(
 
 // ------------------------------------------------------------ inputs
 
-/// One text input or password field: a well holding the value the tree
-/// named, focusable, Enter committing it to the extension. Editing
-/// arrives with #238; the value drawn is the value the tree named, and
-/// the commit tells the extension that value.
+/// Which kind of field a text node is: a text input, a password field or
+/// a text area.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum FieldKind {
+    Text,
+    Password,
+    Area,
+}
+
+/// The character a password field shows for each character typed.
+const CONCEALED: char = '\u{2022}';
+
+/// One text input, password field or text area: a focusable well holding
+/// GPUI CE's editable text — the text, the caret, the selection and the
+/// input method's composition, with undo and the clipboard — keyed by its
+/// path, so a re-render that still draws the field keeps what the user
+/// was doing with it. Enter commits (a text area's Enter inserts a
+/// newline) and a blur commits too; the value the tree names is the value
+/// the field started from and the one an echo of it never fights, and a
+/// value the extension set replaces the text.
 pub(super) fn text_input(
     input: &TextInputNode,
     path: &str,
     draw: &Draw,
-    password: bool,
+    kind: FieldKind,
     cx: &mut gpui::Context<LauncherWindow>,
 ) -> AnyElement {
     let theme = draw.theme;
+    let Some((editing, focus, _)) = draw.field(path) else {
+        return div().into_any_element();
+    };
     let controls = &theme.geometry.controls;
     let ring = controls::well_shadows(true, theme);
-    let shown: SharedString = if input.value.is_empty() {
-        input.placeholder.clone().unwrap_or_default().into()
-    } else if password {
-        input.value.chars().map(|_| '•').collect::<String>().into()
-    } else {
-        input.value.clone().into()
-    };
-    let well = controls::well(false, theme)
-        .id(format!("{path}/well"))
-        .debug_selector(move || "designed-input".into())
-        .map(|well| {
-            well.child(
-                div()
-                    .min_w(px(0.))
-                    .w_full()
-                    .truncate()
-                    .text_size(theme.typography.settings_text_size)
-                    .map(|text| {
-                        text.text_color(if input.value.is_empty() {
-                            theme.text_placeholder
-                        } else {
-                            theme.text_title
-                        })
-                    })
-                    .child(shown.clone()),
-            )
-        });
-    let Some(callback) = input.on_change else {
-        return div()
-            .id(path.to_owned())
-            .flex()
-            .flex_col()
-            .gap_1()
-            .flex_none()
-            .w(controls.well_height * 8.)
-            .min_w(px(0.))
-            .when_some(input.label.clone(), |field, label| {
-                field.child(
-                    div()
-                        .text_size(theme.typography.settings_text_size)
-                        .font_weight(theme.typography.medium)
-                        .text_color(theme.text_title)
-                        .child(label),
-                )
-            })
-            .child(well)
-            .into_any_element();
-    };
-    let key = path_key(path);
-    let (for_commit, key_for_commit) = (callback, key.clone());
-    let value = input.value.clone();
-    let commit = cx.listener(move |this, _: &Commit, window, cx| {
-        this.send_designed_event(
-            for_commit,
-            key_for_commit.clone(),
-            change(&value),
-            window,
-            cx,
-        );
-    });
-    let label = input
+    let live = editing.read(cx).as_str().to_owned();
+    let label: SharedString = input
         .label
         .clone()
-        .unwrap_or_else(|| input.placeholder.clone().unwrap_or_else(|| "field".into()));
+        .or_else(|| input.placeholder.clone())
+        .unwrap_or_else(|| "field".into())
+        .into();
+    let debug = format!("designed-input-{}", short(&label));
+    let area = kind == FieldKind::Area;
+    let password = kind == FieldKind::Password;
+    // The password's text is drawn transparent, a dot for each character
+    // over it, and its value reads as those dots (GPUI CE's editable text
+    // has no masking of its own).
+    let dots = password.then(|| live.chars().map(|_| CONCEALED).collect::<String>());
+    let element = if area {
+        area_input(format!("{path}/input")).state(editing.downgrade())
+    } else {
+        edit_input(format!("{path}/input")).state(editing.downgrade())
+    };
+    let element = field_input(
+        element,
+        &input.placeholder.clone().unwrap_or_default(),
+        theme,
+        area,
+    );
+    let value: SharedString = dots
+        .clone()
+        .map(SharedString::from)
+        .unwrap_or_else(|| live.clone().into());
+    let well = controls::well(false, theme)
+        .id(format!("{path}/well"))
+        .debug_selector(move || debug.clone())
+        .track_focus(focus)
+        .when(area, |well| {
+            // A text area is as tall as three of its lines.
+            well.h(
+                theme.typography.settings_text_size
+                    * theme.typography.line_height
+                    * 3.,
+            )
+        })
+        .role(match kind {
+            FieldKind::Text => Role::TextInput,
+            FieldKind::Password => Role::PasswordInput,
+            FieldKind::Area => Role::MultilineTextInput,
+        })
+        .map(|field| field.aria_label(label.clone()))
+        .map(|field| field.aria_value(value.clone()))
+        .map(|field| {
+            field.when_some(input.placeholder.clone(), |field, placeholder| {
+                field.aria_placeholder(placeholder)
+            })
+        })
+        .focus(move |field| field.shadow(ring))
+        .child(
+            div()
+                .relative()
+                .flex_1()
+                .min_w(px(0.))
+                .when_some(dots, |held, dots| {
+                    held.map(|element| element.text_color(transparent_black()))
+                        .child(
+                            div()
+                                .id(format!("{path}/concealed"))
+                                .absolute()
+                                .top_0()
+                                .left_0()
+                                .whitespace_nowrap()
+                                .overflow_hidden()
+                                .text_color(theme.text_title)
+                                .aria_hidden()
+                                .child(dots),
+                        )
+                })
+                .child(element),
+        );
+    // The field's commit: Enter runs it (a text area's Enter inserts a
+    // newline), as a blur does.
+    let path = path.to_owned();
+    let commit = cx.listener(move |this, _: &Commit, window, cx| {
+        this.designed_field_committed(&path, window, cx);
+    });
     div()
-        .id(path.to_owned())
+        .id(format!("{path}"))
         .flex()
         .flex_col()
         .gap_1()
         .flex_none()
         .w(controls.well_height * 8.)
         .min_w(px(0.))
-        .key_context(INPUT_CONTEXT)
-        .role(if password {
-            Role::PasswordInput
-        } else {
-            Role::TextInput
-        })
-        .map(|field| field.aria_label(label))
-        .aria_value(input.value.clone())
-        .when_some(input.placeholder.clone(), |field, placeholder| {
-            field.aria_placeholder(placeholder)
-        })
+        .key_context(if area { AREA_CONTEXT } else { INPUT_CONTEXT })
         .when_some(input.label.clone(), |field, label| {
             field.child(
                 div()
@@ -1721,101 +1840,85 @@ pub(super) fn text_input(
             )
         })
         .child(well)
-        .when_some(draw.focus.get(path).cloned(), |field, focus| {
-            field
-                .track_focus(&focus)
-                .focus(move |field| field.shadow(ring))
-        })
         .on_action(commit)
         .into_any_element()
 }
 
-/// One text area: a taller well, its value over more lines.
-pub(super) fn text_area(
-    input: &TextInputNode,
-    path: &str,
-    draw: &Draw,
-    cx: &mut gpui::Context<LauncherWindow>,
-) -> AnyElement {
-    text_input(input, path, draw, false, cx)
+/// One field's editable text, in the shape the form's fields draw theirs.
+fn field_input(
+    input: gpui_elements::editable_text::EditableTextElement,
+    placeholder: &str,
+    theme: &Theme,
+    area: bool,
+) -> gpui_elements::editable_text::EditableTextElement {
+    let typography = &theme.typography;
+    input
+        .placeholder(placeholder)
+        .placeholder_color(theme.text_placeholder)
+        .caret_color(theme.accent_text)
+        .selection_color(theme.row_selected)
+        .marked_color(theme.accent_text)
+        .text_size(typography.settings_text_size)
+        .text_color(theme.text_title)
+        .font_family(typography.family.clone())
+        .font_features(typography.features.clone())
+        .w_full()
+        .min_w(px(0.))
+        .when(area, |input| input.whitespace_normal())
+        .when(!area, |input| {
+            input.whitespace_nowrap().overflow_x_scroll()
+        })
 }
 
-/// One select: a well showing the chosen option, focusable, Enter and a
-/// click stepping through its options — until #238's keyed state opens
-/// the searchable select of `ui::select`.
+/// One select: the searchable select of `ui::select`, keyed by its path
+/// so its open state, query and highlight survive a re-render that still
+/// draws it. Its trigger shows the choice the tree names, read live each
+/// frame; a choice the user commits is told to the extension through the
+/// change handler the tree names.
 pub(super) fn select(
     select: &SelectNode,
     path: &str,
     draw: &Draw,
-    cx: &mut gpui::Context<LauncherWindow>,
 ) -> AnyElement {
     let theme = draw.theme;
-    let ring = controls::well_shadows(true, theme);
-    let chosen = position_of(&select.options, select.value.as_deref());
-    let label: SharedString = select
-        .value
-        .as_deref()
-        .and_then(|value| select.options.iter().find(|option| option.value == value))
-        .map(|option| option.label.clone().unwrap_or_else(|| option.value.clone()))
-        .unwrap_or_else(|| " ".into())
-        .into();
-    let trigger = controls::select_trigger(label.clone(), theme);
     if select.options.is_empty() {
-        return trigger.into_any_element();
+        // A select with no options draws its trigger alone, offering
+        // nothing.
+        let label: SharedString = select
+            .value
+            .as_deref()
+            .and_then(|value| {
+                select
+                    .options
+                    .iter()
+                    .find(|option| option.value == value)
+                    .map(|option| option.label.clone().unwrap_or_else(|| option.value.clone()))
+            })
+            .unwrap_or_else(|| " ".into())
+            .into();
+        return controls::select_trigger(label, theme).into_any_element();
     }
-    let values = Rc::new(
-        select
-            .options
-            .iter()
-            .map(|option| option.value.clone())
-            .collect::<Vec<String>>(),
-    );
-    let current = Rc::new(chosen);
-    let Some(callback) = select.on_change else {
-        return trigger.into_any_element();
+    let Some(select_entity) = draw.select(path) else {
+        return div().into_any_element();
     };
-    let key = path_key(path);
-    let (for_commit, key_for_commit) = (callback, key.clone());
-    let (for_click, key_for_click) = (callback, key);
-    let (commit_values, commit_current) = (values.clone(), current.clone());
-    let (commit, click) = (
-        cx.listener(move |this, _: &Commit, window, cx| {
-            if let Some(value) = step(&commit_values, *commit_current, 1) {
-                this.send_designed_event(
-                    for_commit,
-                    key_for_commit.clone(),
-                    change(&value),
-                    window,
-                    cx,
-                );
-            }
-        }),
-        cx.listener(move |this, _: &ClickEvent, window, cx| {
-            if let Some(value) = step(&values, *current, 1) {
-                this.send_designed_event(
-                    for_click,
-                    key_for_click.clone(),
-                    change(&value),
-                    window,
-                    cx,
-                );
-            }
-        }),
-    );
-    let name = select.label.clone().unwrap_or_else(|| "select".into());
-    trigger
+    // The select's trigger carries its own focus and keys; the tree's
+    // label sits above it, as a field's does.
+    div()
         .id(path.to_owned())
-        .debug_selector(move || "designed-select".into())
-        .key_context(SELECT_CONTEXT)
-        .role(Role::ComboBox)
-        .map(|select| select.aria_label(name))
-        .map(|select| select.aria_value(label))
-        .when_some(draw.focus.get(path).cloned(), |select, focus| {
-            select
-                .track_focus(&focus)
-                .focus(move |select| select.shadow(ring))
+        .flex()
+        .flex_col()
+        .gap_1()
+        .flex_none()
+        .min_w(px(0.))
+        .when_some(select.label.clone(), |field, label| {
+            field.child(
+                div()
+                    .text_size(theme.typography.settings_text_size)
+                    .font_weight(theme.typography.medium)
+                    .text_color(theme.text_title)
+                    .child(label),
+            )
         })
-        .on_action(commit)
-        .on_click(click)
+        .child(select_entity.clone())
         .into_any_element()
 }

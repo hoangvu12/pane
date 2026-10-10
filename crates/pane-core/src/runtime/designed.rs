@@ -25,7 +25,10 @@
 //! (`stack`, `scroll`, `spacer`, `divider`), the sizing and surface every
 //! node may carry with their `hover` and `pressed` variants, the shared
 //! UI components, the tone token's semantic names, raw colours in every
-//! form and Markdown — everything #237 names.
+//! form and Markdown (#237); 1.2 adds the keyed state the reconciler
+//! keeps — text fields that edit, the select's searchable state, scroll
+//! by key — the inputs' partial control (`onInput`, `throttleMs`, the
+//! `focus` ask) and the focus, blur and key events (#238).
 
 use serde::Deserialize;
 use serde_json::{Map, Value};
@@ -34,10 +37,31 @@ use crate::icons::{self, Icon, Tint};
 use crate::markdown;
 use crate::tokens::{IconSize, Radius, Space, TextLevel, TextStyle};
 
-/// The version of the UI component set this Pane renders: major 1, minor 1.
+/// The version of the UI component set this Pane renders: major 1, minor 2.
 /// A document of this major and any minor is read (unknown fields and nodes
 /// degrading); a document of another major is refused naming both versions.
-pub const COMPONENT_SET: (u64, u64) = (1, 1);
+pub const COMPONENT_SET: (u64, u64) = (1, 2);
+
+/// Which handler of a node an event raises — the property of the node the
+/// event names, which the stale-event rule checks before delivering: an
+/// event raised on a node the user could see is delivered even if the
+/// extension has rendered since, while the node with that key still has a
+/// handler of that kind; otherwise it is dropped.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DesignedHandler {
+    /// `onPress` — a button, a link, a row or a span pressed.
+    Press,
+    /// `onChange` — a value committed (a field's, a control's).
+    Change,
+    /// `onInput` — a field's value as the user types it.
+    Input,
+    /// `onFocus` — a node taking the keyboard.
+    Focus,
+    /// `onBlur` — a node losing it.
+    Blur,
+    /// `onKey` — a key pressed while the node is focused.
+    Key,
+}
 
 /// The most nodes one document may hold, counting `fallback` subtrees.
 pub const MAX_NODES: usize = 10_000;
@@ -73,13 +97,83 @@ impl DesignedTree {
     }
 }
 
+impl Node {
+    /// Whether this node is one whose state Pane keeps by key: a field, a
+    /// select, a scroll region, or a control with a handler. A tree that
+    /// names no key for such a node is reported in development (its state
+    /// is kept by position instead).
+    pub fn stateful(&self) -> bool {
+        self.handles(DesignedHandler::Press)
+            || self.handles(DesignedHandler::Change)
+            || self.handles(DesignedHandler::Input)
+            || self.handles(DesignedHandler::Focus)
+            || self.handles(DesignedHandler::Blur)
+            || self.handles(DesignedHandler::Key)
+            || matches!(
+                &self.kind,
+                NodeKind::TextInput(_)
+                    | NodeKind::PasswordInput(_)
+                    | NodeKind::TextArea(_)
+                    | NodeKind::Select(_)
+                    | NodeKind::Toggle(_)
+                    | NodeKind::Checkbox(_)
+                    | NodeKind::Segmented(_)
+                    | NodeKind::Slider(_)
+                    | NodeKind::Scroll { .. }
+            )
+    }
+
+    /// Whether this node names a handler of `kind` — the stale-event
+    /// rule's check: an event is delivered while the node with its key
+    /// still has a handler for it. A text's spans and a metadata list's
+    /// rows name handlers of the node they belong to.
+    pub fn handles(&self, kind: DesignedHandler) -> bool {
+        let held = |id: Option<u32>| id.is_some();
+        match kind {
+            DesignedHandler::Press => match &self.kind {
+                NodeKind::Button(button) => held(button.on_press),
+                NodeKind::Link(link) => held(link.on_press),
+                NodeKind::RichRow(row) => held(row.on_press),
+                NodeKind::Text(text) => match &text.content {
+                    TextContent::Plain(_) => false,
+                    TextContent::Spans(spans) => spans
+                        .iter()
+                        .any(|span| held(span.on_press)),
+                },
+                NodeKind::MetadataList(list) => {
+                    list.items.iter().any(|item| held(item.on_press))
+                }
+                _ => false,
+            },
+            DesignedHandler::Change => match &self.kind {
+                NodeKind::Toggle(toggle) | NodeKind::Checkbox(toggle) => held(toggle.on_change),
+                NodeKind::Segmented(control) | NodeKind::Select(control) => {
+                    held(control.on_change)
+                }
+                NodeKind::Slider(slider) => held(slider.on_change),
+                NodeKind::TextInput(input) => held(input.on_change),
+                _ => false,
+            },
+            DesignedHandler::Input => match &self.kind {
+                NodeKind::TextInput(input) => held(input.on_input),
+                _ => false,
+            },
+            DesignedHandler::Focus => held(self.on_focus),
+            DesignedHandler::Blur => held(self.on_blur),
+            DesignedHandler::Key => held(self.on_key),
+        }
+    }
+}
+
 /// One node of a designed view's tree: a layout primitive or UI component,
 /// or a type this Pane does not know (drawn by its `fallback`, else its
 /// children). Every node may carry a `key` (the stable identity Pane keeps
 /// node state under, #238), a `name` assistive technology reads it by, a
 /// [`Style`] every node shares; a child of a `stack` may also say where in
 /// it it is placed; the root node's `navigation-title` names the view
-/// itself.
+/// itself. A focusable node may ask for the keyboard (`focus`) and name
+/// handlers for the events Pane raises on it (`on-focus`, `on-blur`,
+/// `on-key`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Node {
     pub kind: NodeKind,
@@ -106,6 +200,18 @@ pub struct Node {
     /// Drawn instead of this node when Pane does not know it.
     pub fallback: Option<Box<Node>>,
     pub children: Vec<Node>,
+    /// Whether the node asks for the keyboard: a node whose ask is new
+    /// (the tree the user saw did not name it) is focused, as an
+    /// auto-focus on open and a code-driven re-focus both read. Honoured
+    /// while the node is focusable.
+    pub focus: bool,
+    /// The callback a focus of this node runs (it taking the keyboard).
+    pub on_focus: Option<u32>,
+    /// The callback a blur of this node runs (it losing the keyboard).
+    pub on_blur: Option<u32>,
+    /// The callback a key pressed while this node is focused runs (Tab,
+    /// Enter and Escape stay with Pane).
+    pub on_key: Option<u32>,
 }
 
 /// What a node is.
@@ -508,15 +614,24 @@ pub struct EmptyState {
 }
 
 /// One text input, password field or text area, as the tree draws it: its
-/// value and placeholder. Editing arrives with #238; until then the value
-/// the tree names is what is drawn, and a commit tells the extension that
-/// value.
+/// value and placeholder, and the events it asks for. The field edits at
+/// once (#238): the value the tree names is the value the field starts
+/// from and the one an echo of it never fights, a commit (`on-change`)
+/// tells the extension what it holds, and `on-input` — with an optional
+/// `throttle-ms` — hears it as the user types.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct TextInput {
     pub value: String,
     pub placeholder: Option<String>,
-    /// The callback a commit of the field runs.
+    /// The callback a commit of the field runs (Enter, a blur).
     pub on_change: Option<u32>,
+    /// The callback the field's value runs as the user types it, only when
+    /// the tree asks for it.
+    pub on_input: Option<u32>,
+    /// The least time between the field's input events, when it asks for
+    /// one: the events are coalesced to the latest while one is in flight
+    /// however.
+    pub throttle_ms: Option<u64>,
     /// Its label, naming it to assistive technology.
     pub label: Option<String>,
 }
@@ -667,6 +782,80 @@ impl DesignedTree {
     }
 }
 
+/// Why a tree's keys do not identify its stateful nodes: a key shared by
+/// siblings, and a stateful node without one (development reports these;
+/// Pane matches both by position instead).
+pub fn key_problems(tree: &DesignedTree) -> Vec<String> {
+    let mut problems = Vec::new();
+    problems_of(&tree.root, &mut problems);
+    problems
+}
+
+/// The key problems of `node`'s subtree, appended to `problems`.
+fn problems_of(node: &Node, problems: &mut Vec<String>) {
+    let mut seen = Vec::new();
+    for child in &node.children {
+        if let Some(key) = &child.key {
+            if seen.iter().any(|held: &String| held == key) {
+                problems.push(format!(
+                    "the key \"{key}\" is shared by two siblings; \
+                     Pane matches those nodes by position"
+                ));
+            } else {
+                seen.push(key.clone());
+            }
+        } else if child.stateful() {
+            problems.push(format!(
+                "a stateful {} has no key; Pane matches it by position",
+                kind_name(&child.kind)
+            ));
+        }
+        problems_of(child, problems);
+    }
+    if let Some(fallback) = &node.fallback {
+        problems_of(fallback, problems);
+    }
+}
+
+/// The wire name of a node kind, as a development report says it.
+fn kind_name(kind: &NodeKind) -> &'static str {
+    match kind {
+        NodeKind::Column(_) => "column",
+        NodeKind::Row(_) => "row",
+        NodeKind::Stack(_) => "stack",
+        NodeKind::Scroll { .. } => "scroll",
+        NodeKind::Spacer => "spacer",
+        NodeKind::Divider { .. } => "divider",
+        NodeKind::Text(_) => "text",
+        NodeKind::Button(_) => "button",
+        NodeKind::Link(_) => "link",
+        NodeKind::Icon(_) => "icon",
+        NodeKind::IconTile(_) => "icon-tile",
+        NodeKind::Image(_) => "image",
+        NodeKind::RichRow(_) => "rich-row",
+        NodeKind::Keycap(_) => "keycap",
+        NodeKind::KeySequence(_) => "key-sequence",
+        NodeKind::Tag(_) => "tag",
+        NodeKind::Badge(_) => "badge",
+        NodeKind::Toggle(_) => "toggle",
+        NodeKind::Checkbox(_) => "checkbox",
+        NodeKind::Segmented(_) => "segmented",
+        NodeKind::Slider(_) => "slider",
+        NodeKind::Progress(_) => "progress",
+        NodeKind::Loading(_) => "loading",
+        NodeKind::Markdown(_) => "markdown",
+        NodeKind::Card(_) => "card",
+        NodeKind::SectionHeader(_) => "section-header",
+        NodeKind::MetadataList(_) => "metadata-list",
+        NodeKind::EmptyState(_) => "empty-state",
+        NodeKind::TextInput(_) => "text-input",
+        NodeKind::PasswordInput(_) => "password-input",
+        NodeKind::TextArea(_) => "text-area",
+        NodeKind::Select(_) => "select",
+        NodeKind::Unknown(kind) => kind.as_str(),
+    }
+}
+
 /// Why a tree could not be read: [`ReadError::Guest`] is the extension's
 /// error (the view keeps its last good tree), [`ReadError::Unreadable`]
 /// the failure Pane reports as its own reading of what the extension
@@ -749,6 +938,14 @@ struct WireNode {
     fallback: Option<Box<WireNode>>,
     #[serde(default)]
     children: Option<Vec<Value>>,
+    #[serde(default)]
+    focus: Option<bool>,
+    #[serde(default, rename = "onFocus")]
+    on_focus: Option<u32>,
+    #[serde(default, rename = "onBlur")]
+    on_blur: Option<u32>,
+    #[serde(default, rename = "onKey")]
+    on_key: Option<u32>,
     #[serde(flatten)]
     rest: Map<String, Value>,
 }
@@ -857,6 +1054,10 @@ fn node(wire: WireNode, depth: usize, nodes: &mut usize) -> Result<Node, ReadErr
         requires: wire.requires,
         fallback,
         children,
+        focus: wire.focus.unwrap_or(false),
+        on_focus: wire.on_focus,
+        on_blur: wire.on_blur,
+        on_key: wire.on_key,
     })
 }
 
@@ -1299,6 +1500,10 @@ fn text_input(wire: &WireNode) -> Result<TextInput, ReadError> {
         value: string(wire, "value")?.unwrap_or_default(),
         placeholder: string(wire, "placeholder")?,
         on_change: callback(wire, "onChange")?,
+        on_input: callback(wire, "onInput")?,
+        throttle_ms: number(wire, "throttleMs")?.and_then(|Finite(ms)| {
+            u64::try_from(ms.max(0.)).ok()
+        }),
         label: string(wire, "label")?,
     })
 }

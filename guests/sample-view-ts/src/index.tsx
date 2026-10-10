@@ -9,7 +9,10 @@
 // The `components` command of the same package answers a gallery of
 // every component of the UI component set (#237): the layout primitives,
 // the shared components, the tokens and the raw values, with a toggle to
-// show the tree changes.
+// show the tree changes. Its fields hold state (#238): typing edits at
+// once, the view echoes the value back, "Clear" sets it (the
+// extension's value wins), and "Reorder" moves the keyed fields around,
+// their state with them.
 //
 // The view is written as JSX: every property of every component is
 // type-checked, so a misspelling fails the build (the `jsxImportSource`
@@ -38,6 +41,7 @@ import {
   Row,
   Scroll,
   SectionHeader,
+  Segmented,
   Select,
   Slider,
   Spacer,
@@ -74,8 +78,11 @@ function Counter() {
 /** The gallery of components the `components` command shows. */
 function Components() {
   const [on, setOn] = useState(false);
+  const [name, setName] = useState("typed");
+  const [notes, setNotes] = useState("two lines");
+  const [swapped, setSwapped] = useState(false);
   return (
-    <Scroll>
+    <Scroll key="gallery">
       <Column gap="l">
         <Text style="heading">The UI component set</Text>
         {/* A stack: a badge over an icon tile, placed. */}
@@ -114,7 +121,7 @@ function Components() {
           <SectionHeader note="Every one focusable">Controls</SectionHeader>
           <Toggle on={on} label="Dark mode" onChange={() => setOn(!on)} />
           <Checkbox on={on} label="Remember" onChange={() => setOn(!on)} />
-          <Select
+          <Segmented
             options={[
               { value: "daily", label: "Daily" },
               { value: "weekly", label: "Weekly" },
@@ -123,17 +130,64 @@ function Components() {
             label="Digest"
             onChange={() => {}}
           />
+          <Select
+            options={[
+              { value: "daily", label: "Daily" },
+              { value: "weekly", label: "Weekly" },
+            ]}
+            value="daily"
+            label="Pick"
+            onChange={() => {}}
+          />
           <Slider value={0.4} label="Volume" onChange={() => {}} />
           <Progress value={0.7} label="Installed" />
           <Loading label="Checking" />
         </Column>
+        {/* The fields, live and keyed (#238): the name field hears its
+            value as the user types (the view echoing it back, which never
+            fights the typing), the notes field on its commits, "Clear"
+            sets both (the extension's value replacing the text), and
+            "Reorder" swaps the two fields, whose keys keep their state. */}
         <Column gap="s">
-          <SectionHeader>Fields</SectionHeader>
-          <TextInput placeholder="Type here" label="Name" onChange={() => {}}>
-            typed
-          </TextInput>
+          <SectionHeader note="Live, keyed">Fields</SectionHeader>
+          {/* "Reorder" swaps the fields' places, not their state: the keys
+              keep each field's text, caret and focus. */}
+          {swapped ? (
+            <>
+              <TextArea key="notes" value={notes} label="Notes" onChange={setNotes} />
+              <TextInput
+                key="name"
+                value={name}
+                placeholder="Type here"
+                label="Name"
+                onInput={setName}
+              />
+            </>
+          ) : (
+            <>
+              <TextInput
+                key="name"
+                value={name}
+                placeholder="Type here"
+                label="Name"
+                onInput={setName}
+              />
+              <TextArea key="notes" value={notes} label="Notes" onChange={setNotes} />
+            </>
+          )}
+          <Row gap="s">
+            <Button
+              onClick={() => {
+                setName("");
+                setNotes("");
+              }}
+            >
+              Clear
+            </Button>
+            <Button onClick={() => setSwapped(!swapped)}>Reorder</Button>
+          </Row>
+          <Text>{`Echo: ${name}`}</Text>
           <PasswordInput label="Secret" />
-          <TextArea label="Notes">two lines</TextArea>
         </Column>
         {/* Markdown. */}
         <Markdown>

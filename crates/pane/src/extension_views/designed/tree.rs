@@ -4,35 +4,77 @@
 //! with the `hover` and `pressed` variants Pane applies itself. Layout is
 //! computed by GPUI's flex layout; nothing is laid out by the extension.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use gpui::prelude::*;
 use gpui::{
-    AnyElement, Context, Div, FocusHandle, Hsla, Length as GpuiLength, Pixels, Role, Stateful, div,
-    px, relative,
+    AnyElement, Context, Div, Hsla, Length as GpuiLength, Pixels, Role, Stateful, div, px,
+    relative,
 };
 
 use pane_core::{
-    Align, Finite, Justify, Layout as NodeLayout, Length as NodeLength, Node, NodeKind,
-    Orientation, Paint, Place, RadiusLength, Sizing, Style, Surface,
+    Align, DesignedTree, Finite, Justify, Layout as NodeLayout, Length as NodeLength, Node,
+    NodeKind, Orientation, Paint, Place, RadiusLength, Sizing, Style, Surface,
 };
 
 use crate::app::LauncherWindow;
 use crate::ui::theme::Theme;
 use crate::ui::tokens;
 
-use super::components;
+use super::components::{self, FieldKind};
+use super::reconcile::{FieldEvents, Held, KeyedState};
 
 /// What one node's drawing carries with it down the tree.
 #[derive(Clone, Copy)]
 pub(super) struct Draw<'a> {
     pub theme: &'a Theme,
-    /// The focus handles of the tree's focusable controls, by their paths.
-    pub focus: &'a HashMap<String, FocusHandle>,
+    /// The keyed state of the tree's stateful nodes, by their paths: the
+    /// focus each control holds, the editing state each field keeps, the
+    /// select's own state, the scroll regions' positions.
+    pub state: &'a HashMap<String, KeyedState>,
+    /// The render whose tree is being drawn — the events its controls
+    /// raise carry it (the tree the user saw).
+    pub render: u64,
     /// The surface under the node: the panel, or the background the node
     /// it sits in drew, composited over it — what a raw text or icon
     /// colour is corrected against.
     pub surface: Hsla,
+}
+
+impl Draw<'_> {
+    /// The focus handle of the node at `path`, when its state holds one.
+    pub(super) fn focus_of(&self, path: &str) -> Option<gpui::FocusHandle> {
+        self.state.get(path).and_then(|state| state.focus_handle())
+    }
+
+    /// The keyed field at `path`: its editing state, its focus, and the
+    /// bookkeeping of its input events.
+    pub(super) fn field(
+        &self,
+        path: &str,
+    ) -> Option<(
+        &gpui::Entity<gpui_elements::editable_text::EditableTextState>,
+        &gpui::FocusHandle,
+        &FieldEvents,
+    )> {
+        match &self.state.get(path)?.held {
+            Held::Field {
+                editing,
+                focus,
+                events,
+            } => Some((editing, focus, events)),
+            _ => None,
+        }
+    }
+
+    /// The keyed select at `path`: the searchable select entity holding
+    /// its open state, query and highlight.
+    pub(super) fn select(&self, path: &str) -> Option<&Entity<crate::ui::select::Select>> {
+        match &self.state.get(path)?.held {
+            Held::Select { select, .. } => Some(select),
+            _ => None,
+        }
+    }
 }
 
 /// Appends the place of the child at `index` with `key` to `path`.
@@ -42,6 +84,63 @@ pub(super) fn push(path: &mut String, key: Option<&str>, index: usize) {
         Some(key) => path.push_str(key),
         None => path.push_str(&index.to_string()),
     }
+}
+
+/// Appends the place of the child at `index` to `path`: its key, unless a
+/// sibling shares it (Pane's positional fallback for duplicate keys,
+/// which development reports).
+pub(super) fn place_child(
+    path: &mut String,
+    child: &Node,
+    index: usize,
+    duplicates: &HashSet<&str>,
+) {
+    let key = child
+        .key
+        .as_deref()
+        .filter(|key| !duplicates.contains(key));
+    push(path, key, index);
+}
+
+/// The keys `parent`'s children share with a sibling: those children are
+/// matched by position instead of by key.
+pub(super) fn duplicate_keys(parent: &Node) -> HashSet<&str> {
+    let mut counts: HashMap<&str, u32> = HashMap::new();
+    for child in &parent.children {
+        if let Some(key) = child.key.as_deref() {
+            *counts.entry(key).or_default() += 1;
+        }
+    }
+    counts
+        .into_iter()
+        .filter(|(_, count)| *count > 1)
+        .map(|(key, _)| key)
+        .collect()
+}
+
+/// The node `path` names in `tree`, reached by the tree walk's grammar:
+/// each segment is a child's key, else its index — the key preferred when
+/// both spell a segment, as a keyed child's place is.
+pub(super) fn node_at<'a>(tree: &'a DesignedTree, path: &str) -> Option<&'a Node> {
+    let mut node = &tree.root;
+    for segment in path.trim_start_matches('/').split('/') {
+        if segment.is_empty() {
+            continue;
+        }
+        let child = node
+            .children
+            .iter()
+            .find(|child| child.key.as_deref() == Some(segment))
+            .or_else(|| {
+                segment
+                    .parse::<usize>()
+                    .ok()
+                    .and_then(|index| node.children.get(index))
+                    .filter(|child| child.key.is_none())
+            });
+        node = child?;
+    }
+    Some(node)
 }
 
 /// One node of the tree, drawn: `path` is the node's place in the tree
@@ -104,8 +203,20 @@ pub(super) fn draw_node(
         NodeKind::Scroll { orientation } => {
             let own = path.clone();
             let children = children(node, path, inner, cx);
-            let div = apply(scroll(*orientation, children, own), node, &draw);
-            named(div, name.as_deref()).into_any_element()
+            let tracked = draw
+                .state
+                .get(&own)
+                .and_then(|state| match &state.held {
+                    Held::Scroll(handle) => Some(handle.clone()),
+                    _ => None,
+                });
+            let div = apply(
+                scroll(*orientation, children, own, tracked)
+                    .map(|div| named(div, name.as_deref())),
+                node,
+                &draw,
+            );
+            div.into_any_element()
         }
         NodeKind::Spacer => {
             let own = path.clone();
@@ -116,7 +227,7 @@ pub(super) fn draw_node(
             apply(divider(*orientation, draw.theme).id(own), node, &draw).into_any_element()
         }
         NodeKind::Text(text) => {
-            let element = components::text(text, path, &draw, cx);
+            let element = components::text(text, node.key.as_deref(), path, &draw, cx);
             let element = match name.as_deref() {
                 Some(name) => element.aria_label(name),
                 None => element,
@@ -133,7 +244,14 @@ pub(super) fn draw_node(
             node,
             path,
             draw,
-            components::link(link, path, &draw, cx).into_any_element(),
+            components::link(
+                link,
+                node.key.as_deref(),
+                path,
+                &draw,
+                cx,
+            )
+            .into_any_element(),
         ),
         NodeKind::Icon(icon) => styled(
             node,
@@ -187,25 +305,53 @@ pub(super) fn draw_node(
             node,
             path,
             draw,
-            components::toggle(toggle, path, &draw, cx).into_any_element(),
+            components::toggle(
+                toggle,
+                node.key.as_deref(),
+                path,
+                &draw,
+                cx,
+            )
+            .into_any_element(),
         ),
         NodeKind::Checkbox(checkbox) => styled(
             node,
             path,
             draw,
-            components::checkbox(checkbox, path, &draw, cx).into_any_element(),
+            components::checkbox(
+                checkbox,
+                node.key.as_deref(),
+                path,
+                &draw,
+                cx,
+            )
+            .into_any_element(),
         ),
         NodeKind::Segmented(segmented) => styled(
             node,
             path,
             draw,
-            components::segmented(segmented, path, &draw, cx).into_any_element(),
+            components::segmented(
+                segmented,
+                node.key.as_deref(),
+                path,
+                &draw,
+                cx,
+            )
+            .into_any_element(),
         ),
         NodeKind::Slider(slider) => styled(
             node,
             path,
             draw,
-            components::slider(slider, path, &draw, cx).into_any_element(),
+            components::slider(
+                slider,
+                node.key.as_deref(),
+                path,
+                &draw,
+                cx,
+            )
+            .into_any_element(),
         ),
         NodeKind::Progress(progress) => styled(
             node,
@@ -235,7 +381,14 @@ pub(super) fn draw_node(
             node,
             path,
             draw,
-            components::metadata_list(list, path, &draw, cx).into_any_element(),
+            components::metadata_list(
+                list,
+                node.key.as_deref(),
+                path,
+                &draw,
+                cx,
+            )
+            .into_any_element(),
         ),
         NodeKind::EmptyState(empty) => styled(
             node,
@@ -247,25 +400,25 @@ pub(super) fn draw_node(
             node,
             path,
             draw,
-            components::text_input(input, path, &draw, false, cx).into_any_element(),
+            components::text_input(input, path, &draw, FieldKind::Text, cx).into_any_element(),
         ),
         NodeKind::PasswordInput(input) => styled(
             node,
             path,
             draw,
-            components::text_input(input, path, &draw, true, cx).into_any_element(),
+            components::text_input(input, path, &draw, FieldKind::Password, cx).into_any_element(),
         ),
         NodeKind::TextArea(input) => styled(
             node,
             path,
             draw,
-            components::text_area(input, path, &draw, cx).into_any_element(),
+            components::text_input(input, path, &draw, FieldKind::Area, cx).into_any_element(),
         ),
         NodeKind::Select(select) => styled(
             node,
             path,
             draw,
-            components::select(select, path, &draw, cx).into_any_element(),
+            components::select(select, path, &draw).into_any_element(),
         ),
     };
     path.truncate(start);
@@ -304,13 +457,14 @@ fn children(
     draw: Draw,
     cx: &mut Context<LauncherWindow>,
 ) -> Vec<AnyElement> {
+    let duplicates = duplicate_keys(parent);
     parent
         .children
         .iter()
         .enumerate()
         .map(|(index, child)| {
             let start = path.len();
-            push(path, child.key.as_deref(), index);
+            place_child(path, child, index, &duplicates);
             let drawn = draw_node(child, path, draw, cx);
             path.truncate(start);
             drawn
@@ -327,13 +481,14 @@ fn stack_children(
     cx: &mut Context<LauncherWindow>,
     default: Place,
 ) -> Vec<AnyElement> {
+    let duplicates = duplicate_keys(parent);
     parent
         .children
         .iter()
         .enumerate()
         .map(|(index, child)| {
             let start = path.len();
-            push(path, child.key.as_deref(), index);
+            place_child(path, child, index, &duplicates);
             let drawn = draw_node(child, path, draw, cx);
             path.truncate(start);
             layer(child, drawn, default, draw.theme)
@@ -464,10 +619,15 @@ fn stack(children: Vec<AnyElement>) -> Div {
     div().relative().flex().children(children)
 }
 
-/// A scrolling region, whose position Pane keeps by key: the element's
-/// id is the node's path, so a re-render that still draws the region
-/// keeps where it was scrolled to.
-fn scroll(orientation: Orientation, children: Vec<AnyElement>, id: String) -> Stateful<Div> {
+/// A scrolling region, whose position Pane keeps by key: the scroll's
+/// handle is the node's keyed state, so a re-render that still draws the
+/// region keeps where it was scrolled to.
+fn scroll(
+    orientation: Orientation,
+    children: Vec<AnyElement>,
+    id: String,
+    tracked: Option<gpui::ScrollHandle>,
+) -> Stateful<Div> {
     div()
         .id(id)
         .flex()
@@ -479,6 +639,7 @@ fn scroll(orientation: Orientation, children: Vec<AnyElement>, id: String) -> St
         .when(orientation == Orientation::Horizontal, |div| {
             div.flex_row().overflow_x_scroll()
         })
+        .when_some(tracked, |div, handle| div.track_scroll(&handle))
         .children(children)
 }
 

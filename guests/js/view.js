@@ -33,7 +33,7 @@
 // one that knows less draws what it understands.
 
 /** The version of the UI component set this SDK writes. */
-const COMPONENT_SET = "1.1";
+const COMPONENT_SET = "1.2";
 
 /** How long a loading state waits for its data before it is asked for
  * again: the floor of Pane's refreshes. */
@@ -321,6 +321,25 @@ function builtinNode(name, props, path, callbacks, cells, used) {
   if (given.name !== undefined) node.name = given.name;
   if (given.navigationTitle !== undefined) node.navigationTitle = given.navigationTitle;
   if (given.requires !== undefined) node.requires = given.requires;
+  // The keyboard asks and events a focusable node names: the focus ask
+  // (honoured when it is new, so an open's asks and a later one from code
+  // both focus the node), and the focus, blur and key handlers.
+  if (given.focus === true) node.focus = true;
+  if (typeof given.onFocus === "function") {
+    const id = callbacks.size + 1;
+    callbacks.set(id, given.onFocus);
+    node.onFocus = id;
+  }
+  if (typeof given.onBlur === "function") {
+    const id = callbacks.size + 1;
+    callbacks.set(id, given.onBlur);
+    node.onBlur = id;
+  }
+  if (typeof given.onKey === "function") {
+    const id = callbacks.size + 1;
+    callbacks.set(id, given.onKey);
+    node.onKey = id;
+  }
   if (given.fallback != null) {
     // The fallback is drawn in the node's place when Pane does not know
     // it, with its own children under the node's place.
@@ -519,14 +538,24 @@ function builtinNode(name, props, path, callbacks, cells, used) {
     case "text-input":
     case "password-input":
     case "text-area": {
-      node.value = textOf(given.children);
+      node.value = given.value !== undefined ? String(given.value) : textOf(given.children);
       if (given.placeholder !== undefined) node.placeholder = given.placeholder;
       if (given.label !== undefined) node.label = given.label;
+      // The field is partially controlled: `onInput` hears its value as
+      // the user types it (coalesced by Pane, throttled by `throttleMs`),
+      // `onChange` on its commits, and a `value` that differs from the
+      // field's value in the previous render replaces its text.
+      if (typeof given.onInput === "function") {
+        const id = callbacks.size + 1;
+        callbacks.set(id, given.onInput);
+        node.onInput = id;
+      }
       if (typeof given.onChange === "function") {
         const id = callbacks.size + 1;
         callbacks.set(id, given.onChange);
         node.onChange = id;
       }
+      if (given.throttleMs !== undefined) node.throttleMs = given.throttleMs;
       return node;
     }
     default:
@@ -704,11 +733,14 @@ export function createView(component, props = {}) {
         return NOTHING_NEXT;
       }
       // A press of a button the tree named: the table of the render the
-      // user saw holds it. An older event is stale, dropped.
+      // user saw holds it. An older event is stale, dropped. The listener
+      // is told the event's text — its payload's `value` (a field's, a
+      // control's) or `key` (a key pressed) — which the listeners that
+      // take none ignore.
       const run = tables.get(event.render)?.get(event.callback);
       let navigation = null;
       if (run !== undefined) {
-        navigation = await run();
+        navigation = await run(payloadText(event.payload));
       }
       // What the listener answered next: at most one of a push, a replace
       // and a pop is acted on — a pop first, then a replace, then a push,
@@ -724,6 +756,21 @@ export function createView(component, props = {}) {
       return outcome;
     },
   };
+}
+
+/** The text a value-carrying payload names: its `value` (a field's, a
+ * control's) or its `key` (a key pressed). An empty string when it names
+ * none. */
+function payloadText(payload) {
+  try {
+    const held = JSON.parse(payload);
+    for (const field of ["value", "key"]) {
+      if (typeof held?.[field] === "string") return held[field];
+    }
+  } catch {
+    // A payload that is not JSON names no text.
+  }
+  return "";
 }
 
 /** The result the pop event's payload carries: `"…"` for a pop that
