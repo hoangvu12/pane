@@ -3699,9 +3699,14 @@ impl Launcher {
                         // begins, in the instance it runs in; a trap in it
                         // is a crash of the package like any call's,
                         // counted towards pausing it.
-                        let _ = futures::executor::block_on(
+                        if let Err(error) = futures::executor::block_on(
                             runtime.activate_with(&component, Some(data)),
-                        );
+                        ) {
+                            eprintln!(
+                                "Pane could not activate {}: {error:?}",
+                                component.display()
+                            );
+                        }
                     }
                     launcher.lock().activating.remove(&in_flight);
                     launcher.changed();
