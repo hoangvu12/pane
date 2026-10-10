@@ -2683,6 +2683,7 @@ impl Render for LauncherWindow {
                 self.render_search(
                     query,
                     update_results::PLACEHOLDER,
+                    loading.bar,
                     motion::arriving(results, arriving),
                     cx,
                 )
