@@ -336,7 +336,9 @@ fn inlines_element(
                 height,
                 icon,
             } => {
-                let pixels = width.or(*height).map_or(px(96.), |px| px(px as f32));
+                let pixels = width
+                    .or(*height)
+                    .map_or(px(96.), |named| px(named as f32));
                 let named: gpui::SharedString = source.clone().into();
                 let tooltip = title.clone().or_else(|| {
                     (!alt.is_empty()).then(|| alt.clone())

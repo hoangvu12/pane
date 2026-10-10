@@ -84,7 +84,7 @@ pub use launcher::{
     PreferenceField, PreferencesTarget, Presentation, Question, QuickSlot, ResultAction,
     ResultActionItem, ResultActions, Row, RowKind, RowPresentation, Screen, Section, SelectedAction,
     SettingsTarget, SetupHeader, ShortcutCatalog, ShortcutCommand, ShortcutGroup, SlotChange,
-    Status, SubmenuState, UNEXPECTED_QUIT, Unavailable, UnboundShortcut, UpdateHold,
+    Status, SubmenuState, UNEXPECTED_QUIT, Unavailable, UnboundShortcut, UpdateHold, LOADING_MS,
     answer_sections, root_sections,
 };
 pub use links::LinkOpener;

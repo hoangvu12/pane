@@ -19,7 +19,7 @@
 use gpui::prelude::*;
 use gpui::{AnyElement, Context, Role, SharedString, div, px, relative};
 
-use pane_core::{DesignedList, DesignedViewSnapshot, Space};
+use pane_core::{DesignedList, DesignedViewSnapshot, Node, Space};
 
 use crate::app::LauncherWindow;
 use crate::ui::tokens;
@@ -352,10 +352,13 @@ impl LauncherWindow {
         let shape = row.shape;
         let columns = shape.columns.max(1) as f32;
         let width = relative(1. / columns);
-        let drawn = draw.as_ref().and(row.image.as_ref()).map(|(draw, image)| {
-            let path = format!("designed-cell-{}", row.key);
-            super::components::grid_image(image, shape.fit, &path, draw)
-        });
+        let drawn = draw
+            .as_ref()
+            .zip(row.image.as_ref())
+            .map(|(draw, image)| {
+                let path = format!("designed-cell-{}", row.key);
+                super::components::grid_image(image, shape.fit, &path, draw)
+            });
         let drawn = match drawn {
             Some(drawn) => Some(drawn),
             None => row.color.map(|paint| {

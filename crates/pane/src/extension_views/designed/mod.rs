@@ -49,6 +49,7 @@ mod tree;
 
 use std::time::{Duration, Instant};
 
+use gpui::AnimationExt as _;
 use gpui::prelude::*;
 use gpui::{AnyElement, App, Context, KeyBinding, actions, div, px};
 

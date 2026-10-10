@@ -280,7 +280,7 @@ fn the_service_results_are_listed_and_open_their_details() {
 
         // The text is sent encoded; nothing found lists nothing.
         pane.search("no such thing");
-        assert_eq!(pane.titles(), Vec::<String>(), "{}", fixture.package);
+        assert_eq!(pane.titles(), Vec::<String>::new(), "{}", fixture.package);
         assert_eq!(
             service.requests().last().map(String::as_str),
             Some("/search?q=no%20such%20thing")
@@ -304,7 +304,7 @@ fn an_offline_or_failing_service_is_an_error_that_does_not_pause_the_extension()
             pane.search(text);
             // The view answers its own error, in its empty view: the rows
             // list nothing, and the launcher is none the worse.
-            assert_eq!(pane.titles(), Vec::<String>(), "{}", fixture.package);
+            assert_eq!(pane.titles(), Vec::<String>::new(), "{}", fixture.package);
             assert!(matches!(pane.view().status, Status::Idle));
             pane.to_root();
         }
@@ -313,7 +313,7 @@ fn an_offline_or_failing_service_is_an_error_that_does_not_pause_the_extension()
         pane.use_service(&service.url());
         pane.open();
         pane.search("down");
-        assert_eq!(pane.titles(), Vec::<String>(), "{}", fixture.package);
+        assert_eq!(pane.titles(), Vec::<String>::new(), "{}", fixture.package);
         assert!(matches!(pane.view().status, Status::Idle));
 
         // Still running: none of that paused it.
@@ -459,7 +459,7 @@ fn a_service_whose_certificate_is_not_trusted_is_an_error() {
         for text in ["aurora", "basalt"] {
             pane.open();
             pane.search(text);
-            assert_eq!(pane.titles(), Vec::<String>(), "{}", fixture.package);
+            assert_eq!(pane.titles(), Vec::<String>::new(), "{}", fixture.package);
             pane.to_root();
         }
     }

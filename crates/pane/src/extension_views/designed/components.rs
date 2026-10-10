@@ -1923,6 +1923,164 @@ fn field_input(
         .when(!area, |input| input.whitespace_nowrap().overflow_x_scroll())
 }
 
+/// One item of a list the launcher does not present (a second list in
+/// the tree, #240): a row of its icon, title and subtitle, drawn as a
+/// rich row is, pressable by the action it carries.
+pub(super) fn list_item(
+    node: &Node,
+    item: &pane_core::ListItem,
+    path: &str,
+    draw: &Draw,
+    cx: &mut gpui::Context<LauncherWindow>,
+) -> AnyElement {
+    let theme = draw.theme;
+    let debug = format!("designed-row-{}", item.title);
+    let title: SharedString = item.title.clone().into();
+    let subtitle: SharedString = item
+        .subtitle
+        .clone()
+        .map(SharedString::from)
+        .unwrap_or_default();
+    let icon = item
+        .icon
+        .as_ref()
+        .map(|icon| icon_at(icon, 16., path, draw).into_any_element());
+    let row = div()
+        .id(path.to_owned())
+        .debug_selector(move || debug)
+        .flex()
+        .items_center()
+        .min_h(theme.geometry.row_min_height)
+        .px(theme.geometry.row_padding_x)
+        .rounded(theme.geometry.row_radius)
+        .gap(theme.geometry.row_gap)
+        .role(Role::ListItem)
+        .map(|row| row.aria_label(title.clone()))
+        .when(!subtitle.is_empty(), |row| {
+            row.aria_description(subtitle.clone())
+        })
+        .when_some(icon, |row, icon| row.child(icon))
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .min_w(px(0.))
+                .flex_1()
+                .gap_1()
+                .child(
+                    div()
+                        .min_w(px(0.))
+                        .truncate()
+                        .text_size(theme.typography.row_title_size)
+                        .font_weight(theme.typography.medium)
+                        .text_color(theme.text_title)
+                        .child(title),
+                )
+                .when(!subtitle.is_empty(), |column| {
+                    column.child(
+                        div()
+                            .min_w(px(0.))
+                            .truncate()
+                            .text_size(theme.typography.row_subtitle_size)
+                            .text_color(theme.text_body)
+                            .child(subtitle),
+                    )
+                }),
+        );
+    let Some(callback) = item.on_press else {
+        return row.into_any_element();
+    };
+    let key = node.key.clone().unwrap_or_default();
+    let (for_press, key_for_press) = (callback, key.clone());
+    let (for_click, key_for_click) = (callback, key);
+    let seen = draw.render;
+    let (press, click) = (
+        cx.listener(move |this, _: &Press, window, cx| {
+            this.designed_event(
+                DesignedHandler::Press,
+                for_press,
+                key_for_press.clone(),
+                seen,
+                "{}".into(),
+                window,
+                cx,
+            );
+        }),
+        cx.listener(move |this, _: &ClickEvent, window, cx| {
+            this.designed_event(
+                DesignedHandler::Press,
+                for_click,
+                key_for_click.clone(),
+                seen,
+                "{}".into(),
+                window,
+                cx,
+            );
+        }),
+    );
+    let ring = focus_ring(theme);
+    row.key_context(BUTTON_CONTEXT)
+        .when_some(draw.focus_of(path), |row, focus| {
+            row.track_focus(&focus)
+                .focus(move |row| row.shadow(ring))
+        })
+        .on_action(press)
+        .on_click(click)
+        .into_any_element()
+}
+
+/// One cell of a grid the launcher does not present: its image or colour,
+/// with its title and subtitle under it.
+pub(super) fn grid_item(
+    item: &pane_core::GridItem,
+    path: &str,
+    draw: &Draw,
+    cx: &mut gpui::Context<LauncherWindow>,
+) -> AnyElement {
+    let theme = draw.theme;
+    let _ = cx;
+    let image = item
+        .image
+        .as_ref()
+        .map(|image| grid_image(image, pane_core::Fit::Contain, path, draw));
+    let color = item.color.as_ref().map(|paint| {
+        let fill = tokens::paint_color(paint, theme);
+        div()
+            .size(px(48.))
+            .rounded(theme.geometry.row_radius)
+            .bg(fill)
+            .into_any_element()
+    });
+    div()
+        .id(path.to_owned())
+        .flex()
+        .flex_col()
+        .min_w(px(0.))
+        .gap(tokens::space(pane_core::Space::Xs))
+        .when_some(image.or(color), |cell, held| cell.child(held))
+        .when_some(item.title.clone(), |cell, title| {
+            cell.child(
+                div()
+                    .min_w(px(0.))
+                    .truncate()
+                    .text_size(theme.typography.row_subtitle_size)
+                    .text_color(theme.text_title)
+                    .child(title),
+            )
+        })
+        .when_some(item.subtitle.clone(), |cell, subtitle| {
+            cell.child(
+                div()
+                    .min_w(px(0.))
+                    .truncate()
+                    .text_size(theme.typography.row_kind_size)
+                    .text_color(theme.text_muted)
+                    .child(subtitle),
+            )
+        })
+        .into_any_element()
+}
+
 /// One select: the searchable select of `ui::select`, keyed by its path
 /// so its open state, query and highlight survive a re-render that still
 /// draws it. Its trigger shows the choice the tree names, read live each
