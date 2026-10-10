@@ -27,7 +27,7 @@ use pane::placement::Placement;
 use pane::{LauncherWindow, SettingsWindow};
 use pane_core::hotkeys::{HotkeyError, Hotkeys, Shortcut};
 use pane_core::placement::{Display, DisplayId, DisplayLayout, Point, Rect, Size};
-use pane_core::{CommandRegistration, Launcher, PackageIdentity, Runtime, Screen};
+use pane_core::{CommandMatches, CommandRegistration, CommandWhen, Launcher, PackageIdentity, Runtime, Screen};
 use tempfile::TempDir;
 
 #[path = "support/settle.rs"]
@@ -1219,6 +1219,8 @@ fn the_search_sensitivity_control_changes_the_results_live(cx: &mut TestAppConte
         component,
         takes_query: false,
         search: false,
+        when: CommandWhen::Always,
+        matches: CommandMatches::Title,
     }];
     let launcher =
         Launcher::new(Runtime::start(), commands).with_hotkeys(Arc::new(FakeSystem::default()));
