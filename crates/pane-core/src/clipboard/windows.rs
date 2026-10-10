@@ -65,6 +65,7 @@ use ::windows::Win32::UI::WindowsAndMessaging::{
 };
 use ::windows::core::{PCWSTR, PWSTR, w};
 
+use super::ignoring::IGNORED;
 use super::{
     ClipboardSystem, Content, CopiedImage, MAX_FILES, MAX_IMAGE_BYTES, MAX_IMAGE_PIXELS,
     MAX_TEXT_BYTES, Markers, Observation, Sink, Watch,
@@ -269,7 +270,17 @@ fn stop_listening(window: Window) {
 /// reports it; if reading fails, tries again later.
 fn observe(window: HWND, listener: &mut Listener) {
     // SAFETY: no arguments.
-    if unsafe { GetClipboardSequenceNumber() } == listener.read_through {
+    let changed_to = unsafe { GetClipboardSequenceNumber() };
+    if changed_to == listener.read_through {
+        return;
+    }
+    // A simulated copy's window is armed (#262): the change it carries is
+    // the target's copy, which is not Pane's and carries no marker it
+    // could be given, or the restore that follows. It is skipped as a
+    // marked copy is, so no history keeps it; the read that armed the
+    // window is still running, and the next change is read as usual.
+    if IGNORED.is_ignoring(crate::util::now_ms()) {
+        listener.read_through = changed_to;
         return;
     }
     let ticket = listener.sink.reading();

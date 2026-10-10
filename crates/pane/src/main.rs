@@ -74,6 +74,19 @@ fn smoke_system(log: PathBuf) {
 }
 
 fn main() {
+    // Pane's own program serves as the selected-text worker (#262) when
+    // it is started with the internal argument: checked before anything
+    // else, so the worker starts no window, no runtime, no settings and
+    // no tray — only the UI Automation reads it is asked for, ending when
+    // Pane ends it. The argument is Pane's own, never shown and never
+    // parsed as the user's interface.
+    #[cfg(windows)]
+    if std::env::args_os()
+        .skip(1)
+        .any(|arg| arg == pane_core::system::selected::WORKER_ARGUMENT)
+    {
+        pane_core::system::selected::serve();
+    }
     let preview = package_to_preview();
     // Pane's own log and crash record (#133), before anything else can
     // write a diagnostic or panic: the log keeps what standard error says,

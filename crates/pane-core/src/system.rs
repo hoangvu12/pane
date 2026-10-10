@@ -28,10 +28,13 @@
 //!   `SHOpenFolderAndSelectItems`, and the Recycle Bin with
 //!   `SHFileOperationW` (`FOF_ALLOWUNDO`, warning before a path that would
 //!   be deleted for good, such as one on a network drive). The front
-//!   application and paste are Windows' (#125): a system foreground hook
-//!   watches the window in front, and pasting brings it back and sends it
-//!   a tagged Ctrl+V, putting the clipboard back afterwards (`front`,
-//!   `system::windows`);
+//!   application, paste and the selected text are Windows' (#125): a
+//!   system foreground hook watches the window in front, pasting brings
+//!   it back and sends it a tagged Ctrl+V, putting the clipboard back
+//!   afterwards, and the selected text is read through UI Automation in
+//!   a worker process of Pane's own program and, where that gives
+//!   nothing, a simulated copy that leaves the clipboard as it was
+//!   (`front`, `selected`, `system::windows`);
 //! - macOS: the general pasteboard (text, a file URL, the
 //!   `org.nspasteboard.ConcealedType` marker), `/usr/bin/open` (with `-a`
 //!   for an application, `-R` to reveal), and `NSFileManager`'s
@@ -45,13 +48,13 @@
 //!
 //! **Paste, the front application and selected text** are declared here
 //! and implemented on Windows by the Windows power features (#125):
-//! [`System::can_paste`], [`System::paste_clipboard`] and
-//! [`System::front_application`] answer [`SystemError::NotAvailable`] on
-//! macOS and Linux until an adapter answers them, which is not a failure;
-//! [`System::selected_text`] answers it everywhere until #262 does. Pane
-//! itself does the rest of a paste (`paste`): it closes its window, puts
-//! the content on the clipboard, has the system paste, and puts back what
-//! the clipboard held.
+//! [`System::can_paste`], [`System::paste_clipboard`],
+//! [`System::front_application`] and [`System::selected_text`] answer
+//! [`SystemError::NotAvailable`] on macOS and Linux until an adapter
+//! answers them, which is not a failure. Pane itself does the rest of a
+//! paste (`paste`): it closes its window, puts the content on the
+//! clipboard, has the system paste, and puts back what the clipboard
+//! held.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -63,6 +66,7 @@ mod linux;
 mod macos;
 #[cfg(unix)]
 mod programs;
+pub mod selected;
 #[cfg(target_os = "windows")]
 mod windows;
 
@@ -259,6 +263,18 @@ pub fn native() -> Arc<dyn System> {
     }
 }
 
+/// The Windows system whose UI Automation selected-text reads run in
+/// this process, on a thread of their own, instead of in a worker process
+/// of Pane's own program: the real-input adapter test's, which cannot
+/// start Pane's program as its worker. The read it asks for is the code
+/// the worker runs. Hidden: not Pane's interface, only that test's.
+#[cfg(target_os = "windows")]
+#[doc(hidden)]
+pub fn native_selected_text_in_process() -> Arc<dyn System> {
+    let watching = front::windows::Watcher::start().ok();
+    Arc::new(windows::WindowsSystem::reading_selected_here(watching))
+}
+
 /// The system of a launcher given none: every function says that this
 /// Pane does not reach the system.
 pub fn none() -> Arc<dyn System> {
@@ -395,21 +411,16 @@ mod tests {
     #[test]
     fn this_systems_adapter_answers_what_it_can_do_yet() {
         let system = native();
-        // The selected text is no system's yet (#262).
-        match system.selected_text() {
-            Err(SystemError::NotAvailable(why)) => {
-                assert!(why.contains("is not available on"), "{why}");
-                assert!(why.ends_with(" yet"), "{why}");
-            }
-            other => panic!("expected not available, got {other:?}"),
-        }
         if cfg!(target_os = "windows") {
-            // Paste and the front application are Windows' now (#125):
-            // they answer, without saying they are not available — what
-            // they answer depends on the session, and their real path is
-            // the real-input adapter test's, which owns the windows it
-            // pastes into. Only their read-only halves are asked: pasting
-            // here would paste for real, into whatever is in front.
+            // Paste, the front application and the selected text are
+            // Windows' now (#125): they answer, without saying they are
+            // not available — what they answer depends on the session,
+            // and their real paths are the real-input adapter test's,
+            // which owns the windows it pastes into and reads the
+            // selection of. Only their read-only halves are asked: pasting
+            // here would paste for real, into whatever is in front, and
+            // so would reading the selection, which copies where UI
+            // Automation gives nothing.
             let answered = system.can_paste();
             assert!(
                 !matches!(answered, Err(SystemError::NotAvailable(_))),

@@ -83,7 +83,10 @@ png = "0.18"
 # window, the clipboard and its global memory). What the Run dialog runs
 # (#254) expands `%NAME%` in command lines, reads and writes the RunMRU
 # key of the history it shares with the Run dialog, and looks programs up
-# in App Paths; already in the
+# in App Paths; the selected text (#262) is read through UI Automation's
+# `IUIAutomation` from the focused element of the target's own thread
+# (`GetGUIThreadInfo`), its tree woken first with `WM_GETOBJECT`, and its
+# simulated copy reads the clipboard's sequence number; already in the
 # dependency tree through GPUI CE. The file index (#126) lists folders with
 # their file ids, reads the NTFS change journal without administrator rights
 # (`DeviceIoControl`, the journal's control codes) and runs its threads in

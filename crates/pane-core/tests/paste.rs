@@ -15,10 +15,10 @@
 //! in a HUD. The front application answers its name and icon, or none; the
 //! selected text answers the text, "nothing selected" or a failure. The
 //! real adapters answer "not available on this system yet" for each of
-//! those that their system does not implement — on Windows, paste and the
-//! front application are implemented (#125), their real path covered by
-//! the real-input adapter test — and that is never a reason to pause the
-//! package.
+//! those that their system does not implement — on Windows, paste, the
+//! front application and the selected text are implemented (#125), their
+//! real paths covered by the real-input adapter test — and that is never
+//! a reason to pause the package.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -448,12 +448,12 @@ fn selected_text_tells_nothing_selected_from_a_failure(fixture: &Fixture) {
 }
 
 fn the_real_adapters_answer_what_this_system_implements(fixture: &Fixture) {
-    // The selected text is no system's yet (#262), and on macOS and Linux
-    // so are paste and the front application. On Windows paste and the
-    // front application are implemented (#125): what they answer depends
-    // on the session, so only that they answer rather than say "not
-    // available" — their real path is the real-input adapter test's,
-    // which owns the windows it pastes into.
+    // On macOS and Linux, paste, the front application and the selected
+    // text are not available yet. On Windows all three are implemented
+    // (#125): what they answer depends on the session, so only that they
+    // answer rather than say "not available" — their real paths are the
+    // real-input adapter test's, which owns the windows it pastes into
+    // and reads the selection of.
     let pane = Pane::native(fixture);
     let system = if cfg!(target_os = "windows") {
         "Windows"
@@ -464,8 +464,10 @@ fn the_real_adapters_answer_what_this_system_implements(fixture: &Fixture) {
     };
     let not_yet = |what: &str| not_available(&format!("{what} is not available on {system} yet"));
     if cfg!(target_os = "windows") {
-        // Only the read-only half is asked: a paste here would paste for
-        // real, into whatever the session has in front.
+        // Only the read-only halves are asked: a paste here would paste
+        // for real, into whatever the session has in front, and so would
+        // reading the selection, which copies where UI Automation gives
+        // nothing.
         pane.act(FRONT_APPLICATION);
         assert_ne!(
             shown(&pane.launcher),
@@ -491,10 +493,10 @@ fn the_real_adapters_answer_what_this_system_implements(fixture: &Fixture) {
             shown(&pane.launcher),
             not_yet("Reading the application in front")
         );
+        pane.act(SEARCH_SELECTION);
+        assert_eq!(shown(&pane.launcher), not_yet("Reading the selected text"));
+        pane.stayed("reading the selection");
     }
-    pane.act(SEARCH_SELECTION);
-    assert_eq!(shown(&pane.launcher), not_yet("Reading the selected text"));
-    pane.stayed("reading the selection");
     assert_eq!(pane.system.take(), [], "the recording system was not given");
     assert_eq!(pane.launcher.view().screen, Screen::Command);
 }

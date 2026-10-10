@@ -7,6 +7,18 @@
 //! that is gone or not responding fails, saying so, with the text
 //! staying on the clipboard, still tagged.
 //!
+//! The selected text (#262) is read the same way: through UI Automation
+//! from a test-owned edit control with a selection and with none
+//! ("nothing is selected", which is not a failure), and through the
+//! simulated copy from a test-owned window with no text pattern, which
+//! copies when the tagged Ctrl+C reaches it — the clipboard put back
+//! after, with the changes of the window kept from every history: Pane's
+//! own clipboard watch of the test's, running beside the read, reports
+//! nothing while it happens. A target that is not responding fails,
+//! saying so, and nothing is sent to it. The reads run in this process
+//! (the test binary cannot serve as Pane's worker), on the same code the
+//! worker runs, asked the same way with the same timeout.
+//!
 //! This needs a session with real input, so the test runs only where
 //! `PANE_TEST_REAL_INPUT=1` is set (CI's Windows runner sets it); without
 //! it the test passes without looking. It touches nothing but the
@@ -21,7 +33,10 @@ mod windows {
     use std::sync::{Arc, Mutex};
     use std::time::{Duration, Instant};
 
-    use pane_core::system::{Clip, System, SystemError, native};
+    use pane_core::clipboard::{
+        ClipboardSystem, Observation, Sink, Ticket, Watch, WindowsClipboard,
+    };
+    use pane_core::system::{Clip, System, SystemError, native, native_selected_text_in_process};
 
     use ::windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
     use ::windows::Win32::System::DataExchange::{
@@ -46,10 +61,35 @@ mod windows {
         std::env::var("PANE_TEST_REAL_INPUT").is_ok_and(|value| value == "1")
     }
 
+    /// The real-input tests share the session's foreground window and
+    /// clipboard, so they run one at a time: nextest runs each test in a
+    /// process of its own, and a plain `cargo test` runs them as threads
+    /// of one, which this serializes.
+    static SERIAL: Mutex<()> = Mutex::new(());
+
+    fn serial() -> std::sync::MutexGuard<'static, ()> {
+        SERIAL
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
     /// The titles of the target's window and of the hung target's, which
     /// the test finds them by.
     const TARGET: &str = "Pane real input paste target";
     const HUNG: &str = "Pane real input hung target";
+
+    /// The titles of the selection targets' windows, which the test finds
+    /// them by: one whose text box has a selection, one with none, and one
+    /// with no text control at all, which copies when Ctrl+C reaches it.
+    const SELECTED: &str = "Pane real input selection target";
+    const EMPTY: &str = "Pane real input empty selection target";
+    const COPYING: &str = "Pane real input copy target";
+
+    /// What the selection targets' text boxes hold, selected and not.
+    const SELECTION: &str = "Selected by the real-input test";
+
+    /// What the copy target copies when Ctrl+C reaches it.
+    const COPIED: &str = "Copied by the copy target";
 
     /// What the pastes put on the clipboard, and what it held before.
     const BEFORE: &str = "The user's own copy";
@@ -68,6 +108,7 @@ mod windows {
             eprintln!("skipped: set PANE_TEST_REAL_INPUT=1 to paste with real input");
             return;
         }
+        let _serial = serial();
         let folder = tempfile::tempdir().unwrap();
         let system = native();
         let listener = Listener::start().expect("the clipboard listener");
@@ -604,5 +645,290 @@ Start-Sleep -Seconds 300\n";
         }
         .expect("the test's own window");
         window
+    }
+
+    /// The script of a selection target: a form with a multiline text box
+    /// — a Win32 edit control, whose selection UI Automation reads — its
+    /// text selected when `PANE_SELECT_ALL` says so. Its title and text
+    /// come from the environment.
+    const SELECTION_FORM: &str = "\n\
+Add-Type -AssemblyName System.Windows.Forms\n\
+$form = New-Object System.Windows.Forms.Form\n\
+$form.Text = $env:PANE_TARGET_TITLE\n\
+$box = New-Object System.Windows.Forms.TextBox\n\
+$box.Multiline = $true\n\
+$box.Dock = 'Fill'\n\
+$box.Text = $env:PANE_SELECTION_TEXT\n\
+$form.Controls.Add($box)\n\
+$form.ActiveControl = $box\n\
+$form.Add_Shown({ param($sender, $event)\n\
+  $box.Focus()\n\
+  if ($env:PANE_SELECT_ALL -eq '1') { $box.SelectAll() } })\n\
+[System.Windows.Forms.Application]::Run($form)\n";
+
+    /// The script of a copy target: a form with no control — no text
+    /// pattern for UI Automation to read — which copies the text
+    /// `PANE_COPIED_TEXT` names when Ctrl+C reaches it, marking
+    /// `PANE_COPIED_MARK` that it did. Its title comes from the
+    /// environment.
+    const COPY_FORM: &str = "\n\
+Add-Type -AssemblyName System.Windows.Forms\n\
+$form = New-Object System.Windows.Forms.Form\n\
+$form.Text = $env:PANE_TARGET_TITLE\n\
+$form.KeyPreview = $true\n\
+$form.Add_KeyDown({ param($sender, $event)\n\
+  if ($event.Control -and $event.KeyCode -eq 'C') {\n\
+    try {\n\
+      [System.Windows.Forms.Clipboard]::SetText($env:PANE_COPIED_TEXT)\n\
+      [System.IO.File]::WriteAllText($env:PANE_COPIED_MARK, 'copied')\n\
+    } catch { }\n\
+    $event.Handled = $true\n\
+    $event.SuppressKeyPress = $true\n\
+  } })\n\
+[System.Windows.Forms.Application]::Run($form)\n";
+
+    #[test]
+    fn the_selection_is_read_by_uia_and_by_a_copy_that_leaves_no_trace() {
+        if !opted_in() {
+            eprintln!("skipped: set PANE_TEST_REAL_INPUT=1 to read selections with real input");
+            return;
+        }
+        let _serial = serial();
+        let folder = tempfile::tempdir().unwrap();
+        // Pane's own clipboard watch of the test's, counting what it
+        // reports: the ignore window of a simulated copy must keep every
+        // change the read causes from reaching any history.
+        let watching = Watched::start().expect("Pane's clipboard watch");
+        // A listener of the test's own, which sees every change whatever
+        // Pane does: what the read caused, and whether each was tagged.
+        let listener = Listener::start().expect("the clipboard listener");
+        let own = own_window();
+        // The reads run in this process (the test binary cannot serve as
+        // Pane's worker) on the same code the worker runs, asked the same
+        // way with the same timeout.
+        let system = native_selected_text_in_process();
+
+        // The clipboard holds something of the user's; every read must
+        // leave it there.
+        let before = Clip::Text(BEFORE.into());
+        system.copy(&before, false).expect("the setup copy");
+        wait("Pane's watch to see the setup copy", || {
+            watching.seen() == 1
+        });
+        wait("the listener to see the setup copy", || {
+            !listener.seen().is_empty()
+        });
+        listener.clear();
+
+        // UI Automation reads an edit control's selection, without
+        // touching the clipboard.
+        let selected = Form::start(
+            folder.path(),
+            SELECTION_FORM,
+            SELECTED,
+            &[
+                ("PANE_TARGET_TITLE", SELECTED),
+                ("PANE_SELECTION_TEXT", SELECTION),
+                ("PANE_SELECT_ALL", "1"),
+            ],
+        )
+        .expect("the selection target");
+        take_front(selected.window());
+        wait("the selection target to be recorded", || {
+            named_for(system.as_ref())
+        });
+        assert_eq!(
+            system.selected_text(),
+            Ok(Some(SELECTION.into())),
+            "UI Automation reads the edit control's selection"
+        );
+        assert_eq!(system.read_clipboard(), Ok(Some(Clip::Text(BEFORE.into()))));
+        assert!(listener.seen().is_empty(), "the read changed nothing");
+        // Pane's own window in front, so closing the form changes no
+        // foreground the watcher would record.
+        take_front(own);
+        selected.close();
+
+        // Nothing selected is an answer, not a failure — read while
+        // Pane's own window is in front, as a command's read is.
+        let empty = Form::start(
+            folder.path(),
+            SELECTION_FORM,
+            EMPTY,
+            &[
+                ("PANE_TARGET_TITLE", EMPTY),
+                ("PANE_SELECTION_TEXT", SELECTION),
+                ("PANE_SELECT_ALL", "0"),
+            ],
+        )
+        .expect("the empty selection target");
+        take_front(empty.window());
+        wait("the empty target to be recorded", || {
+            named_for(system.as_ref())
+        });
+        take_front(own);
+        assert_eq!(
+            system.selected_text(),
+            Ok(None),
+            "nothing is selected, which is not a failure"
+        );
+        assert_eq!(system.read_clipboard(), Ok(Some(Clip::Text(BEFORE.into()))));
+        take_front(own);
+        empty.close();
+
+        // Where UI Automation gives nothing — a window with no text
+        // pattern — the simulated copy reads the selection: the target
+        // copies when the tagged Ctrl+C reaches it, and the clipboard is
+        // put back.
+        let mark = folder.path().join("copied.txt");
+        let marked = mark.to_string_lossy().into_owned();
+        let copying = Form::start(
+            folder.path(),
+            COPY_FORM,
+            COPYING,
+            &[
+                ("PANE_TARGET_TITLE", COPYING),
+                ("PANE_COPIED_TEXT", COPIED),
+                ("PANE_COPIED_MARK", marked.as_str()),
+            ],
+        )
+        .expect("the copy target");
+        take_front(copying.window());
+        wait("the copy target to be recorded", || {
+            named_for(system.as_ref())
+        });
+        assert_eq!(
+            system.selected_text(),
+            Ok(Some(COPIED.into())),
+            "the simulated copy reads the selection"
+        );
+        // The clipboard is as it was, and the changes the read caused —
+        // the target's own copy, untagged, and the tagged restore — never
+        // reached a history: the ignore window kept them.
+        assert_eq!(system.read_clipboard(), Ok(Some(Clip::Text(BEFORE.into()))));
+        wait("the listener to see the read's changes", || {
+            listener.seen().len() >= 2
+        });
+        let seen = listener.seen();
+        assert!(
+            seen.contains(&false),
+            "{seen:?}: the target's copy, untagged, would have been kept"
+        );
+        assert!(seen.iter().any(|tagged| *tagged), "{seen:?}: the restore");
+        assert_eq!(
+            watching.seen(),
+            1,
+            "only the setup copy reached a history, not the read's changes"
+        );
+        assert!(mark.exists(), "the target answered the copy");
+        take_front(own);
+        copying.close();
+
+        // A target that is not responding fails, saying so, and nothing
+        // is sent to it.
+        let hung = HungForm::start(folder.path()).expect("the hung target");
+        take_front(hung.window());
+        wait("the hung target to be recorded", || {
+            named_for(system.as_ref())
+        });
+        wait("the hung target to stop responding", || {
+            // SAFETY: the hung target's own window.
+            unsafe { IsHungAppWindow(hung.window()) }.as_bool()
+        });
+        let answer = system.selected_text();
+        let refused = answer.expect_err("a hung target to refuse");
+        let SystemError::Failed(why) = refused else {
+            panic!("a failure, not {refused:?} (a hung target)");
+        };
+        assert!(why.contains("not responding"), "{why}");
+        assert_eq!(system.read_clipboard(), Ok(Some(Clip::Text(BEFORE.into()))));
+
+        hung.kill();
+        listener.stop();
+    }
+
+    /// A form the test owns, in a PowerShell process of its own (a window
+    /// of the test's own process would never be the target, which Pane
+    /// skips), found by its window's title and closed by asking it to.
+    struct Form {
+        window: HWND,
+        child: std::process::Child,
+    }
+
+    impl Form {
+        /// Runs `script` in a process of its own, with `envs` set for it,
+        /// waiting for its window titled `title`.
+        fn start(
+            folder: &Path,
+            script: &str,
+            title: &str,
+            envs: &[(&str, &str)],
+        ) -> Result<Form, String> {
+            let file = folder.join(format!("{}.ps1", title));
+            std::fs::write(&file, script).map_err(|error| error.to_string())?;
+            let mut command = powershell(&file);
+            for (name, value) in envs {
+                command.env(name, value);
+            }
+            let child = command
+                .spawn()
+                .map_err(|error| format!("powershell: {error}"))?;
+            let window = wait_for("the form's window", || find_window(title));
+            Ok(Form { window, child })
+        }
+
+        /// The form's window, which the read reaches.
+        fn window(&self) -> HWND {
+            self.window
+        }
+
+        /// Closes the form and waits for its process to end.
+        fn close(mut self) {
+            // SAFETY: the form's own window, closed by its own handler.
+            let _ = unsafe { PostMessageW(Some(self.window), WM_CLOSE, WPARAM(0), LPARAM(0)) };
+            let _ = self.child.wait();
+        }
+    }
+
+    /// Pane's own clipboard watch of the test's, counting the changes it
+    /// reports: an ignored window's changes reach no history, so the
+    /// count says whether they did.
+    struct Watched {
+        /// How many changes were reported.
+        seen: Arc<Mutex<usize>>,
+        /// The watch, which stops when it is dropped at the test's end.
+        _watch: Watch,
+    }
+
+    impl Watched {
+        /// Starts the watch, with a sink of the test's counting what it
+        /// is told.
+        fn start() -> Result<Watched, String> {
+            let seen: Arc<Mutex<usize>> = Arc::new(Mutex::new(0));
+            let counting = Counting(seen.clone());
+            let watch = WindowsClipboard.watch(Arc::new(counting))?;
+            Ok(Watched {
+                seen,
+                _watch: watch,
+            })
+        }
+
+        /// How many changes were reported.
+        fn seen(&self) -> usize {
+            *self.seen.lock().unwrap()
+        }
+    }
+
+    /// [`Watched`]'s sink: counts what it is told.
+    struct Counting(Arc<Mutex<usize>>);
+
+    impl Sink for Counting {
+        fn reading(&self) -> Ticket {
+            Ticket::default()
+        }
+
+        fn observed(&self, _ticket: Ticket, _observation: Observation) {
+            *self.0.lock().unwrap() += 1;
+        }
     }
 }

@@ -21,7 +21,10 @@
 //! contents are put back after a short delay, unless something else was
 //! copied meanwhile: every format it held in ordinary memory, tagged as
 //! a concealed copy is, so neither Pane's history nor Windows' own keeps
-//! the paste or the restore.
+//! the paste or the restore. The selected text is read through
+//! `selected` (#262): UI Automation in a worker process of Pane's own
+//! program and, where that gives nothing, a simulated copy that leaves
+//! the clipboard as it was.
 
 use std::os::windows::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
@@ -58,6 +61,7 @@ use ::windows::core::{GUID, HRESULT, PCWSTR};
 
 use super::front::windows::{Recorded, Watcher};
 use super::front::{NO_TARGET, PasteRefusal, Target, front_application as resolve};
+use super::selected::Selected;
 use super::{Clip, FrontApplication, MAX_CLIPBOARD_TEXT, NotTrashed, System, SystemError, missing};
 use crate::applications::identity::Catalog;
 use crate::applications::{Discovery, StartMenu};
@@ -80,17 +84,31 @@ pub(super) struct WindowsSystem {
     /// The installed applications, scanned once, best-effort, for the
     /// front application's name and icon.
     installed: OnceLock<Catalog>,
+    /// The selected-text read (#262).
+    selected: Selected,
 }
 
 impl WindowsSystem {
     /// The system functions, with `front` watching the application in
     /// front (see [`crate::system::native`]).
     pub(super) fn new(front: Option<Watcher>) -> WindowsSystem {
+        WindowsSystem::with_selected(front, Selected::worker())
+    }
+
+    /// The system functions whose selected-text reads run in this
+    /// process (see [`crate::system::native_selected_text_in_process`]):
+    /// the real-input adapter test's.
+    pub(super) fn reading_selected_here(front: Option<Watcher>) -> WindowsSystem {
+        WindowsSystem::with_selected(front, Selected::reading_here())
+    }
+
+    fn with_selected(front: Option<Watcher>, selected: Selected) -> WindowsSystem {
         WindowsSystem {
             front,
             pasting: Pasting::default(),
             held: Mutex::new(None),
             installed: OnceLock::new(),
+            selected,
         }
     }
 
@@ -232,7 +250,20 @@ impl System for WindowsSystem {
         Ok(Some(resolve(&target, self.installed())))
     }
 
-    // The selected text stays not-yet here: #262 implements it.
+    // The selected text (#262): read through `selected`, whose module
+    // documents the path UI Automation and the simulated copy take.
+    fn selected_text(&self) -> Result<Option<String>, SystemError> {
+        let Some(watcher) = &self.front else {
+            return Err(SystemError::Failed(NOT_WATCHING.into()));
+        };
+        // No window has been tracked as the application the user was in:
+        // no selection is there to read, which is not a failure, as the
+        // front application answering none is not.
+        let Some(recorded) = watcher.target() else {
+            return Ok(None);
+        };
+        self.selected.read(&recorded)
+    }
 }
 
 /// What the front application and paste answer when the watcher could
@@ -359,8 +390,9 @@ fn token_of(process: u32) -> Option<HANDLE> {
 /// Whether `process` is running elevated, as far as Pane can tell: the
 /// elevation of its token — a process whose token Pane cannot read
 /// counts as elevated, since the keys Pane would send it would be
-/// dropped just the same.
-fn elevated(process: u32) -> bool {
+/// dropped just the same. The selected-text read's simulated copy asks
+/// this too (`selected::windows`), for the same reason.
+pub(super) fn elevated(process: u32) -> bool {
     let Some(token) = token_of(process) else {
         return true;
     };
@@ -385,8 +417,9 @@ fn elevated(process: u32) -> bool {
 /// really be there: the plain foreground call first, then, when another
 /// thread's window is in front, attaching to that thread's input and
 /// trying again, which is the way an application takes the foreground
-/// where Windows would not let it.
-fn bring_to_front(window: HWND) -> Result<(), PasteRefusal> {
+/// where Windows would not let it. The selected-text read's simulated
+/// copy uses this too (`selected::windows`).
+pub(super) fn bring_to_front(window: HWND) -> Result<(), PasteRefusal> {
     // SAFETY: plain values.
     let _ = unsafe { SetForegroundWindow(window) };
     if waited_front(window) {
