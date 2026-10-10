@@ -362,7 +362,7 @@ impl<T> Pending<T> {
     /// Data answered by `work`, which the view waits for: a future the
     /// view's `open_designed_view` can start, of a file read, a service
     /// called, or work of its own.
-    pub fn loading(work: impl Future<Output = T>) -> Pending<T> {
+    pub fn loading(work: impl Future<Output = T> + 'static) -> Pending<T> {
         Pending {
             work: Some(Box::pin(work)),
             answer: None,
