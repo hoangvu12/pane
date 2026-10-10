@@ -3,13 +3,15 @@
 // Pane's system commands sample in TypeScript: a command that calls the
 // session and power commands with `@pane-app/extension/system-commands`
 // (#255) — Lock Screen, Log Out, Restart, Shut Down, Sleep, Hibernate,
-// Turn Off Displays and Start Screen Saver — and the audio commands
-// (#265) — Volume Up, Volume Down, Toggle Mute, Set Volume and Toggle
-// Microphone Mute — one item for each, which runs it and says what it
-// answered in a toast: the state the system ended in ("Sleep: Sleeping",
-// "Volume Up: Volume 52%"), or why nothing changed ("Hibernate:
-// Hibernation is not available on this computer: there is no hibernation
-// file").
+// Turn Off Displays and Start Screen Saver — the audio commands (#265) —
+// Volume Up, Volume Down, Toggle Mute, Set Volume and Toggle Microphone
+// Mute — and the bin, appearance and device commands (#266) — Open
+// Recycle Bin, Empty Recycle Bin, Toggle System Appearance, Toggle HDR,
+// Show Desktop, Toggle Hidden Files, Eject Removable Drives and Toggle
+// Bluetooth — one item for each, which runs it and says what it answered
+// in a toast: the state the system ended in ("Sleep: Sleeping", "Volume
+// Up: Volume 52%"), or why nothing changed ("Hibernate: Hibernation is
+// not available on this computer: there is no hibernation file").
 //
 // The sample calls each host function as it is: no confirmation, no HUD —
 // the System Commands default extension (guests/system-commands) is the
@@ -21,14 +23,22 @@
 // Rust sample (guests/sample-system-commands) and the JavaScript one.
 import { showToast } from "@pane-app/extension/feedback";
 import {
+  emptyRecycleBin,
+  ejectRemovableDrives,
   hibernate,
   lockScreen,
   logOut,
+  openRecycleBin,
   restart,
   setVolume,
+  showDesktop,
   shutDown,
   sleep,
   startScreenSaver,
+  toggleAppearance,
+  toggleBluetooth,
+  toggleHdr,
+  toggleHiddenFiles,
   toggleMicrophoneMute,
   toggleMute,
   turnOffDisplays,
@@ -124,6 +134,54 @@ const STEPS: Step[] = [
     title: "Toggle Microphone Mute",
     subtitle: "Mutes every microphone when any is on, unmutes them all otherwise",
     ask: toggleMicrophoneMute,
+  },
+  {
+    id: "open-recycle-bin",
+    title: "Open Recycle Bin",
+    subtitle: "Opens the Recycle Bin in File Explorer",
+    ask: openRecycleBin,
+  },
+  {
+    id: "empty-recycle-bin",
+    title: "Empty Recycle Bin",
+    subtitle: "Empties the Recycle Bin; an already empty one is a success",
+    ask: emptyRecycleBin,
+  },
+  {
+    id: "toggle-appearance",
+    title: "Toggle System Appearance",
+    subtitle: "Switches Windows between light and dark",
+    ask: toggleAppearance,
+  },
+  {
+    id: "toggle-hdr",
+    title: "Toggle HDR",
+    subtitle: "Turns HDR on when any capable display is off, otherwise off",
+    ask: toggleHdr,
+  },
+  {
+    id: "show-desktop",
+    title: "Show Desktop",
+    subtitle: "Hides the open windows, or brings them back",
+    ask: showDesktop,
+  },
+  {
+    id: "toggle-hidden-files",
+    title: "Toggle Hidden Files",
+    subtitle: "Shows hidden files in File Explorer, or hides them again",
+    ask: toggleHiddenFiles,
+  },
+  {
+    id: "eject-removable-drives",
+    title: "Eject Removable Drives",
+    subtitle: "Ejects every removable drive, reporting each drive that refused",
+    ask: ejectRemovableDrives,
+  },
+  {
+    id: "toggle-bluetooth",
+    title: "Toggle Bluetooth",
+    subtitle: "Turns Bluetooth on when any radio is off, otherwise off",
+    ask: toggleBluetooth,
   },
 ];
 

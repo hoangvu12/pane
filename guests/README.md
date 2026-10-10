@@ -2239,19 +2239,27 @@ JavaScript or TypeScript command's package.json sets
 
 A command may also lock the screen, log the user out, restart, shut down,
 sleep, hibernate, turn the displays off, start the screen saver, change
-the volume of the default output device or mute the microphones (#255,
-#265, ADR 0040, `pane:extension/system-commands` in
+the volume of the default output device, mute the microphones, open or
+empty the Recycle Bin, switch the system's appearance between light and
+dark, toggle HDR, show the desktop, toggle hidden files in File Explorer,
+eject the removable drives or toggle Bluetooth (#255, #265, #266, ADR
+0040, `pane:extension/system-commands` in
 [wit/system-commands.wit](../wit/system-commands.wit)). Each function
 answers what it ended in — the state the system is in now, or why nothing
-changed ("Restarting", "Volume 52%", "Microphones muted", "Hibernation is
+changed ("Restarting", "Volume 52%", "Microphones muted", "Dark mode",
+"HDR on", "Ejected E:", "Hibernation is
 not available on this computer: there is no hibernation file") — never
 an error: show the text in a HUD, as the System Commands default extension
-does (it confirms the destructive ones first, with "Don't ask again").
+does (it confirms the destructive ones first, with "Don't ask again",
+emptying the Recycle Bin among them).
 The decisions are Pane's: restart and shut down force applications closed,
 a log out does not; sleep turns the displays off on a computer that enters
 Modern Standby when they turn off, and suspends any other; a volume step
 moves the level as Windows' own volume keys do, and the microphone toggle
-mutes every microphone when any is unmuted and unmutes them all otherwise.
+mutes every microphone when any is unmuted and unmutes them all otherwise;
+the HDR and Bluetooth toggles turn every capable display or radio on when
+any is off, and all off when they are all on; an already empty Recycle Bin
+is a success, and ejection names each drive that refused with why.
 Set Volume takes its level, 0 to 100, as the command's argument. Windows
 implements them today; other systems answer that the commands are not
 available there yet.

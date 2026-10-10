@@ -338,18 +338,20 @@ pub mod clipboard_history {
     };
 }
 
-/// The session, power and audio commands
+/// The session, power, audio and device commands
 /// (`pane:extension/system-commands`): locking the screen, logging out,
 /// restarting, shutting down, sleeping, hibernating, turning the displays
-/// off, starting the screen saver, and the volume of the default output
-/// device and the microphones' mute, which Pane asks the system for (a
-/// pure WASI guest cannot). Each answers what it ended in
-/// ([`system_commands::Outcome`]): the state the system is in now, or why
-/// nothing changed — an operation that cannot happen on this system, or
-/// failed, is an answer, never an error and never a reason to pause the
-/// extension. The System Commands default extension shows the text in a
-/// HUD ([`feedback::show_hud`]) and confirms the destructive ones first
-/// ([`feedback::confirm`]), as ADR 0040 records.
+/// off, starting the screen saver, the volume of the default output
+/// device and the microphones' mute, and the Recycle Bin (opening and
+/// emptying it), the system's appearance, HDR, the desktop, the file
+/// manager's hidden files, the removable drives and Bluetooth, which
+/// Pane asks the system for (a pure WASI guest cannot). Each answers
+/// what it ended in ([`system_commands::Outcome`]): the state the system
+/// is in now, or why nothing changed — an operation that cannot happen
+/// on this system, or failed, is an answer, never an error and never a
+/// reason to pause the extension. The System Commands default extension
+/// shows the text in a HUD ([`feedback::show_hud`]) and confirms the
+/// destructive ones first ([`feedback::confirm`]), as ADR 0040 records.
 pub mod system_commands {
     wit_bindgen::generate!({
         path: "wit",
@@ -358,9 +360,10 @@ pub mod system_commands {
     });
 
     pub use pane::extension::system_commands::{
-        Outcome, hibernate, lock_screen, log_out, restart, set_volume, shut_down, sleep,
-        start_screen_saver, toggle_microphone_mute, toggle_mute, turn_off_displays, volume_down,
-        volume_up,
+        Outcome, empty_recycle_bin, eject_removable_drives, hibernate, lock_screen, log_out,
+        open_recycle_bin, restart, set_volume, show_desktop, shut_down, sleep, start_screen_saver,
+        toggle_appearance, toggle_bluetooth, toggle_hdr, toggle_hidden_files,
+        toggle_microphone_mute, toggle_mute, turn_off_displays, volume_down, volume_up,
     };
 
     impl Outcome {

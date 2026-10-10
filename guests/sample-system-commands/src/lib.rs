@@ -3,10 +3,13 @@
 //! Screen, Log Out, Restart, Shut Down, Sleep, Hibernate, Turn Off
 //! Displays and Start Screen Saver — and the audio commands (#265) —
 //! Volume Up, Volume Down, Toggle Mute, Set Volume and Toggle Microphone
-//! Mute — one item for each, which runs it and says what it answered in a
-//! toast: the state the system ended in ("Sleep: Sleeping", "Volume Up:
-//! Volume 52%"), or why nothing changed ("Hibernate: Hibernation is not
-//! available on this computer: there is no hibernation file").
+//! Mute — and the bin, appearance and device commands (#266) — Open
+//! Recycle Bin, Empty Recycle Bin, Toggle System Appearance, Toggle HDR,
+//! Show Desktop, Toggle Hidden Files, Eject Removable Drives and Toggle
+//! Bluetooth — one item for each, which runs it and says what it answered
+//! in a toast: the state the system ended in ("Sleep: Sleeping", "Volume
+//! Up: Volume 52%"), or why nothing changed ("Hibernate: Hibernation is
+//! not available on this computer: there is no hibernation file").
 //!
 //! The sample calls each host function as it is: no confirmation, no HUD
 //! — the System Commands default extension (guests/system-commands) is the
@@ -40,7 +43,7 @@ struct Step {
     ask: fn() -> Outcome,
 }
 
-const STEPS: [Step; 13] = [
+const STEPS: [Step; 21] = [
     Step {
         id: "lock-screen",
         title: "Lock Screen",
@@ -118,6 +121,54 @@ const STEPS: [Step; 13] = [
         title: "Toggle Microphone Mute",
         subtitle: "Mutes every microphone when any is on, unmutes them all otherwise",
         ask: system_commands::toggle_microphone_mute,
+    },
+    Step {
+        id: "open-recycle-bin",
+        title: "Open Recycle Bin",
+        subtitle: "Opens the Recycle Bin in File Explorer",
+        ask: system_commands::open_recycle_bin,
+    },
+    Step {
+        id: "empty-recycle-bin",
+        title: "Empty Recycle Bin",
+        subtitle: "Empties the Recycle Bin; an already empty one is a success",
+        ask: system_commands::empty_recycle_bin,
+    },
+    Step {
+        id: "toggle-appearance",
+        title: "Toggle System Appearance",
+        subtitle: "Switches Windows between light and dark",
+        ask: system_commands::toggle_appearance,
+    },
+    Step {
+        id: "toggle-hdr",
+        title: "Toggle HDR",
+        subtitle: "Turns HDR on when any capable display is off, otherwise off",
+        ask: system_commands::toggle_hdr,
+    },
+    Step {
+        id: "show-desktop",
+        title: "Show Desktop",
+        subtitle: "Hides the open windows, or brings them back",
+        ask: system_commands::show_desktop,
+    },
+    Step {
+        id: "toggle-hidden-files",
+        title: "Toggle Hidden Files",
+        subtitle: "Shows hidden files in File Explorer, or hides them again",
+        ask: system_commands::toggle_hidden_files,
+    },
+    Step {
+        id: "eject-removable-drives",
+        title: "Eject Removable Drives",
+        subtitle: "Ejects every removable drive, reporting each drive that refused",
+        ask: system_commands::eject_removable_drives,
+    },
+    Step {
+        id: "toggle-bluetooth",
+        title: "Toggle Bluetooth",
+        subtitle: "Turns Bluetooth on when any radio is off, otherwise off",
+        ask: system_commands::toggle_bluetooth,
     },
 ];
 

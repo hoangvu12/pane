@@ -1,16 +1,19 @@
 //! The guest's side of the `system-commands` host functions
 //! (`wit/system-commands.wit`): locking the screen, logging out,
 //! restarting, shutting down, sleeping, hibernating, turning the displays
-//! off and starting the screen saver, and the audio commands — raising,
+//! off and starting the screen saver, the audio commands — raising,
 //! lowering, setting or muting the volume of the default output device,
-//! and muting or unmuting every microphone. Each takes the launcher's
-//! [`SystemCommands`] (through its `HostFunctions`), decides what the
-//! command does — which commands force applications closed, how `sleep`
-//! sleeps, whether `hibernate` can happen, how far a volume step moves
-//! the level, whether the microphone toggle mutes or unmutes — and has
-//! the system do it on a thread of its own: the runtime thread awaits it,
-//! serving other packages' calls meanwhile, and the wait is Pane's time,
-//! never the guest's computing (#18, #136).
+//! and muting or unmuting every microphone — and the bin, appearance and
+//! device commands: opening and emptying the Recycle Bin, the system's
+//! light and dark appearance, HDR, the desktop, the file manager's
+//! hidden files, the removable drives' ejection and Bluetooth. Each takes
+//! the launcher's [`SystemCommands`] (through its `HostFunctions`),
+//! decides what the command does — which commands force applications
+//! closed, how `sleep` sleeps, whether `hibernate` can happen, how far a
+//! volume step moves the level, whether the microphone toggle mutes or
+//! unmutes — and has the system do it on a thread of its own: the
+//! runtime thread awaits it, serving other packages' calls meanwhile,
+//! and the wait is Pane's time, never the guest's computing (#18, #136).
 //!
 //! Each command answers what it ended in — the state the system is in
 //! now, or why nothing changed — never an error and never a reason to
@@ -139,5 +142,37 @@ impl system_commands_host::Host for GuestState {
 
     async fn toggle_microphone_mute(&mut self) -> system_commands_host::Outcome {
         self.system_command(Command::ToggleMicrophoneMute).await
+    }
+
+    async fn open_recycle_bin(&mut self) -> system_commands_host::Outcome {
+        self.system_command(Command::OpenRecycleBin).await
+    }
+
+    async fn empty_recycle_bin(&mut self) -> system_commands_host::Outcome {
+        self.system_command(Command::EmptyRecycleBin).await
+    }
+
+    async fn toggle_appearance(&mut self) -> system_commands_host::Outcome {
+        self.system_command(Command::ToggleAppearance).await
+    }
+
+    async fn toggle_hdr(&mut self) -> system_commands_host::Outcome {
+        self.system_command(Command::ToggleHdr).await
+    }
+
+    async fn show_desktop(&mut self) -> system_commands_host::Outcome {
+        self.system_command(Command::ShowDesktop).await
+    }
+
+    async fn toggle_hidden_files(&mut self) -> system_commands_host::Outcome {
+        self.system_command(Command::ToggleHiddenFiles).await
+    }
+
+    async fn eject_removable_drives(&mut self) -> system_commands_host::Outcome {
+        self.system_command(Command::EjectRemovableDrives).await
+    }
+
+    async fn toggle_bluetooth(&mut self) -> system_commands_host::Outcome {
+        self.system_command(Command::ToggleBluetooth).await
     }
 }

@@ -5,8 +5,11 @@
 // `pane:extension/system-commands@0.1.0` (wit/system-commands.wit):
 // locking the screen, logging out, restarting, shutting down, sleeping,
 // hibernating, turning the displays off and starting the screen saver,
-// and the audio commands: the volume of the default output device and
-// the microphones' mute. Bundled into the command that imports it, like
+// the audio commands: the volume of the default output device and the
+// microphones' mute, and the bin, appearance and device commands: the
+// Recycle Bin (opening and emptying it), the system's appearance, HDR,
+// the desktop, the file manager's hidden files, the removable drives and
+// Bluetooth. Bundled into the command that imports it, like
 // any npm module; only a command whose bundle uses it imports the
 // interface. Each function answers what it ended in — the state the
 // system is in now, or why nothing changed — never throwing for an
@@ -15,14 +18,22 @@
 // ones first, as the System Commands default extension does (ADR 0040).
 
 import {
+  emptyRecycleBin as doEmptyRecycleBin,
+  ejectRemovableDrives as doEjectRemovableDrives,
   hibernate as doHibernate,
   lockScreen as doLockScreen,
   logOut as doLogOut,
+  openRecycleBin as doOpenRecycleBin,
   restart as doRestart,
   setVolume as doSetVolume,
+  showDesktop as doShowDesktop,
   shutDown as doShutDown,
   sleep as doSleep,
   startScreenSaver as doStartScreenSaver,
+  toggleAppearance as doToggleAppearance,
+  toggleBluetooth as doToggleBluetooth,
+  toggleHdr as doToggleHdr,
+  toggleHiddenFiles as doToggleHiddenFiles,
   toggleMicrophoneMute as doToggleMicrophoneMute,
   toggleMute as doToggleMute,
   turnOffDisplays as doTurnOffDisplays,
@@ -157,4 +168,74 @@ export function setVolume(level) {
  */
 export function toggleMicrophoneMute() {
   return answer(doToggleMicrophoneMute());
+}
+
+/**
+ * Opens the Recycle Bin in the file manager. Answers "Opening the Recycle
+ * Bin", or why nothing changed.
+ */
+export function openRecycleBin() {
+  return answer(doOpenRecycleBin());
+}
+
+/**
+ * Empties the Recycle Bin, what it holds deleted for good. An already
+ * empty bin is a success the answer says. Answers "Emptied the Recycle
+ * Bin" or "The Recycle Bin is already empty", or why nothing changed.
+ */
+export function emptyRecycleBin() {
+  return answer(doEmptyRecycleBin());
+}
+
+/**
+ * Toggles the system's appearance between light and dark, the values for
+ * applications and the system together. Answers "Light mode" or "Dark
+ * mode", or why nothing changed.
+ */
+export function toggleAppearance() {
+  return answer(doToggleAppearance());
+}
+
+/**
+ * Toggles HDR: if any HDR-capable display is off they all turn on,
+ * otherwise all off. Answers "HDR on" or "HDR off", or why nothing
+ * changed (no HDR-capable display is connected).
+ */
+export function toggleHdr() {
+  return answer(doToggleHdr());
+}
+
+/**
+ * Shows the desktop, as the shell's own toggle-desktop does: the windows
+ * open now hide, or come back if it is showing. Answers "Showing the
+ * desktop", or why nothing changed.
+ */
+export function showDesktop() {
+  return answer(doShowDesktop());
+}
+
+/**
+ * Toggles whether the file manager shows hidden files, refreshing its
+ * open windows. Answers "Hidden files shown" or "Hidden files hidden",
+ * or why nothing changed.
+ */
+export function toggleHiddenFiles() {
+  return answer(doToggleHiddenFiles());
+}
+
+/**
+ * Ejects every removable drive, each locked, dismounted and ejected; a
+ * drive that fails is named with why, and none at all is explained.
+ */
+export function ejectRemovableDrives() {
+  return answer(doEjectRemovableDrives());
+}
+
+/**
+ * Toggles Bluetooth: if any radio is off they all turn on, otherwise all
+ * off. Answers "Bluetooth on" or "Bluetooth off", or why nothing changed
+ * (no Bluetooth radio is connected).
+ */
+export function toggleBluetooth() {
+  return answer(doToggleBluetooth());
 }

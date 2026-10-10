@@ -104,6 +104,62 @@
       "subtitle": "Mutes every microphone when any is on, unmutes them all otherwise",
       "component": "system_commands.wasm",
       "mode": "no-view"
+    },
+    {
+      "id": "open-recycle-bin",
+      "title": "Open Recycle Bin",
+      "subtitle": "Opens the Recycle Bin in File Explorer",
+      "component": "system_commands.wasm",
+      "mode": "no-view"
+    },
+    {
+      "id": "empty-recycle-bin",
+      "title": "Empty Recycle Bin",
+      "subtitle": "Empties the Recycle Bin, asking first; an already empty one is a success",
+      "component": "system_commands.wasm",
+      "mode": "no-view"
+    },
+    {
+      "id": "toggle-appearance",
+      "title": "Toggle System Appearance",
+      "subtitle": "Switches Windows between light and dark, saying which it chose",
+      "component": "system_commands.wasm",
+      "mode": "no-view"
+    },
+    {
+      "id": "toggle-hdr",
+      "title": "Toggle HDR",
+      "subtitle": "Turns HDR on when any capable display is off, otherwise off",
+      "component": "system_commands.wasm",
+      "mode": "no-view"
+    },
+    {
+      "id": "show-desktop",
+      "title": "Show Desktop",
+      "subtitle": "Hides the open windows, or brings them back, as the shell's own toggle",
+      "component": "system_commands.wasm",
+      "mode": "no-view"
+    },
+    {
+      "id": "toggle-hidden-files",
+      "title": "Toggle Hidden Files",
+      "subtitle": "Shows hidden files in File Explorer, or hides them again",
+      "component": "system_commands.wasm",
+      "mode": "no-view"
+    },
+    {
+      "id": "eject-removable-drives",
+      "title": "Eject Removable Drives",
+      "subtitle": "Ejects every removable drive, reporting each drive that refused",
+      "component": "system_commands.wasm",
+      "mode": "no-view"
+    },
+    {
+      "id": "toggle-bluetooth",
+      "title": "Toggle Bluetooth",
+      "subtitle": "Turns Bluetooth on when any radio is off, otherwise off",
+      "component": "system_commands.wasm",
+      "mode": "no-view"
     }
   ]
 }

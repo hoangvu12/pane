@@ -2,26 +2,30 @@
 //! 0037, ADR 0040): one for each session and power command the
 //! `system-commands` host functions offer — Lock Screen, Log Out,
 //! Restart, Shut Down, Sleep, Hibernate, Turn Off Displays and Start
-//! Screen Saver — and one for each audio command — Volume Up, Volume
-//! Down, Toggle Mute, Set Volume and Toggle Microphone Mute — all
-//! thirteen sharing this component. A command's hotkey runs it without
+//! Screen Saver — one for each audio command — Volume Up, Volume Down,
+//! Toggle Mute, Set Volume and Toggle Microphone Mute — and one for each
+//! bin, appearance and device command — Open Recycle Bin, Empty Recycle
+//! Bin, Toggle System Appearance, Toggle HDR, Show Desktop, Toggle
+//! Hidden Files, Eject Removable Drives and Toggle Bluetooth — all
+//! twenty-one sharing this component. A command's hotkey runs it without
 //! showing Pane's window, and it answers with a HUD of the state the
 //! system ended in, or why nothing changed (1.2 seconds, or 3 for the
 //! failure style, ADR 0035): "Restarting", "Sleeping", "Volume 52%",
 //! "Muted", "Microphones muted", "Hibernation is not available on this
 //! computer: there is no hibernation file".
 //!
-//! Log Out, Restart and Shut Down ask first, with a destructive
-//! confirmation offering "Don't ask again" (ADR 0040): a mistyped query
-//! never ends a session. Restart and Shut Down then force applications
-//! closed, so an application with unsaved work cannot hold one up, while
-//! Log Out leaves applications the chance to save — the host's decision,
-//! not this extension's; each command only calls the host function named
-//! for it. Set Volume takes its level through its `level` argument (0 to
-//! 100), which Pane's argument form asks for; anything else is explained
-//! in the HUD, as the audio commands are not destructive and ask nothing
-//! first. A background launch (a schedule) is answered with an error,
-//! since no confirmation is available there: nothing happens.
+//! Log Out, Restart, Shut Down and Empty Recycle Bin ask first, with a
+//! destructive confirmation offering "Don't ask again" (ADR 0040): a
+//! mistyped query never ends a session or empties the bin. Restart and
+//! Shut Down then force applications closed, so an application with
+//! unsaved work cannot hold one up, while Log Out leaves applications the
+//! chance to save — the host's decision, not this extension's; each
+//! command only calls the host function named for it. Set Volume takes
+//! its level through its `level` argument (0 to 100), which Pane's
+//! argument form asks for; anything else is explained in the HUD, as the
+//! audio, appearance and device commands are not destructive and ask
+//! nothing first. A background launch (a schedule) is answered with an
+//! error, since no confirmation is available there: nothing happens.
 //!
 //! The extension declares `windows` alone in its pane.json, and only the
 //! Windows default set lists it (ADR 0040).
@@ -50,6 +54,14 @@ const VOLUME_DOWN: &str = "volume-down";
 const TOGGLE_MUTE: &str = "toggle-mute";
 const SET_VOLUME: &str = "set-volume";
 const TOGGLE_MICROPHONES: &str = "toggle-microphone-mute";
+const OPEN_BIN: &str = "open-recycle-bin";
+const EMPTY_BIN: &str = "empty-recycle-bin";
+const APPEARANCE: &str = "toggle-appearance";
+const HDR: &str = "toggle-hdr";
+const DESKTOP: &str = "show-desktop";
+const HIDDEN_FILES: &str = "toggle-hidden-files";
+const DRIVES: &str = "eject-removable-drives";
+const BLUETOOTH: &str = "toggle-bluetooth";
 
 /// The name of Set Volume's `level` argument, as `pane.json` declares it
 /// and the launch record carries it.
@@ -60,9 +72,9 @@ const LEVEL: &str = "level";
 const SET_VOLUME_RANGE: &str = "The volume can be set only from 0 to 100";
 
 /// The destructive set, which asks first (ADR 0040): logging out,
-/// restarting and shutting down. The host's `Command` holds the same
-/// decision; this list follows it.
-const DESTRUCTIVE: [&str; 3] = [LOG_OUT, RESTART, SHUT_DOWN];
+/// restarting, shutting down and emptying the Recycle Bin. The host's
+/// `Command` holds the same decision; this list follows it.
+const DESTRUCTIVE: [&str; 4] = [LOG_OUT, RESTART, SHUT_DOWN, EMPTY_BIN];
 
 /// One command's answer: the HUD of the state it ended in, or why nothing
 /// changed (3 seconds for the failure style).
@@ -97,6 +109,14 @@ impl Command for SystemCommands {
             TOGGLE_MUTE => system_commands::toggle_mute(),
             SET_VOLUME => set_volume(&launch),
             TOGGLE_MICROPHONES => system_commands::toggle_microphone_mute(),
+            OPEN_BIN => system_commands::open_recycle_bin(),
+            EMPTY_BIN => system_commands::empty_recycle_bin(),
+            APPEARANCE => system_commands::toggle_appearance(),
+            HDR => system_commands::toggle_hdr(),
+            DESKTOP => system_commands::show_desktop(),
+            HIDDEN_FILES => system_commands::toggle_hidden_files(),
+            DRIVES => system_commands::eject_removable_drives(),
+            BLUETOOTH => system_commands::toggle_bluetooth(),
             other => return Err(format!("`{other}` is no system command")),
         };
         answer(outcome);
@@ -130,6 +150,11 @@ async fn confirm(id: &str) -> Result<bool, String> {
             "Restart?",
             "Windows restarts, closing every application whether saved or not.",
             "Restart",
+        ),
+        EMPTY_BIN => (
+            "Empty the Recycle Bin?",
+            "Windows empties the Recycle Bin of every drive; what it holds is gone.",
+            "Empty Recycle Bin",
         ),
         _ => (
             "Shut down?",

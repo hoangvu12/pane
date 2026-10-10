@@ -113,6 +113,50 @@ interface system-commands {
   /// "Microphones unmuted"); a microphone that has vanished since it was
   /// listed is skipped, and no microphone at all is explained.
   toggle-microphone-mute: func() -> outcome;
+
+  /// Opens the Recycle Bin in File Explorer, every drive's together.
+  /// The answer says the bin opened.
+  open-recycle-bin: func() -> outcome;
+
+  /// Empties the Recycle Bin, every drive's together, what it holds
+  /// deleted for good. An already empty bin is a success, and the
+  /// answer says so rather than saying anything failed.
+  empty-recycle-bin: func() -> outcome;
+
+  /// Toggles the system's appearance between light and dark: the
+  /// personalization values for applications and for the system,
+  /// together, followed by the setting-change broadcast, which is given
+  /// a hang timeout so that a hung application cannot block it. The
+  /// answer says which it chose: "Light mode", or "Dark mode".
+  toggle-appearance: func() -> outcome;
+
+  /// Toggles HDR: the displays' advanced colour state. If any
+  /// HDR-capable display is off, they all turn on; if they are all on,
+  /// they all turn off. The answer says the state it ended in ("HDR on",
+  /// "HDR off"); no HDR-capable display at all is explained.
+  toggle-hdr: func() -> outcome;
+
+  /// Shows the desktop, as the shell's own toggle-desktop does: the
+  /// windows open now hide, or come back if it is showing. The answer
+  /// says the desktop was shown.
+  show-desktop: func() -> outcome;
+
+  /// Toggles whether File Explorer shows hidden files, refreshing its
+  /// open windows. The answer says which it chose: "Hidden files shown",
+  /// or "Hidden files hidden".
+  toggle-hidden-files: func() -> outcome;
+
+  /// Ejects every removable drive: each is locked, dismounted and
+  /// ejected. A drive that fails is named with why, while the rest go
+  /// ("Ejected E:; F: was not ejected: ..."); no removable drive at
+  /// all is explained.
+  eject-removable-drives: func() -> outcome;
+
+  /// Toggles Bluetooth: if any radio is off they all turn on, and if
+  /// they are all on they all turn off; a radio that has vanished since
+  /// it was listed is skipped. The answer says the state it ended in
+  /// ("Bluetooth on", "Bluetooth off"); no radio at all is explained.
+  toggle-bluetooth: func() -> outcome;
 }
 
 /// The system-commands import alone, for guest bindings.

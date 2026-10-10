@@ -3,9 +3,12 @@
 // Declarations for `pane:extension/system-commands` in
 // wit/system-commands.wit: the session and power commands — locking the
 // screen, logging out, restarting, shutting down, sleeping, hibernating,
-// turning the displays off and starting the screen saver — and the audio
+// turning the displays off and starting the screen saver — the audio
 // commands, the volume of the default output device and the microphones'
-// mute. Most commands use them through
+// mute, and the bin, appearance and device commands: the Recycle Bin
+// (opening and emptying it), the system's appearance, HDR, the desktop,
+// the file manager's hidden files, the removable drives and Bluetooth.
+// Most commands use them through
 // `@pane-app/extension/system-commands`
 // (system-commands.d.ts).
 
@@ -82,4 +85,49 @@ declare module "pane:extension/system-commands@0.1.0" {
    * skipped.
    */
   export function toggleMicrophoneMute(): Outcome;
+
+  /** Opens the Recycle Bin in the file manager. */
+  export function openRecycleBin(): Outcome;
+
+  /**
+   * Empties the Recycle Bin, what it holds deleted for good; an already
+   * empty bin is a success.
+   */
+  export function emptyRecycleBin(): Outcome;
+
+  /**
+   * Toggles the system's appearance between light and dark, the values
+   * for applications and the system together, followed by the
+   * setting-change broadcast with a hang timeout.
+   */
+  export function toggleAppearance(): Outcome;
+
+  /**
+   * Toggles HDR: the displays' advanced colour state; if any capable
+   * display is off they all turn on, otherwise all off, and none capable
+   * is explained.
+   */
+  export function toggleHdr(): Outcome;
+
+  /** Shows the desktop, as the shell's own toggle-desktop does. */
+  export function showDesktop(): Outcome;
+
+  /**
+   * Toggles whether the file manager shows hidden files, refreshing its
+   * open windows.
+   */
+  export function toggleHiddenFiles(): Outcome;
+
+  /**
+   * Ejects every removable drive: each locked, dismounted and ejected,
+   * with per-drive failures reported; none at all is explained.
+   */
+  export function ejectRemovableDrives(): Outcome;
+
+  /**
+   * Toggles Bluetooth: if any radio is off they all turn on, otherwise
+   * all off; a radio that vanished since it was listed is skipped, and
+   * none at all is explained.
+   */
+  export function toggleBluetooth(): Outcome;
 }
