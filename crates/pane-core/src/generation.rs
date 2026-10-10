@@ -215,6 +215,7 @@ impl Generation {
                 entry: 0,
             };
         }
+        eprintln!("pane-generation: on_end {what} on {:p}", Arc::as_ptr(&self.0));
         let entry = list.next;
         list.next += 1;
         list.entries.push((entry, what, Box::new(undo)));
@@ -227,6 +228,11 @@ impl Generation {
     /// What is on the undo list now, oldest first: what this generation
     /// still has set up. A diagnostic for tests.
     pub fn undo_list(&self) -> Vec<&'static str> {
+        eprintln!(
+            "pane-generation: list {:p} reads {:?}",
+            Arc::as_ptr(&self.0),
+            self.list().entries.iter().map(|(_, what, _)| *what).collect::<Vec<_>>()
+        );
         self.list()
             .entries
             .iter()
