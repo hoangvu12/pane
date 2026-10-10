@@ -82,6 +82,7 @@ mod uninstall;
 mod uninstall_dependents;
 mod unresponsive;
 mod update;
+mod view_push;
 mod view_refresh;
 mod web_icons;
 

@@ -10,8 +10,9 @@
 // the component reads the state the event's listener changed. A view that
 // changes by itself asks for that: `useInterval(ms, run)` runs `run` each
 // time `ms` passes while the view is open, and `usePending(load)` presents
-// data on its way as loading state (#236) — the tree Pane is asked to
-// draw again is what asks.
+// data on its way as loading state (#236) — the arrival asks for a
+// drawing itself (#243, `pane:extension/view`), so it is drawn the moment
+// it lands, with no timer.
 //
 // `createView(component)` makes the view a command's `openView` answers
 // with: it implements `render(context)` and `handleEvent(event)` for
@@ -32,12 +33,10 @@
 // a Pane that renders another major refuses it naming both versions, and
 // one that knows less draws what it understands.
 
+import { askToRender } from "pane:extension/view@0.1.0";
+
 /** The version of the UI component set this SDK writes. */
 const COMPONENT_SET = "1.2";
-
-/** How long a loading state waits for its data before it is asked for
- * again: the floor of Pane's refreshes. */
-const PROMPT_REFRESH_MS = 100;
 
 /** The empty outcome: what a handler that navigates nowhere answers. */
 const NOTHING_NEXT = { push: null, replace: null, pop: null };
@@ -135,7 +134,8 @@ export const Fragment = Symbol.for("pane.extension.fragment");
 let rendering = null;
 
 /** The ticks and pending data this render registers (see `useInterval`
- * and `usePending`); `null` outside one. */
+ * and `usePending`), with the view's id, for what asks to be drawn again;
+ * `null` outside one. */
 let collecting = null;
 
 /**
@@ -204,11 +204,12 @@ export function useInterval(ms, run) {
  * `usePending(load)` answers `undefined` while the work `load` started has
  * not answered — render a loading state for that — and its answer once it
  * has. The first render starts the work and answers `undefined`, so the
- * loading state is shown at once; Pane is asked for the tree again
- * promptly, and that render awaits the work, so its answer is drawn as
- * soon as it is there. The work is awaited inside the guest call, which
- * Pane bounds as any call (a work that never answers is the view's
- * failure, not a hung launcher).
+ * loading state is shown at once; when the work answers, the SDK itself
+ * asks Pane to draw the view again (#243, `pane:extension/view`), and
+ * that drawing shows the answer — the moment it arrived, with no timer to
+ * wait for. Pane keeps the instance running between calls while a view of
+ * its is open, so the work is awaited in the background; it is still
+ * bounded by the call's limits, as any guest work is.
  *
  * The work runs once; a view that wants it again renders another one.
  */
@@ -216,11 +217,20 @@ export function usePending(load) {
   const host = rendering ?? throwOutside("usePending");
   const index = host.cursor++;
   if (index === host.cells.length) {
-    host.cells.push({ value: undefined, work: Promise.resolve().then(load) });
+    // The view whose render started the work: the one that asks to be
+    // drawn again when it answers, however many views the component's
+    // command opens.
+    const view = collecting.view;
+    const cell = { value: undefined, work: null };
+    cell.work = Promise.resolve()
+      .then(load)
+      .then((answer) => {
+        cell.value = answer;
+        askToRender(view);
+      });
+    host.cells.push(cell);
   }
-  const cell = host.cells[index];
-  collecting.pendings.push(cell);
-  return cell.value;
+  return host.cells[index].value;
 }
 
 /** Throws the "outside a render" error a hook's host is missing. */
@@ -645,42 +655,33 @@ export function createView(component, props = {}) {
   const tables = new Map();
   /** The `onPop` the view's last push registered, run when it pops. */
   let onPop = null;
-  /** The ticks and pending data the last render registered. */
-  let registered = { ticks: [], pendings: [] };
-  /** What the last render asked Pane for: "none", a "prompt" refresh to
-   * await pending data, or the refresh the view asked for ("asked"). */
-  let ask = "none";
-  /** Whether an event was handled since the last render: its render is
-   * not one that answers a refresh. */
-  let afterEvent = false;
+  /** The ticks the last render registered. */
+  let registered = { ticks: [] };
   /** The newest render asked, to number a context that names none. */
   let newest = 0;
+  /** The view's id, as its render context names it: what asks Pane to
+   * draw it again when pending data lands (#243). */
+  let view = 0;
   return {
     async render(context) {
       const number = numberOf(context, newest + 1);
       newest = Math.max(newest, number);
+      view = viewIdOf(context) || view;
       /** The render's listeners, by the ids its tree names. */
       const callbacks = new Map();
       /** The component places this render visited, to drop the rest. */
       const used = new Set();
-      // This render answers the refresh the last one asked for, unless an
-      // event's answer asked for it: the ticks run and the pending work is
-      // awaited before the tree is drawn, so it shows what they changed.
-      // Ticks run only on the view's own ask, not on the prompt a loading
-      // state asks for, which awaits the data instead.
-      const answering = ask !== "none" && !afterEvent;
-      const ticking = answering && ask === "asked";
-      afterEvent = false;
+      // This render answers the refresh the view asked for — the drawing
+      // Pane waited to ask for, as the context names — which is where an
+      // interval's work runs, so the tree shows what it changed. Pending
+      // data is never awaited here: it asks for a drawing of its own when
+      // it lands (#243), which is not one.
+      const answering = whyOf(context) === "refresh";
       if (answering) {
-        if (ticking) {
-          for (const { run } of registered.ticks) await run();
-        }
-        for (const cell of registered.pendings) {
-          if (cell.value === undefined) cell.value = await cell.work;
-        }
+        for (const { run } of registered.ticks) await run();
       }
       /** What this render registers, replacing the last render's. */
-      const collected = { ticks: [], pendings: [] };
+      const collected = { ticks: [], view };
       const root = [];
       collecting = collected;
       try {
@@ -702,25 +703,18 @@ export function createView(component, props = {}) {
       }
       registered = collected;
       // What Pane is asked to wait before the tree again: the soonest the
-      // view's intervals ask for, and promptly while data is pending.
+      // view's intervals ask for. Pending data waits for none of it: the
+      // moment it lands asks for a drawing itself (#243).
       let refreshAfterMs = null;
       for (const { ms } of collected.ticks) {
         refreshAfterMs = Math.min(refreshAfterMs ?? Infinity, ms);
       }
-      const waiting = collected.pendings.some((cell) => cell.value === undefined);
-      if (waiting) {
-        refreshAfterMs = Math.min(refreshAfterMs ?? Infinity, PROMPT_REFRESH_MS);
-      }
-      ask = refreshAfterMs === null ? "none" : waiting ? "prompt" : "asked";
       return {
         tree: JSON.stringify({ version: COMPONENT_SET, root: root[0] }),
         refreshAfterMs,
       };
     },
     async handleEvent(event) {
-      // Any event — the pop event included — means the render it asks for
-      // answers no refresh of the view's own.
-      afterEvent = true;
       // The pop event: the view above this one popped. Its payload is the
       // result that pop answered; the view re-renders after it, as after
       // every event.
@@ -823,6 +817,29 @@ export function pop(result) {
  * answered (or none, the back key's) before this view re-renders. */
 export function Push(target, onPop) {
   return () => push(target, onPop);
+}
+
+/** Why Pane asks for the tree, as `context` names: the render answering
+ * the refresh the view asked for is where an interval's work runs; a
+ * drawing the view's own work asked for (#243) is not one. `""` when it
+ * says none. */
+function whyOf(context) {
+  try {
+    return JSON.parse(context)?.why ?? "";
+  } catch {
+    return "";
+  }
+}
+
+/** The view `context` names — its id, what `ask-to-render` asks for — or 0
+ * when it says none. */
+function viewIdOf(context) {
+  try {
+    const named = JSON.parse(context)?.view;
+    return typeof named === "number" && named > 0 ? named : 0;
+  } catch {
+    return 0;
+  }
 }
 
 /** The render number `context` names, or `fallback` when it says none. */

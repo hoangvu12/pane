@@ -1859,9 +1859,19 @@ impl Launcher {
     fn report_failures(&self) {
         self.report_runtime_crashes();
         // The window and feedback host functions commands call are the
-        // launcher's, for every command it runs (see `feedback`).
+        // launcher's, for every command it runs (see `feedback`), and a
+        // designed view asking to be drawn again reaches this launcher's
+        // refresh thread (see `refresh`, #243).
         if let Ok(runtime) = &self.runtime {
             runtime.set_host_functions(Arc::new(feedback::Hosted(self.downgrade())));
+            if let Some(refresh) = &self.refresh {
+                let refresh = Arc::downgrade(refresh);
+                runtime.set_view_asks(Arc::new(move |view| {
+                    if let Some(refresh) = refresh.upgrade() {
+                        refresh.pushed(view);
+                    }
+                }));
+            }
             // The commands that asked for the installed applications are
             // asked for their results again when the list changes (see
             // `application_changes`).

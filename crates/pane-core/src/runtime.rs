@@ -174,6 +174,7 @@ mod operations_bindings {
 use bindings::exports::pane::extension::command;
 use bindings::pane::extension::commands as launching;
 use bindings::pane::extension::preferences as preference_values;
+use bindings::pane::extension::view as view_host;
 use bindings::pane::extension::{
     applications, cache, clipboard_history, content, credentials, settings,
 };
@@ -373,6 +374,14 @@ type SharedLaunches = Arc<Mutex<Option<Launches>>>;
 /// (`wit/feedback.wit`, and `commands.set-subtitle`), once the launcher has
 /// said: the launcher's own.
 type SharedHostFunctions = Arc<Mutex<Option<Arc<dyn HostFunctions>>>>;
+
+/// What Pane does when a designed view asks to be drawn again
+/// (`pane:extension/view`, #243): told the view's id, the id its render
+/// context named. Set by the launcher, which owns the drawing it asks
+/// for; held weakly by the runtime, so it keeps neither the launcher nor
+/// the runtime running. The runtime alone has none, and an ask names
+/// nothing.
+type SharedViewAsks = Arc<Mutex<Option<Arc<dyn Fn(u64) + Send + Sync>>>>;
 
 /// What a call into a guest is for, as the host functions it calls see it
 /// (`crate::feedback::Caller`): the command it runs for, if Pane knows it,
@@ -593,6 +602,14 @@ impl ViewId {
     /// that thread (see [`supervisor::CrashReport`]) closes it.
     pub(crate) fn thread(&self) -> u64 {
         self.thread
+    }
+
+    /// The view's id, as its render context names it and
+    /// `pane:extension/view`'s `ask-to-render` asks for (#243): a number
+    /// shared by every thread the runtime started, so it names this view
+    /// alone.
+    pub(crate) fn number(&self) -> u64 {
+        self.id
     }
 }
 
@@ -940,7 +957,19 @@ enum Request {
     },
     RefreshDesignedView {
         view: ViewId,
+        /// Whether the view's own work asked for this drawing (its push,
+        /// #243) rather than the clock making the view's ask due: the
+        /// render's context says so, and the SDKs run an interval's work
+        /// only on the ask's drawing.
+        pushed: bool,
         reply: oneshot::Sender<Result<DesignedRendered, CallError>>,
+    },
+    /// Keeps the component's instance running between Pane's calls (#243):
+    /// the work a designed view's answer started is driven to its end, so
+    /// the view can push a drawing of what landed. Asked of the thread by
+    /// itself, as a render of an open view answers.
+    Pump {
+        component: PathBuf,
     },
     CloseDesignedView {
         view: ViewId,
@@ -1740,8 +1769,37 @@ impl Runtime {
         &self,
         view: ViewId,
     ) -> impl Future<Output = Result<DesignedRendered, CallError>> + Send + 'static {
+        self.ask_designed_view(view, false)
+    }
+
+    /// Draws the open designed view `view` again as its own push asked
+    /// (#243, `pane:extension/view`): the drawing a view asks for when its
+    /// work answered. Sent as a refresh is — numbered with the view's
+    /// events, so a late answer never replaces a newer tree — with the
+    /// render's context saying the view's work asked for it, so an
+    /// interval's work does not run in it as the ask's drawing does.
+    pub fn push_designed_view(
+        &self,
+        view: ViewId,
+    ) -> impl Future<Output = Result<DesignedRendered, CallError>> + Send + 'static {
+        self.ask_designed_view(view, true)
+    }
+
+    /// Sends the drawing of `view` a refresh or a push asked for.
+    fn ask_designed_view(
+        &self,
+        view: ViewId,
+        pushed: bool,
+    ) -> impl Future<Output = Result<DesignedRendered, CallError>> + Send + 'static {
         let (reply, response) = oneshot::channel();
-        self.call(Request::RefreshDesignedView { view, reply }, response)
+        self.call(
+            Request::RefreshDesignedView {
+                view,
+                pushed,
+                reply,
+            },
+            response,
+        )
     }
 
     /// Closes the designed view `view`: the guest's view is dropped, after
@@ -1921,6 +1979,16 @@ impl Runtime {
     /// subtitle is refused.
     pub(crate) fn set_host_functions(&self, host_functions: Arc<dyn HostFunctions>) {
         *lock(&self.shared.host_functions) = Some(host_functions);
+    }
+
+    /// Has `asks` hear every designed view that asks to be drawn again
+    /// (`pane:extension/view`, #243) from now on, also for asks made by
+    /// calls already queued and on a restarted runtime thread. Until then
+    /// an ask names nothing: the view is not drawn for it. The runtime
+    /// holds `asks` weakly — it keeps neither the launcher nor itself
+    /// running.
+    pub(crate) fn set_view_asks(&self, asks: Arc<dyn Fn(u64) + Send + Sync>) {
+        *lock(&self.shared.view_asks) = Some(asks);
     }
 
     /// Tells `health` of each later failure of a call into an installed
@@ -2222,6 +2290,11 @@ pub(crate) struct GuestState {
     launches: SharedLaunches,
     /// Carries out the window and feedback host functions the guest calls.
     host_functions: SharedHostFunctions,
+    /// What a designed view asking to be drawn again does
+    /// (`pane:extension/view`, #243): the drawing it asks for is not the
+    /// instance's to run, so the ask is handed on here, however the
+    /// instance is running.
+    view_asks: SharedViewAsks,
     /// What the call the guest runs now is for, as its host functions see
     /// it. Set through [`GuestState::set_call`].
     call: CallFor,
@@ -2529,13 +2602,43 @@ fn launch_record(launch: &LaunchRecord, command: Option<&str>) -> launching::Lau
     }
 }
 
+/// Why Pane asks a designed view for its tree, as its render's context
+/// names: the view's first drawing, the render an event's answer asks
+/// for, the refresh the view's own answer asked for by `refresh-after-ms`
+/// (#236), or the drawing the view's work asked for itself (#243). The
+/// SDKs run an interval's work only in the refresh's render; a push's
+/// drawing shows what landed, without ticking.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Why {
+    Open,
+    Event,
+    Refresh,
+    Push,
+}
+
+impl Why {
+    /// The word the context names it by.
+    fn as_str(self) -> &'static str {
+        match self {
+            Why::Open => "open",
+            Why::Event => "event",
+            Why::Refresh => "refresh",
+            Why::Push => "push",
+        }
+    }
+}
+
 /// The context of a designed view's `render` number `render`: JSON naming
-/// it and the version of the UI component set Pane renders, so the
-/// extension can name each render's callbacks and refuse trees of a
-/// component set it cannot target. It can grow without WIT changes.
-fn render_context(render: u64) -> String {
+/// it, the id of the view it draws, why Pane asks, and the version of the
+/// UI component set Pane renders, so the extension can name each render's
+/// callbacks, ask for a drawing again through `pane:extension/view`
+/// (#243), run an interval's work only where it is due, and refuse trees
+/// of a component set it cannot target. It can grow without WIT changes.
+fn render_context(view: ViewId, render: u64, why: Why) -> String {
     format!(
-        "{{\"render\":{render},\"ui\":\"{}.{}\"}}",
+        "{{\"render\":{render},\"view\":{},\"why\":\"{}\",\"ui\":\"{}.{}\"}}",
+        view.id,
+        why.as_str(),
         designed::COMPONENT_SET.0,
         designed::COMPONENT_SET.1
     )
@@ -2827,6 +2930,19 @@ struct Lane {
     /// While the instance is out for a call: its generation, and
     /// `forgotten` as it was when it was taken out.
     out: Option<(Option<Generation>, u64)>,
+    /// Whether a call is waiting for the turn: a park that holds it ends
+    /// (see [`Host::park_guest`]), so the call never waits behind the
+    /// guest's own work. One waiter at most can hold the turn, so a
+    /// boolean says it.
+    wanted: Arc<AtomicBool>,
+    /// Wakes a park holding the turn: the waiter it notes itself by
+    /// `wanted` first, then wakes it here (the park re-reads `wanted`, so
+    /// a wake it misses is caught by its next poll).
+    woken: Arc<tokio::sync::Notify>,
+    /// Whether a park of the component's instance is running or waiting
+    /// for its turn (see [`Host::park_guest`]): at most one at a time, so
+    /// the render whose answer it follows never starts a second.
+    parking: bool,
 }
 
 /// A call's turn on its instance's [`Lane`]; the next call queued takes it
@@ -2845,6 +2961,17 @@ impl Drop for Turn<'_> {
         {
             lane.holder = None;
         }
+    }
+}
+
+/// Notes, until dropped, that a call wants a lane's turn (see
+/// [`Host::turn`]): a park holding the lane ends, and the note goes when
+/// the call takes the turn — or stops waiting for it.
+struct Wanting(Arc<AtomicBool>);
+
+impl Drop for Wanting {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::SeqCst);
     }
 }
 
@@ -2909,6 +3036,9 @@ struct Host {
     launches: SharedLaunches,
     /// Carries out the window and feedback host functions guests call.
     host_functions: SharedHostFunctions,
+    /// What a designed view asking to be drawn again does
+    /// (`pane:extension/view`, #243).
+    view_asks: SharedViewAsks,
     /// The helper processes guests started.
     helpers: Helpers,
     /// Told of each failure of a call into an installed package's code.
@@ -2993,6 +3123,8 @@ impl Code {
         .expect("registering the file index in a fresh linker cannot conflict");
         launching::add_to_linker::<_, wasmtime::component::HasSelf<_>>(&mut linker, |state| state)
             .expect("registering launching commands in a fresh linker cannot conflict");
+        view_host::add_to_linker::<_, wasmtime::component::HasSelf<_>>(&mut linker, |state| state)
+            .expect("registering the view's push in a fresh linker cannot conflict");
         window_host::add_to_linker::<_, wasmtime::component::HasSelf<_>>(&mut linker, |state| {
             state
         })
@@ -3197,6 +3329,7 @@ impl Host {
             directory: shared.directory.clone(),
             launches: shared.launches.clone(),
             host_functions: shared.host_functions.clone(),
+            view_asks: shared.view_asks.clone(),
             helpers: shared.helpers.clone(),
             health: shared.health.clone(),
             logs: shared.logs.clone(),
@@ -3430,7 +3563,11 @@ impl Host {
                     let _ = reply.send(self.designed_view_event(open, event).await);
                 })
             }
-            Request::RefreshDesignedView { view, reply } => {
+            Request::RefreshDesignedView {
+                view,
+                pushed,
+                reply,
+            } => {
                 // The view as it is now: a refresh asked for before the view
                 // was closed is still drawn, before the view is dropped.
                 let open = self.designed_views.borrow().get(&view).cloned();
@@ -3439,7 +3576,47 @@ impl Host {
                     return;
                 };
                 Box::pin(async move {
-                    let _ = reply.send(self.refresh_designed_view(open).await);
+                    let _ = reply.send(self.draw_designed_view(open, pushed).await);
+                })
+            }
+            Request::Pump { component } => {
+                // At most one park at a time: the render whose answer asked
+                // for this one has ended, and the next that answers asks
+                // again, so a second would drive the same work twice. A
+                // lane already parking (running, or waiting for its turn)
+                // keeps the park it has.
+                let already = self
+                    .lanes
+                    .borrow_mut()
+                    .entry(component.clone())
+                    .or_default()
+                    .parking;
+                if already {
+                    return;
+                }
+                self.lanes
+                    .borrow_mut()
+                    .get_mut(&component)
+                    .expect("the lane was just made")
+                    .parking = true;
+                let chain = self.chain();
+                Box::pin(async move {
+                    // The instance's turn, as a call's: the park holds it
+                    // while it runs, and a call that wants it ends the park
+                    // (see [`Host::turn`]). Waiting for it here, the park
+                    // task may follow the render whose answer asked for it
+                    // still holding the turn — this waits behind it, and
+                    // drives the work both started.
+                    if let Ok(_turn) = self.turn_for(&component, &chain).await {
+                        self.park_guest(&component, &chain).await;
+                    }
+                    // The park is over: the next render's answer may ask for
+                    // another (never panics while the thread unwinds).
+                    if let Ok(mut lanes) = self.lanes.try_borrow_mut()
+                        && let Some(lane) = lanes.get_mut(&component)
+                    {
+                        lane.parking = false;
+                    }
                 })
             }
             Request::CloseDesignedView { view } => {
@@ -3485,7 +3662,7 @@ impl Host {
     /// a turn `chain` holds: a call that would wait on itself is refused
     /// rather than waited for.
     async fn turn(&self, path: &Path, chain: u64) -> Option<Turn<'_>> {
-        let turn = self
+        let lane = self
             .lanes
             .borrow_mut()
             .entry(path.to_path_buf())
@@ -3498,7 +3675,23 @@ impl Host {
         let held = {
             self.waiting.borrow_mut().insert(chain, path.to_path_buf());
             let _waiting = Waiting { host: self, chain };
-            turn.lock_owned().await
+            // A call waiting for the turn ends a park that holds it (#243,
+            // see [`Lane::wanted`]): the park gives the turn back, so the
+            // call never waits behind the guest's own work. Noted before
+            // the wait, and read again by the park whenever it is woken, so
+            // neither can miss the other on this one thread; however the
+            // wait ends, the note goes.
+            let (wanted, woken) = {
+                let mut lanes = self.lanes.borrow_mut();
+                let lane = lanes.entry(path.to_path_buf()).or_default();
+                let wanted = lane.wanted.clone();
+                let woken = lane.woken.clone();
+                wanted.store(true, Ordering::SeqCst);
+                (wanted, woken)
+            };
+            woken.notify_waiters();
+            let _wanting = Wanting(wanted);
+            lane.lock_owned().await
         };
         if let Some(lane) = self.lanes.borrow_mut().get_mut(path) {
             lane.holder = Some(chain);
@@ -3972,7 +4165,7 @@ impl Host {
             reported: RefCell::default(),
         };
         self.designed_views.borrow_mut().insert(view, open);
-        match self.render_designed(view, 1, &chain).await {
+        match self.render_designed(view, 1, &chain, Why::Open).await {
             Ok(rendered) => Ok((view, rendered)),
             Err(error) => {
                 let closed = self.designed_views.borrow_mut().remove(&view);
@@ -4051,7 +4244,7 @@ impl Host {
                     }
                 };
                 return self
-                    .render_designed(view, render, &chain)
+                    .render_designed(view, render, &chain, Why::Event)
                     .await
                     .map(DesignedNext::Tree);
             }
@@ -4085,7 +4278,7 @@ impl Host {
                 reported: RefCell::default(),
             },
         );
-        match self.render_designed(opened, 1, &chain).await {
+        match self.render_designed(opened, 1, &chain, Why::Open).await {
             Ok(rendered) => {
                 if replacing {
                     // The replaced view's resource goes, now that the view
@@ -4114,12 +4307,14 @@ impl Host {
     }
 
     /// Draws the open designed view `open` again, with no event: the
-    /// refresh its last render asked for by `refresh-after-ms`. The next
-    /// render after the last one asked, numbered as an event's render is,
-    /// so a late refresh answer never replaces a newer tree.
-    async fn refresh_designed_view(
+    /// refresh its last render asked for by `refresh-after-ms`, or the
+    /// drawing its own push asked for (#243, `pushed`). The next render
+    /// after the last one asked, numbered as an event's render is, so a
+    /// late answer never replaces a newer tree.
+    async fn draw_designed_view(
         &self,
         open: LiveDesignedView,
+        pushed: bool,
     ) -> Result<DesignedRendered, CallError> {
         let chain = self.chain();
         let view = open.id;
@@ -4136,16 +4331,19 @@ impl Host {
                 None => return Err(CallError::ViewClosed),
             }
         };
-        self.render_designed(view, render, &chain).await
+        let why = if pushed { Why::Push } else { Why::Refresh };
+        self.render_designed(view, render, &chain, why).await
     }
 
     /// Asks the guest to draw the open designed view `view`, in its
-    /// instance's turn, as render number `render`.
+    /// instance's turn, as render number `render`, asked for as `why`
+    /// names.
     async fn render_designed(
         &self,
         view: ViewId,
         render: u64,
         chain: &Chain,
+        why: Why,
     ) -> Result<DesignedRendered, CallError> {
         // The view as it is now; the map entry holds its resource.
         let open = self.designed_views.borrow().get(&view).cloned();
@@ -4155,7 +4353,7 @@ impl Host {
         self.live_designed(&open)?;
         let path = &open.component;
         let resource = open.resource;
-        let context = render_context(render);
+        let context = render_context(view, render, why);
         let result = self
             .run_guest(path, chain, async |instance| {
                 let view = instance.bindings.pane_extension_command().view();
@@ -4174,6 +4372,14 @@ impl Host {
         // shared by siblings, stateful nodes without one — once each, in
         // the extension's log; Pane matches both by position.
         self.report_key_problems(path, view, &tree);
+        // The guest may still have work this render started — the load a
+        // loading state waits for: keep its instance running between
+        // Pane's calls, so the work can land and ask for another drawing
+        // (#243). A view whose render failed is left as it was; the work
+        // it started waits for the next call, as every guest's did before.
+        if self.designed_views.borrow().contains_key(&view) {
+            self.nudge_park(path);
+        }
         // `refresh-after-ms` asks for the next drawing: the launcher's
         // refresh thread (see `launcher/refresh`) schedules it through it.
         Ok(DesignedRendered {
@@ -4220,6 +4426,22 @@ impl Host {
                 );
             }
         }
+    }
+
+    /// Asks the runtime thread to keep `path`'s instance running between
+    /// Pane's calls (see [`Host::park_guest`], #243): the request joins the
+    /// others the thread serves at once — a render's answer does not wait
+    /// for the park — and a lane already parking keeps the park it has.
+    fn nudge_park(&self, path: &Path) {
+        let Some(requests) = self.nudge.upgrade() else {
+            return;
+        };
+        let _ = requests.send(Sent {
+            request: Request::Pump {
+                component: path.to_path_buf(),
+            },
+            in_flight: Some(self.watch.call()),
+        });
     }
 
     /// Whether the instance holding `open` still runs, and its code may:
@@ -4785,6 +5007,194 @@ impl Host {
         }
     }
 
+    /// Keeps the guest's instance of `path` running between Pane's calls
+    /// (#243, the real-push slice of #121): after a designed view's render
+    /// answers, the guest may still have work its answer started — the load
+    /// a loading state waits for, a call it has not awaited — and this frame
+    /// drives the store's event loop, which advances that work, until the
+    /// guest has none left or a call wants the instance ([`Lane::wanted`]).
+    /// So the instance runs between Pane's calls: work that lands there can
+    /// ask Pane, through `pane:extension/view`, to draw the view again. The
+    /// caller holds the instance's turn ([`Host::turn_for`]).
+    ///
+    /// The guest's own computing is bounded as any call's is: metered
+    /// against the compute limit, yielding at every epoch tick, and a
+    /// guest that computes for too long is stopped as unresponsive — its
+    /// instance dropped, its package reported, as a call's is. A trap
+    /// driving its own work is a crash, reported the same way. The
+    /// operation calls the guest makes while it runs are served as a
+    /// call's are, in the same chain, and its generation's end, or Pane
+    /// giving up on this thread, stops the park as it stops a call. A
+    /// call that wants the instance ends the park and the instance is
+    /// lent on whole: the park owns no answer, and nothing of the guest
+    /// is mid-flight inside the frame it leaves behind (its tasks park in
+    /// the store, and the next call's event loop carries on driving
+    /// them), so it is put back rather than dropped, as a cancelled call's
+    /// instance is not.
+    async fn park_guest(&self, path: &Path, chain: &Chain) {
+        /// What happened next while the guest ran between Pane's calls.
+        enum Next {
+            /// The park ended: the guest went idle, or a call wants the
+            /// instance — or it trapped driving its own work.
+            Parked(wasmtime::Result<()>),
+            Stopped(End),
+            /// It computed for too long, as this says.
+            Unresponsive(String),
+            /// Pane gave up on this thread while it was stuck.
+            GivenUp,
+            Called(OperationCall),
+        }
+
+        /// Why the park ended without the guest going idle by itself: the
+        /// guest stopped (its generation ended), computed for too long, or
+        /// Pane gave up on the thread. A trap is not one of these — it
+        /// answers the park as an ordinary result, and is a crash of the
+        /// guest's package.
+        enum Halt {
+            Stopped(End),
+            Unresponsive(String),
+            GivenUp,
+        }
+
+        let Some((mut instance, taken)) = self.take_out(path) else {
+            return;
+        };
+        let own = instance.store.data().generation().cloned();
+        let mut inner = chain.clone();
+        inner.components.push(path.to_path_buf());
+        inner.owners.extend(own.clone());
+        let mut ends = std::pin::pin!(first_end(&inner.owners));
+        // The guest's operation calls, served by this frame only.
+        let mut calls = instance
+            .calls
+            .take()
+            .unwrap_or_else(|| operations::channel().1);
+        instance.store.data_mut().serving = true;
+        // No command and no window: the park runs no call of the user's.
+        instance.store.data_mut().set_call(CallFor::default());
+        let (wanted, woken) = {
+            let mut lanes = self.lanes.borrow_mut();
+            let lane = lanes.entry(path.to_path_buf()).or_default();
+            (lane.wanted.clone(), lane.woken.clone())
+        };
+        let faults = self.faults.clone();
+        let watch = self.watch.clone();
+        let limits = self.limits.clone();
+        let result = {
+            let park = async |instance: &mut Instance| {
+                instance
+                    .store
+                    .run_concurrent(async |accessor| {
+                        // The park itself: the store's event loop runs while
+                        // this pends — it is polled first on every wake —
+                        // advancing whatever the guest left pending. It ends
+                        // when the guest has no task of its own left, or a
+                        // call wants the instance: `wanted` is re-read on
+                        // every wake, so a call noting itself and this going
+                        // to sleep cannot miss each other on this thread.
+                        std::future::poll_fn(|cx| {
+                            if wanted.load(Ordering::SeqCst) {
+                                return Poll::Ready(());
+                            }
+                            let mut woken = std::pin::pin!(woken.notified());
+                            if woken.as_mut().poll(cx).is_ready() {
+                                return Poll::Ready(());
+                            }
+                            accessor.poll_no_interesting_tasks(cx)
+                        })
+                        .await
+                    })
+                    .await
+            };
+            let mut running = std::pin::pin!(deadlines::metered(
+                watch.clone(),
+                limits,
+                park(&mut instance),
+            ));
+            let mut waiting = std::pin::pin!(faults.waiting());
+            loop {
+                let next = std::future::poll_fn(|cx| {
+                    faults.check(waiting.as_mut(), cx);
+                    // Given up on while it was stuck: the guest runs no more.
+                    if watch.given_up() {
+                        return Poll::Ready(Next::GivenUp);
+                    }
+                    if let Poll::Ready(end) = ends.as_mut().poll(cx) {
+                        return Poll::Ready(Next::Stopped(end));
+                    }
+                    {
+                        let _running = watch.doing(Doing::Running);
+                        match running.as_mut().poll(cx) {
+                            Poll::Ready(Ok(parked)) => return Poll::Ready(Next::Parked(parked)),
+                            Poll::Ready(Err(why)) => return Poll::Ready(Next::Unresponsive(why)),
+                            Poll::Pending => {}
+                        }
+                    }
+                    match calls.poll_recv(cx) {
+                        Poll::Ready(Some(call)) => Poll::Ready(Next::Called(call)),
+                        // The instance holds the sender: never closed here.
+                        _ => Poll::Pending,
+                    }
+                })
+                .await;
+                match next {
+                    Next::Parked(parked) => break Ok(parked),
+                    Next::Stopped(end) => break Err(Halt::Stopped(end)),
+                    Next::Unresponsive(why) => break Err(Halt::Unresponsive(why)),
+                    Next::GivenUp => break Err(Halt::GivenUp),
+                    Next::Called(operation_call) => {
+                        Box::pin(self.serve_operation(operation_call, &inner)).await;
+                    }
+                }
+            }
+        };
+        instance.store.data_mut().serving = false;
+        // What the park's guest left running ends with it, as a call's
+        // does: a helper or a program no call waits on.
+        let state = instance.store.data_mut();
+        state.helpers.stop_owned_by(state.owner);
+        state.programs.clear();
+        // A call the guest sent but did not wait for has no frame to serve
+        // it.
+        while let Ok(stranded) = calls.try_recv() {
+            let _ = stranded.reply.send(Err(operations::outside_a_call()));
+        }
+        instance.calls = Some(calls);
+        match result {
+            // The guest went idle, or a call wants the instance: it is put
+            // back whole, for that call or the next.
+            Ok(Ok(())) => self.bring_back(path, taken, instance),
+            outcome => {
+                let data = instance.store.data().data.clone();
+                let out_of_memory = instance.store.data().out_of_memory;
+                // The instance is dropped with its store: the work it left
+                // pending, its host tasks and streams with it.
+                drop(instance);
+                self.gone(path);
+                match outcome {
+                    Ok(Err(trap)) => {
+                        let error = crashed(&trap, out_of_memory);
+                        crate::diagnostic!(
+                            "pane: {} stopped running on its own: {error}",
+                            path.display()
+                        );
+                        self.report(path, data.as_ref(), Health::Crashed(error));
+                    }
+                    Err(Halt::Stopped(end)) => {
+                        let _ = ended(end);
+                    }
+                    Err(Halt::Unresponsive(why)) => {
+                        let error = CallError::Unresponsive(why);
+                        crate::diagnostic!("pane: {} stopped responding: {error}", path.display());
+                        self.report(path, data.as_ref(), Health::Unresponsive(error));
+                    }
+                    Err(Halt::GivenUp) => {}
+                    Ok(Ok(())) => unreachable!("matched above"),
+                }
+            }
+        }
+    }
+
     /// Serves one operation call a guest in `chain` made, answering it.
     async fn serve_operation(&self, mut call: OperationCall, chain: &Chain) {
         // Its caller gave up on it before it started: it is not started.
@@ -5090,6 +5500,7 @@ impl Host {
                 directory: self.directory.clone(),
                 launches: self.launches.clone(),
                 host_functions: self.host_functions.clone(),
+                view_asks: self.view_asks.clone(),
                 call: CallFor::default(),
                 log_command,
                 owner: self.helpers.new_owner(),

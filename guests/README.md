@@ -92,18 +92,23 @@ Rust's standard library on `wasm32-wasip2`) is rejected with an explanation.
   sample too ([Dependencies](#dependencies-on-other-extensions)); held by
   `crates/pane-core/tests/dependencies.rs`.
 - `sample-view`, `sample-view-js`, `sample-view-ts`: the designed view
-  sample in Rust, JavaScript and TypeScript (#235, #237, #238): a counter
-  whose screen the extension describes as a tree Pane renders — a column
-  of a text and a row of buttons — and a second command, `components`, a
-  gallery of every component of the UI component set, from the layout
-  primitives and the shared controls to Markdown, the tokens and the raw
-  values, whose fields are live and keyed: typing edits at once, the view
-  echoes the value back, "Clear" sets it and "Reorder" moves the fields
-  with their state, written with the Rust builder, the JSX runtime's
-  elements and JSX itself (`"mode": "designed"` in their `pane.json`,
+  sample in Rust, JavaScript and TypeScript (#235, #237, #238,
+  #243): a counter whose screen the extension describes as a tree Pane
+  renders — a column of a text and a row of buttons — a second command,
+  `components`, a gallery of every component of the UI component set,
+  from the layout primitives and the shared controls to Markdown, the
+  tokens and the raw values, whose fields are live and keyed: typing
+  edits at once, the view echoes the value back, "Clear" sets it and
+  "Reorder" moves the fields with their state; and a third, `loading`,
+  data arriving drawn the moment it lands (#243): a loading state, then
+  what the view loaded the moment it arrived, with no timer — the arrival
+  asks for the drawing itself. Written with the Rust builder, the JSX
+  runtime's elements and JSX itself (`"mode": "designed"` in their
+  `pane.json`,
   [designed-tree.md](../docs/designed-tree.md)); held to the same
   three-language parity by `crates/pane-core/tests/designed_views.rs`,
-  and drawn by the window tests of `crates/pane/tests/designed_views.rs`
+  `crates/pane-core/tests/view_push.rs` for the loading command, and
+  drawn by the window tests of `crates/pane/tests/designed_views.rs`
   and `crates/pane/tests/designed_components.rs`.
 - `sample-nav`, `sample-nav-js`, `sample-nav-ts`: the navigation sample in
   Rust, JavaScript and TypeScript (#239): a designed view with a stack
@@ -117,7 +122,9 @@ Rust's standard library on `wasm32-wasip2`) is rejected with an explanation.
   Rust, JavaScript and TypeScript (#236): a designed view that shows its
   loading state, then advances an elapsed-seconds counter once a second
   through `refresh-after-ms` (`useInterval` in JavaScript and TypeScript,
-  `.refresh_after` in Rust); held by `crates/pane-core/tests/view_refresh.rs`.
+  `.refresh_after` in Rust); the loading state's arrival asks for the
+  drawing that replaces it itself (#243), so it is drawn the moment the
+  data lands; held by `crates/pane-core/tests/view_refresh.rs`.
 - `sample-icons`, `sample-icons-js`, `sample-icons-ts`: the icons sample in
   Rust, JavaScript and TypeScript (#139): rows with a built-in icon, a
   packaged image with `@light` and `@dark` variants, a light and dark pair,

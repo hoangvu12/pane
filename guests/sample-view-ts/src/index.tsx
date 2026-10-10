@@ -12,12 +12,16 @@
 // show the tree changes. Its fields hold state (#238): typing edits at
 // once, the view echoes the value back, "Clear" sets it (the
 // extension's value wins), and "Reorder" moves the keyed fields around,
-// their state with them.
+// their state with them. And its `loading` command answers a view that
+// loads something on open (#243): a loading state drawn at once, and what
+// the load answered the moment it arrives — the arrival asks for the
+// drawing itself, with no timer to wait for.
 //
 // The view is written as JSX: every property of every component is
 // type-checked, so a misspelling fails the build (the `jsxImportSource`
 // in tsconfig.json makes the transform use the SDK's runtime).
 import type { Command } from "@pane-app/extension";
+import { waitFor } from "wasi:clocks/monotonic-clock@0.3.0";
 import {
   Badge,
   Button,
@@ -53,6 +57,7 @@ import {
   TextInput,
   Toggle,
   createView,
+  usePending,
   useState,
 } from "@pane-app/extension/view";
 
@@ -229,7 +234,26 @@ function Components() {
   );
 }
 
-/** The command's views: the counter, or the gallery. */
+/** What the loading sample loads: held back for a moment, as work from a
+ * service would be, so the loading state shows once. */
+const load = (): Promise<string> =>
+  waitFor(300_000_000).then(() => "Pane drew this the moment it arrived");
+
+/** The loading sample: a loading state drawn at once, and what the load
+ * answered the moment it arrives. */
+function LoadingView() {
+  const what = usePending(load);
+  if (what === undefined) {
+    return <Text level="secondary">Loading…</Text>;
+  }
+  return (
+    <Column gap="m">
+      <Text style="title">Loaded</Text>
+      <Text level="secondary">{what}</Text>
+    </Column>
+  );
+}
+
 export const command: Command = {
   async openView(commandId: string) {
     if (commandId === "sample") {
@@ -237,6 +261,9 @@ export const command: Command = {
     }
     if (commandId === "components") {
       return createView(Components);
+    }
+    if (commandId === "loading") {
+      return createView(LoadingView);
     }
     throw new Error("this command opens no designed view");
   },

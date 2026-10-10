@@ -397,7 +397,7 @@ A command of an enabled package that needs a required capability or required dep
 _Avoid_: Pending (Cordis's word), paused extension (stopped after its own failure), disabled extension (the user's choice), unavailable action (excluded by its platforms)
 
 **Extension runtime**:
-The part of Pane that runs every installed extension's code (the Wasmtime engine; the runtime is a thread in Pane's process today), shared by all extensions; the window, root search's own rows and the extension pages in Settings do not depend on it.
+The part of Pane that runs every installed extension's code (the Wasmtime engine; the runtime is a thread in Pane's process today), shared by all extensions; the window, root search's own rows and the extension pages in Settings do not depend on it. An extension's code runs inside the calls Pane asks of it — and, while one of its designed views is open, between them too: the runtime keeps a guest that still has work running, so a view's own arrival can ask Pane to draw it again (#243).
 _Avoid_: Engine (one part of it)
 
 **Runtime crash**:
@@ -405,7 +405,7 @@ A failure of the extension runtime itself, not attributable to any one extension
 _Avoid_: Extension crash, paused runtime
 
 **Unresponsive call**:
-A guest call whose extension computed for five seconds in all without finishing, holding every other extension's calls behind it; Pane stops it where the guest yields (every guest yields to the runtime at each epoch tick), drops its instance and says so, and, since the extension's own code was running, counts it towards pausing that extension as a crash. Only the guest's own computing counts: time it spends waiting (on a clock, a save, a helper, another extension), time inside Pane's host calls, time the system gave other threads and starting its instance are not, so a healthy extension is never stopped for them.
+A guest call whose extension computed for five seconds in all without finishing; Pane stops it where the guest yields (every guest yields to the runtime at each epoch tick), drops its instance and says so, and, since the extension's own code was running, counts it towards pausing that extension as a crash. Only the guest's own computing counts: time it spends waiting (on a clock, a save, a helper, another extension), time inside Pane's host calls, time the system gave other threads and starting its instance are not, so a healthy extension is never stopped for them. A guest computing between Pane's calls (its instance kept running for a designed view, #243) is bounded the same way. Waiting never holds another extension's calls behind it; computing holds only its own instance's.
 _Avoid_: Timeout (waiting is not limited), hung extension, frozen
 
 **Runtime hang**:

@@ -13,3 +13,6 @@ crate-type = ["cdylib"]
 
 [dependencies]
 pane-extension.workspace = true
+# The loading sample's data waits on the guest's own clock, as work from a
+# service would.
+wasip3 = { version = "=0.9.0", default-features = false }

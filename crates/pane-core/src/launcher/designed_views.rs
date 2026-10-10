@@ -114,6 +114,19 @@ impl DesignedStack {
         self.views.last_mut().expect("the stack holds the root")
     }
 
+    /// The id of the top view, as its render context named it: the view
+    /// the refresh thread draws a pushed drawing for (#243).
+    pub(super) fn top_id(&self) -> u64 {
+        self.top().id.number()
+    }
+
+    /// Whether the view `view` — the id its render context named — is one
+    /// of the stack's, so an ask for it is one to hold; one for any other
+    /// view is dropped.
+    pub(super) fn holds(&self, view: u64) -> bool {
+        self.views.iter().any(|open| open.id.number() == view)
+    }
+
     /// The screen of the top view: its snapshot, and its navigation title
     /// as the screen's title.
     fn shown(&self) -> (super::DesignedViewSnapshot, String) {
@@ -161,7 +174,9 @@ struct OpenDesignedView {
 }
 
 /// One event sent to a designed view, with its reply: a user's event, or
-/// the view's refresh (see [`OpenDesignedView::send_refresh`]).
+/// one of its drawings with no event — the refresh its answer asked for
+/// (see [`OpenDesignedView::send_refresh`]) or the push its own work
+/// asked for (see [`OpenDesignedView::send_push`]).
 pub(super) struct SentDesignedEvent {
     /// The view the event was sent to: one of the stack's, which must
     /// still be its top when the answer lands.
@@ -190,6 +205,21 @@ impl OpenDesignedView {
         self.sent += 1;
         // The refresh is sent now, not when the reply is first polled.
         let reply = runtime.refresh_designed_view(self.id);
+        SentDesignedEvent {
+            view: self.id,
+            number: self.sent,
+            reply: Box::pin(async move { reply.await.map(DesignedNext::Tree) }),
+        }
+    }
+
+    /// Sends the drawing the view's own work asked for (#243), numbered as
+    /// a refresh's is: the same rules, with the render's context saying
+    /// the view's push asked for it, so an interval's work does not run in
+    /// it.
+    pub(super) fn send_push(&mut self, runtime: &Runtime) -> SentDesignedEvent {
+        self.sent += 1;
+        // The drawing is sent now, not when the reply is first polled.
+        let reply = runtime.push_designed_view(self.id);
         SentDesignedEvent {
             view: self.id,
             number: self.sent,
@@ -495,6 +525,16 @@ impl Launcher {
         let stack = state.designed_view.as_mut()?;
         let runtime = self.runtime().ok()?;
         Some((epoch, stack.top_mut().send_refresh(runtime)))
+    }
+
+    /// As [`Launcher::start_view_refresh`], for the drawing the view's own
+    /// work asked for (#243, `pane:extension/view`): served by the same
+    /// thread, under the same rules.
+    pub(super) fn start_view_push(&self, state: &mut State) -> Option<(u64, SentDesignedEvent)> {
+        let epoch = state.screen_epoch;
+        let stack = state.designed_view.as_mut()?;
+        let runtime = self.runtime().ok()?;
+        Some((epoch, stack.top_mut().send_push(runtime)))
     }
 
     /// The designed view's answer asked Pane to render it again after
@@ -823,7 +863,7 @@ impl Launcher {
             }
         }
         if let Some(refresh) = &self.refresh {
-            refresh.cancel();
+            refresh.left();
         }
     }
 }

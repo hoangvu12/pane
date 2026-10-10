@@ -6,6 +6,12 @@
 //! answers. None waits for the user, so none is ever a reason to pause the
 //! extension, and its time is Pane's, not the guest's ([`GuestState::host`]).
 //!
+//! `pane:extension/view`'s `ask-to-render` (#243, wit/view.wit) is handed
+//! on the same way ([`super::Runtime::set_view_asks`]): a designed view
+//! asking to be drawn again, from inside a call or between them (see
+//! `Host::park_guest`) — the drawing it asks for is the launcher's, never
+//! the instance's, so the ask is recorded and answered at once.
+//!
 //! Stopped code does nothing more: a window function then answers that no
 //! window was shown, a toast or HUD is shown nowhere, and a subtitle is
 //! refused. So does a runtime no launcher drives (tests of the runtime
@@ -23,7 +29,7 @@ use std::sync::Arc;
 
 use wasmtime::component::{Accessor, HasData};
 
-use super::{GuestState, feedback_host, lock, stopped_code, window_host};
+use super::{GuestState, feedback_host, lock, stopped_code, view_host, window_host};
 use crate::feedback::{
     Asking, Caller, GivenAction, GivenConfirmation, GivenToast, HostFunctions, Hud, PopToRoot,
     ToastStyle,
@@ -140,6 +146,15 @@ impl window_host::Host for GuestState {
             return false;
         };
         host.clear_search(&self.caller())
+    }
+}
+
+impl view_host::Host for GuestState {
+    fn ask_to_render(&mut self, view: u64) {
+        let _host = self.host();
+        if let Some(asks) = lock(&self.view_asks).clone() {
+            asks(view);
+        }
     }
 }
 

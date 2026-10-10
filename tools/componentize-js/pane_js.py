@@ -116,7 +116,7 @@ SAMPLES = [
 # Pane's WIT, copied beside the world in guests/js/wit.
 PANE_WIT = ["extension.wit", "commands.wit", "feedback.wit", "system.wit", "data.wit", "preferences.wit", "root-results.wit",
             "operations.wit", "applications.wit", "search.wit", "helpers.wit", "files.wit", "clipboard.wit", "service.wit",
-            "programs.wit", "file-index.wit"]
+            "programs.wit", "file-index.wit", "view.wit"]
 # WASI's WIT (clocks, and `wasi:http` with the packages it names), copied from
 # wit/deps into the world's deps/.
 WASI_WIT = sorted((REPO / "wit" / "deps").glob("*.wit"))

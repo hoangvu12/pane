@@ -46,6 +46,7 @@ name = "designed-fixture"
 version = "0.1.0"
 dependencies = [
  "dlmalloc",
+ "wasip3",
  "wit-bindgen",
 ]
 
@@ -459,6 +460,7 @@ name = "sample-timer"
 version = "0.1.0"
 dependencies = [
  "pane-extension",
+ "wasip3",
 ]
 
 [[package]]
@@ -466,6 +468,7 @@ name = "sample-view"
 version = "0.1.0"
 dependencies = [
  "pane-extension",
+ "wasip3",
 ]
 
 [[package]]
@@ -606,6 +609,7 @@ version = "0.62.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "53cb4b5556c3a791e86838ea287782bdafa704d55b0e68b5b81a3a16b9ea5f4b"
 dependencies = [
+ "futures",
  "wit-bindgen-rust-macro",
 ]
 

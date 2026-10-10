@@ -14,9 +14,10 @@
 //! command's `render`. Pane asks for the tree again after each event, so
 //! the view's `render` reads the state the event's listener changed. A
 //! view that changes by itself asks for that: the answer of its render
-//! names when Pane asks again ([`IntoNode::refresh_after`], #236), with
-//! [`Pending`] presenting data on its way as a loading state — see the
-//! timer sample (`sample-timer`).
+//! names when Pane asks again ([`IntoNode::refresh_after`], #236), and
+//! data on its way is shown as a loading state whose arrival asks for a
+//! drawing itself ([`Pending`], #243) — see the timer sample
+//! (`sample-timer`).
 //!
 //! ```ignore
 //! struct Counter {
@@ -79,18 +80,21 @@
 use alloc::borrow::ToOwned as _;
 use alloc::boxed::Box;
 use alloc::format;
+use alloc::rc::Rc;
 use alloc::string::String;
 use alloc::vec::Vec;
-use core::cell::{Cell, RefCell};
+use core::cell::{OnceCell, RefCell};
 use core::fmt::Write as _;
 use core::future::Future;
 use core::pin::Pin;
-use core::task::{Context, Poll, Waker};
+use core::sync::atomic::{AtomicU64, Ordering};
 use core::time::Duration;
 
 use crate::exports::pane::extension::command as wit;
 use crate::icon::{self, Color, Icon};
+use crate::pane::extension::view::ask_to_render;
 use wit::{GuestView, Outcome, Rendered, UiEvent};
+use wit_bindgen::spawn_local;
 
 /// The version of the UI component set this SDK writes
 /// (`docs/designed-tree.md`).
@@ -102,9 +106,12 @@ const COMPONENT_SET: &str = "1.2";
 /// when the back key popped, so no view's result reached the one below).
 const POP_CALLBACK: u32 = 0;
 
-/// How long a loading state waits for its data before it is asked for
-/// again: the floor of Pane's refreshes (#236).
-const PROMPT_REFRESH_MS: u32 = 100;
+/// The id of the view being rendered, as its context named it: what
+/// [`Pending`]'s work asks to be drawn again when it answers (#243). Set
+/// for the duration of the view's `render`, read where the work is
+/// started inside it — a component's code runs on one thread, one view at
+/// a time, so one slot serves every view of the command.
+static ASKING_VIEW: AtomicU64 = AtomicU64::new(0);
 
 /// A designed view: the screen a `"mode": "designed"` command opens. Pane
 /// asks for its tree when the view opens and after each event, with a
@@ -213,11 +220,10 @@ impl<V: View> Cx<'_, V> {
 
     /// Whether this render answers the refresh the view asked for by
     /// [`IntoNode::refresh_after`]: `false` on the view's first render,
-    /// on the one after an event, and on the prompt a loading state asks
-    /// for (which awaits its data instead, see [`Pending`]). This is
-    /// where an interval's work runs — counting a tick, advancing a
-    /// clock — so that it runs once per interval and never twice for one
-    /// drawing.
+    /// on the one after an event, and on the one a loading state's data
+    /// asked for itself (see [`Pending`]). This is where an interval's
+    /// work runs — counting a tick, advancing a clock — so that it runs
+    /// once per interval and never twice for one drawing.
     pub fn refreshed(&self) -> bool {
         self.refreshed
     }
@@ -830,9 +836,9 @@ pub trait IntoNode {
 
 /// What a view's `render` answers: the tree it drew, and when Pane asks
 /// for it again. Every tree an [`IntoNode`] builds is one with no ask;
-/// [`IntoNode::refresh_after`] — the view's own ask, an interval — and
-/// [`loading`] — the prompt a loading state asks for, awaiting its data
-/// — are the two that ask.
+/// [`IntoNode::refresh_after`] — the view's own ask, an interval — is the
+/// one that asks. Data on its way asks for nothing ([`loading`]): its
+/// arrival asks for a drawing itself ([`Pending`], #243).
 pub struct Answer {
     node: Node,
     refresh: Option<Refresh>,
@@ -840,8 +846,6 @@ pub struct Answer {
 
 /// When Pane asks for a view's tree again.
 enum Refresh {
-    /// Promptly: a loading state waiting for its data ([`loading`]).
-    Prompt,
     /// After `after`: the view's own ask, whose render [`Cx::refreshed`]
     /// names.
     After(Duration),
@@ -878,15 +882,16 @@ impl IntoAnswer for Answer {
     }
 }
 
-/// A view's loading state (#236): `tree` is shown at once, and Pane is
-/// asked for the tree again promptly — the render the pending data the
-/// view shows it for is awaited in ([`Pending::ready`]), unlike an
-/// interval's ask, whose work runs then instead. What `tree` draws is
-/// the author's; a text naming what is loading is the usual one.
+/// A view's loading state (#236): `tree` is shown at once, and the data
+/// it waits for asks for the drawing that replaces it itself when it
+/// lands ([`Pending`], #243) — so the answer asks Pane for no refresh,
+/// unlike an interval's ask, whose work runs in its render instead. What
+/// `tree` draws is the author's; a text naming what is loading is the
+/// usual one.
 pub fn loading(tree: impl IntoNode) -> Answer {
     Answer {
         node: tree.into_node(),
-        refresh: Some(Refresh::Prompt),
+        refresh: None,
     }
 }
 
@@ -894,45 +899,56 @@ pub fn loading(tree: impl IntoNode) -> Answer {
 /// arrives (#236): [`Pending::loading`] holds the work, and each render
 /// reads it through [`Pending::ready`] — `None` while the work has not
 /// answered, so the view renders its loading state ([`loading`]), and its
-/// answer from then on. The work is polled once per render: a guest has
-/// no clock of its own, so the prompt refresh the loading state asks for
-/// is what waits for it, and each poll is bounded by the call's limits as
-/// any compute is.
+/// answer from then on. The work keeps running between Pane's calls
+/// (#243): the first `ready` that finds it pending starts it as a task of
+/// the render's own, which Pane drives while a view of the command is
+/// open, so it is awaited in the background; when it answers, the SDK
+/// asks Pane to draw the view again, and that drawing shows the answer —
+/// the moment it arrived, with no timer to wait for. The work is a real
+/// future: it must either await something the host answers (a file, a
+/// service, the clock) or finish on its own, for nothing schedules a
+/// future that wakes no one.
 ///
 /// The work runs once; a view that wants it again builds another.
 pub struct Pending<T> {
+    /// The work, until the first render starts it.
     work: Option<Pin<Box<dyn Future<Output = T>>>>,
-    answer: Option<T>,
+    /// Where the work's answer is kept, shared with the task that waits
+    /// for it: set once, read from then on.
+    answer: Rc<OnceCell<T>>,
 }
 
-impl<T> Pending<T> {
+impl<T: 'static> Pending<T> {
     /// Data answered by `work`, which the view waits for: a future the
     /// view's `open_designed_view` can start, of a file read, a service
     /// called, or work of its own.
     pub fn loading(work: impl Future<Output = T> + 'static) -> Pending<T> {
         Pending {
             work: Some(Box::pin(work)),
-            answer: None,
+            answer: Rc::new(OnceCell::new()),
         }
     }
 
-    /// The work's answer, once it has answered: each call polls the work
-    /// once, taking its answer when it is ready. `None` while it is
-    /// pending — the loading state, whose prompt refresh asks for this
-    /// render again.
+    /// The work's answer, once it has answered: `None` while it is
+    /// pending — the loading state, whose arrival asks for this render
+    /// again. The first call starts the work, running it beyond the
+    /// render that reads it (see [`Pending`]); the answer is written
+    /// from the task that awaits the work, before it asks to be drawn
+    /// again, so a `Some` is always the whole answer.
     pub fn ready(&mut self) -> Option<&T> {
-        if self.answer.is_none()
-            && let Some(work) = self.work.as_mut()
-        {
-            // The waker does nothing: nothing schedules the work, the
-            // prompt refresh's render polls it again.
-            let mut context = Context::from_waker(Waker::noop());
-            if let Poll::Ready(answer) = work.as_mut().poll(&mut context) {
-                self.answer = Some(answer);
-                self.work = None;
-            }
+        if let Some(work) = self.work.take() {
+            let answer = self.answer.clone();
+            // The view whose render started the work: the one that asks
+            // to be drawn again when it answers, however many views the
+            // command's component holds.
+            let view = ASKING_VIEW.load(Ordering::Relaxed);
+            spawn_local(async move {
+                let arrived = work.await;
+                answer.set(arrived).ok();
+                ask_to_render(view);
+            });
         }
-        self.answer.as_ref()
+        self.answer.get()
     }
 }
 
@@ -2325,16 +2341,6 @@ impl View for NoDesignedView {
     }
 }
 
-/// What the view's last render asked Pane for: nothing, a prompt refresh
-/// (to await pending data, see [`Pending`]), or the refresh the view
-/// asked for by [`IntoNode::refresh_after`].
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Ask {
-    None,
-    Prompt,
-    Asked,
-}
-
 /// The state of one designed view the extension opened, as Pane's resource
 /// holds it: the view, the listeners of its last two renders, and the
 /// `on_pop` of the view it pushed last. The SDK makes it around the state
@@ -2347,12 +2353,6 @@ pub struct Open<V: View> {
     /// The `on_pop` this view's last push registered, run when the view it
     /// pushed pops, with the result that pop answered.
     on_pop: RefCell<Option<Box<dyn FnOnce(&mut V, Option<&str>)>>>,
-    /// What the view's last render asked Pane for (see [`Ask`]): the
-    /// render that answers it knows why it was asked.
-    ask: Cell<Ask>,
-    /// Whether an event was handled since the last render: its render is
-    /// not one that answers a refresh.
-    after_event: Cell<bool>,
 }
 
 impl<V: View> Open<V> {
@@ -2362,8 +2362,6 @@ impl<V: View> Open<V> {
             state: RefCell::new(state),
             tables: RefCell::new(Vec::new()),
             on_pop: RefCell::new(None),
-            ask: Cell::new(Ask::None),
-            after_event: Cell::new(false),
         }
     }
 }
@@ -2371,12 +2369,17 @@ impl<V: View> Open<V> {
 impl<V: View> GuestView for Open<V> {
     async fn render(&self, context: String) -> Result<Rendered, String> {
         let render = render_of(&context);
+        // The view's id: what its pending data asks to be drawn again
+        // when it answers (#243). Named for the render's duration, so the
+        // work a `Pending` inside it starts asks for this view.
+        ASKING_VIEW.store(view_of(&context), Ordering::Relaxed);
         let mut listeners: Vec<Run<V>> = Vec::new();
         // This render answers the refresh the view asked for by
-        // `refresh_after` — not the prompt a loading state asked for (that
-        // one awaits its data, see `Pending`), and not one an event's
-        // answer asked for — which is where an interval's work runs.
-        let refreshed = self.ask.get() == Ask::Asked && !self.after_event.replace(false);
+        // `refresh_after` — the drawing Pane waited to ask for, as the
+        // context names — not one an event's answer asked for, and not
+        // the drawing pending data asked for itself (see `Pending`):
+        // which is where an interval's work runs.
+        let refreshed = why_of(&context) == Why::Refresh;
         let answer = {
             let mut cx = Cx {
                 listeners: &mut listeners,
@@ -2384,11 +2387,7 @@ impl<V: View> GuestView for Open<V> {
             };
             self.state.borrow_mut().render(&mut cx).into_answer()
         };
-        self.ask.set(match answer.refresh {
-            Some(Refresh::Prompt) => Ask::Prompt,
-            Some(Refresh::After(_)) => Ask::Asked,
-            None => Ask::None,
-        });
+        ASKING_VIEW.store(0, Ordering::Relaxed);
         let mut tree = String::new();
         write_node(&mut tree, &answer.node)?;
         let document = format!("{{\"version\":\"{COMPONENT_SET}\",\"root\":{tree}}}");
@@ -2403,15 +2402,12 @@ impl<V: View> GuestView for Open<V> {
             // The ask, as milliseconds: a duration Pane clamps to the
             // floor and the ceiling of refreshes.
             refresh_after_ms: answer.refresh.map(|refresh| match refresh {
-                Refresh::Prompt => PROMPT_REFRESH_MS,
                 Refresh::After(after) => ms_of(after),
             }),
         })
     }
 
     async fn handle_event(&self, event: UiEvent) -> Result<Outcome, String> {
-        // The render that follows this answers the event, not a refresh.
-        self.after_event.set(true);
         // The pop event: the view above this one popped, its payload the
         // result that pop answered. The view re-renders after it, as after
         // every event.
@@ -2610,9 +2606,71 @@ fn ms_of(after: Duration) -> u32 {
     u32::try_from(after.as_millis()).unwrap_or(u32::MAX)
 }
 
+/// Why Pane asks for the view's tree, as its render's context names: the
+/// render answering the view's own ask is where an interval's work runs;
+/// a drawing the view's work asked for itself (#243) is not one.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Why {
+    /// The view's first drawing.
+    Open,
+    /// The render an event's answer asks for.
+    Event,
+    /// The drawing the view asked Pane to wait for by
+    /// [`IntoNode::refresh_after`].
+    Refresh,
+    /// The drawing the view's own work asked for.
+    Push,
+}
+
+/// Why Pane asks for the view's tree, as `context` names: the context is
+/// JSON, `{"render": N, "view": V, "why": "refresh", "ui": "1.1"}`, read
+/// without parsing the whole document, so a context that grew a field
+/// still gives its why.
+fn why_of(context: &str) -> Why {
+    let Some(at) = context.find("\"why\"") else {
+        return Why::Open;
+    };
+    let word = context[at + 5..]
+        .trim_start()
+        .strip_prefix(':')
+        .unwrap_or("")
+        .trim_start();
+    for (name, why) in [
+        ("\"open\"", Why::Open),
+        ("\"event\"", Why::Event),
+        ("\"refresh\"", Why::Refresh),
+        ("\"push\"", Why::Push),
+    ] {
+        if word.starts_with(name) {
+            return why;
+        }
+    }
+    Why::Open
+}
+
+/// The view `context` names — its id, what [`Pending`]'s work asks to be
+/// drawn again — or 0 when it says none: the context is JSON, `{"render":
+/// N, "view": V, "why": "open", "ui": "1.1"}`, read without parsing the
+/// whole document, so a context that grew a field still gives its id.
+fn view_of(context: &str) -> u64 {
+    let Some(at) = context.find("\"view\"") else {
+        return 0;
+    };
+    let digits = context[at + 6..]
+        .trim_start()
+        .strip_prefix(':')
+        .unwrap_or("")
+        .trim_start();
+    let end = digits
+        .find(|c: char| !c.is_ascii_digit())
+        .unwrap_or(digits.len());
+    digits[..end].parse().unwrap_or(0)
+}
+
 /// The render number `context` names, or 1 when it says none: the context
-/// is JSON, `{"render": N, "ui": "1.2"}`, read without parsing the whole
-/// document, so a context that grew a field still gives its number.
+/// is JSON, `{"render": N, "view": V, "ui": "1.2"}`, read without parsing
+/// the whole document, so a context that grew a field still gives its
+/// number.
 fn render_of(context: &str) -> u64 {
     let Some(at) = context.find("\"render\"") else {
         return 1;
