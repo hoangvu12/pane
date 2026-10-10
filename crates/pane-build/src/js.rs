@@ -237,7 +237,8 @@ pub fn build_js_command(
         let mut beside = out.as_os_str().to_os_string();
         beside.push(".map");
         if let Err(error) = fs::copy(&map, &beside) {
-            return failed(&format!("{} cannot be written: {error}", map.display()));
+            let shown = Path::new(&beside);
+            return failed(&format!("{} cannot be written: {error}", shown.display()));
         }
     }
     job.line(&format!(

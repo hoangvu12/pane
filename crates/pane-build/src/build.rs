@@ -285,8 +285,11 @@ pub enum Componentizer {
     /// its `componentizer` feature (`pane-ext` is, and Pane's own tests
     /// through its dev-dependencies), embedding the committed `runtime.wasm`
     /// and `libc.so` ([`crate::js_assets`]). [`Toolchains::from_env`] returns
-    /// it whenever it is compiled in.
-    #[cfg(feature = "componentizer")]
+    /// it whenever it is compiled in. The variant exists without the feature
+    /// too (so a build that names it still compiles); only its handling
+    /// differs: a build without the feature explains that it has none linked
+    /// in, so `cargo build -p pane` (which resolves pane-build featureless)
+    /// keeps building.
     Linked,
 }
 
@@ -383,7 +386,6 @@ impl<M: ManifestFiles + Clone> Builder for Toolchains<M> {
         }
         if folder.join("package.json").is_file() {
             let componentizer = match self.componentizer.clone() {
-                #[cfg(feature = "componentizer")]
                 Componentizer::Linked => Componentizer::Linked,
                 Componentizer::Binary(None) => match crate::js::package_componentizer(folder) {
                     Ok(package) => Componentizer::Binary(Some(package)),

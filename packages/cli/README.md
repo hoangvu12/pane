@@ -2,11 +2,12 @@
 
 Pane's command-line tool for extension authors: `pane-ext`, which creates,
 develops, checks and packs an extension package from the terminal, beside
-the Pane app. `pane-ext dev` builds a package here (cargo's and tsc's and
+the Pane app. `pane-ext new` writes a package from a template; `pane-ext
+dev` builds a package here (cargo's and tsc's and
 esbuild's errors appear here) and hands each build to the running Pane;
 `pane-ext check` reports everything Pane would refuse at install, with
 Pane's own messages; `pane-ext pack` builds the release components and
-assembles what users download. `pane-ext new` is to follow.
+assembles what users download.
 
 This package holds only a small JavaScript shim (as esbuild, biome and
 turbo ship their tools). The `pane-ext` program itself is native, so each
