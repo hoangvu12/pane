@@ -1182,7 +1182,8 @@ fn group_page(
             let selector = format!("extension-item-official-{title}");
             lines.push(
                 controls::field_description(OFFICIAL, theme.text_muted, theme)
-                    .debug_selector(move || selector)                    .into_any_element(),
+                    .debug_selector(move || selector)
+                    .into_any_element(),
             );
         }
         if !package.enabled {

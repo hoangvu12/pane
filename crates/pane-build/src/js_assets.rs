@@ -113,7 +113,10 @@ const SDK: [(&str, &str); 39] = [
         "system-commands.d.ts",
         include_str!("../../../guests/js/system-commands.d.ts"),
     ),
-    ("system-commands.js", include_str!("../../../guests/js/system-commands.js")),
+    (
+        "system-commands.js",
+        include_str!("../../../guests/js/system-commands.js"),
+    ),
     (
         "system-host.d.ts",
         include_str!("../../../guests/js/system-host.d.ts"),
@@ -123,7 +126,10 @@ const SDK: [(&str, &str); 39] = [
         include_str!("../../../guests/js/system.d.ts"),
     ),
     ("system.js", include_str!("../../../guests/js/system.js")),
-    ("windows.d.ts", include_str!("../../../guests/js/windows.d.ts")),
+    (
+        "windows.d.ts",
+        include_str!("../../../guests/js/windows.d.ts"),
+    ),
     ("wasi.d.ts", include_str!("../../../guests/js/wasi.d.ts")),
     (
         "wit/world.wit",
@@ -136,7 +142,10 @@ const PANE_WIT: [(&str, &str); 19] = [
     ("extension.wit", include_str!("../../../wit/extension.wit")),
     ("commands.wit", include_str!("../../../wit/commands.wit")),
     ("feedback.wit", include_str!("../../../wit/feedback.wit")),
-    ("system-commands.wit", include_str!("../../../wit/system-commands.wit")),
+    (
+        "system-commands.wit",
+        include_str!("../../../wit/system-commands.wit"),
+    ),
     ("system.wit", include_str!("../../../wit/system.wit")),
     ("data.wit", include_str!("../../../wit/data.wit")),
     (
