@@ -709,6 +709,9 @@ impl<R: FnMut(&PackageIdentity, &str) -> Result<SourcePackage, PackageError>> Pl
                     // the package that installs — and the current id may be
                     // one already installed, or read already for another
                     // dependency: taken as it is, with nothing read for it.
+                    // The id the source named comes off the plan's seen list
+                    // for that look, the current one taking its place only
+                    // where nothing else names it.
                     let mut target = target;
                     if source.identity != target {
                         let renamed = source.identity.clone();
@@ -717,15 +720,12 @@ impl<R: FnMut(&PackageIdentity, &str) -> Result<SourcePackage, PackageError>> Pl
                             .last_mut()
                             .expect("the dependency's demand, pushed above");
                         demand.target = renamed.clone();
-                        let seen = self
-                            .seen
-                            .last_mut()
-                            .expect("the dependency's id, pushed above");
-                        *seen = renamed.clone();
+                        self.seen.pop();
                         target = renamed;
                         if self.already(&dependent, &id, &target) {
                             continue;
                         }
+                        self.seen.push(target.clone());
                     }
                     let named = Named {
                         identity: target.clone(),
