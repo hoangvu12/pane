@@ -10,6 +10,13 @@
       "subtitle": "A counter whose screen the extension designs as a tree",
       "component": "sample_view_js.wasm",
       "mode": "designed"
+    },
+    {
+      "id": "components",
+      "title": "JavaScript components sample",
+      "subtitle": "Every component of the UI component set, drawn by Pane",
+      "component": "sample_view_js.wasm",
+      "mode": "designed"
     }
   ]
 }

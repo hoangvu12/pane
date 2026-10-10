@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 //
 // The designed view runtime: JSX elements become the nodes of the tree
-// Pane renders (docs/designed-tree.md, ADR 0036), and the four UI
-// components this component set has — Column, Row, Text and Button — are
-// values an author spreads into a layout. A function component runs per
-// render, with the state of `useState`, `useRef` and `useMemo` kept per
-// instance (by its place in the tree, and its key when it gives one), and
-// Pane asks for the tree again after each event, so the component reads
-// the state the event's listener changed.
+// Pane renders (docs/designed-tree.md, ADR 0036), and every UI component
+// of the component set — the layout primitives, the shared components,
+// Markdown — is a value an author spreads into a layout. A function
+// component runs per render, with the state of `useState`, `useRef` and
+// `useMemo` kept per instance (by its place in the tree, and its key when
+// it gives one), and Pane asks for the tree again after each event, so
+// the component reads the state the event's listener changed.
 //
 // `createView(component)` makes the view a command's `openView` answers
 // with: it implements `render(context)` and `handleEvent(event)` for
@@ -29,7 +29,7 @@
 // one that knows less draws what it understands.
 
 /** The version of the UI component set this SDK writes. */
-const COMPONENT_SET = "1.0";
+const COMPONENT_SET = "1.1";
 
 /** What the view answers for `refresh-after-ms` until timers land. */
 const NO_REFRESH = null;
@@ -60,10 +60,68 @@ function builtin(name) {
 export const Column = builtin("column");
 /** A row: children beside each other. */
 export const Row = builtin("row");
-/** One line of text. */
+/** Children drawn over each other, each placed. */
+export const Stack = builtin("stack");
+/** A scrolling region. */
+export const Scroll = builtin("scroll");
+/** Space: it grows to fill what it is given. */
+export const Spacer = builtin("spacer");
+/** A hairline rule. */
+export const Divider = builtin("divider");
+/** One line of text, its children spelling it or its spans. */
 export const Text = builtin("text");
+/** One styled or linked span of a text's content. */
+export const Span = builtin("span");
 /** A button, pressed by its `onClick`. */
 export const Button = builtin("button");
+/** A link, pressed by its `onClick`. */
+export const Link = builtin("link");
+/** One icon, by name, file, URL or system reference. */
+export const Icon = builtin("icon");
+/** One icon on Pane's tile. */
+export const IconTile = builtin("icon-tile");
+/** One image, its children standing in for it while it loads. */
+export const Image = builtin("image");
+/** A rich row: a title, a subtitle, an icon and accessories. */
+export const RichRow = builtin("rich-row");
+/** One keycap: the key its cap shows. */
+export const Keycap = builtin("keycap");
+/** A key sequence: the keys its caps show. */
+export const KeySequence = builtin("key-sequence");
+/** One tag: a short label in a chip. */
+export const Tag = builtin("tag");
+/** One badge: a short count in a filled chip. */
+export const Badge = builtin("badge");
+/** One toggle: on or off, changed by its `onChange`. */
+export const Toggle = builtin("toggle");
+/** One checkbox: checked or not, changed by its `onChange`. */
+export const Checkbox = builtin("checkbox");
+/** A segmented control, its choice changed by its `onChange`. */
+export const Segmented = builtin("segmented");
+/** One slider, adjusted by its `onChange`. */
+export const Slider = builtin("slider");
+/** One progress bar. */
+export const Progress = builtin("progress");
+/** One loading indicator. */
+export const Loading = builtin("loading");
+/** Markdown, its children spelling its source. */
+export const Markdown = builtin("markdown");
+/** A card of children, on Pane's own card surface. */
+export const Card = builtin("card");
+/** A section header: a title over a group. */
+export const SectionHeader = builtin("section-header");
+/** A metadata list: rows of a label and its value. */
+export const MetadataList = builtin("metadata-list");
+/** An empty state: an icon, a title and a description. */
+export const EmptyState = builtin("empty-state");
+/** One text input. */
+export const TextInput = builtin("text-input");
+/** One password field. */
+export const PasswordInput = builtin("password-input");
+/** One text area. */
+export const TextArea = builtin("text-area");
+/** A select, its choice changed by its `onChange`. */
+export const Select = builtin("select");
 
 /** A fragment: its children are drawn where it sits, unwrapped. */
 export const Fragment = Symbol.for("pane.extension.fragment");
@@ -219,26 +277,72 @@ function builtinNode(name, props, path, callbacks, cells, used) {
     write(given.fallback, path, callbacks, cells, used, fallback);
     node.fallback = fallback[0];
   }
+  // The style every node carries: its sizing and its surface, with its
+  // hover and pressed variants, and its place in a stack.
+  writeStyle(node, given);
   switch (name) {
     case "column":
-    case "row": {
-      if (given.gap !== undefined) node.gap = given.gap;
-      if (given.padding !== undefined) node.padding = given.padding;
-      if (given.align !== undefined) node.align = given.align;
-      if (given.justify !== undefined) node.justify = given.justify;
+    case "row":
+    case "card": {
+      for (const field of ["gap", "padding", "align", "justify"]) {
+        if (given[field] !== undefined) node[field] = given[field];
+      }
       if (given.wrap !== undefined) node.wrap = given.wrap;
       node.children = children;
       return node;
     }
+    case "stack": {
+      if (given.align !== undefined) node.align = given.align;
+      node.children = children;
+      return node;
+    }
+    case "scroll": {
+      if (given.orientation !== undefined) node.orientation = given.orientation;
+      node.children = children;
+      return node;
+    }
+    case "divider": {
+      if (given.orientation !== undefined) node.orientation = given.orientation;
+      return node;
+    }
+    case "spacer": {
+      return node;
+    }
     case "text": {
-      node.text = textOf(given.children);
+      // The children spell the text, or its spans: a Span element among
+      // them makes the text one of spans.
+      const spans = [];
+      const plain = [];
+      let linked = false;
+      for (const child of asList(given.children)) {
+        if (isElement(child) && child.type === Span) {
+          linked = true;
+          spans.push(spanNode(child, path, callbacks));
+        } else if (linked) {
+          spans.push(spanNode(child, path, callbacks));
+        } else {
+          plain.push(child);
+        }
+      }
+      if (linked) {
+        node.spans = spans;
+      } else {
+        node.text = textOf(given.children);
+      }
       if (given.style !== undefined) node.style = given.style;
       if (given.level !== undefined) node.level = given.level;
+      if (given.color !== undefined) node.color = given.color;
+      if (given.size !== undefined) node.size = given.size;
+      if (given.weight !== undefined) node.weight = given.weight;
+      if (given.truncate !== undefined) node.truncate = given.truncate;
       return node;
     }
     case "button": {
       node.label = textOf(given.children);
       if (given.tone !== undefined) node.tone = given.tone;
+      if (given.icon !== undefined) node.icon = given.icon;
+      if (given.keys !== undefined) node.keys = given.keys;
+      if (given.enabled !== undefined) node.enabled = given.enabled;
       if (typeof given.onClick === "function") {
         const id = callbacks.size + 1;
         callbacks.set(id, given.onClick);
@@ -246,9 +350,192 @@ function builtinNode(name, props, path, callbacks, cells, used) {
       }
       return node;
     }
+    case "link": {
+      node.label = textOf(given.children);
+      if (given.color !== undefined) node.color = given.color;
+      if (typeof given.onClick === "function") {
+        const id = callbacks.size + 1;
+        callbacks.set(id, given.onClick);
+        node.onPress = id;
+      }
+      return node;
+    }
+    case "icon":
+    case "icon-tile": {
+      node.icon = given.icon ?? {};
+      if (given.size !== undefined) node.size = given.size;
+      return node;
+    }
+    case "image": {
+      node.image = given.image ?? {};
+      if (given.size !== undefined) node.size = given.size;
+      if (given.fit !== undefined) node.fit = given.fit;
+      node.children = children;
+      return node;
+    }
+    case "rich-row": {
+      node.title = textOf(given.children);
+      if (given.subtitle !== undefined) node.subtitle = given.subtitle;
+      if (given.icon !== undefined) node.icon = given.icon;
+      if (given.accessories !== undefined) node.accessories = given.accessories;
+      if (typeof given.onClick === "function") {
+        const id = callbacks.size + 1;
+        callbacks.set(id, given.onClick);
+        node.onPress = id;
+      }
+      return node;
+    }
+    case "keycap": {
+      node.key = textOf(given.children);
+      return node;
+    }
+    case "key-sequence": {
+      node.keys = given.keys ?? [];
+      return node;
+    }
+    case "tag":
+    case "badge": {
+      node.text = textOf(given.children);
+      if (given.color !== undefined) node.color = given.color;
+      return node;
+    }
+    case "toggle":
+    case "checkbox": {
+      if (name === "toggle") node.on = given.on === true;
+      else node.checked = given.on === true;
+      if (given.label !== undefined) node.label = given.label;
+      if (typeof given.onChange === "function") {
+        const id = callbacks.size + 1;
+        callbacks.set(id, given.onChange);
+        node.onChange = id;
+      }
+      return node;
+    }
+    case "segmented":
+    case "select": {
+      node.options = given.options ?? [];
+      if (given.value !== undefined) node.value = given.value;
+      if (given.label !== undefined) node.label = given.label;
+      if (typeof given.onChange === "function") {
+        const id = callbacks.size + 1;
+        callbacks.set(id, given.onChange);
+        node.onChange = id;
+      }
+      return node;
+    }
+    case "slider": {
+      node.value = given.value ?? 0;
+      if (given.min !== undefined) node.min = given.min;
+      if (given.max !== undefined) node.max = given.max;
+      if (given.step !== undefined) node.step = given.step;
+      if (given.label !== undefined) node.label = given.label;
+      if (typeof given.onChange === "function") {
+        const id = callbacks.size + 1;
+        callbacks.set(id, given.onChange);
+        node.onChange = id;
+      }
+      return node;
+    }
+    case "progress": {
+      node.value = given.value ?? 0;
+      if (given.label !== undefined) node.label = given.label;
+      return node;
+    }
+    case "loading": {
+      if (given.label !== undefined) node.label = given.label;
+      return node;
+    }
+    case "markdown": {
+      node.markdown = textOf(given.children);
+      return node;
+    }
+    case "section-header": {
+      node.title = textOf(given.children);
+      if (given.note !== undefined) node.note = given.note;
+      return node;
+    }
+    case "metadata-list": {
+      node.items = given.items ?? [];
+      return node;
+    }
+    case "empty-state": {
+      if (given.title !== undefined) node.title = given.title;
+      if (given.description !== undefined) node.description = given.description;
+      if (given.icon !== undefined) node.icon = given.icon;
+      node.children = children;
+      return node;
+    }
+    case "text-input":
+    case "password-input":
+    case "text-area": {
+      node.value = textOf(given.children);
+      if (given.placeholder !== undefined) node.placeholder = given.placeholder;
+      if (given.label !== undefined) node.label = given.label;
+      if (typeof given.onChange === "function") {
+        const id = callbacks.size + 1;
+        callbacks.set(id, given.onChange);
+        node.onChange = id;
+      }
+      return node;
+    }
     default:
       throw new Error(`the tree has no ${name} component`);
   }
+}
+
+/** The style properties every node carries, written from `given`. */
+function writeStyle(node, given) {
+  for (const field of [
+    "grow",
+    "shrink",
+    "basis",
+    "width",
+    "height",
+    "minWidth",
+    "maxWidth",
+    "minHeight",
+    "maxHeight",
+    "aspectRatio",
+    "background",
+    "border",
+    "radius",
+    "opacity",
+    "place",
+  ]) {
+    if (given[field] !== undefined) node[field] = given[field];
+  }
+  if (given.offset !== undefined) node.offset = given.offset;
+  if (given.hover !== undefined) node.hover = given.hover;
+  if (given.pressed !== undefined) node.pressed = given.pressed;
+}
+
+/** One span of a text's content, from `child` — a Span element or plain
+ * text — with the listener its `onClick` names. */
+function spanNode(child, path, callbacks) {
+  const given = isElement(child) ? (child.props ?? {}) : { children: child };
+  const span = { text: textOf(given.children) };
+  for (const field of ["style", "level", "color"]) {
+    if (given[field] !== undefined) span[field] = given[field];
+  }
+  if (given.code === true) span.code = true;
+  if (typeof given.onClick === "function") {
+    const id = callbacks.size + 1;
+    callbacks.set(id, given.onClick);
+    span.onPress = id;
+  }
+  return span;
+}
+
+/** Whether `value` is an element the tree draws. */
+function isElement(value) {
+  return value !== null && typeof value === "object" && typeof value.type !== "undefined";
+}
+
+/** `value` as the list of children it is. */
+function asList(children) {
+  if (children === null || children === undefined) return [];
+  if (Array.isArray(children)) return children.flat();
+  return [children];
 }
 
 /** The text `children` spell: strings and numbers, joined. */

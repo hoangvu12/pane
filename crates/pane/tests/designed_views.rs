@@ -168,7 +168,12 @@ fn wait_for(window: &Entity<LauncherWindow>, cx: &mut VisualTestContext, text: &
 fn text_of(node: &pane_core::Node) -> Option<String> {
     use pane_core::NodeKind;
     match &node.kind {
-        NodeKind::Text(text) => Some(text.content.clone()),
+        NodeKind::Text(text) => match &text.content {
+            pane_core::TextContent::Plain(content) => Some(content.clone()),
+            pane_core::TextContent::Spans(spans) => {
+                (!spans.is_empty()).then(|| spans.iter().map(|span| span.text.clone()).collect())
+            }
+        },
         NodeKind::Unknown(_) => node
             .fallback
             .as_deref()

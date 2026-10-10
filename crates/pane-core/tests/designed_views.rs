@@ -17,7 +17,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use futures::executor::block_on;
-use pane_core::{DesignedTree, Launcher, Node, NodeKind, Runtime, Screen, Status};
+use pane_core::{DesignedTree, Launcher, Node, NodeKind, Runtime, Screen, Status, TextContent};
 
 use tempfile::TempDir;
 
@@ -31,6 +31,8 @@ struct Sample {
     package: &'static str,
     language: &'static str,
     title: &'static str,
+    /// The title of its components gallery command.
+    components: &'static str,
 }
 
 const SAMPLES: [Sample; 3] = [
@@ -38,16 +40,19 @@ const SAMPLES: [Sample; 3] = [
         package: "sample-view",
         language: "Rust",
         title: "Designed view sample",
+        components: "Components sample",
     },
     Sample {
         package: "sample-view-js",
         language: "JavaScript",
         title: "JavaScript designed view sample",
+        components: "JavaScript components sample",
     },
     Sample {
         package: "sample-view-ts",
         language: "TypeScript",
         title: "TypeScript designed view sample",
+        components: "TypeScript components sample",
     },
 ];
 
@@ -155,8 +160,17 @@ impl Pane {
 
 /// The first text node of `node`'s tree, in order.
 fn text_of(node: &Node) -> Option<String> {
+    let plain = |text: &pane_core::Text| match &text.content {
+        TextContent::Plain(content) => Some(content.clone()),
+        TextContent::Spans(spans) => (!spans.is_empty()).then(|| {
+            spans
+                .iter()
+                .map(|span| span.text.clone())
+                .collect::<String>()
+        }),
+    };
     match &node.kind {
-        NodeKind::Text(text) => Some(text.content.clone()),
+        NodeKind::Text(text) => plain(text),
         // An unknown node draws its fallback, else its children.
         NodeKind::Unknown(_) => node
             .fallback
@@ -195,6 +209,7 @@ fn opening_the_sample_shows_its_first_tree_and_presses_change_it() {
         package,
         language,
         title,
+        ..
     } in SAMPLES
     {
         let pane = Pane::new(&[package]);
@@ -400,4 +415,158 @@ fn a_view_the_guest_refuses_to_open_is_an_error() {
         "{:?}",
         pane.status()
     );
+}
+
+/// The kinds of node a tree holds, in order.
+fn kinds_of(node: &Node) -> Vec<String> {
+    let kind = |node: &Node| -> String {
+        match &node.kind {
+            NodeKind::Column(_) => "column".to_owned(),
+            NodeKind::Row(_) => "row".to_owned(),
+            NodeKind::Stack(_) => "stack".to_owned(),
+            NodeKind::Scroll { .. } => "scroll".to_owned(),
+            NodeKind::Spacer => "spacer".to_owned(),
+            NodeKind::Divider { .. } => "divider".to_owned(),
+            NodeKind::Text(_) => "text".to_owned(),
+            NodeKind::Button(_) => "button".to_owned(),
+            NodeKind::Link(_) => "link".to_owned(),
+            NodeKind::Icon(_) => "icon".to_owned(),
+            NodeKind::IconTile(_) => "icon-tile".to_owned(),
+            NodeKind::Image(_) => "image".to_owned(),
+            NodeKind::RichRow(_) => "rich-row".to_owned(),
+            NodeKind::Keycap(_) => "keycap".to_owned(),
+            NodeKind::KeySequence(_) => "key-sequence".to_owned(),
+            NodeKind::Tag(_) => "tag".to_owned(),
+            NodeKind::Badge(_) => "badge".to_owned(),
+            NodeKind::Toggle(_) => "toggle".to_owned(),
+            NodeKind::Checkbox(_) => "checkbox".to_owned(),
+            NodeKind::Segmented(_) => "segmented".to_owned(),
+            NodeKind::Slider(_) => "slider".to_owned(),
+            NodeKind::Progress(_) => "progress".to_owned(),
+            NodeKind::Loading(_) => "loading".to_owned(),
+            NodeKind::Markdown(_) => "markdown".to_owned(),
+            NodeKind::Card(_) => "card".to_owned(),
+            NodeKind::SectionHeader(_) => "section-header".to_owned(),
+            NodeKind::MetadataList(_) => "metadata-list".to_owned(),
+            NodeKind::EmptyState(_) => "empty-state".to_owned(),
+            NodeKind::TextInput(_) => "text-input".to_owned(),
+            NodeKind::PasswordInput(_) => "password-input".to_owned(),
+            NodeKind::TextArea(_) => "text-area".to_owned(),
+            NodeKind::Select(_) => "select".to_owned(),
+            NodeKind::Unknown(kind) => kind.to_owned(),
+        }
+    };
+    let mut kinds = vec![kind(node)];
+    for child in &node.children {
+        kinds.extend(kinds_of(child));
+    }
+    kinds
+}
+
+/// The first toggle of `node`'s tree: whether it is on, and its callback.
+fn toggle_of(node: &Node) -> Option<(bool, u32)> {
+    match &node.kind {
+        NodeKind::Toggle(toggle) => toggle.on_change.map(|callback| (toggle.on, callback)),
+        NodeKind::Unknown(_) => node
+            .fallback
+            .as_deref()
+            .and_then(toggle_of)
+            .or_else(|| node.children.iter().find_map(toggle_of)),
+        _ => node.children.iter().find_map(toggle_of),
+    }
+}
+
+#[test]
+fn the_component_set_draws_and_a_change_flips_its_toggle() {
+    let pane = fixture();
+    pane.press("Draw the component set");
+    // Every kind of node the fixture drew: the layout primitives, the
+    // shared components and the inputs.
+    let kinds = kinds_of(&pane.tree().root);
+    for kind in [
+        "scroll",
+        "stack",
+        "spacer",
+        "divider",
+        "card",
+        "rich-row",
+        "keycap",
+        "key-sequence",
+        "tag",
+        "badge",
+        "toggle",
+        "checkbox",
+        "segmented",
+        "slider",
+        "progress",
+        "loading",
+        "markdown",
+        "metadata-list",
+        "empty-state",
+        "text-input",
+        "password-input",
+        "text-area",
+        "select",
+    ] {
+        assert!(kinds.contains(&kind.to_owned()), "the tree draws a {kind}");
+    }
+    // The toggle starts off, with a callback to change it.
+    let (on, callback) = toggle_of(&pane.tree().root).expect("a toggle");
+    assert!(!on);
+
+    // A change of the toggle: the payload names the value, and the next
+    // tree shows it flipped — Pane sent what the user chose.
+    block_on(pane.launcher.send_designed_change(
+        callback,
+        Some("toggle"),
+        r#"{"value":true}"#.to_owned(),
+    ));
+    let (on, _) = toggle_of(&pane.tree().root).expect("the toggle still drawn");
+    assert!(on, "the change flipped the toggle");
+
+    // And back.
+    block_on(pane.launcher.send_designed_change(
+        callback,
+        Some("toggle"),
+        r#"{"value":false}"#.to_owned(),
+    ));
+    let (on, _) = toggle_of(&pane.tree().root).expect("the toggle still drawn");
+    assert!(!on);
+    assert_eq!(pane.status(), Status::Idle);
+}
+
+#[test]
+fn the_components_gallery_of_the_three_samples_matches() {
+    // The gallery command answers the same tree in Rust, JavaScript and
+    // TypeScript: the same nodes, in order, with the same toggle state —
+    // the parity the counter is held to.
+    let mut galleries = Vec::new();
+    for Sample {
+        package,
+        language,
+        components,
+        ..
+    } in SAMPLES
+    {
+        let pane = Pane::new(&[package]);
+        pane.open("", components);
+        let tree = pane.tree();
+        let (on, _) = toggle_of(&tree.root).expect("a toggle");
+        galleries.push((language, kinds_of(&tree.root), on));
+    }
+    let (_, kinds, on) = &galleries[0];
+    assert!(on == &false, "the Rust gallery's toggle starts off");
+    assert!(
+        kinds.contains(&"toggle".to_owned())
+            && kinds.contains(&"markdown".to_owned())
+            && kinds.contains(&"select".to_owned()),
+        "the Rust gallery draws the components: {kinds:?}"
+    );
+    for (language, other, other_on) in &galleries[1..] {
+        assert_eq!(kinds.len(), other.len(), "the {language} gallery");
+        for (at, (kind, other_kind)) in kinds.iter().zip(other.iter()).enumerate() {
+            assert_eq!(kind, other_kind, "node {at} of the {language} gallery");
+        }
+        assert_eq!(on, other_on, "the {language} gallery's toggle");
+    }
 }

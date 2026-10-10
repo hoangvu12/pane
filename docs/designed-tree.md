@@ -3,12 +3,13 @@
 A command whose `pane.json` entry says `"mode": "designed"` opens a
 designed view: a screen the extension describes as a **tree of layout
 nodes and UI components that Pane renders**, in Pane's design, with
-Pane's keyboard behaviour and accessibility (#235, part of #121). The tree
-reaches Pane through the typed envelope of
+Pane's keyboard behaviour and accessibility (#235, #237, part of #121).
+The tree reaches Pane through the typed envelope of
 [ADR 0036](https://github.com/hoangvu12/pane/blob/main/docs/adr/0036-extension-ui-is-a-tree-pane-renders-written-with-a-gpui-like-api.md),
 which extends the one the list tree uses (`render` and `handle-event`,
-[list-tree.md](list-tree.md)) without redefining it. `pane:extension/command`
-(`wit/extension.wit`) has what a designed view needs:
+[list-tree.md](list-tree.md)) without redefining it.
+`pane:extension/command` (`wit/extension.wit`) has what a designed view
+needs:
 
 - **`open-view(command, launch) -> result<view, string>`** opens the
   designed view of the command `command` (its id in `pane.json`, so one
@@ -24,7 +25,7 @@ which extends the one the list tree uses (`render` and `handle-event`,
   component set it uses, and `refresh-after-ms`, how long Pane waits
   before asking again (read and carried, but nothing acts on it until
   timers land, #236). `context` is JSON too: the sequence number of this
-  render (`{"render": 1, "ui": "1.0"}`), so the extension can name each
+  render (`{"render": 1, "ui": "1.1"}`), so the extension can name each
   render's callbacks, and the version of the component set Pane
   supports; it can grow without WIT changes.
 - **`view.handle-event(event) -> result<outcome, string>`** handles the
@@ -32,9 +33,10 @@ which extends the one the list tree uses (`render` and `handle-event`,
   (`callback`), the sequence number of the render whose tree the user saw
   (`render`), the key of the node the event was raised on (`key`, `""`
   when the tree gave it none) and the event's details as JSON
-  (`payload`, `"{}"` for a press). Pane then calls `view.render` again
-  and draws the answer. `outcome` (`push`, `replace`, `pop`) changes the
-  view's navigation stack, below.
+  (`payload`: `"{}"` for a press, `{"value": …}` for a change — the
+  value the user chose, a boolean, a string or a number). Pane then calls
+  `view.render` again and draws the answer. `outcome` (`push`, `replace`,
+  `pop`) changes the view's navigation stack, below.
 
 Events of one view are delivered one at a time, in order; an answer that
 arrives after its view left the screen is discarded, and a tree is shown
@@ -51,20 +53,22 @@ working.
 Authors never see the JSON or the callback ids. In Rust
 (`pane-extension`) the command's `open_designed_view` answers with its
 view's state, a type implementing `pane_extension::view::View`, whose
-`render` builds the tree with `column()`, `row()`, `text()` and
-`button()`, naming each button's closure with
-`cx.listener(|this: &mut V| ...)`; the SDK writes the tree. In
-JavaScript and TypeScript (`@pane-app/extension`) the exported command's
-`openView` resolves with `createView(Component)` from
+`render` builds the tree with `column()`, `row()`, `stack()`, `text()`,
+`button()` and every other constructor of `pane_extension::view`, naming
+each control's closure with `cx.listener(|this: &mut V| ...)` and its
+style through the same-named methods every builder carries; the SDK
+writes the tree. In JavaScript and TypeScript (`@pane-app/extension`) the
+exported command's `openView` resolves with `createView(Component)` from
 `@pane-app/extension/view`, the component written as JSX (`Column`,
-`Row`, `Text`, `Button`, every property type-checked; the `jsx-runtime`
-module is the JSX import source) or as the elements `jsxs(...)` builds
-directly, with `useState`, `useRef` and `useMemo` for state; the SDK's
-runtime writes the tree. Both SDKs keep the callbacks of the last two
-renders, so a press of what the user could see is delivered even if the
-view has rendered since, and an older event is dropped.
+`Row`, `Stack`, `Text`, `Button`, every property type-checked; the
+`jsx-runtime` module is the JSX import source) or as the elements
+`jsxs(...)` builds directly, with `useState`, `useRef` and `useMemo` for
+state; the SDK's runtime writes the tree. Both SDKs keep the callbacks of
+the last two renders, so a press of what the user could see is delivered
+even if the view has rendered since, and an older event is dropped.
 
-The sample is a counter, in [Rust](../guests/sample-view/src/lib.rs),
+The samples are a counter and a components gallery, in
+[Rust](../guests/sample-view/src/lib.rs),
 [JavaScript](../guests/sample-view-js/src/index.js) and
 [TypeScript](../guests/sample-view-ts/src/index.tsx), held alike by
 `crates/pane-core/tests/designed_views.rs`.
@@ -137,14 +141,12 @@ A document is one JSON object: its version and its root node.
 
 ```json
 {
-  "version": "1.0",
+  "version": "1.1",
   "root": {
     "type": "column",
     "key": "main",
     "gap": "m",
     "padding": { "x": "l", "y": "s" },
-    "align": "center",
-    "justify": "space-between",
     "children": [
       { "type": "text", "text": "Count: 3", "style": "title", "level": "secondary" },
       { "type": "row", "gap": "s", "wrap": true, "children": [
@@ -160,11 +162,12 @@ A document is one JSON object: its version and its root node.
   `"<major>.<minor>"`. A document of Pane's major and any minor is read;
   one of another major is refused as the extension's error, naming both
   versions. Additive changes (a component, a property, an event) bump the
-  minor.
+  minor; 1.1 added the layout primitives, the shared UI components, the
+  tokens' colour grammar and Markdown (#237).
 - Every node has a `type`, and may have:
   - `key`: the node's stable identity among its siblings, which Pane
     keeps node state under (the keyed reconciler, #238; the focus of a
-    button survives a re-render that still draws it);
+    control survives a re-render that still draws it);
   - `name`: what assistive technology reads the node by, when the node's
     own content does not name it (a column's or row's);
   - `navigationTitle`: what names the view, read from the root node only
@@ -174,54 +177,169 @@ A document is one JSON object: its version and its root node.
   - `requires`: the minimum minor version of the component set the node
     needs; a node Pane cannot satisfy degrades as an unknown node does;
   - `fallback`: the node drawn instead when Pane does not know the node;
-  - `children`: the node's children, in order.
+  - `children`: the node's children, in order;
+  - the **style** every node carries, below.
 
-### `column`, `row`
+### The style every node carries
 
-A `column` lays its children out below each other; a `row` beside each
-other. Both take:
+Any node, whichever its type, may set how it takes space and the surface
+it draws — and Pane applies the `hover` and `pressed` variants of that
+surface itself, with no call into the extension (Figma-style):
 
-- `gap`: a space token, the gap between children;
-- `padding`: a space token for all four sides, or `{ "x": ..., "y": ... }`
-  naming the left and right, top and bottom sides, or `top`, `right`,
-  `bottom`, `left` naming each one;
-- `align`: `start`, `center`, `end`, `stretch` or `baseline` — how
-  children are laid out along the cross axis;
-- `justify`: `start`, `center`, `end`, `space-between` or `space-around`
-  — how children share the main axis;
-- `wrap`: whether children wrap onto further lines.
+- **Sizing**: `grow` and `shrink` (numbers), `basis`, `width`, `height`,
+  `minWidth`, `maxWidth`, `minHeight` and `maxHeight` (a length), and
+  `aspectRatio` (a number, its width over its height; a non-positive one
+  is left out).
+- **Surface**: `background` (a colour), `border`
+  (`{ "width": <length>, "color": <colour> }`, either alone allowed),
+  `radius` (a radius) and `opacity` (0 to 1).
+- **Variants**: `hover` and `pressed`, each an object restating any of
+  the surface's properties, drawn while the pointer is over the node or
+  the node is pressed.
+- **In a stack**: `place` (one of the nine places) and `offset`
+  (a length, or `{ "x": ..., "y": ... }`), which move the node from its
+  place.
 
-### `text`
+A **length** is a space token (`"xs"`–`"xxl"`), a number of pixels, a
+string of pixels (`"12px"`), or a fraction of the parent (`"1/2"` or
+`"50%"`). A **radius** is a radius token (`"s"`, `"m"`, `"l"`, `"full"`)
+or pixels. Raw lengths are clamped to 0–4096 px; raw opacity to 0–1.
 
-One line of text. Its children (in JSX, its content) spell its `text`.
-It takes:
+### Tokens and raw values
 
-- `style`: `heading`, `title`, `body` (the default), `caption`, `mono` or
-  `small-mono` — its size, weight and family;
-- `level`: `primary` (the default), `secondary`, `tertiary` or
-  `quaternary` — its colour, through the alpha of the text colour.
+A **colour** is accepted wherever a token is, in any of its forms:
 
-### `button`
+- a **tone token** by its name: `neutral` (the primary ink), `accent`,
+  `success`, `warning`, `danger`, `primary`, `secondary`, and the seven
+  palette colours `red`, `orange`, `yellow`, `green`, `blue`, `purple`,
+  `magenta`;
+- a **raw colour**: `#RGB`, `#RRGGBB`, `#RRGGBBAA`, `rgb()`, `rgba()`,
+  `hsl()` or `hsla()`, channels as numbers or percentages;
+- a **pair**: `{ "light": <colour>, "dark": <colour> }`, one per
+  appearance;
+- an **exact** colour: `{ "raw": <colour or pair> }`, drawn as it is.
 
-A button. Its children spell its `label`. It takes:
+**Contrast correction:** a colour used for *text or an icon* — a text's
+`color`, a span's, a link's, a tag's, a tint — is corrected against the
+surface it is drawn on, by moving its lightness until it reads at **2.5:1**
+(the ratio the spec chose, deliberately below Pane's own icon 3.0 and
+text 4.5), unless it is given as `raw`. A colour used for a *background*
+is drawn as it is; the text and icons on it are corrected against it,
+composited over what is behind.
 
-- `tone`: `default` (the plain pill), `secondary`, `ghost`, `accent` or
-  `destructive` — how it is drawn;
-- `onPress`: the callback id a press of it runs. A button without one
-  cannot be pressed: its label is drawn as a text.
+The token set also names the **space** tokens (`xs`–`xxl`), the **text
+style** (`heading`, `title`, `body`, `caption`, `mono`, `small-mono`) and
+**text level** (`primary`, `secondary`, `tertiary`, `quaternary`) of #235,
+the **radius** tokens (`s`, `m`, `l`, `full`), and the **icon size**
+tokens (`s`, `m`, `l`, `xl`) — a stable mapping layer over Pane's
+private theme, resolving per appearance (and over the background image),
+so the theme can change without renaming a token.
 
 Buttons are focusable, in tree order: Tab and Shift+Tab move through
 them, and Enter and Space press the focused one. Escape stays with Pane,
 as it does for a custom view: it pops the navigation stack (above), and
 leaves the screen when only the root view is on it.
 
-### Tokens
+### Layout primitives
 
-The properties above name **tokens**, resolved onto Pane's theme (in
-light and dark): space (`xs`, `s`, `m`, `l`, `xl`, `xxl` — the named
-distances), text style and text level as above, and tone as above. The
-public token layer (#237) extracts the mappings; raw values (hex colours,
-pixel sizes) and the tokens yet to come (radius, icon size) land with it.
+- `column`, `row`: children below or beside each other, with `gap`,
+  `padding` (as #235), `align`, `justify` and `wrap`.
+- `stack`: children drawn over each other, each placed at one of the nine
+  places — `place` on the child, the stack's `align` the default — with
+  an optional `offset` from it.
+- `scroll`: a scrolling region, `orientation` `"vertical"` (the default)
+  or `"horizontal"`, whose position Pane keeps by key.
+- `spacer`: space, growing to fill what it is given unless its style says
+  otherwise.
+- `divider`: a hairline rule, `orientation` as a scroll's.
+- `card`: children on Pane's own card surface, with a column's layout.
+
+Layout is computed by GPUI's flex layout; nothing is laid out by the
+extension.
+
+### Text
+
+One text: `text` (a string), or `spans` — an array of
+`{ "text", "style", "level", "color", "code", "onPress" }` — where a span
+with `onPress` is a **link**, its callback run by a press. A text takes
+`style`, `level`, `color` (a colour), `size` (pixels), `weight`
+(100–900) and `truncate` (one line with an ellipsis). In the SDKs the
+children spell the `text`, and `Span` children make the spans.
+
+### Shared UI components
+
+Pane's own, drawn from Pane's own families; each has one accessibility
+mapping (role, name, value, state) owned by the host. All are focusable
+where they name a callback, in tree order: Tab and Shift+Tab move through
+them, Enter and Space press or change the focused one, and the segmented
+control's and slider's arrows move them. Escape stays with Pane, as it
+does for a custom view: it leaves the screen.
+
+- **`button`** — `label`, `tone` (`default`, `secondary`, `ghost`,
+  `accent`, `destructive`), `icon`, `keys` (a key sequence drawn after
+  its label), `enabled` and `onPress`. Without `onPress` it draws its
+  label as a text.
+- **`link`** — `label`, `color`, `onPress`: its label underlined in the
+  accent.
+- **`icon`**, **`icon-tile`** — the icon model below, `size`; the tile
+  draws it on Pane's own tile.
+- **`image`** — the icon model below as `image`, `size`, `fit`
+  (`contain`, the default, `cover`, `fill`); its children are its
+  placeholder, drawn while it loads or cannot be read.
+- **`rich-row`** — `title`, `subtitle`, `icon`,
+  `accessories` (`{ "text", "tag", "color" }`), `onPress`: the
+  launcher's own result row as a component.
+- **`keycap`** — `key`: the key its cap shows.
+- **`key-sequence`** — `keys`: one cap per key, drawn as the launcher's
+  shortcuts are.
+- **`tag`**, **`badge`** — `text`, `color`: a short label in a chip, a
+  short count in a filled one.
+- **`toggle`** — `on`, `label`, `onChange`: the Settings board's switch.
+  A change tells the extension `{"value": true|false}`.
+- **`checkbox`** — `checked`, `label`, `onChange`: alike, a box with a
+  check.
+- **`segmented`** — `options` (`{ "value", "label" }`), `value`,
+  `label`, `onChange`: the Settings board's track; its arrows move the
+  choice, a change telling the extension `{"value": "…"}`.
+- **`select`** — `options`, `value`, `label`, `onChange`: a well showing
+  the chosen option. Enter and a click step through its options until
+  #238's keyed state opens the searchable select.
+- **`slider`** — `value`, `min` (0), `max` (1), `step` (0.1), `label`,
+  `onChange`: its arrows adjust it by its step, a click moves it to
+  where its rail was clicked, and a change tells the extension
+  `{"value": <number>}`.
+- **`progress`** — `value` (0 to 1), `label`.
+- **`loading`** — `label`: an indeterminate bar, its highlight sweeping
+  it.
+- **`markdown`** — `markdown` (the source; the children spell it): a
+  CommonMark subset with GitHub's tables and task lists, drawn in the
+  theme's own typography. LaTeX and images are out of scope here.
+- **`section-header`** — `title` (the children spell it), `note`.
+- **`metadata-list`** — `items`:
+  `{ "label", "value", "onPress" (making the value a link), "tags",
+  "separator" }`.
+- **`empty-state`** — `title`, `description`, `icon`, its children its
+  actions: the notice the launcher's own empty board draws.
+- **`text-input`**, **`password-input`**, **`text-area`** — `value`,
+  `placeholder`, `label`, `onChange`: a well holding the value the tree
+  named, focusable, Enter committing it. The value drawn is the value
+  the tree names and a commit tells the extension that value; the
+  editing state that survives a re-render — the caret, the typing —
+  arrives with #238's keyed reconciler.
+
+### Icons and images
+
+`icon`, `icon-tile`, `image`, a button's `icon`, a rich row's and an
+empty state's use the icon model the list tree uses
+([list-tree.md](list-tree.md), ADR 0036): a reicon builtin by name, a
+packaged PNG or SVG by path (with its `@dark` and `@light` variants, or a
+light and dark pair), a web image by URL through the existing bounded
+download and cache, a system file or application icon, or bounded inline
+`data:` — each with `tint` (a colour, corrected), `mask`
+(`circle`, `rounded-rectangle`), `fallback` (four deep) and `tooltip`,
+which also names it to assistive technology; an icon without one is
+decoration. Web images load as rows' icons do: the fallback shows until
+one arrives, and on failure.
 
 ## Reading a document
 
@@ -234,11 +352,16 @@ versioning asks for it, as the list tree's is:
 - A node whose `type` Pane does not know, or whose `requires` it does not
   meet, draws the `fallback` the tree gave, else its children if it has
   any, and nothing without either.
+- An icon Pane cannot read is not drawn (its image node draws its
+  placeholder).
 - A document that is not JSON, lacks `version` or `root`, or a node's
-  `type`, a text's `text` or a button's `label`, or gives one of the
-  wrong type, is **unreadable**: the command's failure, which Pane
-  reports as its own reading of what the extension answered ("Pane could
-  not read what the extension answered: ..."), never a crash.
+  `type`, a text's `text` or `spans`, a button's or link's `label`, a
+  markdown's `markdown`, a rich row's or section header's `title`, an
+  empty state's `title`, a segmented's or select's `options`, a slider's
+  or progress's `value`, or gives one of the wrong type, is
+  **unreadable**: the command's failure, which Pane reports as its own
+  reading of what the extension answered ("Pane could not read what the
+  extension answered: ..."), never a crash.
 - A document over one of the limits, or of another major version, is the
   **extension's error** ("The extension reported an error: ..."): the view
   keeps its last good tree, which an unreadable tree leaves too.
@@ -246,6 +369,12 @@ versioning asks for it, as the list tree's is:
 ### Limits
 
 One document may hold at most 10,000 nodes (counting `fallback`
-subtrees), be at most 64 levels deep and at most 4 MiB of JSON, and each
-text node at most 64 KiB. One command's navigation stack holds at most 32
-views. Provisional (#121), as the spec's proposed defaults.
+subtrees), be at most 64 levels deep and at most 4 MiB of JSON; each text
+node at most 64 KiB; each markdown source at most 1 MiB; each inline
+`data:` image at most 1 MiB. Raw lengths are clamped to 0–4096 px, raw
+opacity to 0–1. One command's navigation stack holds at most 32 views.
+Provisional (#121), as the spec's proposed defaults.
+
+The parse and reconcile cost of a 500- and a 5,000-node tree is measured
+and recorded with the change (`crates/pane-core/tests/designed_cost.rs`
+prints it), not gated.
