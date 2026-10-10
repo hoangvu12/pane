@@ -556,10 +556,17 @@ impl Launcher {
             Screen::CommandSearch { query } => Some(query.clone()),
             _ => None,
         };
-        let selected = state
-            .view
+        // The selection is the command's root list's, kept by key: a view
+        // or form the command pushed holds the root list's state to
+        // return to, which is what the reopened screen keeps.
+        let view = state
+            .custom_view
+            .as_ref()
+            .map(|open| &open.return_to)
+            .unwrap_or(&state.view);
+        let selected = view
             .selected
-            .and_then(|at| state.view.rows.get(at))
+            .and_then(|at| view.rows.get(at))
             .map(|row| row.id.clone());
         self.leave_command(state);
         // The new code's command of the same id, one that opens a screen:

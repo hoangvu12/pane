@@ -645,13 +645,15 @@ fn the_open_screen_of_a_package_that_does_not_opt_in_reopens() {
     // by key.
     open(&launcher, "Rust sample");
     launcher.select(1);
+    select_title(&launcher, "Choose a color");
+    // The root list's selection as the view is pushed: the row the user
+    // chose, which the reopened screen keeps by key.
     let selected = launcher
         .view()
-        .rows
-        .get(1)
+        .selected
+        .and_then(|at| launcher.view().rows.get(at))
         .map(|row| row.id.clone())
         .unwrap_or_default();
-    select_title(&launcher, "Choose a color");
     block_on(launcher.activate_selected());
     assert!(matches!(launcher.view().screen, Screen::CustomView(_)));
 
