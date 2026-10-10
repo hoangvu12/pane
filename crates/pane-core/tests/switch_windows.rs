@@ -32,6 +32,7 @@ use std::sync::{Arc, Mutex};
 use futures::executor::block_on;
 use pane_core::applications::{Catalog, Key, Source};
 use pane_core::switch_windows::{Facts, SwitchWindows, Window, WindowsError, window as record};
+use pane_core::system_icons::{SystemIcon, SystemIcons};
 use pane_core::{Launcher, Runtime, Screen, Status};
 use tempfile::TempDir;
 
@@ -83,6 +84,43 @@ fn listed(
         elsewhere,
         elevated,
     }
+}
+
+/// The host's icon extraction, stood in for: it answers a small PNG for
+/// a path that exists and for a Windows `shell:` name — the system's to
+/// find, as Windows' own extraction reads it — recording the paths it
+/// was asked for, which are what the windows' records named (#263).
+#[derive(Clone, Default)]
+struct FakeIcons {
+    asked: Arc<Mutex<Vec<String>>>,
+}
+
+impl FakeIcons {
+    /// The paths it was asked for, in order.
+    fn asked(&self) -> Vec<String> {
+        self.asked.lock().unwrap().clone()
+    }
+}
+
+impl SystemIcons for FakeIcons {
+    fn icon(&self, path: &Path) -> Result<SystemIcon, String> {
+        self.asked.lock().unwrap().push(path.display().to_string());
+        let shell = path
+            .to_string_lossy()
+            .get(..6)
+            .is_some_and(|scheme| scheme.eq_ignore_ascii_case("shell:"));
+        if shell || path.exists() {
+            Ok(SystemIcon::Png(small_png()))
+        } else {
+            Err(format!("{} does not exist", path.display()))
+        }
+    }
+}
+
+/// A small PNG, as the system's icon extraction answers.
+fn small_png() -> Vec<u8> {
+    let pixels = vec![48, 164, 108, 255].repeat(64);
+    pane_core::icons::encode_png(8, 8, &pixels).expect("a PNG")
 }
 
 /// A fake of the open windows for the tests (#263): it answers the
@@ -398,11 +436,12 @@ fn copy(name: &str, folder: &Path) -> PathBuf {
 }
 
 /// One test's Pane: its folders, the fake of the windows its commands
-/// reach, and the launcher.
+/// reach, the stand-in for the host's icon extraction, and the launcher.
 struct Pane {
     _sources: TempDir,
     _data: TempDir,
     fake: FakeWindows,
+    icons: FakeIcons,
     launcher: Launcher,
 }
 
@@ -411,9 +450,11 @@ impl Pane {
         let sources = tempfile::tempdir().unwrap();
         let data = tempfile::tempdir().unwrap();
         let fake = FakeWindows::default();
+        let icons = FakeIcons::default();
         let launcher =
             Launcher::with_packages(Runtime::start(), vec![], data.path().join("extensions"))
-                .with_switch_windows(Arc::new(fake.clone()));
+                .with_switch_windows(Arc::new(fake.clone()))
+                .with_system_icons(Arc::new(icons.clone()));
         let folder = copy(sample.package, &sources.path().join(sample.package));
         block_on(launcher.install_package(&folder));
         assert_eq!(
@@ -424,6 +465,7 @@ impl Pane {
             _sources: sources,
             _data: data,
             fake,
+            icons,
             launcher,
         }
     }
@@ -513,34 +555,45 @@ fn the_windows_are_listed_with_their_applications_and_icons(sample: &Sample) {
         "{}",
         sample.title
     );
-    // Each row's icon is what its window's record named: a shell name
-    // keeps the icon it is, a program's path is drawn where the file
-    // is (Windows only, for a Windows path), and a window whose record
-    // knows no icon shows the fallback.
+    // Each row's icon is what its window's record named: the host's icon
+    // extraction is asked for the record's path or `shell:` name — a
+    // program's path where the file is (Windows only, for a Windows
+    // path), a shell name on every system, as Windows' own extraction
+    // reads it, and nothing for a window whose record knows no icon —
+    // and the rows that named one draw the image it answered, the one
+    // that named none shows the row's own fallback.
+    assert!(
+        pane.launcher
+            .wait_for_icons(std::time::Duration::from_secs(30)),
+        "{}: the icons kept loading",
+        sample.title
+    );
     let presentation = pane.launcher.presentation();
-    let icons: Vec<Option<String>> = presentation
+    let drawn: Vec<bool> = presentation
         .rows
         .iter()
         .map(|row| {
-            row.icon.as_ref().and_then(|icon| match &icon.source {
-                pane_core::IconSource::File(path) => Some(path.display().to_string()),
-                _ => None,
-            })
+            row.icon
+                .as_ref()
+                .is_some_and(|icon| matches!(icon.source, pane_core::IconSource::Image { .. }))
         })
         .collect();
-    let notepad = if cfg!(windows) {
-        Some(r"C:\Windows\System32\notepad.exe".to_owned())
-    } else {
-        None
-    };
     assert_eq!(
-        icons,
-        [
-            notepad,
-            Some(r"shell:AppsFolder\Chrome.PWA_abc".to_owned()),
-            None
-        ],
-        "{}",
+        drawn,
+        [cfg!(windows), true, false],
+        "{}: the rows draw the icons their records named",
+        sample.title
+    );
+    let mut asked = pane.icons.asked();
+    asked.sort();
+    let mut expected = vec![r"shell:AppsFolder\Chrome.PWA_abc".to_owned()];
+    if cfg!(windows) {
+        expected.push(r"C:\Windows\System32\notepad.exe".to_owned());
+    }
+    expected.sort();
+    assert_eq!(
+        asked, expected,
+        "{}: the extraction was asked for what the records named",
         sample.title
     );
 }

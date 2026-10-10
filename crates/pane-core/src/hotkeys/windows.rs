@@ -1411,11 +1411,14 @@ fn pane_in_front() -> bool {
     if front.is_invalid() {
         return false;
     }
-    // SAFETY: a window handle; the process id is not wanted.
-    let process = unsafe { GetWindowThreadProcessId(front, None) };
+    let mut process = 0;
+    // SAFETY: a window handle; the window's process id is written to it.
+    // The call's answer is the thread that made the window, not the
+    // process — the id the comparison needs is the one written.
+    let thread = unsafe { GetWindowThreadProcessId(front, Some(&mut process)) };
     // SAFETY: no arguments; it reads this process's own id.
     let ours = unsafe { GetCurrentProcessId() };
-    process != 0 && process == ours
+    thread != 0 && process == ours
 }
 
 /// The adapter's thread, to post the presses to; `None` if the hook

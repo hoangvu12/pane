@@ -2197,9 +2197,10 @@ fn reduced_motion_settles_disclosures_at_once(cx: &mut TestAppContext) {
 fn a_hotkey_cell_records_the_kinds_a_session_reports(cx: &mut TestAppContext) {
     let data = tempfile::tempdir().unwrap();
     let query = query_package(&data.path().join("sources").join("query"));
-    let (window, settings, hotkeys, cx) = open_hooking(cx, &data, &[&query]);
+    let hello = hello_package(&data.path().join("sources").join("hello"));
+    let (window, settings, hotkeys, cx) = open_hooking(cx, &data, &[&query, &hello]);
     let mut settings_cx = record_hotkey(&settings, cx, &command_id(&query));
-    let echo_id = command_id(&query);
+    let (echo_id, hello_id) = (command_id(&query), command_id(&hello));
 
     // The cell's recorder asked the adapter for a session (#260): the
     // fake hands one whose reports the test feeds as the user's presses —
@@ -2225,14 +2226,25 @@ fn a_hotkey_cell_records_the_kinds_a_session_reports(cx: &mut TestAppContext) {
     );
     assert!(hotkeys.registered.lock().unwrap().contains(&right_ctrl));
     assert!(hotkeys_record(&data).contains("\"tap:rctrl\""));
-    // The recorded binding opens the command, as a chord's does.
+    // The recorded binding opens the command, as a chord's does: Echo is
+    // a no-view command, so the hotkey runs it without opening a view,
+    // and its toast says what it was sent — nothing, for a hotkey's
+    // press.
     press(&window, &right_ctrl, cx);
-    let view = settle(&window, cx);
-    assert_eq!(view.title, "Echo");
+    assert_eq!(
+        settle_shown(&window, cx),
+        Status::Result(
+            "Echo heard nothing: give it an alias or make it a fallback in Settings, then send \
+             it text from root search"
+                .into()
+        )
+    );
 
-    // A double tap records the same way ("Ctrl Ctrl"), and a single and a
-    // double tap of the same modifier are refused together, as they are
-    // through the hotkey screen.
+    // A double tap records the same way ("Ctrl Ctrl"), replacing the
+    // binding the cell held. A single and a double tap of the same
+    // modifier are refused together, as they are through the hotkey
+    // screen: the same command's own double tap refuses another
+    // command's single tap of that modifier.
     let mut settings_cx = record_hotkey(&settings, cx, &echo_id);
     let reported = hotkeys.reporters.lock().unwrap().clone();
     reported[1].send(Shortcut::parse("double:ctrl").unwrap());
@@ -2242,7 +2254,7 @@ fn a_hotkey_cell_records_the_kinds_a_session_reports(cx: &mut TestAppContext) {
         label.as_deref(),
         Some(format!("Hotkey for Echo: {ctrl} {ctrl}").as_str())
     );
-    let mut settings_cx = record_hotkey(&settings, cx, &echo_id);
+    let mut settings_cx = record_hotkey(&settings, cx, &hello_id);
     let reported = hotkeys.reporters.lock().unwrap().clone();
     reported[2].send(Shortcut::parse("tap:ctrl").unwrap());
     settings_cx.run_until_parked();
@@ -2256,12 +2268,14 @@ fn a_hotkey_cell_records_the_kinds_a_session_reports(cx: &mut TestAppContext) {
         "a single and a double tap of the same modifier refuse each other: {tree}"
     );
 
-    // Escape still cancels the cell's recorder, session and all.
+    // Escape still cancels the cell's recorder, session and all: Hello's
+    // cell rests with no hotkey, and Echo keeps its double tap.
     settings_cx.simulate_keystrokes("escape");
     settings_cx.run_until_parked();
-    let (label, _) = accessibility(&mut settings_cx);
-    assert_eq!(
-        label.as_deref(),
-        Some(format!("Hotkey for Echo: {ctrl} {ctrl}").as_str())
+    let (label, tree) = accessibility(&mut settings_cx);
+    assert_eq!(label.as_deref(), Some("Hotkey for Say hello: none"));
+    assert!(
+        tree.contains(&format!("Hotkey for Echo: {ctrl} {ctrl}")),
+        "the refusal changed nothing: {tree}"
     );
 }

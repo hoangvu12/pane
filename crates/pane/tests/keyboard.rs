@@ -1603,6 +1603,8 @@ fn the_keyboard_page_says_the_hook_s_state_and_the_rows_say_their_route(cx: &mut
     // Settings opens on the General page, where the Open Pane row says
     // its dispatch route, with the elevated-application limit that comes
     // with a hook-dispatched binding.
+    cx.simulate_keystrokes(settings_shortcut());
+    cx.run_until_parked();
     let (_settings, mut settings_cx) = open_settings(cx);
     settings_cx.simulate_resize(gpui::size(gpui::px(860.), gpui::px(1000.)));
     settings_cx.run_until_parked();
@@ -1617,9 +1619,11 @@ fn the_keyboard_page_says_the_hook_s_state_and_the_rows_say_their_route(cx: &mut
     );
     assert!(tree.contains("elevated application"), "{tree}");
 
-    // The Keyboard page holds the hook's health under its actions: that
-    // it is installed, how many times Windows removed it and Pane
-    // installed it again, and that its pages are pinned (#259).
+    // The Keyboard page holds the hook's health under its actions (#259):
+    // that it is installed, how many times Windows removed it and Pane
+    // installed it again, and that its pages are pinned. The row is not a
+    // control — it takes no focus and no click — so it is read through its
+    // note, the status line assistive technology sees.
     click(&mut settings_cx, "section-Keyboard");
     settings_cx.run_until_parked();
     assert!(
@@ -1627,7 +1631,6 @@ fn the_keyboard_page_says_the_hook_s_state_and_the_rows_say_their_route(cx: &mut
         "the hook's row is drawn"
     );
     let tree = a11y(&mut settings_cx);
-    assert!(tree.contains("Pane's keyboard hook"), "{tree}");
     assert!(
         tree.contains("Installed, its pages are pinned in memory"),
         "{tree}"

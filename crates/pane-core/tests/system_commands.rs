@@ -1379,8 +1379,9 @@ mod extension {
             }
             assert!(
                 started.elapsed() < PROMPTLY,
-                "no confirmation was asked: {:?}",
-                launcher.view()
+                "no confirmation was asked: {:?} (toast {:?})",
+                launcher.view(),
+                launcher.toast()
             );
             thread::sleep(std::time::Duration::from_millis(5));
         }
@@ -1452,11 +1453,7 @@ mod extension {
         // Its page in Settings lists its commands, and the extension's
         // switch is its own.
         manage(&pane.launcher);
-        assert!(
-            titles(&pane.launcher).contains(&"Reload System Commands".to_owned()),
-            "{:?}",
-            titles(&pane.launcher)
-        );
+        assert!(titles(&pane.launcher).contains(&"Clear cache of System Commands".to_owned()));
         assert!(titles(&pane.launcher).contains(&"Uninstall System Commands".to_owned()));
         for title in [
             "Hotkey for Lock Screen",
@@ -1747,6 +1744,11 @@ mod extension {
         pane.launcher
             .answer_confirmation(confirmation.id, ConfirmAnswer::Confirmed, true);
         running.ended();
+        assert_eq!(
+            pane.huds(),
+            [hud("Emptied the Recycle Bin", ToastStyle::Success)]
+        );
+        assert_eq!(pane.commands.take(), [Done::EmptiedBin]);
         assert!(
             pane.launcher
                 .remembered_confirmations(&pane.identity)
@@ -1838,6 +1840,12 @@ mod extension {
             pane.launcher
                 .answer_confirmation(confirmation.id, ConfirmAnswer::Confirmed, true);
             running.ended();
+            assert_eq!(
+                pane.huds(),
+                [hud(done_text, ToastStyle::Success)],
+                "{command}"
+            );
+            assert_eq!(pane.commands.take(), [done.clone()], "{command}");
             assert!(
                 pane.launcher
                     .remembered_confirmations(&pane.identity)

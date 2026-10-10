@@ -191,15 +191,17 @@ mod x11 {
 mod windows {
     use super::*;
     use ::windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
+    use ::windows::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
     use ::windows::Win32::UI::Input::KeyboardAndMouse::{
-        INPUT, INPUT_KEYBOARD, KEYBD_EVENT_FLAGS, KEYBDINPUT, KEYEVENTF_KEYUP, MOD_ALT,
-        MOD_CONTROL, MOD_NOREPEAT, MOD_SHIFT, RegisterHotKey, SendInput, VIRTUAL_KEY, VK_ESCAPE,
-        VK_NONAME,
+        INPUT, INPUT_KEYBOARD, KEYBD_EVENT_FLAGS, KEYBDINPUT, KEYEVENTF_EXTENDEDKEY,
+        KEYEVENTF_KEYUP, MOD_ALT, MOD_CONTROL, MOD_NOREPEAT, MOD_SHIFT, RegisterHotKey, SendInput,
+        VIRTUAL_KEY, VK_ESCAPE, VK_NONAME,
     };
     use ::windows::Win32::UI::WindowsAndMessaging::{
-        CallNextHookEx, DefWindowProcW, DispatchMessageW, GetForegroundWindow, HHOOK,
-        KBDLLHOOKSTRUCT, LLKHF_UP, MSG, PM_REMOVE, PeekMessageW, PostMessageW, SetForegroundWindow,
-        SetWindowsHookExW, UnhookWindowsHookEx, WH_KEYBOARD_LL, WM_INPUT,
+        CallNextHookEx, DefWindowProcW, DispatchMessageW, GetForegroundWindow,
+        GetWindowThreadProcessId, HHOOK, KBDLLHOOKSTRUCT, LLKHF_UP, MSG, PM_REMOVE, PeekMessageW,
+        PostMessageW, SetForegroundWindow, SetWindowsHookExW, UnhookWindowsHookEx, WH_KEYBOARD_LL,
+        WM_INPUT,
     };
     use pane_core::hotkeys::{HookHealth, INJECTED_TAG, Presses, Route, WindowsHotkeys};
     use std::sync::{Arc, Mutex};
@@ -210,6 +212,23 @@ mod windows {
     /// key alone, the modifier of a double tap, one side's Ctrl).
     fn inject_one(key: u32, up: bool, tag: usize) {
         let events = [key_event(key, up, tag)];
+        // SAFETY: the events are this slice's, the one of them.
+        let sent = unsafe { SendInput(&events, size_of::<INPUT>() as i32) };
+        assert_eq!(sent as usize, events.len(), "SendInput injected the key");
+    }
+
+    /// Sends one right-hand key event with `SendInput`, tagged `tag`, as
+    /// a tool that injects input does: the extended flag is what tells
+    /// the low-level hook the key is the right-hand one — the vk code
+    /// alone is read as the modifier's left key.
+    fn inject_right(key: u32, up: bool, tag: usize) {
+        let mut event = key_event(key, up, tag);
+        // SAFETY: the union's keyboard arm is the one `key_event` fully
+        // initialized.
+        unsafe {
+            event.Anonymous.ki.dwFlags |= KEYEVENTF_EXTENDEDKEY;
+        }
+        let events = [event];
         // SAFETY: the events are this slice's, the one of them.
         let sent = unsafe { SendInput(&events, size_of::<INPUT>() as i32) };
         assert_eq!(sent as usize, events.len(), "SendInput injected the key");
@@ -657,17 +676,41 @@ mod windows {
         unsafe { DefWindowProcW(window, message, wparam, lparam) }
     }
 
-    /// Brings `window` — one the test owns — to the front.
+    /// Brings `window` — one the test owns — to the front, as the paste
+    /// and `real_input.rs` do: the plain call, then attaching to the
+    /// foreground thread's input and trying again.
     fn take_front(window: HWND) {
         // SAFETY: a window handle.
         let _ = unsafe { SetForegroundWindow(window) };
+        if front_is(window) {
+            return;
+        }
+        // SAFETY: no arguments.
+        let current = unsafe { GetForegroundWindow() };
+        if !current.is_invalid() {
+            // SAFETY: a window handle; the process id is not wanted.
+            let theirs = unsafe { GetWindowThreadProcessId(current, None) };
+            // SAFETY: no arguments.
+            let ours = unsafe { GetCurrentThreadId() };
+            if theirs != 0 && theirs != ours {
+                // SAFETY: plain thread ids, paired with the detach below.
+                let _ = unsafe { AttachThreadInput(ours, theirs, true) };
+                // SAFETY: a window handle.
+                let _ = unsafe { SetForegroundWindow(window) };
+                // SAFETY: paired with the attach above.
+                let _ = unsafe { AttachThreadInput(ours, theirs, false) };
+            }
+        }
         assert!(
-            pumped_within(5, || {
-                // SAFETY: no arguments.
-                (unsafe { GetForegroundWindow() }) == window
-            }),
+            pumped_within(5, || front_is(window)),
             "the test's window did not come to the front"
         );
+    }
+
+    /// Whether `window` is the window in front.
+    fn front_is(window: HWND) -> bool {
+        // SAFETY: no arguments.
+        (unsafe { GetForegroundWindow() }) == window
     }
 
     #[test]
@@ -751,25 +794,28 @@ mod windows {
 
         // A side-specific chord — Right Ctrl with Alt and Shift and F13,
         // none of which a registration can express together; the left
-        // Ctrl's press does not complete it.
+        // Ctrl's press does not complete it. The chord is injected as the
+        // tools that inject input send it: the generic modifier codes
+        // (VK_MENU for Alt, VK_SHIFT), the right Ctrl by its own code
+        // (VK_RCONTROL).
         let chord = Shortcut::parse("rctrl+alt+shift+f13").unwrap();
         pane.register(&chord).expect("the hook takes the chord");
         assert_eq!(pane.route(&chord), Route::Hook);
         inject_one(0xA2, false, TEST_TAG);
-        inject_one(0x11, false, TEST_TAG);
+        inject_one(0x12, false, TEST_TAG);
         inject_one(0x10, false, TEST_TAG);
         inject_one(0x7C, false, TEST_TAG);
         inject_one(0x7C, true, TEST_TAG);
         inject_one(0x10, true, TEST_TAG);
-        inject_one(0x11, true, TEST_TAG);
+        inject_one(0x12, true, TEST_TAG);
         inject_one(0xA2, true, TEST_TAG);
         assert_eq!(
             press_within(&mut presses, 2),
             None,
             "the left Ctrl does not complete a right-Ctrl chord"
         );
-        inject_one(0xA3, false, TEST_TAG);
-        inject_one(0x11, false, TEST_TAG);
+        inject_right(0xA3, false, TEST_TAG);
+        inject_one(0x12, false, TEST_TAG);
         inject_one(0x10, false, TEST_TAG);
         inject_one(0x7C, false, TEST_TAG);
         assert_eq!(
@@ -856,7 +902,8 @@ mod windows {
         inject_one(0x5B, true, TEST_TAG);
         assert!(
             pumped_within(5, || session.try_next().is_some()),
-            "the session reports the tap"
+            "the session reports the tap; the hook below saw {:?}",
+            below.seen()
         );
         let seen = below.seen();
         assert!(
