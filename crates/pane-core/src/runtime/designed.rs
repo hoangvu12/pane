@@ -825,7 +825,7 @@ pub struct TextInput {
 /// the note under it, the error the extension's last answer set, and
 /// whether its last submitted value is kept as the package's settings and
 /// prefilled the next time the field appears.
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct FieldProps {
     /// The field's title, drawn over its control; also names it to
     /// assistive technology when the field's own label does not.
@@ -1495,6 +1495,7 @@ fn kind_name(kind: &NodeKind) -> String {
         NodeKind::TextInput(_) => "text-input".to_owned(),
         NodeKind::PasswordInput(_) => "password-input".to_owned(),
         NodeKind::TextArea(_) => "text-area".to_owned(),
+        NodeKind::Select(_) => "select".to_owned(),
         NodeKind::List(_) => "list".to_owned(),
         NodeKind::Grid(_) => "grid".to_owned(),
         NodeKind::ListSection(_) => "list-section".to_owned(),
