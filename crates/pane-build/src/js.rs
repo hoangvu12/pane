@@ -870,16 +870,16 @@ mod tests {
     #[test]
     fn a_componentizer_folder_names_its_parts() {
         let dir = tempfile::tempdir().unwrap();
-        let error = componentizer_parts(dir.path()).unwrap_err();
-        assert!(
-            error.contains(&format!("has no {}, runtime.wasm, libc.so", COMPONENTIZER)),
-            "{error}"
-        );
         let binary = if cfg!(windows) {
             format!("{COMPONENTIZER}.exe")
         } else {
             COMPONENTIZER.to_owned()
         };
+        let error = componentizer_parts(dir.path()).unwrap_err();
+        assert!(
+            error.contains(&format!("has no {binary}, runtime.wasm, libc.so")),
+            "{error}"
+        );
         for file in [binary.as_str(), "runtime.wasm", "libc.so"] {
             std::fs::write(dir.path().join(file), b"part").unwrap();
         }

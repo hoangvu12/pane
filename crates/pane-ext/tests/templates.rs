@@ -164,6 +164,13 @@ fn build(folder: &Path) {
     let build = toolchains.build_for(folder).unwrap();
     let staging = tempfile::tempdir().unwrap();
     fs::copy(folder.join("pane.json"), staging.path().join("pane.json")).unwrap();
+    // The icon the manifest names, so the staged folder reads as the
+    // package it is (the samples' manifests name no icon, which is why
+    // the develop tests never copy one).
+    let icon = folder.join("icon.png");
+    if icon.is_file() {
+        fs::copy(&icon, staging.path().join("icon.png")).unwrap();
+    }
     let job = BuildJob::new(staging.path().to_path_buf());
     let outcome = build.run(&job);
     assert_eq!(outcome, BuildOutcome::Built, "{:#?}", job.output());

@@ -247,8 +247,7 @@ fn the_package_is_the_list_template_as_pane_ext_new_writes_it() {
     for file in [
         "src/index.ts",
         "tsconfig.json",
-        "eslint.config.js",
-        ".prettierrc.json",
+        "biome.json",
         ".gitignore",
     ] {
         let scaffolded = fs::read_to_string(folder.join(file)).unwrap();
@@ -261,7 +260,7 @@ fn the_package_is_the_list_template_as_pane_ext_new_writes_it() {
 fn its_ci_builds_checks_and_installs_the_package() {
     // The workflow's push job, on a scratch copy: `npm run pack` builds
     // the components and checks what users will download, `npm run check`
-    // adds the package's own eslint, and the package Pane would install is
+    // runs the package's own checks, and the package Pane would install is
     // the one an author's push leaves.
     let folder = prepared("check");
     let (passed, printed) = pane_ext(&["pack", folder.to_str().unwrap()]);

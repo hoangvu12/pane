@@ -319,7 +319,7 @@ pub fn add_command(folder: &Path, command: &NewCommand, kind: Kind) -> Result<()
         Language::Rust => format!("mod {};", module_name(&command.id)),
         Language::TypeScript => format!("import * as {identifier} from \"./{}\";", command.id),
     };
-    let mut source = insert_after_marker(&source, module_marker(), &module)?;
+    let mut source = insert_after_marker(&source, module_marker(language), &module)?;
     // The arms the kind's dispatches get: a view command's in `render`, a
     // form's in `submit_form` too, a no-view's in `run`.
     if kind != Kind::NoView {
@@ -466,9 +466,14 @@ fn form_arm(language: Language, id: &str, identifier: &str) -> String {
     }
 }
 
-/// Where `add_command` adds the command's module or import.
-fn module_marker() -> &'static str {
-    "pane-ext new command adds a command's module here."
+/// Where `add_command` adds the command's module or import: each language's
+/// entry file carries its own wording of the marker, as its templates write
+/// it.
+fn module_marker(language: Language) -> &'static str {
+    match language {
+        Language::Rust => "pane-ext new command adds a command's module here.",
+        Language::TypeScript => "pane-ext new command adds a command's file here.",
+    }
 }
 
 /// Where it adds a view command's arm.
@@ -666,12 +671,8 @@ fn shared(language: Language) -> &'static [(&'static str, &'static str)] {
                 include_str!("../templates/typescript/.gitignore"),
             ),
             (
-                ".prettierrc.json",
-                include_str!("../templates/typescript/.prettierrc.json"),
-            ),
-            (
-                "eslint.config.js",
-                include_str!("../templates/typescript/eslint.config.js"),
+                "biome.json",
+                include_str!("../templates/typescript/biome.json"),
             ),
             (
                 "tsconfig.json",
@@ -765,9 +766,8 @@ mod tests {
             ],
             Language::TypeScript => &[
                 ".gitignore",
-                ".prettierrc.json",
                 "README.md",
-                "eslint.config.js",
+                "biome.json",
                 "icon.png",
                 "package.json",
                 "pane.json",

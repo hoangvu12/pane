@@ -411,7 +411,12 @@ fn a_typescript_package_with_pane_cli_installed_builds_with_its_componentizer() 
         Err(error) => error,
     };
     assert!(error.contains("npm install"), "{error}");
-    assert!(error.contains("node_modules/@pane-app/cli-"), "{error}");
+    let cli_folder = if cfg!(windows) {
+        "node_modules\\@pane-app\\cli-"
+    } else {
+        "node_modules/@pane-app/cli-"
+    };
+    assert!(error.contains(cli_folder), "{error}");
 }
 
 #[test]

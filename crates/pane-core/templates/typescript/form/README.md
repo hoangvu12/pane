@@ -25,10 +25,10 @@ and reloads the command while it keeps running.
   own copies (`"file:../guests/js"`) until they are published.
 - `tsconfig.json` — the type checker's settings, as Pane's own
   TypeScript samples set them.
-- `eslint.config.js` — the linter's settings, which `npm run check` runs
-  through the package's own eslint.
-- `.prettierrc.json` — the formatter's settings; `npx prettier -w .`
-  formats the sources.
+- `biome.json` — the linter's and the formatter's settings;
+  `npx biome check .` lints, `npx biome format --write .` formats. Biome
+  needs no peer of TypeScript's, so it installs beside the version the
+  build pins.
 - `icon.png` — the package's placeholder icon, 512×512; replace it with
   your own.
 - `.gitignore` — keeps `node_modules/` and `dist/`, the build's output,

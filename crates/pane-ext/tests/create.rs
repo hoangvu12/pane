@@ -130,9 +130,9 @@ fn the_create_package_packs_and_its_bin_scaffolds_a_project() {
         vec![
             "package/LICENSE-APACHE".to_owned(),
             "package/LICENSE-MIT".to_owned(),
-            "package/README.md".to_owned(),
             "package/create.js".to_owned(),
             "package/package.json".to_owned(),
+            "package/README.md".to_owned(),
         ]
     );
     // Where npm install puts the published package, with the pane-ext

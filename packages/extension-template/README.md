@@ -28,9 +28,10 @@ while it keeps running.
   ([`@pane-app/extension`], types and runtime), the tool ([`@pane-app/cli`],
   whose `pane-ext` the scripts run), and the build's esbuild and TypeScript,
   the linter and the formatter.
-- `tsconfig.json`, `eslint.config.js`, `.prettierrc.json` — the
-  type-checker's, linter's and formatter's settings; `npx prettier -w .`
-  formats the sources.
+- `tsconfig.json`, `biome.json` — the type-checker's and the
+  linter's-and-formatter's settings; `npx biome format --write .` formats
+  the sources (biome needs no peer of TypeScript's, so it installs beside
+  the version the build pins).
 - `icon.png` — the package's placeholder icon, 512×512 (a published
   extension's icon size); replace it with your own.
 - `AGENTS.md` — what an AI asked to write the extension should read first.
@@ -58,8 +59,7 @@ the running Pane (starting one if none is running), then builds it again
 after each save and has Pane reload it, until Ctrl+C.
 
 `npm run check` reports what Pane would refuse at install — with Pane's own
-messages — plus the package's own eslint, so a broken release fails in CI
-before it is made. `npm run pack` builds the release components and checks
+messages — so a broken release fails in CI before it is made. `npm run pack` builds the release components and checks
 what the package's users will download.
 
 ## Releasing

@@ -58,7 +58,9 @@ impl Command for __STRUCT__ {
     async fn run(command: String, _launch: pane_extension::LaunchRecord) -> Result<(), String> {
         match command.as_str() {
             // pane-ext new command adds a no-view command's arm here.
-            other => Err(format!("`{other}` opens a screen; it has no run entry point")),
+            other => Err(format!(
+                "`{other}` opens a screen; it has no run entry point"
+            )),
         }
     }
 

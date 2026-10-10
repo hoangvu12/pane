@@ -51,7 +51,7 @@ and Pane installs nothing.
   reloads it on each save, until Ctrl+C. Its errors are the build's own
   (tsc, esbuild), shown in the terminal.
 - `npm run check` — everything Pane would refuse at install, with Pane's
-  own messages, plus this package's eslint.
+  own messages.
 - `npm run pack` — build the release components into `dist/` and check
   what users will download.
 - `npx pane-ext new command . --template <kind>` — add a command to the

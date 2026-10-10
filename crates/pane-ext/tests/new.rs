@@ -186,7 +186,14 @@ fn new_command_adds_a_command_to_a_package_pane_ext_wrote() {
 #[test]
 fn new_command_refuses_a_folder_that_is_no_package() {
     let folder = tempfile::tempdir().unwrap();
-    let (passed, printed) = new(&["command", folder.path().to_str().unwrap()]);
+    let (passed, printed) = new(&[
+        "command",
+        folder.path().to_str().unwrap(),
+        "--id",
+        "note",
+        "--title",
+        "Note",
+    ]);
     assert!(!passed, "{printed}");
     assert!(printed.contains("is not a package"), "{printed}");
 

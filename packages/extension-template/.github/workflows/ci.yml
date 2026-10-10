@@ -7,7 +7,7 @@ name: CI
 # `npm install`, then `npm run pack`, which builds the release components
 # into `dist/` with the same build Pane's development mode uses and checks
 # everything Pane would refuse the package for at install, and `npm run
-# check`, which adds the package's own eslint. A push that breaks the
+# check`. A push that breaks the
 # package fails here, before anything is released.
 #
 # **Release.** A tag is what users install (`git:<repository>@v0.1.0` pins

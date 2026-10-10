@@ -346,12 +346,12 @@ mod tests {
     fn a_package_is_written_from_what_the_terminal_answers() {
         let folder = tempfile::tempdir().unwrap();
         let arguments = arguments(Some(folder.path().join("notes")));
-        // The language, then the template, then the title (only when the
-        // folder leaves none to name the package by).
-        let mut input = Cursor::new("rust\nform\nWord Count\n");
+        // The language, then the template; the folder already names the
+        // package, so no title is asked.
+        let mut input = Cursor::new("rust\nform\n");
         let next = package(&arguments, &mut input, true).unwrap();
         assert!(
-            next.contains("wrote Word Count (the form template, in Rust) into"),
+            next.contains("wrote Notes (the form template, in Rust) into"),
             "{next}"
         );
         assert!(folder.path().join("notes/Cargo.toml").is_file());
