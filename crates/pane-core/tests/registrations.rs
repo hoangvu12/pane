@@ -316,9 +316,9 @@ fn a_dynamic_root_item_appears_updates_and_disappears_in_root_search() {
         {
             assert!(
                 began.elapsed() < PROMPTLY,
-                "the dynamic root item's row: undo list {:?}, rows {:?}, status {:?}",
+                "the dynamic root item's row: undo list {:?}, log {:?}, status {:?}",
                 launcher.undo_list(&identity),
-                launcher.view().rows,
+                launcher.extension_log(&identity),
                 launcher.view().status
             );
             thread::sleep(Duration::from_millis(20));
