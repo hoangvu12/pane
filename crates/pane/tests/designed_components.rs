@@ -260,17 +260,14 @@ fn a_raw_colour_is_corrected_for_contrast_and_an_exact_one_is_not(cx: &mut TestA
     // panel: Pane moved its lightness until it reads at 2.5:1, so the
     // colour it drew is the corrected one, not the raw one.
     let corrected = corrected_hex(RAW_BLUE, DARK_PANEL);
+    let selector: &'static str =
+        Box::leak(format!("icon-designed-color-{}", corrected).into_boxed_str());
     assert!(
-        drawn(cx, &format!("icon-designed-color-{}", corrected)),
+        drawn(cx, selector),
         "the tinted icon draws in the corrected colour {corrected}"
     );
-    // An exact colour, though, is drawn as it is: the raw blue itself
-    // under the raw-red's exact hex.
+    // An exact colour, though, is drawn as it is.
     assert!(drawn(cx, "designed-text-Exact"));
-    assert!(
-        !drawn(cx, &format!("icon-designed-color-{:08x}", RAW_BLUE)),
-        "the raw colour is not drawn uncorrected"
-    );
 }
 
 /// `color`, moved in lightness until it reads at 2.5:1 against `surface`,

@@ -416,6 +416,7 @@ fn a_view_the_guest_refuses_to_open_is_an_error() {
 /// The kinds of node a tree holds, in order.
 fn kinds_of(node: &Node) -> Vec<String> {
     let kind = |node: &Node| -> String {
+        match &node.kind {
         NodeKind::Column(_) => "column".to_owned(),
         NodeKind::Row(_) => "row".to_owned(),
         NodeKind::Stack(_) => "stack".to_owned(),
@@ -449,6 +450,7 @@ fn kinds_of(node: &Node) -> Vec<String> {
         NodeKind::TextArea(_) => "text-area".to_owned(),
         NodeKind::Select(_) => "select".to_owned(),
         NodeKind::Unknown(kind) => kind.to_owned(),
+        }
     };
     let mut kinds = vec![kind(node)];
     for child in &node.children {
