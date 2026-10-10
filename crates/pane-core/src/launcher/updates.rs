@@ -4,7 +4,11 @@
 //! newer commit of the tracked branch it was installed from, and of one
 //! extension of a collection installed from its own release tag with the
 //! commit of its newest release above the version installed (ADR 0044) —
-//! all without the user asking (US72–US75, T15).
+//! where the newer revision's index renamed the extension's id, the
+//! update follows it to the current id's files keeping the installed
+//! identity, and where it no longer offers the id it is reported as a
+//! notice, the installed copy left running (#310) — all without the
+//! user asking (US72–US75, T15).
 //!
 //! The updater is a thread of Pane's own, shaped like the scheduler's and
 //! the services thread's, driven by the launcher's clock: it checks a
@@ -56,7 +60,10 @@
 //! why, a check or an update that fails is recorded as failed — and a
 //! failure is announced once, the next time the launcher is shown —
 //! while a successful update is quiet, its outcome the record itself,
-//! which the results screen shows. The status-line messages a single
+//! which the results screen shows. An extension of a collection whose
+//! newer revision's index no longer offers its id is reported as a
+//! notice (ADR 0044, #310), and its installed copy keeps running. The
+//! status-line messages a single
 //! background update once set are replaced by that. An update staged
 //! whose package is in use waits, listed in the record as waiting until
 //! the package is not in use.
@@ -814,8 +821,10 @@ impl Updates {
     /// installed. A newer tag's commit is fetched, checked as an install
     /// checks a package — read through the collection's index, so an
     /// extension whose folder moved within it still updates, and one
-    /// whose id the newer index no longer lists fails, keeping its
-    /// installed code — and staged pinned to that tag's commit.
+    /// whose id the newer index renamed follows the `renamed` map to the
+    /// current id's files keeping its identity, while one the index no
+    /// longer offers is reported as a notice, keeping its installed
+    /// code (#310) — and staged pinned to that tag's commit.
     fn check_extension_release(
         &self,
         launcher: &Launcher,
@@ -1036,6 +1045,15 @@ impl Updates {
                             &format!("{reason}{}", application_update_note(launcher)),
                         );
                     }
+                    // One extension of a collection whose newer revision's
+                    // index no longer offers its id — renamed to `null`,
+                    // or named by no entry at all (ADR 0044, #310): a
+                    // notice, not a fault. There is nothing to retry, and
+                    // the installed copy keeps running; Pane never
+                    // uninstalls one silently.
+                    PackageError::RemovedExtension(_) => {
+                        pass.removed(installed.identity.clone(), title);
+                    }
                     PackageError::UnsupportedPlatform(_) => {
                         pass.refused(installed.identity.clone(), title, &reason.to_string());
                     }
@@ -1049,6 +1067,19 @@ impl Updates {
                 }
                 return None;
             }
+        };
+        // Where the newer revision's index renamed the extension the
+        // installed copy's id names, the read followed the collection's
+        // `renamed` map to the extension's current id, reading the
+        // current id's folder (ADR 0044, #310). The update replaces the
+        // installed copy — the same package, its identity the id it was
+        // installed with, kept through the rename as a moved folder's is —
+        // so the staged package is installed under the installed
+        // identity.
+        let package = if package.identity.extension_id() != installed.identity.extension_id() {
+            package.keeps_identity_of(&installed.identity)
+        } else {
+            package
         };
         // What the update stages the copy at: the version of an npm
         // package, the revision a Git one fetched, the release a default

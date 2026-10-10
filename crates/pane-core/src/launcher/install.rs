@@ -1006,7 +1006,7 @@ impl Launcher {
                 .collect();
             (state.packages.clone(), paused)
         };
-        let (package, mut plan) = off_thread(move || {
+        let (mut package, mut plan) = off_thread(move || {
             let read = |identity: &PackageIdentity, source: &str| {
                 sources.read_dependency(identity, source)
             };
@@ -1038,6 +1038,18 @@ impl Launcher {
             }
         }
         plan.problems.extend(problems);
+        // What each package the plan installs records of its dependencies:
+        // the identities the plan resolved them to — a source naming an
+        // old id a collection renamed resolves to the extension's current
+        // id (ADR 0044, #310), which the record names so a call through
+        // the dependency reaches the package that installed. Unplanned
+        // (a reload), the source's own text resolves them.
+        let resolved = plan.resolved_dependencies_of(&package.identity);
+        package.planned_dependencies(resolved);
+        for at in 0..plan.install.len() {
+            let resolved = plan.resolved_dependencies_of(&plan.install[at].identity);
+            plan.install[at].planned_dependencies(resolved);
+        }
         (package, plan)
     }
     /// What an install that stopped partway leaves: the message for the

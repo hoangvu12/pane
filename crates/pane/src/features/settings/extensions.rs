@@ -1244,10 +1244,11 @@ fn settings_choice_tick(
 
 /// The update results screen in place of the page (#256): the launcher's
 /// record of the latest pass that recorded, its groups in the order
-/// Updated, Skipped, Failed, the empty ones hidden, each row the
-/// extension's icon, title and outcome, opening that extension's page —
-/// as the screen's own rows do in the launcher window. The way back is
-/// the page's own Back button, as a details screen's is.
+/// Updated, Skipped, No longer offered, Failed, the empty ones hidden,
+/// each row the extension's icon, title and outcome, opening that
+/// extension's page — as the screen's own rows do in the launcher
+/// window. The way back is the page's own Back button, as a details
+/// screen's is.
 fn update_results_screen(
     this: &mut SettingsWindow,
     live: &LauncherView,
@@ -1261,6 +1262,9 @@ fn update_results_screen(
         ("Updated", &results.updated),
         ("Waiting", &results.waiting),
         ("Skipped", &results.skipped),
+        // A notice, not a fault: the extensions of collections the pass
+        // found no longer offered by them (ADR 0044, #310).
+        ("No longer offered", &results.removed),
         ("Failed", &results.failed),
     ] {
         if group.is_empty() {

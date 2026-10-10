@@ -19,6 +19,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::arguments::{self, ManifestArgument};
 use crate::atomic::{Readers, write_atomically};
+use crate::collections::Resolved;
 use crate::defaults::InstalledDefault;
 use crate::git::{GitOrigin, GitRevision, GitSpec, InstalledGit, Repository, shown};
 use crate::helpers::runner;
@@ -295,7 +296,11 @@ impl PackageIdentity {
         };
         if let Ok(identity) = PackageIdentity::local(&folder) {
             return Ok(match extension {
-                Some(id) => local_extension_of(identity, &id),
+                // The id resolves through the collection's `renamed` map
+                // where the folder is one (ADR 0044, #310): an old id
+                // names the extension's current one, which the identity
+                // takes, as a read of the source resolves it.
+                Some(id) => local_extension_of(identity, &resolved_id(&folder, &id)),
                 None => identity,
             });
         }
@@ -366,6 +371,20 @@ fn local_extension_of(of: PackageIdentity, id: &str) -> PackageIdentity {
     PackageIdentity(Source::Local {
         local: format!("{local}#{id}"),
     })
+}
+
+/// The id a `local:` source names for the collection at `folder` (ADR
+/// 0044, #310), resolved through its `renamed` map: an old id names the
+/// extension's current one, which a dependency's identity takes, as a
+/// read of the source resolves it. The id as written where the folder is
+/// no collection, its index cannot be read, or it resolves no such id.
+fn resolved_id(folder: &Path, id: &str) -> String {
+    crate::collections::read(folder)
+        .ok()
+        .flatten()
+        .and_then(|collection| collection.resolve(id))
+        .map(|resolved| resolved.id)
+        .unwrap_or_else(|| id.to_owned())
 }
 
 /// The installed package with `identity` among `packages`.
@@ -1481,6 +1500,14 @@ pub enum PackageError {
     /// A package from Git cannot be fetched, written out or installed; the
     /// message says why.
     Git(String),
+    /// One extension of a collection whose id the revision's index no
+    /// longer offers — renamed to `null` by its `renamed` map, or named
+    /// by no entry at all (ADR 0044, #310); the message says which
+    /// extension and what its collection says of it. An update that reads
+    /// one reports it in its results as a notice, and the installed copy
+    /// keeps running — Pane never uninstalls one silently; an install
+    /// naming the id is refused, as any id a collection does not offer is.
+    RemovedExtension(String),
     /// A collection (ADR 0044) cannot be read, its index is invalid, or the
     /// id the address names is not one of its extensions; the message says
     /// why.
@@ -1548,6 +1575,7 @@ impl fmt::Display for PackageError {
             }
             PackageError::Npm(message)
             | PackageError::Git(message)
+            | PackageError::RemovedExtension(message)
             | PackageError::Collection(message)
             | PackageError::Defaults(message) => f.write_str(message),
         }
@@ -1576,8 +1604,19 @@ pub(crate) struct SourcePackage {
     /// The id of the extension of a collection this package is, when it is
     /// one (ADR 0044): named by `#<id>` in the address or dependency source
     /// it was read from, and recorded beside its Git source fields.
-    /// `None` otherwise.
+    /// `None` otherwise. Where the source named an old id the collection
+    /// renamed, this is the extension's current id (#310), except where an
+    /// update keeps the installed copy's id (see
+    /// [`SourcePackage::keeps_identity_of`]).
     pub extension: Option<String>,
+    /// The identities this package's dependencies resolved to when it was
+    /// planned, by dependency id, where a read resolved them (#310): a
+    /// dependency's source naming an old id a collection renamed resolves
+    /// to the extension's current id, which its record names so a call
+    /// through it reaches the package that installed. `None` until the
+    /// package is planned; [`PackageIdentity::dependency_at`]'s reading of
+    /// the source stands in then, and for an unplanned reload.
+    resolved: Option<Vec<(String, PackageIdentity)>>,
     /// For a package from npm or Git, its download, removed from the
     /// downloads folder once the last copy of this package is dropped.
     _download: Option<std::sync::Arc<crate::downloads::Download>>,
@@ -1596,6 +1635,31 @@ impl SourcePackage {
     pub(crate) fn note_imports(&mut self, checked: crate::runtime::Checked) {
         self.network = checked.network;
         self.programs = checked.programs;
+    }
+
+    /// Notes the identities this package's dependencies resolved to when
+    /// it was planned, by dependency id (see the field): what its record
+    /// names. For the launcher's planning, as the dependencies a read
+    /// resolves are worked out ([`crate::dependencies::plan`]).
+    pub(crate) fn planned_dependencies(&mut self, resolved: Vec<(String, PackageIdentity)>) {
+        self.resolved = Some(resolved);
+    }
+
+    /// This package, read from a newer revision of the collection the
+    /// installed copy with `identity` is one extension of, as the update
+    /// of that copy: where the revision's index renamed the extension's
+    /// id, the read followed the `renamed` map to the extension's current
+    /// id, reading the current id's folder (ADR 0044, #310) — and the
+    /// update replaces the installed copy, the same package, so the
+    /// package takes the installed identity and the extension id its
+    /// record keeps is the id it was installed with, as a moved folder's
+    /// is. Nothing changes where the identities already agree.
+    pub(crate) fn keeps_identity_of(mut self, identity: &PackageIdentity) -> SourcePackage {
+        if self.identity.extension_id() != identity.extension_id() {
+            self.identity = identity.clone();
+            self.extension = identity.extension_id().map(ToOwned::to_owned);
+        }
+        self
     }
 
     /// The identity of the package this one names with the dependency
@@ -1658,6 +1722,7 @@ impl SourcePackage {
             _download: Some(std::sync::Arc::new(download)),
             network: false,
             programs: false,
+            resolved: None,
         })
     }
 
@@ -1670,10 +1735,16 @@ impl SourcePackage {
     /// A root holding `pane-collection.json` is a **collection** (ADR 0044):
     /// `extension` names the one extension of it to read, by the id the
     /// address gave after `#`; without one, the revision is explained as a
-    /// collection whose extension must be named. The extension's folder,
-    /// as the index names it, is read as a local package's is: only the
-    /// files under it reach the managed copy, so a component outside it is
-    /// missing and the revision is explained as source-only.
+    /// collection whose extension must be named. The id resolves through
+    /// the index's `renamed` map where the index lists no extension with it
+    /// (#310): an old id names the extension's current one, whose folder is
+    /// read and whose id the identity takes, so an address naming the old
+    /// id installs the extension under its current one; one the map maps
+    /// to `null`, or names no entry at all, the revision no longer offers,
+    /// and is refused saying so. The extension's folder, as the index
+    /// names it, is read as a local package's is: only the files under it
+    /// reach the managed copy, so a component outside it is missing and
+    /// the revision is explained as source-only.
     pub(crate) fn read_git(
         fetched: crate::git::Fetched,
         extension: Option<&str>,
@@ -1724,11 +1795,28 @@ impl SourcePackage {
                     crate::collections::COLLECTION_FILE
                 )));
             };
-            let Some(entry) = collection.find(id) else {
-                return Err(PackageError::Git(format!(
-                    "{revision} lists no extension `{id}` in its {}",
-                    crate::collections::COLLECTION_FILE
-                )));
+            // The id resolves through the index (ADR 0044, #310): where the
+            // index lists no extension with it, the `renamed` map may name
+            // its current id, followed through the chain — the extension's
+            // package is read from its current id's folder, and the package
+            // takes the current id's identity, so an address naming the old
+            // id installs the extension under its current one. An id the
+            // map maps to `null`, or names no entry at all, is one the
+            // revision no longer offers.
+            let Some(Resolved { extension: entry, id }) = collection.resolve(id) else {
+                let why = if matches!(collection.renamed().get(id), Some(None)) {
+                    format!(
+                        "{revision} no longer offers the extension `{id}`: its {} maps it to \
+                         `null`, one that was removed",
+                        crate::collections::COLLECTION_FILE
+                    )
+                } else {
+                    format!(
+                        "{revision} lists no extension `{id}` in its {}",
+                        crate::collections::COLLECTION_FILE
+                    )
+                };
+                return Err(PackageError::RemovedExtension(why));
             };
             let subfolder = folder.join(&entry.path);
             let (manifest, manifest_text) = match Manifest::read_text(&subfolder) {
@@ -1768,17 +1856,18 @@ impl SourcePackage {
                 }
             }
             return Ok(SourcePackage {
-                identity: PackageIdentity::git_extension(&origin.repository, id),
+                identity: PackageIdentity::git_extension(&origin.repository, &id),
                 folder: subfolder,
                 manifest,
                 manifest_text,
                 npm: None,
                 git: Some(origin),
                 default: None,
-                extension: Some(id.to_owned()),
+                extension: Some(id),
                 _download: Some(download),
                 network: false,
                 programs: false,
+                resolved: None,
             });
         }
         // One extension at the root, or none: `#<id>` names no extension of
@@ -1833,6 +1922,7 @@ impl SourcePackage {
             _download: Some(download),
             network: false,
             programs: false,
+            resolved: None,
         })
     }
 
@@ -1896,6 +1986,7 @@ impl SourcePackage {
             _download: Some(std::sync::Arc::new(download)),
             network: false,
             programs: false,
+            resolved: None,
         })
     }
 
@@ -1931,6 +2022,7 @@ impl SourcePackage {
             _download: None,
             network: false,
             programs: false,
+            resolved: None,
         })
     }
 
@@ -1984,13 +2076,16 @@ impl SourcePackage {
             _download: None,
             network: false,
             programs: false,
+            resolved: None,
         })
     }
 
     /// Reads the extension `id` of the collection at `folder`, as a local
     /// package is read: from the folder the collection's index names for
     /// it, self-contained, with the identity of the collection folder and
-    /// the id (ADR 0044). Nothing in the folder runs.
+    /// the id (ADR 0044) — the id the index resolves for it, so an old id
+    /// the collection renamed reads the extension under its current one
+    /// (#310). Nothing in the folder runs.
     pub(crate) fn read_collection(folder: &Path, id: &str) -> Result<SourcePackage, PackageError> {
         let (identity, _root, subfolder) = collection_extension(folder, id)?;
         let (manifest, manifest_text) = Manifest::read_text(&subfolder)?;
@@ -2006,6 +2101,7 @@ impl SourcePackage {
             _download: None,
             network: false,
             programs: false,
+            resolved: None,
         })
     }
 
@@ -2069,6 +2165,9 @@ impl ListedExtension {
 /// ([`crate::develop::target`]). Refused every way an install of one
 /// extension is.
 ///
+/// The id resolves through the index's `renamed` map where the index
+/// lists no extension with it (#310): an old id names the extension's
+/// current one, whose folder is read and whose id the identity takes.
 /// A tuple: the identity, the collection's folder, the extension's.
 pub(crate) fn collection_extension(
     folder: &Path,
@@ -2079,9 +2178,7 @@ pub(crate) fn collection_extension(
             "the extension id `{id}` of a collection must be lowercase letters, digits and `-`"
         )));
     }
-    // The collection's folder, resolved as any local package's folder is,
-    // and the identity of the extension of it that `id` names.
-    let identity = PackageIdentity::local_extension(folder, id)?;
+    // The collection's folder, resolved as any local package's folder is.
     let root = PackageIdentity::local(folder)?
         .local_folder()
         .expect("a local identity has a folder")
@@ -2116,12 +2213,26 @@ pub(crate) fn collection_extension(
             root.display()
         )));
     }
-    let Some(entry) = collection.find(id) else {
-        return Err(PackageError::Collection(format!(
-            "The collection at {} lists no extension `{id}` in its {file}",
-            root.display()
-        )));
+    // The id resolves through the index (ADR 0044, #310): an old id the
+    // `renamed` map names resolves to the extension's current one,
+    // which the identity takes; one mapped to `null`, or named by no
+    // entry at all, the collection no longer offers.
+    let Some(Resolved { extension: entry, id }) = collection.resolve(id) else {
+        let why = if matches!(collection.renamed().get(id), Some(None)) {
+            format!(
+                "The collection at {} no longer offers the extension `{id}`: its {file} \
+                 maps it to `null`, one that was removed",
+                root.display()
+            )
+        } else {
+            format!(
+                "The collection at {} lists no extension `{id}` in its {file}",
+                root.display()
+            )
+        };
+        return Err(PackageError::Collection(why));
     };
+    let identity = PackageIdentity::local_extension(folder, &id)?;
     let subfolder = root.join(&entry.path);
     if !subfolder.join(MANIFEST_FILE).is_file() {
         return Err(PackageError::Collection(format!(
@@ -2826,7 +2937,23 @@ fn resolved_dependencies(package: &SourcePackage) -> Vec<ResolvedJson> {
         .dependencies
         .iter()
         .filter_map(|dependency| {
-            let PackageIdentity(source) = package.dependency_at(&dependency.source).ok()?;
+            // Where a read resolved the dependency when the package was
+            // planned, that is the identity its record names: a source
+            // naming an old id a collection renamed resolves to the
+            // extension's current id (ADR 0044, #310), which a call
+            // through the dependency reaches. Unplanned (a reload), the
+            // source's own text resolves it.
+            let planned = package.resolved.as_ref().and_then(|resolved| {
+                resolved
+                    .iter()
+                    .find(|(id, _)| id == dependency.id.as_str())
+                    .map(|(_, identity)| identity.clone())
+            });
+            let resolved = match planned {
+                Some(resolved) => resolved,
+                None => package.dependency_at(&dependency.source).ok()?,
+            };
+            let PackageIdentity(source) = resolved;
             Some(ResolvedJson {
                 id: dependency.id.clone(),
                 source,
