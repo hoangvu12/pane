@@ -35,10 +35,12 @@ use pane_core::run::{
 use pane_core::{Launcher, PackageIdentity, Runtime, Screen, Status};
 use tempfile::TempDir;
 
-#[path = "support/artifacts.rs"]
-mod artifacts;
+#[path = "support/defaults.rs"]
+mod defaults;
 #[path = "support/feedback.rs"]
 mod feedback;
+#[path = "support/repo_server.rs"]
+mod repo_server;
 #[path = "support/rows.rs"]
 mod rows;
 
@@ -944,9 +946,7 @@ mod windows {
     use pane_core::run::WindowsRun;
     use pane_core::{DefaultExtension, PackageIdentity, SearchPath};
 
-    use super::artifacts::Artifacts;
     use super::feedback::RecordingWindow;
-    use pane_core::defaults::ArtifactSource;
     use serde_json::Value;
 
     /// A number making this test's registry names its own.
@@ -1483,35 +1483,37 @@ mod windows {
         text.as_ref().encode_wide().chain([0]).collect()
     }
 
-    /// Pane's data location and artifact source for one test of the real
-    /// default extension.
+    /// Pane's data location, and the served repository holding Run's
+    /// package as a release revision, for one test of the real default
+    /// extension: a stand-in for the repository a release pins it to.
     struct Pane {
         data: TempDir,
-        artifacts: Artifacts,
+        _repos: TempDir,
+        _server: repo_server::Server,
+        pin: DefaultExtension,
         fake: FakeRun,
     }
 
     impl Pane {
-        /// Pane with Run's payload published to its artifact source.
+        /// Pane with Run's package served as its repository's release.
         fn new() -> Pane {
-            let artifacts = Artifacts::start();
+            let server = repo_server::Server::start();
+            let repos = tempfile::tempdir().unwrap();
             let files = package_files();
-            let manifest: Value = serde_json::from_slice(
-                &files
-                    .iter()
-                    .find(|(path, _)| path == "pane.json")
-                    .expect("the package has a pane.json")
-                    .1,
-            )
-            .unwrap();
-            let borrowed: Vec<(&str, Vec<u8>)> = files
-                .iter()
-                .map(|(path, contents)| (path.as_str(), contents.clone()))
-                .collect();
-            artifacts.publish("run", manifest["version"].as_str().unwrap(), &borrowed);
+            let tag = format!("v{}", defaults::version_of(&files));
+            let pin = defaults::pinned(
+                &server,
+                repos.path(),
+                "run",
+                "Run",
+                &tag,
+                &files,
+            );
             Pane {
                 data: tempfile::tempdir().unwrap(),
-                artifacts,
+                _repos: repos,
+                _server: server,
+                pin,
                 fake: FakeRun::default(),
             }
         }
@@ -1524,13 +1526,7 @@ mod windows {
                 vec![],
                 self.data.path().join("extensions"),
             )
-            .with_defaults(
-                ArtifactSource::local(self.artifacts.url()).unwrap(),
-                vec![DefaultExtension {
-                    id: "run".into(),
-                    title: "Run".into(),
-                }],
-            )
+            .with_defaults(vec![self.pin.clone()])
             .with_run(run);
             block_on(launcher.acquire_defaults());
             assert!(

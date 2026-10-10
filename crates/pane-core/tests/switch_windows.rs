@@ -36,12 +36,14 @@ use pane_core::system_icons::{SystemIcon, SystemIcons};
 use pane_core::{Launcher, Runtime, Screen, Status};
 use tempfile::TempDir;
 
-#[path = "support/artifacts.rs"]
-mod artifacts;
+#[path = "support/defaults.rs"]
+mod defaults;
 #[path = "support/feedback.rs"]
 mod feedback;
 #[path = "support/guests.rs"]
 mod guests;
+#[path = "support/repo_server.rs"]
+mod repo_server;
 #[path = "support/rows.rs"]
 mod rows;
 
@@ -896,10 +898,8 @@ mod extension {
     use std::time::{Duration, Instant};
 
     use futures::executor::block_on;
-    use pane_core::defaults::ArtifactSource;
-    use pane_core::{DefaultExtension, PackageIdentity};
+    use pane_core::PackageIdentity;
 
-    use super::artifacts::Artifacts;
     use super::feedback::RecordingWindow;
     use super::rows::{select_title, titles, to_root};
     use super::{FakeWindows, WindowsError, listed, window};
@@ -914,7 +914,8 @@ mod extension {
     /// reaches, and the launcher.
     struct Pane {
         _data: tempfile::TempDir,
-        _artifacts: Artifacts,
+        _repos: tempfile::TempDir,
+        _server: repo_server::Server,
         fake: FakeWindows,
         launcher: pane_core::Launcher,
         identity: PackageIdentity,
@@ -923,39 +924,16 @@ mod extension {
     impl Pane {
         fn new() -> Pane {
             let data = tempfile::tempdir().unwrap();
-            let artifacts = Artifacts::start();
-            let folder = super::guests().join("packages").join("switch-windows");
-            assert!(
-                folder.is_dir(),
-                "{} is missing; run `cargo xtask guests`",
-                folder.display()
-            );
-            let mut files: Vec<(String, Vec<u8>)> = std::fs::read_dir(&folder)
-                .unwrap()
-                .map(|entry| entry.unwrap().path())
-                .filter(|path| path.is_file())
-                .map(|path| {
-                    let name = path.file_name().unwrap().to_str().unwrap().to_owned();
-                    (name, std::fs::read(&path).unwrap())
-                })
-                .collect();
-            files.sort();
-            let manifest: serde_json::Value = serde_json::from_slice(
-                &files
-                    .iter()
-                    .find(|(path, _)| path == "pane.json")
-                    .expect("the package has a pane.json")
-                    .1,
-            )
-            .unwrap();
-            let borrowed: Vec<(&str, Vec<u8>)> = files
-                .iter()
-                .map(|(path, contents)| (path.as_str(), contents.clone()))
-                .collect();
-            artifacts.publish(
+            // The package's own repository, served as a release revision:
+            // a stand-in for the one a release pins the default to.
+            let server = repo_server::Server::start();
+            let repos = tempfile::tempdir().unwrap();
+            let pin = defaults::from_sample(
+                &server,
+                repos.path(),
                 "switch-windows",
-                manifest["version"].as_str().unwrap(),
-                &borrowed,
+                "Switch Windows",
+                "switch-windows",
             );
             let fake = FakeWindows::default();
             let launcher = pane_core::Launcher::with_packages(
@@ -963,13 +941,7 @@ mod extension {
                 vec![],
                 data.path().join("extensions"),
             )
-            .with_defaults(
-                ArtifactSource::local(artifacts.url()).unwrap(),
-                vec![DefaultExtension {
-                    id: "switch-windows".into(),
-                    title: "Switch Windows".into(),
-                }],
-            )
+            .with_defaults(vec![pin])
             .with_switch_windows(std::sync::Arc::new(fake.clone()));
             block_on(launcher.acquire_defaults());
             assert!(
@@ -979,7 +951,8 @@ mod extension {
             );
             Pane {
                 _data: data,
-                _artifacts: artifacts,
+                _repos: repos,
+                _server: server,
                 fake,
                 launcher,
                 identity: PackageIdentity::default_extension("switch-windows"),

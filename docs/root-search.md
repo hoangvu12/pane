@@ -42,13 +42,17 @@ for it come first, once they arrive):
    explaining the problem;
 4. Pane's own rows: "Install extension from folder…", "Install extension
    from npm…" ([npm](npm.md)), "Install extension from Git…" ([Git](git.md)),
-   "Manage Extensions" and "Settings…". Extensions are installed and
+   "Check for Extension Updates", "Manage Extensions" and "Settings…".
+   Extensions are installed and
    managed in Settings ([ADR 0043](adr/0043-extensions-are-managed-in-settings-one-page-per-extension.md),
    #168): "Manage Extensions" opens Settings at its Extensions group, and
    the install rows open its install flow there — the folder picker, or
    the field for an npm package or a Git repository, then the package's
-   preview with its Install. The launcher itself has no screen for
-   extensions.
+   preview with its Install. "Check for Extension Updates" checks every
+   updatable extension at once, whatever the cadence, and updates what it
+   finds ([npm](npm.md#updating-by-itself)); Settings' Extensions group
+   has a "Check for updates" button that starts the same pass. The
+   launcher itself has no screen for extensions.
 
 For a query that is not blank, a command whose [alias](aliases.md) the
 query is, or starts with, comes before everything (computed results
@@ -424,14 +428,18 @@ recorded choice for a provider takes no effect.
 
 ### The calculator
 
-The calculator ([`guests/calculator`](../guests/calculator)) is a default
-extension in Rust: package `guests/packages/calculator`, a root provider
+The calculator is a default extension in Rust, in
+[its own repository](https://github.com/pane-app/calculator) (a Pane
+release pinning its release commits,
+[`crates/pane/defaults.json`](../crates/pane/defaults.json)): a root
+provider
 whose command, "Calculator", has no row and computes results for root
-search. It is not part of the core and can be disabled like any package. Acquiring it automatically at setup is
-[#51](https://github.com/pane-app/pane/issues/51) to
-[#53](https://github.com/pane-app/pane/issues/53); until then it is
-installed from its folder like any package
-(`pane --install target/guests/packages/calculator`).
+search. It is not part of the core and can be disabled like any package.
+First setup acquires it from the commit this Pane release pins
+([#278](https://github.com/pane-app/pane/issues/278),
+[#53](https://github.com/pane-app/pane/issues/53)); a user can also install
+it by hand from its repository
+(`pane --install git:https://github.com/pane-app/calculator`).
 
 Its expression scope is deliberately small (US06; no symbolic algebra and no
 arbitrary code evaluation):
