@@ -136,13 +136,9 @@ impl Node {
                 NodeKind::RichRow(row) => held(row.on_press),
                 NodeKind::Text(text) => match &text.content {
                     TextContent::Plain(_) => false,
-                    TextContent::Spans(spans) => spans
-                        .iter()
-                        .any(|span| held(span.on_press)),
+                    TextContent::Spans(spans) => spans.iter().any(|span| held(span.on_press)),
                 },
-                NodeKind::MetadataList(list) => {
-                    list.items.iter().any(|item| held(item.on_press))
-                }
+                NodeKind::MetadataList(list) => list.items.iter().any(|item| held(item.on_press)),
                 _ => false,
             },
             DesignedHandler::Change => match &self.kind {

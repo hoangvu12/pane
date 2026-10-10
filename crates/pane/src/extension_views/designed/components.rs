@@ -31,14 +31,13 @@ use gpui::{
 use gpui_elements::editable_text::{text_area as area_input, text_input as edit_input};
 
 use pane_core::{
-    Badge as BadgeNode, Binding, Button as ButtonNode, Checkbox as CheckboxNode,
-    DesignedHandler, EmptyState as EmptyStateNode, Finite, Fit, Icon, IconExtent, IconNode,
-    Image as ImageNode, KeySequence as KeySequenceNode, Keycap as KeycapNode, Link as LinkNode,
-    Loading as LoadingNode, Markdown as MarkdownNode, MetadataItem as MetadataItemNode,
-    MetadataList as MetadataListNode, Node, Paint, Progress as ProgressNode, RichRow as RichRowNode,
-    SectionHeader, Segmented as SegmentedNode, Select as SelectNode, Slider as SliderNode, Span,
-    Tag as TagNode, Text as TextNode, TextContent, TextInput as TextInputNode,
-    Toggle as ToggleNode,
+    Badge as BadgeNode, Binding, Button as ButtonNode, Checkbox as CheckboxNode, DesignedHandler,
+    EmptyState as EmptyStateNode, Finite, Fit, Icon, IconExtent, IconNode, Image as ImageNode,
+    KeySequence as KeySequenceNode, Keycap as KeycapNode, Link as LinkNode, Loading as LoadingNode,
+    Markdown as MarkdownNode, MetadataItem as MetadataItemNode, MetadataList as MetadataListNode,
+    Node, Paint, Progress as ProgressNode, RichRow as RichRowNode, SectionHeader,
+    Segmented as SegmentedNode, Select as SelectNode, Slider as SliderNode, Span, Tag as TagNode,
+    Text as TextNode, TextContent, TextInput as TextInputNode, Toggle as ToggleNode,
 };
 use pane_core::{Space, TextLevel};
 
@@ -1774,11 +1773,7 @@ pub(super) fn text_input(
         .track_focus(focus)
         .when(area, |well| {
             // A text area is as tall as three of its lines.
-            well.h(
-                theme.typography.settings_text_size
-                    * theme.typography.line_height
-                    * 3.,
-            )
+            well.h(theme.typography.settings_text_size * theme.typography.line_height * 3.)
         })
         .role(match kind {
             FieldKind::Text => Role::TextInput,
@@ -1865,9 +1860,7 @@ fn field_input(
         .w_full()
         .min_w(px(0.))
         .when(area, |input| input.whitespace_normal())
-        .when(!area, |input| {
-            input.whitespace_nowrap().overflow_x_scroll()
-        })
+        .when(!area, |input| input.whitespace_nowrap().overflow_x_scroll())
 }
 
 /// One select: the searchable select of `ui::select`, keyed by its path
@@ -1875,11 +1868,7 @@ fn field_input(
 /// draws it. Its trigger shows the choice the tree names, read live each
 /// frame; a choice the user commits is told to the extension through the
 /// change handler the tree names.
-pub(super) fn select(
-    select: &SelectNode,
-    path: &str,
-    draw: &Draw,
-) -> AnyElement {
+pub(super) fn select(select: &SelectNode, path: &str, draw: &Draw) -> AnyElement {
     let theme = draw.theme;
     if select.options.is_empty() {
         // A select with no options draws its trigger alone, offering

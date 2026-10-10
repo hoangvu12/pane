@@ -16,7 +16,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use gpui::{Entity, EntityInputHandler as _, TestAppContext, VisualTestContext, px, prelude::*};
+use gpui::{Entity, EntityInputHandler as _, TestAppContext, VisualTestContext, prelude::*, px};
 use pane::LauncherWindow;
 use pane_core::{Launcher, Runtime, Screen};
 
@@ -149,18 +149,12 @@ fn marked(
     key: &'static str,
 ) -> Option<std::ops::Range<usize>> {
     let field = field_of(window, cx, key);
-    cx.update(|window, cx| {
-        field.update(cx, |field, cx| field.marked_text_range(window, cx))
-    })
+    cx.update(|window, cx| field.update(cx, |field, cx| field.marked_text_range(window, cx)))
 }
 
 /// Waits until the gallery's echo names exactly `text`, so the answer to
 /// the field's input events is on screen.
-fn wait_for_echo(
-    window: &Entity<LauncherWindow>,
-    cx: &mut VisualTestContext,
-    text: &'static str,
-) {
+fn wait_for_echo(window: &Entity<LauncherWindow>, cx: &mut VisualTestContext, text: &'static str) {
     let drawn = format!("Echo: {text}");
     until(window, cx, |view| match &view.screen {
         Screen::DesignedView(view) => texts_of(&view.tree.root)
@@ -286,7 +280,9 @@ fn the_caret_and_selection_survive_re_renders(cx: &mut TestAppContext) {
     // state, not a value the tree re-applies.
     let toggle = bounds(cx, "designed-toggle");
     cx.simulate_click(toggle.center(), gpui::Modifiers::none());
-    until(&window, cx, |view| view.status != pane_core::Status::Running);
+    until(&window, cx, |view| {
+        view.status != pane_core::Status::Running
+    });
     assert_eq!(
         marked_caret(&window, cx, "name"),
         Some(8..8),
@@ -303,7 +299,9 @@ fn the_caret_and_selection_survive_re_renders(cx: &mut TestAppContext) {
     );
     let toggle = bounds(cx, "designed-toggle");
     cx.simulate_click(toggle.center(), gpui::Modifiers::none());
-    until(&window, cx, |view| view.status != pane_core::Status::Running);
+    until(&window, cx, |view| {
+        view.status != pane_core::Status::Running
+    });
     assert_eq!(
         marked_caret(&window, cx, "name"),
         Some(8..10),
@@ -410,7 +408,9 @@ fn the_scroll_position_survives_re_renders_and_reorders(cx: &mut TestAppContext)
     // the fields swapped.
     let reorder = bounds(cx, "designed-button-Reorder");
     cx.simulate_click(reorder.center(), gpui::Modifiers::none());
-    until(&window, cx, |view| view.status != pane_core::Status::Running);
+    until(&window, cx, |view| {
+        view.status != pane_core::Status::Running
+    });
     let after = scrolled(&window, cx);
     assert_eq!(after, at, "the scroll position survived the re-render");
 }
@@ -443,7 +443,9 @@ fn the_focus_survives_re_renders_and_reorders(cx: &mut TestAppContext) {
         "Tab reached the Reorder button"
     );
     cx.simulate_keystrokes("enter");
-    until(&window, cx, |view| view.status != pane_core::Status::Running);
+    until(&window, cx, |view| {
+        view.status != pane_core::Status::Running
+    });
     assert_eq!(
         focused_label(cx).as_deref(),
         Some("Reorder"),
@@ -514,7 +516,9 @@ fn tab_order_follows_the_tree_across_reorders(cx: &mut TestAppContext) {
     // the name field, Tab now reaches the buttons' row.
     let reorder = bounds(cx, "designed-button-Reorder");
     cx.simulate_click(reorder.center(), gpui::Modifiers::none());
-    until(&window, cx, |view| view.status != pane_core::Status::Running);
+    until(&window, cx, |view| {
+        view.status != pane_core::Status::Running
+    });
     focus_field(&window, cx, "name");
     cx.simulate_keystrokes("tab");
     assert_eq!(

@@ -360,9 +360,10 @@ impl Launcher {
             let key = key.map(str::to_owned);
             let dropped = if seen + 1 < top.rendered {
                 Some("the view has rendered twice since")
-            } else if key.as_deref().is_some_and(|key| {
-                !tree_holds(&top.tree, key, handler)
-            }) {
+            } else if key
+                .as_deref()
+                .is_some_and(|key| !tree_holds(&top.tree, key, handler))
+            {
                 Some("the view no longer names a handler for its key")
             } else {
                 None
@@ -413,8 +414,7 @@ impl Launcher {
             return;
         };
         let component = state.open.clone().unwrap_or_default();
-        let owner = super::owner(&state.packages, &component)
-            .map(|package| package.identity.key());
+        let owner = super::owner(&state.packages, &component).map(|package| package.identity.key());
         let Some(owner) = owner else {
             return;
         };
@@ -433,9 +433,7 @@ impl Launcher {
             &owner,
             0,
             LogLevel::Warn,
-            &format!(
-                "{what} on the key \"{key}\" of render {render} was dropped: {why}"
-            ),
+            &format!("{what} on the key \"{key}\" of render {render} was dropped: {why}"),
         );
     }
 

@@ -141,9 +141,8 @@ impl LauncherWindow {
             return;
         }
         let closed = shown.is_none();
-        self.designed = shown.map(|(view, render, tree)| {
-            DesignedControls::new(view, &tree, render, window, cx)
-        });
+        self.designed = shown
+            .map(|(view, render, tree)| DesignedControls::new(view, &tree, render, window, cx));
         if closed {
             window.focus(&self.focus_handle, cx);
         }
@@ -323,9 +322,13 @@ impl LauncherWindow {
         cx: &mut Context<Self>,
     ) {
         let key = (!key.is_empty()).then_some(key);
-        let pending =
-            self.launcher
-                .send_designed_seen(handler, callback, key.as_deref(), Some(seen), payload);
+        let pending = self.launcher.send_designed_seen(
+            handler,
+            callback,
+            key.as_deref(),
+            Some(seen),
+            payload,
+        );
         self.show_until_done(pending, window, cx);
     }
 
@@ -343,7 +346,10 @@ impl LauncherWindow {
         cx.notify();
         let changed = self.designed.as_mut().and_then(|controls| {
             let entry = controls.state.get_mut(path)?;
-            let Held::Field { events, editing, .. } = &mut entry.held else {
+            let Held::Field {
+                events, editing, ..
+            } = &mut entry.held
+            else {
                 return None;
             };
             if events.placing {
@@ -486,7 +492,10 @@ impl LauncherWindow {
         let send = self.designed.as_mut().and_then(|controls| {
             let entry = controls.state.get_mut(path)?;
             let (render, key) = (entry.render, entry.key.clone());
-            let Held::Field { events, editing, .. } = &mut entry.held else {
+            let Held::Field {
+                events, editing, ..
+            } = &mut entry.held
+            else {
                 return None;
             };
             let live = editing.read(cx).as_str().to_owned();
@@ -571,7 +580,9 @@ impl LauncherWindow {
                 .state
                 .iter()
                 .find(|(_, entry)| {
-                    entry.focus_handle().is_some_and(|handle| handle.is_focused(window))
+                    entry
+                        .focus_handle()
+                        .is_some_and(|handle| handle.is_focused(window))
                 })
                 .and_then(|(_, entry)| {
                     let callback = entry.on_key?;
@@ -586,7 +597,15 @@ impl LauncherWindow {
             return;
         };
         let payload = key_payload(keystroke);
-        self.designed_event(DesignedHandler::Key, callback, key, render, payload, window, cx);
+        self.designed_event(
+            DesignedHandler::Key,
+            callback,
+            key,
+            render,
+            payload,
+            window,
+            cx,
+        );
     }
 
     /// The select at `path`'s choice was committed by its user: the

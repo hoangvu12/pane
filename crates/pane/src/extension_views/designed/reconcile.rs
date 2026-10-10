@@ -207,9 +207,7 @@ impl DesignedControls {
             let field = matches!(entry.held, Held::Field { .. });
             match &mut entry.held {
                 Held::Field {
-                    events,
-                    editing,
-                    ..
+                    events, editing, ..
                 } => {
                     if let NodeKind::TextInput(input) = &node.kind {
                         events.on_input = input.on_input;
@@ -238,10 +236,7 @@ impl DesignedControls {
             }
         };
         if watching {
-            let handle = self
-                .state
-                .get(path)
-                .and_then(|entry| entry.focus_handle());
+            let handle = self.state.get(path).and_then(|entry| entry.focus_handle());
             if let Some(handle) = handle {
                 let (on_focus, on_blur) = (node.on_focus, node.on_blur);
                 let focus_path = path.to_owned();
@@ -477,19 +472,18 @@ impl Held {
             HeldKind::Select => {
                 let entity = cx.entity();
                 let place = path.to_owned();
-                let model = std::rc::Rc::new(
-                    move |cx: &App| entity.read(cx).designed_select_model(&place, cx),
-                );
+                let model = std::rc::Rc::new(move |cx: &App| {
+                    entity.read(cx).designed_select_model(&place, cx)
+                });
                 let entity = cx.entity();
                 let place = path.to_owned();
-                let commit = std::rc::Rc::new(
-                    move |value: &str, window: &mut Window, cx: &mut App| {
+                let commit =
+                    std::rc::Rc::new(move |value: &str, window: &mut Window, cx: &mut App| {
                         let place = place.clone();
                         let _ = entity.update(cx, |this, cx| {
                             this.designed_select_committed(&place, value, window, cx);
                         });
-                    },
-                );
+                    });
                 let name = select_label(node).unwrap_or_else(|| "select".into());
                 let debug = format!("designed-select-{}", super::components::short(&name));
                 let select = cx.new(|cx| {

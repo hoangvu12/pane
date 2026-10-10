@@ -186,10 +186,13 @@ impl Pane {
         seen: Option<u64>,
         payload: &str,
     ) {
-        block_on(
-            self.launcher
-                .send_designed_seen(handler, callback, key, seen, payload.to_owned()),
-        );
+        block_on(self.launcher.send_designed_seen(
+            handler,
+            callback,
+            key,
+            seen,
+            payload.to_owned(),
+        ));
     }
 
     /// The status line.
@@ -263,7 +266,11 @@ fn input_of(node: &pane_core::Node, key: &str) -> Option<(Option<u32>, Option<u3
             .children
             .iter()
             .find_map(|child| input_of(child, key))
-            .or_else(|| node.fallback.as_deref().and_then(|child| input_of(child, key))),
+            .or_else(|| {
+                node.fallback
+                    .as_deref()
+                    .and_then(|child| input_of(child, key))
+            }),
     }
 }
 
@@ -288,7 +295,8 @@ fn the_input_and_change_events_carry_their_payloads() {
         r#"{"value":"Ada"}"#,
     );
     assert!(
-        pane.texts().contains(r#"Sent: 29 on name: {"value":"Ada"}"#),
+        pane.texts()
+            .contains(r#"Sent: 29 on name: {"value":"Ada"}"#),
         "the input event's payload reached the view: {}",
         pane.texts()
     );
@@ -326,7 +334,13 @@ fn an_event_raised_on_an_older_tree_is_delivered_while_its_key_is_handled() {
     // handler, so what the user saw still works.
     let (callback, key) = button_of(&pane.tree().root, "Increment").unwrap();
     let saw = pane.render() - 1;
-    pane.send(DesignedHandler::Press, callback, key.as_deref(), Some(saw), "{}");
+    pane.send(
+        DesignedHandler::Press,
+        callback,
+        key.as_deref(),
+        Some(saw),
+        "{}",
+    );
     assert_eq!(pane.text(), "Count: 2");
 }
 
@@ -342,14 +356,20 @@ fn an_event_whose_key_went_is_dropped() {
     // The tree the user saw named "Increment"; this one does not. The
     // press is dropped — the view never answers it, so the fields' tree
     // stays — and, the package being developed, its log says so.
-    pane.send(DesignedHandler::Press, callback, Some("increment"), Some(1), "{}");
+    pane.send(
+        DesignedHandler::Press,
+        callback,
+        Some("increment"),
+        Some(1),
+        "{}",
+    );
     assert_eq!(pane.text(), "The fields");
     assert_eq!(pane.status(), Status::Idle);
     let lines = pane.launcher.extension_log(&identity);
     assert!(
-        lines.iter().any(|line| line.text.contains(
-            "a press on the key \"increment\" of render 1 was dropped"
-        )),
+        lines.iter().any(|line| line
+            .text
+            .contains("a press on the key \"increment\" of render 1 was dropped")),
         "the dropped event is reported: {:?}",
         lines
     );
@@ -371,7 +391,13 @@ fn an_event_two_renders_old_is_dropped() {
     // The render the user saw is two renders past: the SDKs keep two, and
     // Pane drops the event without sending it.
     let (callback, key) = button_of(&pane.tree().root, "Increment").unwrap();
-    pane.send(DesignedHandler::Press, callback, key.as_deref(), Some(1), "{}");
+    pane.send(
+        DesignedHandler::Press,
+        callback,
+        key.as_deref(),
+        Some(1),
+        "{}",
+    );
     assert_eq!(pane.text(), "Count: 2");
     assert_eq!(pane.status(), Status::Idle);
 }

@@ -8,8 +8,7 @@ use std::collections::{HashMap, HashSet};
 
 use gpui::prelude::*;
 use gpui::{
-    AnyElement, Context, Div, Hsla, Length as GpuiLength, Pixels, Role, Stateful, div, px,
-    relative,
+    AnyElement, Context, Div, Hsla, Length as GpuiLength, Pixels, Role, Stateful, div, px, relative,
 };
 
 use pane_core::{
@@ -69,10 +68,7 @@ impl Draw<'_> {
 
     /// The keyed select at `path`: the searchable select entity holding
     /// its open state, query and highlight.
-    pub(super) fn select(
-        &self,
-        path: &str,
-    ) -> Option<&gpui::Entity<crate::ui::select::Select>> {
+    pub(super) fn select(&self, path: &str) -> Option<&gpui::Entity<crate::ui::select::Select>> {
         match &self.state.get(path)?.held {
             Held::Select { select, .. } => Some(select),
             _ => None,
@@ -98,10 +94,7 @@ pub(super) fn place_child(
     index: usize,
     duplicates: &HashSet<&str>,
 ) {
-    let key = child
-        .key
-        .as_deref()
-        .filter(|key| !duplicates.contains(key));
+    let key = child.key.as_deref().filter(|key| !duplicates.contains(key));
     push(path, key, index);
 }
 
@@ -206,16 +199,12 @@ pub(super) fn draw_node(
         NodeKind::Scroll { orientation } => {
             let own = path.clone();
             let children = children(node, path, inner, cx);
-            let tracked = draw
-                .state
-                .get(&own)
-                .and_then(|state| match &state.held {
-                    Held::Scroll(handle) => Some(handle.clone()),
-                    _ => None,
-                });
+            let tracked = draw.state.get(&own).and_then(|state| match &state.held {
+                Held::Scroll(handle) => Some(handle.clone()),
+                _ => None,
+            });
             let div = apply(
-                scroll(*orientation, children, own, tracked)
-                    .map(|div| named(div, name.as_deref())),
+                scroll(*orientation, children, own, tracked).map(|div| named(div, name.as_deref())),
                 node,
                 &draw,
             );
@@ -247,14 +236,7 @@ pub(super) fn draw_node(
             node,
             path,
             draw,
-            components::link(
-                link,
-                node.key.as_deref(),
-                path,
-                &draw,
-                cx,
-            )
-            .into_any_element(),
+            components::link(link, node.key.as_deref(), path, &draw, cx).into_any_element(),
         ),
         NodeKind::Icon(icon) => styled(
             node,
@@ -308,53 +290,26 @@ pub(super) fn draw_node(
             node,
             path,
             draw,
-            components::toggle(
-                toggle,
-                node.key.as_deref(),
-                path,
-                &draw,
-                cx,
-            )
-            .into_any_element(),
+            components::toggle(toggle, node.key.as_deref(), path, &draw, cx).into_any_element(),
         ),
         NodeKind::Checkbox(checkbox) => styled(
             node,
             path,
             draw,
-            components::checkbox(
-                checkbox,
-                node.key.as_deref(),
-                path,
-                &draw,
-                cx,
-            )
-            .into_any_element(),
+            components::checkbox(checkbox, node.key.as_deref(), path, &draw, cx).into_any_element(),
         ),
         NodeKind::Segmented(segmented) => styled(
             node,
             path,
             draw,
-            components::segmented(
-                segmented,
-                node.key.as_deref(),
-                path,
-                &draw,
-                cx,
-            )
-            .into_any_element(),
+            components::segmented(segmented, node.key.as_deref(), path, &draw, cx)
+                .into_any_element(),
         ),
         NodeKind::Slider(slider) => styled(
             node,
             path,
             draw,
-            components::slider(
-                slider,
-                node.key.as_deref(),
-                path,
-                &draw,
-                cx,
-            )
-            .into_any_element(),
+            components::slider(slider, node.key.as_deref(), path, &draw, cx).into_any_element(),
         ),
         NodeKind::Progress(progress) => styled(
             node,
@@ -384,14 +339,8 @@ pub(super) fn draw_node(
             node,
             path,
             draw,
-            components::metadata_list(
-                list,
-                node.key.as_deref(),
-                path,
-                &draw,
-                cx,
-            )
-            .into_any_element(),
+            components::metadata_list(list, node.key.as_deref(), path, &draw, cx)
+                .into_any_element(),
         ),
         NodeKind::EmptyState(empty) => styled(
             node,
