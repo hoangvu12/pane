@@ -79,21 +79,13 @@ fn truncate(v: f64) -> f64 {
 
 /// `x` rounded to the nearest whole number, half away from zero.
 pub(super) fn round(x: f64) -> f64 {
-    if x < 0.0 {
-        -round(-x)
-    } else {
-        floor(x + 0.5)
-    }
+    if x < 0.0 { -round(-x) } else { floor(x + 0.5) }
 }
 
 /// The remainder of `x / m`, in [0, m) for `m > 0`.
 pub(super) fn remainder(x: f64, m: f64) -> f64 {
     let r = x % m;
-    if r < 0.0 {
-        r + m
-    } else {
-        r
-    }
+    if r < 0.0 { r + m } else { r }
 }
 
 /// The `n`th root of `x`, for `x > 0`: Newton's iteration from the power
@@ -122,11 +114,7 @@ pub(super) fn root(x: f64, n: u32) -> f64 {
 
 /// The cube root of `x`, any sign.
 pub(super) fn cbrt(x: f64) -> f64 {
-    if x < 0.0 {
-        -root(-x, 3)
-    } else {
-        root(x, 3)
-    }
+    if x < 0.0 { -root(-x, 3) } else { root(x, 3) }
 }
 
 /// `x` to the power 2.4 (a gamma-encoded channel to linear light), for

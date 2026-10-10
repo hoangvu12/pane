@@ -20,8 +20,8 @@
 use pane_extension::alloc::{format, string::String, vec::Vec};
 use pane_extension::file_index::{self, FileEntry, IndexState, SearchOptions};
 use pane_extension::root::{RootAction, RootResult, WallTime};
-use pane_extension::typed_folder::{self, FolderEntry};
 use pane_extension::search::SearchResult;
+use pane_extension::typed_folder::{self, FolderEntry};
 use pane_extension::{Command, CustomView, FieldValue, FormError, Item, List, NoCustomView};
 
 struct Sample;
@@ -51,7 +51,9 @@ fn typed(query: &str) -> Option<Vec<FolderEntry>> {
     }
     // Pane resolves what the user typed: `~` to the home folder,
     // `file://` taken off. The bounds are Pane's, not the command's.
-    typed_folder::list_entries(query).ok().map(|listing| listing.entries)
+    typed_folder::list_entries(query)
+        .ok()
+        .map(|listing| listing.entries)
 }
 
 impl Command for Sample {

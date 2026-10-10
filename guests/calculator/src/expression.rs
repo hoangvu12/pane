@@ -374,7 +374,12 @@ pub(super) fn percentage(query: &str) -> Option<f64> {
     let part = |x: f64, p: f64| p * x / 100.0;
     let value = match &parts[..] {
         // p% of x, p% off x, p% on x.
-        [Part::Number(p), Part::Percent, Part::Word(word), Part::Number(x)] => match *word {
+        [
+            Part::Number(p),
+            Part::Percent,
+            Part::Word(word),
+            Part::Number(x),
+        ] => match *word {
             "of" => part(*x, *p),
             "off" => *x - part(*x, *p),
             "on" => *x + part(*x, *p),

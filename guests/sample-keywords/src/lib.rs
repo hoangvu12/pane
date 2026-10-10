@@ -16,7 +16,7 @@
 //! samples.
 #![no_std]
 
-use pane_extension::alloc::{format, string::String, vec::Vec};
+use pane_extension::alloc::{format, string::String, vec, vec::Vec};
 use pane_extension::feedback::{Toast, show_toast};
 use pane_extension::indexed::{IndexedAction, IndexedResult, OpenTarget};
 use pane_extension::{Command, LaunchRecord, NoCustomView};

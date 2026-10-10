@@ -121,7 +121,12 @@ fn clock(time: i64) -> String {
 /// seconds, "14:23:45".
 fn stamp(time: i64) -> String {
     let seconds = time / 1000;
-    format!("{:02}:{:02}:{:02}", seconds / 3600, seconds / 60 % 60, seconds % 60)
+    format!(
+        "{:02}:{:02}:{:02}",
+        seconds / 3600,
+        seconds / 60 % 60,
+        seconds % 60
+    )
 }
 
 /// The zone of an offset from UTC in milliseconds, as ISO 8601 writes it:
@@ -132,7 +137,11 @@ fn zone(offset: i64) -> String {
         return "Z".into();
     }
     let minutes = offset / 60_000;
-    let (sign, minutes) = if minutes < 0 { ("-", -minutes) } else { ("+", minutes) };
+    let (sign, minutes) = if minutes < 0 {
+        ("-", -minutes)
+    } else {
+        ("+", minutes)
+    };
     format!("{sign}{:02}:{:02}", minutes / 60, minutes % 60)
 }
 
