@@ -255,7 +255,10 @@ fn field_node<'a>(form: &'a pane_core::PaneForm, key: &str) -> &'a pane_core::No
 
 /// Whether the field `key` of the argument form's tree is a text field.
 fn is_text(form: &pane_core::PaneForm, key: &str) -> bool {
-    matches!(field_node(form, key).kind, pane_core::NodeKind::TextInput(_))
+    matches!(
+        field_node(form, key).kind,
+        pane_core::NodeKind::TextInput(_)
+    )
 }
 
 /// Whether the field `key` of the argument form's tree is a password

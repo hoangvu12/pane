@@ -179,7 +179,6 @@ fn going_back_while_an_action_runs_discards_its_answer() {
     assert_eq!((view.query(), &view.status), (Some(""), &Status::Idle));
 }
 
-
 /// A launcher over `runtime` with the Rust sample's color picker opened.
 fn sample_color_view(runtime: &Runtime) -> Launcher {
     let launcher = Launcher::new(
