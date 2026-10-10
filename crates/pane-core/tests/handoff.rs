@@ -133,6 +133,7 @@ impl Pane {
         .unwrap();
         for (key, value) in settings {
             let file = self.data.path().join("extensions/settings.json");
+            fs::create_dir_all(file.parent().unwrap()).unwrap();
             let mut saved: serde_json::Value = match fs::read_to_string(&file) {
                 Ok(text) => serde_json::from_str(&text).unwrap(),
                 Err(_) => serde_json::json!({ "packages": {} }),
@@ -299,6 +300,7 @@ fn a_reload_hands_the_counter_and_draft_over_and_reopens_the_screen() {
         let (launcher, identity, folder) = pane.installed(sample);
 
         // The state the sample keeps in memory: two counts and a draft.
+        open(&launcher, sample.command);
         assert_eq!(title(&launcher), "Handoff: 0 counted, draft nothing");
         assert_eq!(
             run(&launcher, sample.command, "Add one (0 so far)"),
@@ -382,7 +384,7 @@ fn an_update_the_user_chose_hands_the_state_over_and_reopens_the_screen() {
 #[test]
 fn nothing_is_handed_over_after_a_disable_and_enable_or_a_restart() {
     let pane = Pane::new();
-    let (launcher, identity, folder) = pane.installed(&SAMPLES[0]);
+    let (launcher, identity, _folder) = pane.installed(&SAMPLES[0]);
     run(&launcher, SAMPLES[0].command, "Add one (0 so far)");
 
     // Disabled and enabled again: a new generation, and nothing is handed
@@ -641,7 +643,7 @@ fn the_open_screen_of_a_package_that_does_not_opt_in_reopens() {
     // is reopened, not the pushed one. The row the user had selected is
     // selected again where the new list has it: the host-owned state kept
     // by key.
-    open(&launcher, "Say hello");
+    open(&launcher, "Rust sample");
     launcher.select(1);
     let selected = launcher
         .view()

@@ -307,13 +307,22 @@ fn a_dynamic_root_item_appears_updates_and_disappears_in_root_search() {
         let (launcher, identity, _folder) = pane.installed(&sample);
         // The activation entry point registered the item: the row is
         // listed with nothing counted yet.
-        pane.until("the dynamic root item's row", true, || {
-            launcher
-                .view()
-                .rows
-                .iter()
-                .any(|row| row.id.ends_with(":counted"))
-        });
+        let began = Instant::now();
+        while !launcher
+            .view()
+            .rows
+            .iter()
+            .any(|row| row.id.ends_with(":counted"))
+        {
+            assert!(
+                began.elapsed() < PROMPTLY,
+                "the dynamic root item's row: undo list {:?}, rows {:?}, status {:?}",
+                launcher.undo_list(&identity),
+                launcher.view().rows,
+                launcher.view().status
+            );
+            thread::sleep(Duration::from_millis(20));
+        }
         let row = dynamic_row(&launcher);
         assert_eq!(row.title, "Registrations: counting");
         assert_eq!(row.subtitle, Some(item_subtitle(&sample, 0, 0)));
