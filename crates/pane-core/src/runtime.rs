@@ -95,8 +95,8 @@ pub use supervisor::{RuntimeFailure, RuntimeStatus};
 pub(crate) use tree::read_shortcut;
 pub use tree::{Accessory, AccessoryContent, ItemLook, MAX_ACCESSORIES};
 pub use tree::{
-    Action, ActionKind, ActionStyle, ActionSubmenu, Answer, Item, ScreenForm, SubmenuEntries,
-    TREE_VERSION, View,
+    Action, ActionKind, ActionStyle, ActionSubmenu, Answer, Item, SubmenuEntries, TREE_VERSION,
+    View,
 };
 
 pub(crate) mod bindings {
@@ -613,79 +613,6 @@ impl ViewId {
     }
 }
 
-/// A form an item opens, as produced by the guest.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Form {
-    pub title: String,
-    pub fields: Vec<Field>,
-    pub submit_label: String,
-}
-
-/// One field of a [`Form`].
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Field {
-    pub id: String,
-    pub label: String,
-    pub kind: FieldKind,
-    /// What the field starts with: a text field's text, or the id of the
-    /// option chosen first; `None` for an empty text field, or the first
-    /// option.
-    pub value: Option<String>,
-}
-
-/// What a field holds.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum FieldKind {
-    /// A single-line text field, which starts with the field's value, else
-    /// empty.
-    Text { placeholder: Option<String> },
-    /// A single-line text field whose text is concealed while it is typed:
-    /// a password argument in Pane's argument form. An extension's form
-    /// has none yet.
-    Password { placeholder: Option<String> },
-    /// Exactly one of these options; the first starts chosen.
-    Choice(Vec<Choice>),
-    /// A path, typed or chosen with the system's picker for `pick`: a
-    /// file, folder or application preference on Pane's Setup screen, as
-    /// its extension's card in Settings has them. An extension's form has
-    /// none yet.
-    Path {
-        placeholder: Option<String>,
-        pick: PathKind,
-    },
-}
-
-/// What a path field's picker chooses.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum PathKind {
-    File,
-    Folder,
-    /// An application: a program's file, or on macOS its bundle (a folder).
-    Application,
-}
-
-/// An option of a choice field.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Choice {
-    pub id: String,
-    pub label: String,
-}
-
-/// A field's submitted value: its text, or the chosen option's id.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct FieldValue {
-    pub id: String,
-    pub value: String,
-}
-
-/// Why the guest did not accept a submitted form.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct FormError {
-    /// The field the message is about; `None` for the form as a whole.
-    pub field: Option<String>,
-    pub message: String,
-}
-
 /// What one cycle of a continuing service answers: the status to show on
 /// the command's screen and how long Pane waits before the next cycle
 /// (`pane:extension/service`, which the launcher's services thread runs
@@ -715,8 +642,6 @@ pub enum CallError {
     OlderApiShape(String),
     /// The guest ran and reported an error.
     Guest(String),
-    /// The guest did not accept a submitted form.
-    Form(FormError),
     /// The guest answered something Pane cannot read: a tree that is not
     /// JSON, or lacks a field Pane needs (see `tree`). The command's
     /// failure, as an error it answered with is, never a crash.
@@ -780,7 +705,6 @@ impl fmt::Display for CallError {
                 EXTENSION_API.0, EXTENSION_API.1
             ),
             CallError::Guest(message) => write!(f, "The extension reported an error: {message}"),
-            CallError::Form(error) => f.write_str(&error.message),
             CallError::Unreadable(reason) => {
                 write!(
                     f,
@@ -919,13 +843,6 @@ enum Request {
     Forget {
         components: Vec<PathBuf>,
     },
-    SubmitForm {
-        component: PathBuf,
-        item_id: String,
-        values: Vec<FieldValue>,
-        data: Option<PackageData>,
-        reply: oneshot::Sender<Result<String, CallError>>,
-    },
     OpenView {
         component: PathBuf,
         item_id: String,
@@ -1007,7 +924,6 @@ impl Request {
             | Request::HandleEvent { component, .. }
             | Request::RunItem { component, .. }
             | Request::Search { component, .. }
-            | Request::SubmitForm { component, .. }
             | Request::OpenView { component, .. }
             | Request::OpenDesignedView { component, .. } => Some(component),
             _ => None,
@@ -1616,41 +1532,6 @@ impl Runtime {
             response,
         );
         (stop, answer)
-    }
-
-    /// Submits the form of `item_id` in the command in `component`. A
-    /// rejection by the guest is [`CallError::Form`]. The command has no
-    /// extension data.
-    pub async fn submit_form(
-        &self,
-        component: &Path,
-        item_id: &str,
-        values: Vec<FieldValue>,
-    ) -> Result<String, CallError> {
-        self.submit_form_with(component, item_id, values, None)
-            .await
-    }
-
-    /// Like [`Runtime::submit_form`]; the command reads and saves `data`.
-    pub(crate) async fn submit_form_with(
-        &self,
-        component: &Path,
-        item_id: &str,
-        values: Vec<FieldValue>,
-        data: Option<PackageData>,
-    ) -> Result<String, CallError> {
-        let (reply, response) = oneshot::channel();
-        self.call(
-            Request::SubmitForm {
-                component: component.to_path_buf(),
-                item_id: item_id.to_owned(),
-                values,
-                data,
-                reply,
-            },
-            response,
-        )
-        .await
     }
 
     /// Opens the custom view of `item_id` in the command in `component` and
@@ -3208,11 +3089,21 @@ impl Code {
             func("handle-event")?,
             &cx,
         )?;
-        check::<(String, Vec<command::FieldValue>), (Result<String, command::FormError>,)>(
-            "submit-form",
-            func("submit-form")?,
-            &cx,
-        )?;
+        // The typed form of the interface's earlier shape: a component
+        // that still answers it is one built before the Form components of
+        // the designed tree replaced it (#241), refused naming the change
+        // instead of running a form Pane can no longer submit.
+        if interface
+            .get_export(&self.engine, "submit-form")
+            .is_some()
+        {
+            return Err(older(
+                "it still exports `submit-form`, the typed form of the command \
+                 interface that the designed tree's Form components replaced; \
+                 a form is now a tree whose fields are components"
+                    .into(),
+            ));
+        }
         check::<(String,), (Result<ResourceAny, String>,)>(
             "open-custom-view",
             func("open-custom-view")?,
@@ -3495,16 +3386,6 @@ impl Host {
                 return;
             }
             Request::DropStopped | Request::Quit => return,
-            Request::SubmitForm {
-                component,
-                item_id,
-                values,
-                data,
-                reply,
-            } => Box::pin(async move {
-                let result = self.submit_form(&component, item_id, values, data).await;
-                let _ = reply.send(result);
-            }),
             Request::OpenView {
                 component,
                 item_id,
@@ -3982,40 +3863,6 @@ impl Host {
         };
         self.handle_event_in_turn(path, call, callback.to_owned(), "{}".into(), data, &chain)
             .await
-    }
-
-    async fn submit_form(
-        &self,
-        path: &Path,
-        item_id: String,
-        values: Vec<FieldValue>,
-        data: Option<PackageData>,
-    ) -> Result<String, CallError> {
-        let chain = self.chain();
-        let _turn = self.turn_for(path, &chain).await?;
-        self.instance(path, data).await?;
-        let values = values
-            .into_iter()
-            .map(|FieldValue { id, value }| command::FieldValue { id, value })
-            .collect();
-        let result = self
-            .run_guest(path, &chain, async |instance| {
-                instance.store.data_mut().set_call(CallFor::in_window(None));
-                let command = instance.bindings.pane_extension_command();
-                instance
-                    .store
-                    .run_concurrent(async |store| {
-                        command.call_submit_form(store, item_id, values).await
-                    })
-                    .await
-            })
-            .await?;
-        self.settle(path, result, |error: command::FormError| {
-            CallError::Form(FormError {
-                field: error.field,
-                message: error.message,
-            })
-        })
     }
 
     async fn open_view(

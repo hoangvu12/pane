@@ -46,11 +46,21 @@ use super::tree;
 /// its tree's nodes, and the window's keystroke observer while any node
 /// asks for key events.
 pub(crate) struct DesignedControls {
-    /// The opened view these controls are for.
-    pub(super) view: ViewId,
+    /// The opened view these controls are for: a view's id number, or a
+    /// Pane form's own identity (#241) — either way one number per
+    /// screen the controls follow.
+    pub(super) view: u64,
     /// The keyed state of every stateful and focusable node the last tree
     /// named, by its path.
     pub(super) state: HashMap<String, KeyedState>,
+    /// The values the current tree named for its discrete controls, keyed
+    /// by the nodes' keys (#241): the baseline an unchanged value does
+    /// not move.
+    pub(super) rendered: HashMap<String, String>,
+    /// The values those controls reported since the tree landed, keyed by
+    /// the nodes' keys: a form's submission reads them while the answers
+    /// that carry them have not landed (#241).
+    pub(super) sent: HashMap<String, String>,
     /// The window's keystroke observer, while any drawn node asks for key
     /// events (`onKey`).
     keys: Option<Subscription>,
@@ -61,7 +71,7 @@ impl DesignedControls {
     /// state its tree asks for, and the keyboard on the first focusable
     /// control — or the one that asks for it.
     pub(super) fn new(
-        view: ViewId,
+        view: u64,
         tree: &DesignedTree,
         render: u64,
         window: &mut Window,
@@ -70,6 +80,8 @@ impl DesignedControls {
         let mut controls = DesignedControls {
             view,
             state: HashMap::new(),
+            rendered: HashMap::new(),
+            sent: HashMap::new(),
             keys: None,
         };
         let opened = controls.reconcile(tree, render, window, cx);
@@ -209,16 +221,40 @@ impl DesignedControls {
                 Held::Field {
                     events, editing, ..
                 } => {
-                    if let NodeKind::TextInput(input) = &node.kind {
-                        events.on_input = input.on_input;
-                        events.on_change = input.on_change;
-                        events.throttle = input.throttle_ms.map(Duration::from_millis);
-                        place(editing, events, &input.value, cx);
+                    // A date field or a picker of one path edits its value
+                    // as a field does, with no events its tree names for
+                    // itself.
+                    let (value, wired) = match &node.kind {
+                        NodeKind::TextInput(input)
+                        | NodeKind::PasswordInput(input)
+                        | NodeKind::TextArea(input) => (
+                            input.value.clone(),
+                            Some((input.on_input, input.on_change, input.throttle_ms)),
+                        ),
+                        NodeKind::DatePicker(date) | NodeKind::DateTimePicker(date) => {
+                            (date.value.clone(), None)
+                        }
+                        NodeKind::FilePicker(picker) | NodeKind::FolderPicker(picker) => (
+                            picker.paths.first().cloned().unwrap_or_default(),
+                            None,
+                        ),
+                        _ => (String::new(), None),
+                    };
+                    if let Some((on_input, on_change, throttle)) = wired {
+                        events.on_input = on_input;
+                        events.on_change = on_change;
+                        events.throttle = throttle.map(Duration::from_millis);
                     }
+                    place(editing, events, &value, cx);
                 }
-                Held::Select { on_change, .. } => {
+                Held::Select {
+                    on_change,
+                    on_input,
+                    ..
+                } => {
                     if let NodeKind::Select(select) = &node.kind {
                         *on_change = select.on_change;
+                        *on_input = select.on_input;
                     }
                 }
                 _ => {}
@@ -367,6 +403,8 @@ impl KeyedState {
             Held::Focus(focus) => Some(focus.clone()),
             Held::Field { focus, .. } => Some(focus.clone()),
             Held::Select { focus, .. } => Some(focus.clone()),
+            Held::Tags { focus, .. } => Some(focus.clone()),
+            Held::Paths { focus, .. } => Some(focus.clone()),
             Held::Scroll(_) => None,
         }
     }
@@ -391,6 +429,10 @@ pub(super) enum HeldKind {
     Field,
     /// A select.
     Select,
+    /// A tag picker.
+    Tags,
+    /// A picker of many paths.
+    Paths,
     /// A scroll region.
     Scroll,
 }
@@ -414,6 +456,23 @@ pub(super) enum Held {
         select: Entity<crate::ui::select::Select>,
         focus: FocusHandle,
         on_change: Option<u32>,
+        /// The callback the popup's query runs as the user types it, when
+        /// the tree asks for it: a dropdown whose search the extension
+        /// handles (#241).
+        on_input: Option<u32>,
+    },
+    /// A tag picker: the query its field edits, its focus, the tags
+    /// chosen and the option highlighted (#241).
+    Tags {
+        query: Entity<EditableTextState>,
+        focus: FocusHandle,
+        chosen: Vec<String>,
+        highlighted: Option<usize>,
+    },
+    /// A picker of many paths: its focus and the paths chosen (#241).
+    Paths {
+        focus: FocusHandle,
+        paths: Vec<String>,
     },
     /// A scroll region: its position, kept by the handle its drawing
     /// tracks.
@@ -484,19 +543,64 @@ impl Held {
                             this.designed_select_committed(&place, value, window, cx);
                         });
                     });
+                let entity = cx.entity();
+                let place = path.to_owned();
+                // The query of a dropdown whose search the extension
+                // handles, told to it as the user types it (#241).
+                let query = std::rc::Rc::new(
+                    move |text: &str, window: &mut Window, cx: &mut App| {
+                        let place = place.clone();
+                        let _ = entity.update(cx, |this, cx| {
+                            this.designed_select_queried(&place, text, window, cx);
+                        });
+                    },
+                );
                 let name = select_label(node).unwrap_or_else(|| "select".into());
                 let debug = format!("designed-select-{}", super::components::short(&name));
+                let searching = !matches!(&node.kind, NodeKind::Select(select) if !select.search);
                 let select = cx.new(|cx| {
                     crate::ui::select::Select::new(name, "", debug, model, commit, window, cx)
+                        .on_query(query)
+                        .when(!searching, |select| select.unfiltered())
                 });
                 let focus = select.read(cx).trigger_focus();
                 Held::Select {
                     select,
                     focus,
                     on_change: None,
+                    on_input: None,
                 }
             }
             HeldKind::Scroll => Held::Scroll(ScrollHandle::new()),
+            HeldKind::Tags => {
+                let query = cx.new(|cx| EditableTextState::new(StringStorage::default(), cx));
+                let focus = query.read(cx).focus_handle(cx);
+                let focus = focus.tab_stop(true);
+                // The query's changes move the highlight and redraw; the
+                // picker's value is its chosen tags, committed as one.
+                let path = path.to_owned();
+                cx.subscribe_in(&query, window, move |this, _, _: &TextChanged, window, cx| {
+                    let _ = window;
+                    if let Some(controls) = this.designed.as_mut()
+                        && let Some(entry) = controls.state.get_mut(&path)
+                        && let Held::Tags { highlighted, .. } = &mut entry.held
+                    {
+                        *highlighted = None;
+                    }
+                    cx.notify();
+                })
+                .detach();
+                Held::Tags {
+                    query,
+                    focus,
+                    chosen: tags_of(node),
+                    highlighted: None,
+                }
+            }
+            HeldKind::Paths => Held::Paths {
+                focus: cx.focus_handle().tab_stop(true),
+                paths: paths_of(node),
+            },
         }
     }
 
@@ -507,6 +611,8 @@ impl Held {
             (Held::Focus(_), HeldKind::Focus)
                 | (Held::Field { .. }, HeldKind::Field)
                 | (Held::Select { .. }, HeldKind::Select)
+                | (Held::Tags { .. }, HeldKind::Tags)
+                | (Held::Paths { .. }, HeldKind::Paths)
                 | (Held::Scroll(_), HeldKind::Scroll)
         )
     }
@@ -595,17 +701,66 @@ fn place(
     events.rendered = value.to_owned();
 }
 
+/// The tags a tag picker node starts with.
+fn tags_of(node: &Node) -> Vec<String> {
+    match &node.kind {
+        NodeKind::TagPicker(picker) => picker.tags.clone(),
+        _ => Vec::new(),
+    }
+}
+
+/// The paths a picker-of-many node starts with.
+fn paths_of(node: &Node) -> Vec<String> {
+    match &node.kind {
+        NodeKind::FilePicker(picker) | NodeKind::FolderPicker(picker) => picker.paths.clone(),
+        _ => Vec::new(),
+    }
+}
+
+/// The value a discrete control's tree names, keyed by its key: a
+/// dropdown's choice, a checkbox's or toggle's state, a tag picker's or
+/// picker-of-many's chosen — the baseline an unchanged value does not
+/// move and a submission's collection reads behind what the control
+/// reported (#241).
+fn discrete_value(node: &Node) -> Option<(String, String)> {
+    let key = node.key.clone()?;
+    let value = match &node.kind {
+        NodeKind::Select(select) => select.value.clone().unwrap_or_default(),
+        NodeKind::Toggle(toggle) => toggle.on.to_string(),
+        NodeKind::Checkbox(checkbox) => checkbox.checked.to_string(),
+        NodeKind::TagPicker(picker) => picker.tags.join("\u{1}"),
+        NodeKind::FilePicker(picker) | NodeKind::FolderPicker(picker) => {
+            picker.paths.join("\u{1}")
+        }
+        _ => return None,
+    };
+    Some((key, value))
+}
+
 /// Which kind of state a node holds, `None` for one that holds none: a
 /// field, a select, a scroll region, or a control that is focusable or
 /// names a handler.
 fn held(node: &Node) -> Option<HeldKind> {
     match &node.kind {
-        NodeKind::TextInput(_) | NodeKind::PasswordInput(_) | NodeKind::TextArea(_) => {
-            Some(HeldKind::Field)
+        NodeKind::TextInput(_)
+        | NodeKind::PasswordInput(_)
+        | NodeKind::TextArea(_)
+        | NodeKind::DatePicker(_)
+        | NodeKind::DateTimePicker(_) => Some(HeldKind::Field),
+        // A picker of one path is a field its text edits; one of many
+        // holds the paths it chose.
+        NodeKind::FilePicker(picker) | NodeKind::FolderPicker(picker) => {
+            Some(if picker.multiple {
+                HeldKind::Paths
+            } else {
+                HeldKind::Field
+            })
         }
         NodeKind::Select(select) => (!select.options.is_empty()).then_some(HeldKind::Select),
+        NodeKind::TagPicker(_) => Some(HeldKind::Tags),
         NodeKind::Scroll { .. } => Some(HeldKind::Scroll),
         _ if focusable(node)
+            || node.handles(pane_core::DesignedHandler::Submit)
             || node.on_focus.is_some()
             || node.on_blur.is_some()
             || node.on_key.is_some() =>

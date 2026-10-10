@@ -28,7 +28,10 @@
 //! form and Markdown (#237); 1.2 adds the keyed state the reconciler
 //! keeps — text fields that edit, the select's searchable state, scroll
 //! by key — the inputs' partial control (`onInput`, `throttleMs`, the
-//! `focus` ask) and the focus, blur and key events (#238).
+//! `focus` ask) and the focus, blur and key events (#238); 1.3 adds the
+//! form — a `form` node whose submission is an action, the field
+//! components' titles, notes, errors and remembered values, and the
+//! date, tag, file and folder pickers (#241).
 
 use serde::Deserialize;
 use serde_json::{Map, Value};
@@ -37,10 +40,10 @@ use crate::icons::{self, Icon, Tint};
 use crate::markdown;
 use crate::tokens::{IconSize, Radius, Space, TextLevel, TextStyle};
 
-/// The version of the UI component set this Pane renders: major 1, minor 2.
+/// The version of the UI component set this Pane renders: major 1, minor 3.
 /// A document of this major and any minor is read (unknown fields and nodes
 /// degrading); a document of another major is refused naming both versions.
-pub const COMPONENT_SET: (u64, u64) = (1, 2);
+pub const COMPONENT_SET: (u64, u64) = (1, 3);
 
 /// Which handler of a node an event raises — the property of the node the
 /// event names, which the stale-event rule checks before delivering: an
@@ -55,6 +58,8 @@ pub enum DesignedHandler {
     Change,
     /// `onInput` — a field's value as the user types it.
     Input,
+    /// `onSubmit` — a form submitted (its fields' values with it).
+    Submit,
     /// `onFocus` — a node taking the keyboard.
     Focus,
     /// `onBlur` — a node losing it.
@@ -106,6 +111,7 @@ impl Node {
         self.handles(DesignedHandler::Press)
             || self.handles(DesignedHandler::Change)
             || self.handles(DesignedHandler::Input)
+            || self.handles(DesignedHandler::Submit)
             || self.handles(DesignedHandler::Focus)
             || self.handles(DesignedHandler::Blur)
             || self.handles(DesignedHandler::Key)
@@ -119,6 +125,11 @@ impl Node {
                     | NodeKind::Checkbox(_)
                     | NodeKind::Segmented(_)
                     | NodeKind::Slider(_)
+                    | NodeKind::DatePicker(_)
+                    | NodeKind::DateTimePicker(_)
+                    | NodeKind::TagPicker(_)
+                    | NodeKind::FilePicker(_)
+                    | NodeKind::FolderPicker(_)
                     | NodeKind::Scroll { .. }
             )
     }
@@ -148,10 +159,16 @@ impl Node {
                 NodeKind::Select(control) => held(control.on_change),
                 NodeKind::Slider(slider) => held(slider.on_change),
                 NodeKind::TextInput(input) => held(input.on_change),
+                NodeKind::TagPicker(picker) => held(picker.on_change),
                 _ => false,
             },
             DesignedHandler::Input => match &self.kind {
                 NodeKind::TextInput(input) => held(input.on_input),
+                NodeKind::Select(select) => held(select.on_input),
+                _ => false,
+            },
+            DesignedHandler::Submit => match &self.kind {
+                NodeKind::Form(form) => held(form.on_submit),
                 _ => false,
             },
             DesignedHandler::Focus => held(self.on_focus),
@@ -262,6 +279,25 @@ pub enum NodeKind {
     PasswordInput(TextInput),
     TextArea(TextInput),
     Select(Select),
+    /// A form: a column of fields whose submission is an action (#241).
+    /// Its children are the author's own layout; every field component
+    /// in its subtree is one of its fields, whose values a submission
+    /// carries.
+    Form(FormNode),
+    /// One date field, typed or stepped with the arrow keys: its value
+    /// "YYYY-MM-DD".
+    DatePicker(DateField),
+    /// One date and time field, typed or stepped with the arrow keys:
+    /// its value "YYYY-MM-DD HH:MM".
+    DateTimePicker(DateField),
+    /// One tag picker: a multi-select of its options, its chosen tags as
+    /// chips.
+    TagPicker(TagPicker),
+    /// One file picker: a path typed or chosen with the system's dialog.
+    FilePicker(FilePicker),
+    /// One folder picker: a path typed or chosen with the system's
+    /// dialog.
+    FolderPicker(FilePicker),
     /// A node whose type Pane does not know, or whose `requires` it does
     /// not meet: its `fallback` and children decide what is drawn.
     Unknown(String),
@@ -503,6 +539,9 @@ pub struct Toggle {
     pub on_change: Option<u32>,
     /// Its label, drawn beside it and naming it to assistive technology.
     pub label: Option<String>,
+    /// What it says around the control as a form field: its title, note,
+    /// error and remembered value (#241).
+    pub field: FieldProps,
 }
 
 /// One checkbox: checked or not, and the callback a change of it runs.
@@ -512,6 +551,9 @@ pub struct Checkbox {
     pub on_change: Option<u32>,
     /// Its label, drawn beside it and naming it to assistive technology.
     pub label: Option<String>,
+    /// What it says around the control as a form field: its title, note,
+    /// error and remembered value (#241).
+    pub field: FieldProps,
 }
 
 /// A segmented control: its segments and the one chosen.
@@ -530,8 +572,21 @@ pub struct Select {
     pub options: Vec<Segment>,
     pub value: Option<String>,
     pub on_change: Option<u32>,
+    /// The callback the popup's query runs as the user types it, when the
+    /// tree asks for it — a dropdown whose search the extension handles,
+    /// answering options that match (#241).
+    pub on_input: Option<u32>,
+    /// Whether the popup filters its choices as the user types: `true`,
+    /// the default, or `false` for a dropdown whose search the extension
+    /// handles.
+    pub search: bool,
+    /// Shown while no choice is committed.
+    pub placeholder: Option<String>,
     /// Its label, naming it to assistive technology.
     pub label: Option<String>,
+    /// What it says around the control as a form field: its title, note,
+    /// error and remembered value (#241).
+    pub field: FieldProps,
 }
 
 /// One option of a segmented control or a select.
@@ -540,6 +595,26 @@ pub struct Segment {
     pub value: String,
     /// What is drawn for it; its `value` when the tree gives none.
     pub label: Option<String>,
+    /// The section the option belongs to, drawn as a group's header; the
+    /// options of one section are drawn together under it (#241).
+    pub section: Option<String>,
+}
+
+impl Default for Select {
+    /// The select a tree gives no properties: it offers nothing, and its
+    /// popup searches as one always does.
+    fn default() -> Select {
+        Select {
+            options: Vec::new(),
+            value: None,
+            on_change: None,
+            on_input: None,
+            search: true,
+            placeholder: None,
+            label: None,
+            field: FieldProps::default(),
+        }
+    }
 }
 
 /// One slider: its value between its bounds, and the callback a change of
@@ -614,7 +689,11 @@ pub struct EmptyState {
 /// once (#238): the value the tree names is the value the field starts
 /// from and the one an echo of it never fights, a commit (`on-change`)
 /// tells the extension what it holds, and `on-input` — with an optional
-/// `throttle-ms` — hears it as the user types.
+/// `throttle-ms` — hears it as the user types. A field of a form also
+/// carries what every field does (#241): its `title`, the note under it,
+/// the error the extension's last answer set, the value it starts from
+/// when the tree names none (`default`), and whether its last submitted
+/// value is remembered.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct TextInput {
     pub value: String,
@@ -630,6 +709,106 @@ pub struct TextInput {
     pub throttle_ms: Option<u64>,
     /// Its label, naming it to assistive technology.
     pub label: Option<String>,
+    /// What it says around the control as a form field (#241).
+    pub field: FieldProps,
+}
+
+/// What every field component says around its control (#241): its title,
+/// the note under it, the error the extension's last answer set, and
+/// whether its last submitted value is kept as the package's settings and
+/// prefilled the next time the field appears.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct FieldProps {
+    /// The field's title, drawn over its control; also names it to
+    /// assistive technology when the field's own label does not.
+    pub title: Option<String>,
+    /// The note drawn under the field.
+    pub info: Option<String>,
+    /// The error drawn under the field, in the danger tone: what the
+    /// extension's last answer set, as its next render does.
+    pub error: Option<String>,
+    /// Whether the field's last submitted value is kept as the package's
+    /// settings and prefilled the next time the field's key appears.
+    pub remember: bool,
+}
+
+/// One field's value in a form's submission (#241), as the window
+/// collects it from the field's own state: the text a field edits, the
+/// state a checkbox or toggle is in, the tags or paths a picker chose.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum FormValue {
+    /// A text field's, password field's, text area's, date field's,
+    /// dropdown's or single-path picker's value.
+    Text(String),
+    /// A checkbox's or toggle's state.
+    On(bool),
+    /// A tag picker's chosen tags, or a picker-of-many's chosen paths.
+    List(Vec<String>),
+}
+
+impl FormValue {
+    /// The value as a form Pane itself asks reads it: its text, a
+    /// checkbox's or toggle's state as `true` or `false`, a list joined
+    /// by commas.
+    pub fn as_text(&self) -> String {
+        match self {
+            FormValue::Text(text) => text.clone(),
+            FormValue::On(on) => on.to_string(),
+            FormValue::List(values) => values.join(","),
+        }
+    }
+}
+
+/// One form: a column of fields whose submission is an action (#241). Its
+/// children are the author's own layout, and every field component in its
+/// subtree is one of its fields: a submission collects their values and
+/// runs `on-submit` with them, and Enter in a single-line field of the
+/// form submits it, as Ctrl+Enter does in a text area (whose Enter
+/// inserts a newline). A form with no `on-submit` is one Pane itself
+/// answers: the window collects its values and hands them to the
+/// launcher (Pane's own argument, Setup, alias, npm and Git forms).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct FormNode {
+    /// The callback a submission runs, with every field's value.
+    pub on_submit: Option<u32>,
+    /// The submit button's label; "Submit" when the tree names none.
+    pub submit_label: Option<String>,
+}
+
+/// One date field (`date-picker`) or date and time field
+/// (`date-time-picker`): its value typed or stepped with the arrow keys,
+/// the part the caret is in — "YYYY-MM-DD" or "YYYY-MM-DD HH:MM".
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct DateField {
+    /// The field's text, which parses as a date or date and time or does
+    /// not; the extension validates it, as a text field's value.
+    pub value: String,
+    pub field: FieldProps,
+}
+
+/// One tag picker: a multi-select of its options, the chosen tags drawn
+/// as chips. Enter adds the highlighted option; Backspace over an empty
+/// query removes the last chip.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct TagPicker {
+    /// The tags chosen, by their options' values.
+    pub tags: Vec<String>,
+    /// The tags offered.
+    pub options: Vec<Segment>,
+    /// The callback a change of the chosen tags runs, told them all.
+    pub on_change: Option<u32>,
+    pub field: FieldProps,
+}
+
+/// One file or folder picker: a path typed or chosen with the system's
+/// dialog (its "Choose…" opens it), one path or several.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct FilePicker {
+    /// The paths chosen, one unless the picker allows many.
+    pub paths: Vec<String>,
+    /// Whether the picker chooses several paths; `false` names one.
+    pub multiple: bool,
+    pub field: FieldProps,
 }
 
 /// The tone of a button.
@@ -848,6 +1027,12 @@ fn kind_name(kind: &NodeKind) -> String {
         NodeKind::PasswordInput(_) => "password-input".to_owned(),
         NodeKind::TextArea(_) => "text-area".to_owned(),
         NodeKind::Select(_) => "select".to_owned(),
+        NodeKind::Form(_) => "form".to_owned(),
+        NodeKind::DatePicker(_) => "date-picker".to_owned(),
+        NodeKind::DateTimePicker(_) => "date-time-picker".to_owned(),
+        NodeKind::TagPicker(_) => "tag-picker".to_owned(),
+        NodeKind::FilePicker(_) => "file-picker".to_owned(),
+        NodeKind::FolderPicker(_) => "folder-picker".to_owned(),
         NodeKind::Unknown(kind) => kind.clone(),
     }
 }
@@ -992,14 +1177,20 @@ fn node(wire: WireNode, depth: usize, nodes: &mut usize) -> Result<Node, ReadErr
             "tag" => NodeKind::Tag(texted(&wire, "text")?),
             "badge" => NodeKind::Badge(badge(&wire)?),
             "toggle" => NodeKind::Toggle(Toggle {
-                on: boolean(&wire, "on")?.unwrap_or(false),
+                on: boolean(&wire, "on")?
+                    .or(boolean(&wire, "default")?)
+                    .unwrap_or(false),
                 on_change: callback(&wire, "onChange")?,
                 label: string(&wire, "label")?,
+                field: field_props(&wire)?,
             }),
             "checkbox" => NodeKind::Checkbox(Checkbox {
-                checked: boolean(&wire, "checked")?.unwrap_or(false),
+                checked: boolean(&wire, "checked")?
+                    .or(boolean(&wire, "default")?)
+                    .unwrap_or(false),
                 on_change: callback(&wire, "onChange")?,
                 label: string(&wire, "label")?,
+                field: field_props(&wire)?,
             }),
             "segmented" => NodeKind::Segmented(segmented(&wire)?),
             "slider" => NodeKind::Slider(slider(&wire)?),
@@ -1019,6 +1210,22 @@ fn node(wire: WireNode, depth: usize, nodes: &mut usize) -> Result<Node, ReadErr
             "password-input" => NodeKind::PasswordInput(text_input(&wire)?),
             "text-area" => NodeKind::TextArea(text_input(&wire)?),
             "select" => NodeKind::Select(select(&wire)?),
+            "form" => NodeKind::Form(FormNode {
+                on_submit: callback(&wire, "onSubmit")?,
+                submit_label: string(&wire, "submitLabel")?,
+            }),
+            "date-picker" => NodeKind::DatePicker(date_field(&wire)?),
+            "date-time-picker" => NodeKind::DateTimePicker(date_field(&wire)?),
+            "tag-picker" => NodeKind::TagPicker(TagPicker {
+                tags: texts(&wire, "tags")?
+                    .or_else(|| texts(&wire, "default")?)
+                    .unwrap_or_default(),
+                options: options(wire, "options")?,
+                on_change: callback(&wire, "onChange")?,
+                field: field_props(&wire)?,
+            }),
+            "file-picker" => NodeKind::FilePicker(file_picker(&wire)?),
+            "folder-picker" => NodeKind::FolderPicker(file_picker(&wire)?),
             _ => NodeKind::Unknown(wire.kind.clone()),
         }
     };
@@ -1342,13 +1549,17 @@ fn segmented(wire: &WireNode) -> Result<Segmented, ReadError> {
 fn select(wire: &WireNode) -> Result<Select, ReadError> {
     Ok(Select {
         options: options(wire, "options")?,
-        value: string(wire, "value")?,
+        value: string(wire, "value")?.or(string(wire, "default")?),
         on_change: callback(wire, "onChange")?,
+        on_input: callback(wire, "onInput")?,
+        search: boolean(wire, "search")?.unwrap_or(true),
+        placeholder: string(wire, "placeholder")?,
         label: string(wire, "label")?,
+        field: field_props(wire)?,
     })
 }
 
-/// The options a segmented control or select names.
+/// The options a segmented control, select or tag picker names.
 fn options(wire: &WireNode, property: &str) -> Result<Vec<Segment>, ReadError> {
     let rest = &wire.rest;
     let options = match rest.get(property) {
@@ -1368,6 +1579,11 @@ fn options(wire: &WireNode, property: &str) -> Result<Vec<Segment>, ReadError> {
                         Some(Value::String(label)) => Some(label.clone()),
                         None | Some(Value::Null) => None,
                         Some(_) => return Err(unreadable("an option's label is not a string")),
+                    },
+                    section: match fields.get("section") {
+                        Some(Value::String(section)) => Some(section.clone()),
+                        None | Some(Value::Null) => None,
+                        Some(_) => return Err(unreadable("an option's section is not a string")),
                     },
                 })
             })
@@ -1499,15 +1715,87 @@ fn empty_state(wire: &WireNode) -> Result<EmptyState, ReadError> {
 
 /// The text input a text-input, password-input or text-area node's
 /// properties give it.
+/// The text input a text-input, password-input or text-area node's other
+/// properties give it: its value (else its `default`), placeholder, the
+/// events it asks for, and what it says around its control as a form
+/// field.
 fn text_input(wire: &WireNode) -> Result<TextInput, ReadError> {
     Ok(TextInput {
-        value: string(wire, "value")?.unwrap_or_default(),
+        value: string(wire, "value")?
+            .or(string(wire, "default")?)
+            .unwrap_or_default(),
         placeholder: string(wire, "placeholder")?,
         on_change: callback(wire, "onChange")?,
         on_input: callback(wire, "onInput")?,
         throttle_ms: number(wire, "throttleMs")?.map(|Finite(ms)| ms.max(0.) as u64),
         label: string(wire, "label")?,
+        field: field_props(wire)?,
     })
+}
+
+/// What a field node says around its control: its `title`, `info`,
+/// `error` and `remember`.
+fn field_props(wire: &WireNode) -> Result<FieldProps, ReadError> {
+    Ok(FieldProps {
+        title: string(wire, "title")?,
+        info: string(wire, "info")?,
+        error: string(wire, "error")?,
+        remember: boolean(wire, "remember")?.unwrap_or(false),
+    })
+}
+
+/// The date field a date-picker or date-time-picker node's other
+/// properties give it: its value, else its `default`.
+fn date_field(wire: &WireNode) -> Result<DateField, ReadError> {
+    Ok(DateField {
+        value: string(wire, "value")?
+            .or(string(wire, "default")?)
+            .unwrap_or_default(),
+        field: field_props(wire)?,
+    })
+}
+
+/// The paths a file-picker or folder-picker node names, its `value` or
+/// `default` — one path, or a list of them when it allows many.
+fn file_picker(wire: &WireNode) -> Result<FilePicker, ReadError> {
+    let paths = |name: &str| match wire.rest.get(name) {
+        None | Some(Value::Null) => None,
+        Some(Value::String(path)) => Some(vec![path.clone()]),
+        Some(Value::Array(paths)) => Some(
+            paths
+                .iter()
+                .map(|path| match path {
+                    Value::String(path) => Ok(path.clone()),
+                    _ => Err(unreadable("a path of it is not a string")),
+                })
+                .collect::<Result<Vec<String>, ReadError>>()?,
+        ),
+        Some(_) => return Err(unreadable("its paths are not a path or a list of them")),
+    };
+    Ok(FilePicker {
+        paths: paths("value")
+            .or_else(|| paths("default"))
+            .unwrap_or_default(),
+        multiple: boolean(wire, "multiple")?.unwrap_or(false),
+        field: field_props(wire)?,
+    })
+}
+
+/// A list of strings property, `Err` when it is not one.
+fn texts(wire: &WireNode, name: &str) -> Result<Option<Vec<String>>, ReadError> {
+    match wire.rest.get(name) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::Array(values)) => Ok(Some(
+            values
+                .iter()
+                .map(|value| match value {
+                    Value::String(value) => Ok(value.clone()),
+                    _ => Err(unreadable(&format!("a {name} entry is not a string"))),
+                })
+                .collect::<Result<Vec<String>, ReadError>>()?,
+        )),
+        Some(_) => Err(unreadable(&format!("its {name} is not a list"))),
+    }
 }
 
 /// The style every node carries: its sizing, its surface, and its hover

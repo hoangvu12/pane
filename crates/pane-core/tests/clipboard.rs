@@ -485,7 +485,7 @@ fn submit(launcher: &Launcher, title: &str, values: &[(&str, &str)]) -> Status {
     block_on(launcher.activate_selected());
     assert!(launcher.view().form().is_some(), "{:?}", launcher.view());
     for (field, value) in values {
-        launcher.set_field_value(field, value);
+        launcher.submit_pane_form_todo(field, value);
     }
     block_on(launcher.submit_form());
     launcher.view().status
@@ -669,11 +669,13 @@ fn text_from_an_excluded_program_is_not_kept(fixture: &'static Fixture) {
     select_title(&launcher, EXCLUDE);
     block_on(launcher.activate_selected());
     assert!(launcher.view().form().is_some());
-    launcher.set_field_value("program", r"C:\KeePass.exe");
-    block_on(launcher.submit_form());
+    block_on(launcher.submit_pane_form(vec![
+        ("program".to_owned(), (r"C:\KeePass.exe").to_owned()),
+    ]));
     assert!(matches!(launcher.view().status, Status::Error(_)));
-    launcher.set_field_value("program", " KeePass.exe ");
-    block_on(launcher.submit_form());
+    block_on(launcher.submit_pane_form(vec![
+        ("program".to_owned(), (" KeePass.exe ").to_owned()),
+    ]));
     assert_eq!(
         launcher.view().status,
         result("Text copied from KeePass.exe is not kept")

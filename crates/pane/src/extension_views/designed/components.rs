@@ -50,6 +50,7 @@ use crate::ui::keycap::{CapStyle, Key, KeySequence, key_sequence as draw_keys};
 use crate::ui::theme::{Theme, pressed};
 use crate::ui::tokens;
 
+use super::fields;
 use super::tree::{Draw, duplicate_keys, place_child};
 use super::{
     AREA_CONTEXT, BUTTON_CONTEXT, CHECKBOX_CONTEXT, Commit, INPUT_CONTEXT, Move, Press,
@@ -998,8 +999,13 @@ pub(super) fn toggle(
         }),
     );
     let ring = focus_ring(theme);
-    let label = toggle.label.clone().unwrap_or_else(|| "toggle".into());
-    div()
+    let label = toggle
+        .label
+        .clone()
+        .or_else(|| toggle.field.title.clone())
+        .unwrap_or_else(|| "toggle".into());
+    let key = key.unwrap_or_default().to_owned();
+    let switch = div()
         .id(path.to_owned())
         .debug_selector(move || "designed-toggle".into())
         .flex()
@@ -1031,7 +1037,10 @@ pub(super) fn toggle(
         })
         .on_action(press)
         .on_click(click)
-        .into_any_element()
+        .into_any_element();
+    // The form field's chrome around it: its title over, its note and
+    // error under (#241).
+    fields::field_group(&key, &toggle.field, None, switch, theme).into_any_element()
 }
 
 /// One checkbox: a box with a check, its label beside it, focusable,
@@ -1077,8 +1086,13 @@ pub(super) fn checkbox(
         }),
     );
     let ring = focus_ring(theme);
-    let label = checkbox.label.clone().unwrap_or_else(|| "checkbox".into());
-    div()
+    let label = checkbox
+        .label
+        .clone()
+        .or_else(|| checkbox.field.title.clone())
+        .unwrap_or_else(|| "checkbox".into());
+    let key = key.unwrap_or_default().to_owned();
+    let control = div()
         .id(path.to_owned())
         .debug_selector(move || "designed-checkbox".into())
         .flex()
@@ -1110,7 +1124,10 @@ pub(super) fn checkbox(
         })
         .on_action(press)
         .on_click(click)
-        .into_any_element()
+        .into_any_element();
+    // The form field's chrome around it: its title over, its note and
+    // error under (#241).
+    fields::field_group(&key, &checkbox.field, None, control, theme).into_any_element()
 }
 
 /// A checkbox's box, with its check.
@@ -1736,12 +1753,66 @@ pub(super) fn text_input(
     let Some((editing, focus, _)) = draw.field(path) else {
         return div().into_any_element();
     };
+    let well = field_well(input, editing, focus, path, kind, theme, cx);
+    // The field's commit: Enter runs it (a text area's Enter inserts a
+    // newline), as a blur does — and Enter in a field of a form submits
+    // the form, which its own commit handler decides (#241). Ctrl+Enter
+    // submits from any field.
+    let field_path = path.to_owned();
+    let commit = cx.listener(move |this, _: &Commit, window, cx| {
+        this.designed_field_committed(&field_path, window, cx);
+    });
+    let submit = cx.listener(move |this, _: &super::SubmitForm, window, cx| {
+        this.submit_designed_form(window, cx);
+    });
+    div()
+        .id(path.to_owned())
+        .flex()
+        .flex_col()
+        .gap_1()
+        .flex_none()
+        .min_w(px(0.))
+        .key_context(if kind == FieldKind::Area {
+            AREA_CONTEXT
+        } else {
+            INPUT_CONTEXT
+        })
+        .child(fields::field_group(
+            input
+                .field
+                .title
+                .as_deref()
+                .unwrap_or(path.rsplit('/').next().unwrap_or("field")),
+            &input.field,
+            input.label.as_deref(),
+            well,
+            theme,
+        ))
+        .on_action(commit)
+        .on_action(submit)
+        .into_any_element()
+}
+
+/// One field's well: GPUI CE's editable text in the field's chrome, the
+/// shape every text-like field draws — a text input, a password field, a
+/// text area, a date field, a picker of one path. The field's group
+/// (its title, note and error) wraps it.
+pub(super) fn field_well(
+    input: &TextInputNode,
+    editing: &gpui::Entity<gpui_elements::editable_text::EditableTextState>,
+    focus: &gpui::FocusHandle,
+    path: &str,
+    kind: FieldKind,
+    theme: &Theme,
+    cx: &gpui::App,
+) -> gpui::Stateful<gpui::Div> {
     let controls = &theme.geometry.controls;
     let ring = controls::well_shadows(true, theme);
     let live = editing.read(cx).as_str().to_owned();
     let label: SharedString = input
         .label
         .clone()
+        .or_else(|| input.field.title.clone())
         .or_else(|| input.placeholder.clone())
         .unwrap_or_else(|| "field".into())
         .into();
@@ -1767,7 +1838,7 @@ pub(super) fn text_input(
         .clone()
         .map(SharedString::from)
         .unwrap_or_else(|| live.clone().into());
-    let well = controls::well(false, theme)
+    controls::well(false, theme)
         .id(format!("{path}/well"))
         .debug_selector(move || debug.clone())
         .track_focus(focus)
@@ -1785,6 +1856,11 @@ pub(super) fn text_input(
         .map(|field| {
             field.when_some(input.placeholder.clone(), |field, placeholder| {
                 field.aria_placeholder(placeholder)
+            })
+        })
+        .map(|field| {
+            field.when_some(input.field.error.clone(), |field, error| {
+                field.aria_description(error)
             })
         })
         .focus(move |field| field.shadow(ring))
@@ -1809,34 +1885,7 @@ pub(super) fn text_input(
                         )
                 })
                 .child(element),
-        );
-    // The field's commit: Enter runs it (a text area's Enter inserts a
-    // newline), as a blur does.
-    let field_path = path.to_owned();
-    let commit = cx.listener(move |this, _: &Commit, window, cx| {
-        this.designed_field_committed(&field_path, window, cx);
-    });
-    div()
-        .id(path.to_owned())
-        .flex()
-        .flex_col()
-        .gap_1()
-        .flex_none()
-        .w(controls.well_height * 8.)
-        .min_w(px(0.))
-        .key_context(if area { AREA_CONTEXT } else { INPUT_CONTEXT })
-        .when_some(input.label.clone(), |field, label| {
-            field.child(
-                div()
-                    .text_size(theme.typography.settings_text_size)
-                    .font_weight(theme.typography.medium)
-                    .text_color(theme.text_title)
-                    .child(label),
-            )
-        })
-        .child(well)
-        .on_action(commit)
-        .into_any_element()
+        )
 }
 
 /// One field's editable text, in the shape the form's fields draw theirs.
@@ -1867,8 +1916,15 @@ fn field_input(
 /// so its open state, query and highlight survive a re-render that still
 /// draws it. Its trigger shows the choice the tree names, read live each
 /// frame; a choice the user commits is told to the extension through the
-/// change handler the tree names.
-pub(super) fn select(select: &SelectNode, path: &str, draw: &Draw) -> AnyElement {
+/// change handler the tree names, and a select whose search the extension
+/// handles tells it the query as the user types it (#241), its popup
+/// showing the choices the extension answers with.
+pub(super) fn select(
+    select: &SelectNode,
+    path: &str,
+    draw: &Draw,
+    cx: &mut gpui::Context<LauncherWindow>,
+) -> AnyElement {
     let theme = draw.theme;
     if select.options.is_empty() {
         // A select with no options draws its trigger alone, offering
@@ -1890,24 +1946,41 @@ pub(super) fn select(select: &SelectNode, path: &str, draw: &Draw) -> AnyElement
     let Some(select_entity) = draw.select(path) else {
         return div().into_any_element();
     };
-    // The select's trigger carries its own focus and keys; the tree's
-    // label sits above it, as a field's does.
-    div()
-        .id(path.to_owned())
-        .flex()
-        .flex_col()
-        .gap_1()
-        .flex_none()
-        .min_w(px(0.))
-        .when_some(select.label.clone(), |field, label| {
-            field.child(
-                div()
-                    .text_size(theme.typography.settings_text_size)
-                    .font_weight(theme.typography.medium)
-                    .text_color(theme.text_title)
-                    .child(label),
-            )
-        })
-        .child(select_entity.clone())
-        .into_any_element()
+    // The select's trigger carries its own focus and keys; the field's
+    // group carries its title, note and error.
+    let trigger = div().child(select_entity.clone());
+    fields::field_group(
+        select
+            .field
+            .title
+            .as_deref()
+            .or(select.label.as_deref())
+            .unwrap_or(path.rsplit('/').next().unwrap_or("field")),
+        &select.field,
+        select.label.as_deref(),
+        trigger,
+        theme,
+    )
+    .into_any_element()
+}
+
+/// One inline query field, as a tag picker's query draws: the shared
+/// editable text element in the field's own type.
+pub(super) fn query_input(
+    input: gpui::Entity<gpui_elements::editable_text::EditableTextState>,
+    theme: &Theme,
+) -> gpui_elements::editable_text::EditableTextElement {
+    field_input(
+        edit_input("query").state(input.downgrade()),
+        "",
+        theme,
+        false,
+    )
+}
+
+/// One chosen chip, as a tag picker's chosen tag or a picker-of-many's
+/// chosen path draws: the tag chip's own shape, in the body text's
+/// colour. The caller attaches the click that removes it.
+pub(super) fn chosen_chip(text: &str, theme: &Theme) -> Stateful<Div> {
+    tag_chip(text, theme.text_body, theme).id(SharedString::from(text.to_owned()))
 }

@@ -180,8 +180,9 @@ fn manage(launcher: &Launcher) {
 /// Submits `alias` in the open alias form; returns the status.
 fn submit_alias(launcher: &Launcher, alias: &str) -> Status {
     let form = launcher.view().form().cloned().expect("the alias form");
-    launcher.set_field_value(&form.fields[0].id, alias);
-    block_on(launcher.submit_form());
+    block_on(launcher.submit_pane_form(vec![
+        (&form.fields[0].id.to_owned(), (alias).to_owned()),
+    ]));
     launcher.view().status
 }
 
@@ -804,8 +805,9 @@ fn a_change_that_cannot_be_kept_never_brings_back_an_uninstalled_packages_choice
     manage(&launcher);
     activate(&launcher, "Alias for Echo");
     let form = launcher.view().form().cloned().unwrap();
-    launcher.set_field_value(&form.fields[0].id, "ec");
-    let write = launcher.submit_form();
+    let write = launcher.submit_pane_form(vec![
+        (&form.fields[0].id.to_owned(), ("ec").to_owned()),
+    ]);
     // Meanwhile the package is uninstalled, forgetting it.
     uninstall(&launcher, &folder, "Query sample");
     assert!(launcher.packages().is_empty());

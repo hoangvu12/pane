@@ -558,7 +558,7 @@ impl LauncherWindow {
         let opening = match &view.screen {
             // Forms, custom views and a package's Logs screen (#213) keep
             // their own accessibility.
-            Screen::Form(_)
+            Screen::PaneForm(_)
             | Screen::CustomView(_)
             | Screen::DesignedView(_)
             | Screen::ExtensionLog { .. } => return None,

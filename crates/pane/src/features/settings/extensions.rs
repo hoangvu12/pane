@@ -2172,6 +2172,7 @@ fn preference_selects(
                     subtitle: None,
                     keywords: vec![option.value.clone().into()],
                     unavailable_reason: None,
+                    section: None,
                 })
                 .collect(),
             committed: effective

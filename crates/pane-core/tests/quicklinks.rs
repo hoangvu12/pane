@@ -202,7 +202,7 @@ fn form(launcher: &Launcher) -> (String, Vec<(String, String)>) {
 /// Fills in the open form's fields and submits it; what the user reads.
 fn submit(launcher: &Launcher, values: &[(&str, &str)]) -> Status {
     for (field, value) in values {
-        launcher.set_field_value(field, value);
+        launcher.submit_pane_form_todo(field, value);
     }
     block_on(launcher.submit_form());
     launches_done(launcher);

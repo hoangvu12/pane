@@ -227,7 +227,7 @@ fn editing_an_invalid_field_clears_its_error() {
     block_on(launcher.submit_form());
     assert_eq!(field_errors(&launcher), [Some("Enter a name".into()), None]);
 
-    launcher.set_field_value("name", "A");
+    launcher.submit_pane_form_todo("name", "A");
 
     assert_eq!(field_errors(&launcher), [None, None]);
 }
@@ -236,8 +236,8 @@ fn editing_an_invalid_field_clears_its_error() {
 fn a_choice_the_form_does_not_offer_is_ignored() {
     let launcher = sample_form();
 
-    launcher.set_field_value("greeting", "howdy");
-    launcher.set_field_value("missing", "value");
+    launcher.submit_pane_form_todo("greeting", "howdy");
+    launcher.submit_pane_form_todo("missing", "value");
 
     let view = launcher.view();
     let values: Vec<&str> = view
@@ -265,7 +265,7 @@ fn a_form_level_error_is_shown_without_marking_a_field() {
 #[test]
 fn going_back_while_a_form_is_submitted_discards_its_answer() {
     let launcher = sample_form();
-    launcher.set_field_value("name", "Ada");
+    launcher.submit_pane_form_todo("name", "Ada");
 
     let pending = launcher.submit_form();
     assert_eq!(launcher.view().status, Status::Running);
@@ -280,7 +280,7 @@ fn going_back_while_a_form_is_submitted_discards_its_answer() {
 fn submitting_again_while_a_submission_is_pending_is_ignored() {
     let launcher = sample_form();
     let first = launcher.submit_form();
-    launcher.set_field_value("name", "Ada");
+    launcher.submit_pane_form_todo("name", "Ada");
 
     let second = launcher.submit_form();
     block_on(second);

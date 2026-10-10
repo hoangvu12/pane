@@ -30,7 +30,7 @@ use pane_core::{
     Screen, SelectedAction, SettingsTarget, Status, WindowPresence,
 };
 
-use crate::extension_views::{custom_view, designed, form};
+use crate::extension_views::{custom_view, designed};
 use crate::features::actions_panel;
 use crate::features::announcer;
 use crate::features::clipboard_history;
@@ -69,8 +69,6 @@ pub struct LauncherWindow {
     pub(crate) focus_handle: FocusHandle,
     /// Root search's query field, which has focus on root search.
     pub(crate) query: root_search::QueryField,
-    /// The open form's controls; `Some` exactly on the form screen.
-    pub(crate) form: Option<form::FormControls>,
     /// The open custom view's focus and layout; `Some` exactly on the
     /// custom view screen.
     pub(crate) custom_view: Option<custom_view::CustomViewControls>,
@@ -205,7 +203,6 @@ impl LauncherWindow {
             launcher,
             focus_handle,
             query,
-            form: None,
             results,
             pointer: None,
             pointer_selection_frozen: false,
@@ -532,8 +529,15 @@ impl LauncherWindow {
                 .launcher
                 .item_actions()
                 .is_some_and(|actions| actions.actions.first().is_some_and(|first| first.submenu));
-        if matches!(self.launcher.screen(), Screen::Form(_)) {
-            self.submit_form(window, cx);
+        // A form on screen submits: one Pane itself asks, or an extension
+        // designed view holding one (#241).
+        if matches!(
+            self.launcher.screen(),
+            Screen::PaneForm(_) | Screen::DesignedView(_)
+        ) && self.launcher.selected_action().available
+            && !self.launcher.selected_action().label.is_empty()
+        {
+            self.submit_designed_form(window, cx);
         } else if primary_submenu {
             self.open_item_submenu(0, window, cx);
         } else {
@@ -679,9 +683,7 @@ impl LauncherWindow {
     /// key itself. Whether one was cancelled.
     fn cancel_composition(&self, window: &mut Window, cx: &mut Context<Self>) -> bool {
         let mut fields = vec![self.query_field()];
-        if let Some(form) = &self.form {
-            fields.extend(form.text_fields());
-        }
+
         fields.extend(self.designed_text_fields());
         for input in fields {
             let marked = input.update(cx, |input, cx| input.marked_text_range(window, cx));
@@ -1284,7 +1286,6 @@ impl LauncherWindow {
         if !self.actions_belong_to(&self.launcher.screen()) && self.actions.take().is_some() {
             self.launcher.close_submenus();
         }
-        self.sync_form(window, cx);
         self.sync_custom_view(window, cx);
         self.sync_designed_view(window, cx);
         // Last: coming back to root search, even as a view closes, focuses
@@ -1624,7 +1625,7 @@ impl LauncherWindow {
         let id = match &view.screen {
             Screen::Command
             | Screen::CommandSearch { .. }
-            | Screen::Form(_)
+            | Screen::PaneForm(_)
             | Screen::CustomView(_)
             | Screen::DesignedView(_) => self.launcher.open_command_id()?,
             Screen::Extensions { .. } => pane_core::MANAGE_EXTENSIONS.to_owned(),
@@ -1782,7 +1783,7 @@ impl Render for LauncherWindow {
             Screen::Root { .. } => "No commands are installed.",
             Screen::Command | Screen::CommandSearch { .. } => "This command has no items.",
             Screen::Package { .. } => "Nothing to install.",
-            Screen::Form(_) => "",
+            Screen::PaneForm(_) => "",
             Screen::Extensions { .. } => "No extensions are installed.",
             Screen::CustomView(_)
             | Screen::DesignedView(_)
@@ -1957,7 +1958,7 @@ impl Render for LauncherWindow {
             Screen::Root { .. }
             | Screen::Command
             | Screen::CommandSearch { .. }
-            | Screen::Form(_)
+            | Screen::PaneForm(_)
             | Screen::CustomView(_)
             | Screen::DesignedView(_)
             | Screen::Extensions { .. } => None,
@@ -1968,7 +1969,7 @@ impl Render for LauncherWindow {
         // not follow.
         let listed = !matches!(
             view.screen,
-            Screen::Form(_) | Screen::CustomView(_) | Screen::DesignedView(_)
+            Screen::PaneForm(_) | Screen::CustomView(_) | Screen::DesignedView(_)
         );
 
         // The content that changes between screens — the results, a form,
@@ -1977,9 +1978,8 @@ impl Render for LauncherWindow {
         // above the results and outside the moving area, so the field
         // never moves while the list below it arrives.
         let body = match view.screen {
-            Screen::Form(form) => {
-                motion::arriving(self.render_form(view.title.clone(), form, cx), arriving)
-                    .into_any_element()
+            Screen::PaneForm(form) => {
+                motion::arriving(self.render_pane_form(form, cx), arriving).into_any_element()
             }
             Screen::CustomView(custom_view) => {
                 motion::arriving(self.render_custom_view(custom_view, cx), arriving)

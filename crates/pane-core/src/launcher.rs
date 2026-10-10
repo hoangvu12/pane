@@ -33,6 +33,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 mod acquire;
@@ -57,6 +58,7 @@ mod item_actions;
 mod launching;
 mod network;
 mod own_actions;
+mod pane_form;
 mod presentation;
 mod programs;
 mod providers;
@@ -81,10 +83,11 @@ use crate::packages::{
 };
 use crate::platform;
 use crate::runtime::{
-    CallError, CustomViewInfo, CustomViewRole, DesignedTree, FieldKind, FieldValue, Form, Frame,
-    Item, Point, ResultListing, RootAction, RootResult as ComputedResult, Runtime, ScreenForm,
-    View, ViewEvent, ViewId, WeakRuntime,
+    CallError, CustomViewInfo, CustomViewRole, DesignedTree, Frame, Item, Point, ResultListing,
+    RootAction, RootResult as ComputedResult, Runtime, View, ViewEvent, ViewId, WeakRuntime,
 };
+use pane_form::{PaneForm, PaneFormField};
+pub use pane_form::{PaneFieldKind, PathPick};
 use crate::search::{self, Keys, Query};
 
 mod dependents;
@@ -134,7 +137,7 @@ pub use quick_slots::{PinTarget, QuickSlot, SlotChange};
 use schedules::Schedules;
 use services::Services;
 pub use setup::{
-    CommandPreferences, PackagePreferences, PreferenceField, PreferencesTarget, SetupHeader,
+    CommandPreferences, PackagePreferences, PreferenceField, PreferencesTarget,
 };
 pub use shortcuts::{ShortcutCatalog, ShortcutCommand, ShortcutGroup};
 pub use submenus::{OpenSubmenu, SubmenuState};
@@ -216,9 +219,11 @@ pub enum Screen {
     /// A package folder's identity and compatibility, before installing it,
     /// as lines of information under the title.
     Package { details: Vec<String> },
-    /// A form opened from an item of the command's list view. It has no
-    /// rows.
-    Form(FormView),
+    /// A form Pane itself asks the user: the argument form, the Setup
+    /// screen, the alias form, or the npm or Git install form, as a
+    /// designed tree whose fields are the tree's field components (#241)
+    /// — the same ones an extension's form uses. It has no rows.
+    PaneForm(PaneForm),
     /// The installed packages, each enabled or disabled, with lines of
     /// information under the title.
     Extensions { details: Vec<String> },
@@ -370,20 +375,19 @@ struct CommandList {
 
 impl CommandList {
     /// The list of a command whose list view has `items`. Choosing an item
-    /// opens its form, else its custom view, else runs its primary action
-    /// (the first, by its callback id); an item with none of them cannot be
-    /// activated and says so.
+    /// opens its custom view, else runs its primary action (the first, by
+    /// its callback id); an item with none of them cannot be activated and
+    /// says so.
     fn of(items: Vec<Item>) -> CommandList {
         let (rows, entries) = items
             .into_iter()
             .map(|item| {
                 let unavailable = platform::unavailable(item.platforms.as_deref(), "this action");
-                let entry = match (&unavailable, item.form, item.custom_view) {
+                let entry = match (&unavailable, item.custom_view) {
                     (Some(reason), ..) => Entry::Unavailable(reason.clone()),
-                    (None, Some(form), _) => Entry::Form(item.id.clone(), form),
-                    (None, None, Some(info)) => Entry::CustomView(item.id.clone(), info),
-                    (None, None, None) if item.actions.is_empty() => Entry::NoActions,
-                    (None, None, None) => Entry::Actions(item_actions::Listed {
+                    (None, Some(info)) => Entry::CustomView(item.id.clone(), info),
+                    (None, None) if item.actions.is_empty() => Entry::NoActions,
+                    (None, None) => Entry::Actions(item_actions::Listed {
                         id: item.id.clone(),
                         title: item.title.clone(),
                         actions: item.actions,
@@ -439,7 +443,8 @@ pub enum Status {
 /// synthesis ([#70](https://github.com/pane-app/pane/issues/70)), named
 /// here so behavior and wording move together. Dispatch itself stays where
 /// it is: both Enter and the button route through
-/// [`Launcher::activate_selected`], or [`Launcher::submit_form`] on a form.
+/// [`Launcher::activate_selected`], or [`Launcher::submit_pane_form`] on a
+/// form.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SelectedAction {
     /// The action's label, from its identity. Empty where there is no
@@ -454,36 +459,6 @@ pub struct SelectedAction {
     /// already running. Enter keeps the behavior it has today either way;
     /// this keeps the button from dispatching what cannot run.
     pub available: bool,
-}
-
-/// An open form, as the user is filling it in.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct FormView {
-    pub fields: Vec<FormField>,
-    pub submit_label: String,
-    /// What the Setup screen shows above and beside its fields, when the
-    /// form is the Setup screen Pane shows before a command whose required
-    /// preferences are unset (see `setup`); `None` for every other form.
-    pub setup: Option<SetupHeader>,
-}
-
-/// One field of an open form with its current value.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct FormField {
-    pub id: String,
-    pub label: String,
-    pub kind: FieldKind,
-    /// The text of a text field, or the id of the chosen option.
-    pub value: String,
-    /// Why the extension rejected this field on the last submission.
-    pub error: Option<String>,
-    /// What the value is for, shown under the field: a preference's
-    /// description on the Setup screen; `None` on other forms.
-    pub description: Option<String>,
-    /// Whether the form needs a value in it: a required argument in Pane's
-    /// argument form, whose first empty one the window focuses. An
-    /// extension's form and Pane's other forms say `false`.
-    pub required: bool,
 }
 
 /// An open custom view as the extension last drew it.
@@ -581,10 +556,10 @@ impl LauncherView {
         }
     }
 
-    /// The open form, on the form screen.
-    pub fn form(&self) -> Option<&FormView> {
+    /// The open form, on the Pane form screen.
+    pub fn form(&self) -> Option<&PaneForm> {
         match &self.screen {
-            Screen::Form(form) => Some(form),
+            Screen::PaneForm(form) => Some(form),
             _ => None,
         }
     }
@@ -1042,22 +1017,27 @@ struct OpenForm {
     purpose: FormPurpose,
     /// The command view that Back returns to.
     return_to: LauncherView,
-    /// Whether a submission is waiting for the extension's reply; further
-    /// submissions are ignored meanwhile.
+    /// Whether a submission is waiting for its reply; further submissions
+    /// are ignored meanwhile.
     submitting: bool,
+}
+
+/// The number the next form Pane itself opens takes as its identity, so
+/// the window's keyed state follows a form whose tree changes (an error
+/// set on a field) and leaves with the form.
+static NEXT_FORM: AtomicU64 = AtomicU64::new(1);
+
+/// The identity the next Pane form opened takes.
+fn next_form_id() -> u64 {
+    NEXT_FORM.fetch_add(1, Ordering::Relaxed)
 }
 
 /// What submitting a form does.
 enum FormPurpose {
-    /// Sends it to the open command, for its item with this id.
-    Item(String),
-    /// Sends it to the open command with this id: the form is the
-    /// command's whole screen (`"type": "form"`), so Back leaves the
-    /// command for root search.
-    Screen(String),
-    /// Sets the alias of the installed command with this id (Pane's own).
+    /// Sets the alias of the installed command with this id (Pane's own;
+    /// see `aliases`).
     Alias(String),
-    /// Previews the npm package it names (Pane's own).
+    /// Previews the npm package it names (Pane's own; see `install`).
     Npm,
     /// Previews the Git repository it names (Pane's own).
     Git,
@@ -1207,8 +1187,6 @@ enum Entry {
     /// Say that this item has no actions, so it cannot be activated
     /// (command view).
     NoActions,
-    /// Open this form of the open command's item with this id.
-    Form(String, Form),
     /// Open the custom view of the open command's item with this id.
     CustomView(String, CustomViewInfo),
     /// Install the previewed package from this folder or npm package, or
@@ -2581,19 +2559,7 @@ impl Launcher {
     pub fn back(&self) -> bool {
         let mut state = self.lock();
         match &state.view.screen {
-            Screen::Form(_)
-                if matches!(
-                    state.form,
-                    Some(OpenForm {
-                        purpose: FormPurpose::Screen(_),
-                        ..
-                    })
-                ) =>
-            {
-                // The command's own screen: leaving it leaves the command.
-                self.show_root(&mut state, None);
-            }
-            Screen::Form(_) => {
+            Screen::PaneForm(_) => {
                 let form = state.form.take().expect("a form is open");
                 if !self.return_from_actions_flow(&mut state) {
                     state.next_screen();
@@ -2694,14 +2660,14 @@ impl Launcher {
     /// with the selected row now (see [`SelectedAction`]). One definition
     /// for the label, the availability and the binding the window shows;
     /// dispatch is the one both inputs already take —
-    /// [`Launcher::activate_selected`], or [`Launcher::submit_form`] on a
-    /// form — so a click and a key press cannot diverge.
+    /// [`Launcher::activate_selected`], or [`Launcher::submit_pane_form`]
+    /// on a form — so a click and a key press cannot diverge.
     pub fn selected_action(&self) -> SelectedAction {
         selected_action(&self.lock())
     }
 
-    /// Opens the selected command (root), opens the selected item's form or
-    /// runs its action (command view), or installs or updates the previewed
+    /// Opens the selected command (root), or runs the selected item's
+    /// action (command view), or installs or updates the previewed
     /// package. Await the returned future to apply the reply.
     ///
     /// A row that [asks for a folder](Launcher::selected_asks_for_folder)
@@ -2822,10 +2788,6 @@ impl Launcher {
             }
             Entry::Copy(text) => {
                 state.view.status = Status::Result(format!("Copied {text} to the clipboard"));
-                Pending::Nothing
-            }
-            Entry::Form(item_id, form) => {
-                open_form(state, item_id, form);
                 Pending::Nothing
             }
             // Any scheme, as Raycast opens it (ADR 0037): the extension is
@@ -3462,7 +3424,7 @@ impl Launcher {
             Screen::Command
             | Screen::CommandSearch { .. }
             | Screen::Package { .. }
-            | Screen::Form(_)
+            | Screen::PaneForm(_)
             | Screen::CustomView(_)
             | Screen::DesignedView(_)
             | Screen::Confirm { .. }
@@ -3710,200 +3672,6 @@ impl Launcher {
             add(row, Entry::Settings, None, None);
         }
         results
-    }
-
-    /// Sets the value of the open form's field `field_id`: a text field's
-    /// text, or the id of an option of a choice field. Unknown fields and
-    /// options are ignored. Editing a field clears its error.
-    pub fn set_field_value(&self, field_id: &str, value: &str) {
-        let mut state = self.lock();
-        let Screen::Form(form) = &mut state.view.screen else {
-            return;
-        };
-        let Some(field) = form.fields.iter_mut().find(|field| field.id == field_id) else {
-            return;
-        };
-        if let FieldKind::Choice(choices) = &field.kind
-            && !choices.iter().any(|choice| choice.id == value)
-        {
-            return;
-        }
-        field.value = value.to_owned();
-        field.error = None;
-    }
-
-    /// Submits the open form to its extension. Await the returned future to
-    /// apply the reply: the answer as the result, or the extension's
-    /// rejection next to its field. While a submission is waiting for its
-    /// reply, submitting again does nothing.
-    ///
-    /// Pane's own alias form is applied at once instead (see `aliases`);
-    /// the future records it. Pane's argument form launches its command
-    /// with the values given, or takes focus to a required field left
-    /// empty (see `argument_form`); the future runs the command.
-    pub fn submit_form(&self) -> impl Future<Output = ()> + Send + 'static {
-        let mut state = self.lock();
-        let state = &mut *state;
-        // The Setup screen saves the preferences it asks for, then launches
-        // the command it held back (see `setup`).
-        let setup = self.begin_setup_submit(state);
-        let arguments = self.submit_arguments(state);
-        let alias_change = match (&state.view.screen, &state.form) {
-            (
-                Screen::Form(_),
-                Some(OpenForm {
-                    purpose: FormPurpose::Alias(command),
-                    ..
-                }),
-            ) => {
-                let command = command.clone();
-                self.submit_alias(state, &command)
-            }
-            _ => None,
-        };
-        // Pane's own npm and Git forms preview the package they name; the
-        // form stays until the preview replaces it, and Back meanwhile
-        // discards it.
-        let named = match (&state.view.screen, &mut state.form) {
-            (
-                Screen::Form(form),
-                Some(
-                    open @ OpenForm {
-                        purpose: FormPurpose::Npm | FormPurpose::Git,
-                        submitting: false,
-                        ..
-                    },
-                ),
-            ) => {
-                open.submitting = true;
-                state.view.status = Status::Running;
-                let git = matches!(open.purpose, FormPurpose::Git);
-                form.fields.first().map(|field| (git, field.value.clone()))
-            }
-            _ => None,
-        };
-        let submission = match (&state.view.screen, &mut state.form, &state.open) {
-            (
-                Screen::Form(form),
-                Some(
-                    open @ OpenForm {
-                        purpose: FormPurpose::Item(_) | FormPurpose::Screen(_),
-                        ..
-                    },
-                ),
-                Some(component),
-            ) if !open.submitting => {
-                let (FormPurpose::Item(item_id) | FormPurpose::Screen(item_id)) = &open.purpose
-                else {
-                    unreachable!("matched above");
-                };
-                let item_id = item_id.clone();
-                open.submitting = true;
-                let values: Vec<FieldValue> = form
-                    .fields
-                    .iter()
-                    .map(|field| FieldValue {
-                        id: field.id.clone(),
-                        value: field.value.clone(),
-                    })
-                    .collect();
-                Some((component.clone(), item_id, values))
-            }
-            _ => None,
-        };
-        if submission.is_some() {
-            state.view.status = Status::Running;
-        }
-        let epoch = state.screen_epoch;
-        let data = submission
-            .as_ref()
-            .and_then(|(component, ..)| self.data_in(state, component));
-        let launcher = self.clone();
-        async move {
-            if let Some(setup) = setup {
-                launcher.finish_setup(epoch, setup).await;
-            }
-            if let Some(submitted) = arguments {
-                launcher.launch_submitted(submitted).await;
-            }
-            if let Some(change) = alias_change {
-                launcher.finish_choice_change(change).await;
-            }
-            match named {
-                Some((false, spec)) => launcher.preview_npm(&spec).await,
-                Some((true, spec)) => launcher.preview_git(&spec).await,
-                None => {}
-            }
-            if let Some((component, item_id, values)) = submission {
-                launcher
-                    .submit(epoch, component, item_id, values, data)
-                    .await
-            }
-        }
-    }
-
-    /// Sends `values` and applies the reply as though it had arrived before
-    /// any edit made meanwhile: a rejected field that the user has changed
-    /// since is not marked, since editing a field clears its error.
-    async fn submit(
-        &self,
-        epoch: u64,
-        component: PathBuf,
-        item_id: String,
-        values: Vec<FieldValue>,
-        data: Option<PackageData>,
-    ) {
-        let result = match self.runtime() {
-            Ok(runtime) => {
-                runtime
-                    .submit_form_with(&component, &item_id, values.clone(), data.clone())
-                    .await
-            }
-            Err(error) => Err(error),
-        };
-        let Some(mut state) = self.lock_if_current(epoch) else {
-            return;
-        };
-        let state = &mut *state;
-        state.form.as_mut().expect("a form is open").submitting = false;
-        if let Some(problem) = stopped(state, &component, &data) {
-            // Stopped while it was submitting: its answer is not shown.
-            state.view.status = Status::Error(problem);
-            return;
-        }
-        let view = &mut state.view;
-        let Screen::Form(form) = &mut view.screen else {
-            unreachable!("a form is open");
-        };
-        let fields = &mut form.fields;
-        for field in fields.iter_mut() {
-            field.error = None;
-        }
-        view.status = match result {
-            Ok(answer) => Status::Result(answer),
-            Err(CallError::Form(error)) => {
-                let field = error
-                    .field
-                    .as_deref()
-                    .and_then(|id| fields.iter_mut().find(|field| field.id == id));
-                match field {
-                    Some(field) => {
-                        let status = format!("{}: {}", field.label, error.message);
-                        let unchanged = values
-                            .iter()
-                            .any(|sent| sent.id == field.id && sent.value == field.value);
-                        if unchanged {
-                            field.error = Some(error.message);
-                        }
-                        Status::Error(status)
-                    }
-                    // A rejection of the form as a whole is the extension's
-                    // message to the user, shown as it is.
-                    None => Status::Error(error.message),
-                }
-            }
-            Err(error) => Status::Error(error.to_string()),
-        };
     }
 
     /// Shows why Pane paused the installed package with `identity`: how it
@@ -4563,11 +4331,7 @@ impl Launcher {
                         };
                     self.report_unbound(state);
                     self.report_extra_accessories(state, extra, true);
-                    // A command whose screen is a form (#149) shows it at once;
-                    // Back from it leaves the command.
-                    if let Some(ScreenForm { id, form }) = view.form {
-                        open_form_for(state, FormPurpose::Screen(id), form);
-                    } else if let Some(text) = initial_search.filter(|_| search) {
+                    if let Some(text) = initial_search.filter(|_| search) {
                         // Opened with text in its field ("Search Files for
                         // “…”"): searched at once, as if typed.
                         searching = self.search_in_command(state, &text);
@@ -4689,60 +4453,6 @@ fn disabled(state: &State, component: &Path) -> String {
         Some(package) => format!("{} is disabled", package.title()),
         None => CallError::Disabled.to_string(),
     }
-}
-
-/// Replaces the command view with `form`, which belongs to item `item_id`.
-/// The command's row entries stay, for when the form closes.
-fn open_form(state: &mut State, item_id: String, form: Form) {
-    open_form_for(state, FormPurpose::Item(item_id), form);
-}
-
-/// Replaces the command view with `form`, which `purpose` submits: each
-/// field starts with the value the tree gives it (a text field's text, a
-/// choice's option), else empty or with the first option.
-fn open_form_for(state: &mut State, purpose: FormPurpose, form: Form) {
-    let fields = form
-        .fields
-        .into_iter()
-        .map(|field| {
-            let value = match &field.kind {
-                FieldKind::Text { .. } | FieldKind::Password { .. } | FieldKind::Path { .. } => {
-                    field.value.clone().unwrap_or_default()
-                }
-                FieldKind::Choice(choices) => field
-                    .value
-                    .as_ref()
-                    .filter(|value| choices.iter().any(|choice| &choice.id == *value))
-                    .or_else(|| choices.first().map(|choice| &choice.id))
-                    .cloned()
-                    .unwrap_or_default(),
-            };
-            FormField {
-                id: field.id,
-                label: field.label,
-                kind: field.kind,
-                value,
-                error: None,
-                description: None,
-                required: false,
-            }
-        })
-        .collect();
-    let form_view = LauncherView::new(
-        Screen::Form(FormView {
-            fields,
-            submit_label: form.submit_label,
-            setup: None,
-        }),
-        form.title,
-    );
-    let return_to = std::mem::replace(&mut state.view, form_view);
-    state.form = Some(OpenForm {
-        purpose,
-        return_to,
-        submitting: false,
-    });
-    state.next_screen();
 }
 
 /// The rows of root search for `query`, and what activating each does: the

@@ -17,6 +17,7 @@
 //! — the same rows, the target still selected, the outcome in the status —
 //! where the same flows opened from the extension list return there.
 
+use super::pane_form::form_submit_of;
 use super::{
     Entry, Launcher, LauncherView, Mode, Screen, SelectedAction, State, Status, quick_slots,
     shortcuts,
@@ -354,10 +355,15 @@ pub(in crate::launcher) fn selected_action(state: &State) -> SelectedAction {
         .selected
         .and_then(|index| state.entries.get(index));
     match (&state.view.screen, entry) {
-        // A form submits: the form's own control keeps the label the
-        // extension gave it, but Enter — and the footer's button with it —
-        // submits the form.
-        (Screen::Form(_), _) => acting("Submit"),
+        // A form Pane itself asks submits: the form's own control keeps
+        // the label it was given, but Enter — and the footer's button with
+        // it — submits the form. A designed view holding a form is the
+        // same: its submission is the view's primary action.
+        (Screen::PaneForm(form), _) => acting(&form.submit),
+        (Screen::DesignedView(view), _) => match form_submit_of(&view.tree) {
+            Some(submit) => acting(&submit),
+            None => unusable(""),
+        },
         // A custom view or a designed view takes the keys itself, and the
         // network and program details screens have only Back: Enter does
         // nothing, so there is no primary action to show.

@@ -42,12 +42,13 @@
 //! its view, and the whole screen is redrawn from the answer.
 
 mod components;
+mod fields;
 mod markdown;
 mod reconcile;
 mod tree;
 
 use gpui::prelude::*;
-use gpui::{App, Context, KeyBinding, actions, div, px};
+use gpui::{App, Context, KeyBinding, PathPromptOptions, actions, div, px};
 
 use gpui_elements::editable_text::EditableTextState;
 use pane_core::{DesignedHandler, DesignedViewSnapshot};
@@ -82,13 +83,39 @@ const AREA_CONTEXT: &str = "DesignedTextArea";
 /// The key context of a designed view's select: the searchable select's
 /// trigger takes its keys from `ui::select`'s bindings.
 const SELECT_CONTEXT: &str = "DesignedSelect";
+/// The key context of a designed form's date and date-time fields: their
+/// arrows step the date.
+const DATE_CONTEXT: &str = "DesignedDate";
+/// The key context of a designed form's tag picker: Enter commits the
+/// highlighted option.
+const TAGS_CONTEXT: &str = "DesignedTags";
+/// The key context of a designed form's picker of many paths: Enter opens
+/// the system's dialog.
+const PATHS_CONTEXT: &str = "DesignedPaths";
 
-actions!(designed, [Press, Toggle, Move, Adjust, Commit]);
+actions!(
+    designed,
+    [
+        Press,
+        Toggle,
+        Move,
+        Adjust,
+        Commit,
+        SubmitForm,
+        StepDateUp,
+        StepDateDown,
+        CommitTag,
+        ChoosePath
+    ]
+);
 
 /// Registers the designed view's key bindings: Enter and Space press a
 /// button or a link, change a toggle or a checkbox; a segmented
 /// control's and a slider's arrows move them; Enter commits a text
-/// field; Enter in a text area inserts a newline.
+/// field; Enter in a text area inserts a newline. A form's keys submit:
+/// Ctrl+Enter in any field (#241), and a date field's arrows step the
+/// date, a tag picker's Enter commits its highlighted option, a picker
+/// of many paths' Enter opens the system's dialog.
 pub(crate) fn bind_keys(cx: &mut App) {
     cx.bind_keys([
         KeyBinding::new("enter", Press, Some(BUTTON_CONTEXT)),
@@ -109,6 +136,12 @@ pub(crate) fn bind_keys(cx: &mut App) {
             gpui_elements::editable_text::actions::Enter,
             Some(AREA_CONTEXT),
         ),
+        KeyBinding::new("ctrl-enter", SubmitForm, Some(INPUT_CONTEXT)),
+        KeyBinding::new("ctrl-enter", SubmitForm, Some(AREA_CONTEXT)),
+        KeyBinding::new("up", StepDateUp, Some(DATE_CONTEXT)),
+        KeyBinding::new("down", StepDateDown, Some(DATE_CONTEXT)),
+        KeyBinding::new("enter", CommitTag, Some(TAGS_CONTEXT)),
+        KeyBinding::new("enter", ChoosePath, Some(PATHS_CONTEXT)),
     ]);
 }
 
@@ -270,6 +303,28 @@ impl LauncherWindow {
         view: DesignedViewSnapshot,
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
+        self.render_designed_tree(&view.tree, view.render, cx)
+    }
+
+    /// A form Pane itself asks, as its tree says (#241): the same drawing
+    /// as an extension's designed view, its submission routed to the
+    /// launcher rather than the view.
+    pub(crate) fn render_pane_form(
+        &self,
+        form: pane_core::PaneForm,
+        cx: &mut Context<Self>,
+    ) -> gpui::AnyElement {
+        self.render_designed_tree(&form.tree, 0, cx)
+    }
+
+    /// One designed tree, drawn with the keyed state the window keeps for
+    /// it.
+    fn render_designed_tree(
+        &self,
+        tree: &pane_core::DesignedTree,
+        render: u64,
+        cx: &mut Context<Self>,
+    ) -> gpui::AnyElement {
         let Some(controls) = &self.designed else {
             return div().into_any_element();
         };
@@ -278,13 +333,13 @@ impl LauncherWindow {
         let draw = Draw {
             theme: &theme,
             state: &controls.state,
-            render: view.render,
+            render,
             surface: theme.panel_solid,
         };
-        let tree = {
+        let drawn = {
             let mut path = String::new();
-            tree::push(&mut path, view.tree.root.key.as_deref(), 0);
-            tree::draw_node(&view.tree.root, &mut path, draw, cx)
+            tree::push(&mut path, tree.root.key.as_deref(), 0);
+            tree::draw_node(&tree.root, &mut path, draw, cx)
         };
         // Fills the body as the list and the form do, so the status line
         // stays at the bottom; the tree's own `scroll` regions scroll
@@ -302,8 +357,356 @@ impl LauncherWindow {
             .px(geometry.search_padding_x)
             .pt(crate::ui::tokens::space(pane_core::Space::S))
             .pb(geometry.list_padding_bottom)
-            .child(tree)
+            .child(drawn)
             .into_any_element()
+    }
+
+    /// Submits the form the screen holds (#241): the values of its
+    /// fields, collected from the state the window keeps for them, run
+    /// the form's action — an extension form's `onSubmit`, with the
+    /// values as its event's payload, or a form Pane itself asks, which
+    /// the launcher answers. Enter in a single-line field of the form
+    /// runs this, as Ctrl+Enter does in a text area and the form's submit
+    /// button and the footer's primary action do.
+    pub(crate) fn submit_designed_form(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some((form, values)) = self.collect_form() else {
+            return;
+        };
+        if matches!(self.launcher.screen(), pane_core::Screen::PaneForm(_)) {
+            let values: Vec<(String, String)> = values
+                .into_iter()
+                .map(|(key, value)| (key, value.as_text()))
+                .collect();
+            let pending = self.launcher.submit_pane_form(values);
+            self.show_until_done(pending, window, cx);
+        } else {
+            let pending = self.launcher.submit_designed_form(Some(&form), values);
+            self.show_until_done(pending, window, cx);
+        }
+    }
+
+    /// The form the screen holds, and the values its fields hold as a
+    /// submission collects them: keyed by the fields' keys — the text a
+    /// field edits, the state a checkbox or toggle last told the
+    /// extension, the tags or paths a picker chose. `None` when no form
+    /// is on screen.
+    fn collect_form(&self) -> Option<(String, Vec<(String, pane_core::FormValue)>)> {
+        let tree = match self.launcher.screen() {
+            pane_core::Screen::DesignedView(view) => Some(view.tree),
+            pane_core::Screen::PaneForm(form) => Some(form.tree),
+            _ => None,
+        }?;
+        let controls = self.designed.as_ref()?;
+        let mut collected = Collected {
+            form: None,
+            values: Vec::new(),
+        };
+        let mut path = String::new();
+        tree::push(&mut path, tree.root.key.as_deref(), 0);
+        collect_node(
+            &tree.root,
+            None,
+            &mut path,
+            &controls.state,
+            &controls.sent,
+            &mut collected,
+            cx,
+        );
+        let form = collected.form?;
+        Some((form, collected.values))
+    }
+
+    /// Whether the field at `path` sits inside a form on this screen
+    /// (#241): Enter in it submits the form.
+    fn field_in_form(&self, path: &str) -> bool {
+        let tree = match self.launcher.screen() {
+            pane_core::Screen::DesignedView(view) => Some(view.tree),
+            pane_core::Screen::PaneForm(form) => Some(form.tree),
+            _ => None,
+        };
+        tree.is_some_and(|tree| tree::inside_form(&tree, path))
+    }
+
+    /// The date field at `path`, stepped by `days` days (a date and time
+    /// by as many minutes): its text rewritten, its caret at the end.
+    /// Nothing steps a text that does not parse as the field's format.
+    fn designed_date_stepped(
+        &mut self,
+        path: &str,
+        minutes: i64,
+        window: &mut gpui::Window,
+        cx: &mut Context<Self>,
+    ) {
+        let date_time = self.designed.as_ref().and_then(|controls| {
+            controls.state.get(path).and_then(|entry| match &entry.held {
+                Held::Field { editing, .. } => Some(editing.clone()),
+                _ => None,
+            })
+        });
+        let Some(editing) = date_time else {
+            return;
+        };
+        let text = editing.read(cx).as_str().to_owned();
+        let Some(stepped) = fields::step_date(&text, minutes) else {
+            return;
+        };
+        let len = stepped.len();
+        editing.update(cx, |editing, cx| {
+            editing.emplace(&stepped, cx);
+            editing.move_to(len, cx);
+        });
+        let _ = window;
+        cx.notify();
+    }
+
+    /// Adds the tag `value` to the tag picker at `path`, telling the
+    /// extension what it now holds.
+    fn designed_tag_added(
+        &mut self,
+        path: &str,
+        value: &str,
+        callback: Option<u32>,
+        key: &str,
+        seen: u64,
+        window: &mut gpui::Window,
+        cx: &mut Context<Self>,
+    ) {
+        let tags = self.designed.as_mut().and_then(|controls| {
+            let entry = controls.state.get_mut(path)?;
+            let Held::Tags { chosen, .. } = &mut entry.held else {
+                return None;
+            };
+            if chosen.iter().any(|chosen| chosen == value) {
+                return None;
+            }
+            chosen.push(value.to_owned());
+            Some(chosen.clone())
+        });
+        let Some(tags) = tags else {
+            return;
+        };
+        self.designed_tags_changed(path, tags, callback, key, seen, window, cx);
+    }
+
+    /// Removes the tag `value` from the tag picker at `path`, telling the
+    /// extension what it now holds.
+    fn designed_tag_removed(
+        &mut self,
+        path: &str,
+        value: &str,
+        callback: Option<u32>,
+        key: &str,
+        seen: u64,
+        window: &mut gpui::Window,
+        cx: &mut Context<Self>,
+    ) {
+        let tags = self.designed.as_mut().and_then(|controls| {
+            let entry = controls.state.get_mut(path)?;
+            let Held::Tags { chosen, .. } = &mut entry.held else {
+                return None;
+            };
+            chosen.retain(|chosen| chosen != value);
+            Some(chosen.clone())
+        });
+        let Some(tags) = tags else {
+            return;
+        };
+        self.designed_tags_changed(path, tags, callback, key, seen, window, cx);
+    }
+
+    /// The tag picker at `path`'s query's Enter: the highlighted option is
+    /// added, the query cleared.
+    fn designed_tag_committed(
+        &mut self,
+        path: &str,
+        window: &mut gpui::Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some((value, callback, key, seen)) = self.designed.as_ref().and_then(|controls| {
+            let entry = controls.state.get(path)?;
+            let Held::Tags {
+                query, highlighted, ..
+            } = &entry.held
+            else {
+                return None;
+            };
+            let text = query.read(cx).as_str().to_owned();
+            let tree = match self.launcher.screen() {
+                pane_core::Screen::DesignedView(view) => Some(view.tree),
+                pane_core::Screen::PaneForm(form) => Some(form.tree),
+                _ => None,
+            }?;
+            let picker = tree::node_at(&tree, path)?;
+            let pane_core::NodeKind::TagPicker(picker) = &picker.kind else {
+                return None;
+            };
+            let options = fields::matching(&picker.options, &text);
+            let at = highlighted.filter(|at| *at < options.len()).unwrap_or(0);
+            let chosen = options.get(at).map(|option| option.value.clone())?;
+            let (callback, key, seen) = (picker.on_change, picker.key.clone()?, entry.render);
+            Some((chosen, callback, key, seen))
+        })
+        else {
+            return;
+        };
+        let query = self.designed.as_ref().and_then(|controls| {
+            controls.state.get(path).and_then(|entry| match &entry.held {
+                Held::Tags { query, .. } => Some(query.clone()),
+                _ => None,
+            })
+        });
+        if let Some(query) = query {
+            query.update(cx, |query, cx| query.emplace("", cx));
+        }
+        self.designed_tag_added(path, &value, callback, &key, seen, window, cx);
+    }
+
+    /// Tells the extension the tag picker at `path` now holds `tags`.
+    fn designed_tags_changed(
+        &mut self,
+        path: &str,
+        tags: Vec<String>,
+        callback: Option<u32>,
+        key: &str,
+        seen: u64,
+        window: &mut gpui::Window,
+        cx: &mut Context<Self>,
+    ) {
+        let _ = path;
+        cx.notify();
+        let Some(callback) = callback else {
+            return;
+        };
+        let payload = list_payload(&tags);
+        self.designed_event(
+            DesignedHandler::Change,
+            callback,
+            key.to_owned(),
+            seen,
+            payload,
+            window,
+            cx,
+        );
+    }
+
+    /// Removes the last path of the picker of many at `path`.
+    fn designed_path_removed(
+        &mut self,
+        path: &str,
+        window: &mut gpui::Window,
+        cx: &mut Context<Self>,
+    ) {
+        let _ = window;
+        let removed = self.designed.as_mut().and_then(|controls| {
+            let entry = controls.state.get_mut(path)?;
+            let Held::Paths { paths, .. } = &mut entry.held else {
+                return None;
+            };
+            (!paths.is_empty()).then(|| paths.pop().expect("just checked"))
+        });
+        if removed.is_some() {
+            cx.notify();
+        }
+    }
+
+    /// The system's dialog for the picker at `path`, choosing what `pick`
+    /// asks: the path (or paths, for one that allows many) fills the
+    /// field.
+    fn designed_paths_chosen(
+        &mut self,
+        path: &str,
+        key: &str,
+        pick: PathPick,
+        window: &mut gpui::Window,
+        cx: &mut Context<Self>,
+    ) {
+        let picked = cx.prompt_for_paths(PathPromptOptions {
+            files: pick.files,
+            directories: pick.directories,
+            multiple: pick.multiple,
+            prompt: Some("Choose".into()),
+        });
+        let (path, key) = (path.to_owned(), key.to_owned());
+        cx.spawn_in(window, async move |this, cx| {
+            let Ok(Ok(Some(paths))) = picked.await else {
+                return;
+            };
+            this.update_in(cx, |this, window, cx| {
+                this.designed_paths_arrived(&path, &key, paths, window, cx);
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// The paths the system's dialog chose, filling the picker at `path`:
+    /// one path fills the field's text, as typing it is; several join the
+    /// picker's chips, telling the extension what it now holds.
+    fn designed_paths_arrived(
+        &mut self,
+        path: &str,
+        key: &str,
+        paths: Vec<std::path::PathBuf>,
+        window: &mut gpui::Window,
+        cx: &mut Context<Self>,
+    ) {
+        let single = self.designed.as_mut().and_then(|controls| {
+            let entry = controls.state.get_mut(path)?;
+            match &mut entry.held {
+                Held::Field { editing, .. } => Some(editing.clone()),
+                _ => None,
+            }
+        });
+        if let (Some(editing), Some(picked)) = (single, paths.into_iter().next()) {
+            let text = picked.to_string_lossy().into_owned();
+            let len = text.len();
+            editing.update(cx, |editing, cx| {
+                editing.emplace(&text, cx);
+                editing.move_to(len, cx);
+            });
+            cx.notify();
+            return;
+        }
+        let picked = self
+            .designed
+            .as_mut()
+            .and_then(|controls| {
+                let entry = controls.state.get_mut(path)?;
+                let Held::Paths { paths, .. } = &mut entry.held else {
+                    return None;
+                };
+                let before = paths.len();
+                for arrived in &paths {
+                    let text = arrived.to_string_lossy().into_owned();
+                    if !paths.contains(&text) {
+                        paths.push(text);
+                    }
+                }
+                (paths.len() != before).then(|| paths.clone())
+            });
+        if let Some(picked) = picked
+            && let Some((callback, seen)) = self.designed.as_ref().and_then(|controls| {
+                let entry = controls.state.get(path)?;
+                match &entry.held {
+                    Held::Paths { .. } => Some((path_node_of(self, path)?.on_change, entry.render)),
+                    _ => None,
+                }
+            })
+            && let Some(callback) = callback
+        {
+            let payload = list_payload(&picked);
+            self.designed_event(
+                DesignedHandler::Change,
+                callback,
+                key.to_owned(),
+                seen,
+                payload,
+                window,
+                cx,
+            );
+            return;
+        }
+        cx.notify();
     }
 
     /// Sends one event of the open designed view — the callback id its
@@ -321,7 +724,26 @@ impl LauncherWindow {
         window: &mut gpui::Window,
         cx: &mut Context<Self>,
     ) {
+        // A form Pane itself asks is answered by the launcher: its
+        // controls' changes move into the tree the screen holds, as an
+        // extension's change moves into the tree its answer holds
+        // (#241).
+        if handler == DesignedHandler::Change
+            && matches!(self.launcher.screen(), pane_core::Screen::PaneForm(_))
+        {
+            if let Some(key) = (!key.is_empty()).then_some(key) {
+                self.note_sent(&key, payload_value(&payload));
+                self.launcher.pane_form_changed(&key, &payload_value(&payload));
+                cx.notify();
+            }
+            return;
+        }
         let key = (!key.is_empty()).then_some(key);
+        if handler == DesignedHandler::Change {
+            if let Some(named) = key.as_deref() {
+                self.note_sent(named, &payload_value(&payload));
+            }
+        }
         let pending = self.launcher.send_designed_seen(
             handler,
             callback,
@@ -330,6 +752,14 @@ impl LauncherWindow {
             payload,
         );
         self.show_until_done(pending, window, cx);
+    }
+
+    /// Notes the value a discrete control reported, so a submission reads
+    /// it while the tree that carries it has not landed (#241).
+    fn note_sent(&mut self, key: &str, value: String) {
+        if let Some(controls) = self.designed.as_mut() {
+            controls.sent.insert(key.to_owned(), value);
+        }
     }
 
     /// The field at `path`'s text changed, as the user typed or composed
@@ -489,6 +919,13 @@ impl LauncherWindow {
         window: &mut gpui::Window,
         cx: &mut Context<Self>,
     ) {
+        // Enter in a single-line field of a form submits it (#241): the
+        // form's primary action, not the field's own commit — the
+        // submission carries the field's value.
+        if self.field_in_form(path) {
+            self.submit_designed_form(window, cx);
+            return;
+        }
         let send = self.designed.as_mut().and_then(|controls| {
             let entry = controls.state.get_mut(path)?;
             let (render, key) = (entry.render, entry.key.clone());
@@ -640,12 +1077,46 @@ impl LauncherWindow {
         );
     }
 
+    /// The select at `path`'s popup query, as the user typed it into a
+    /// dropdown whose search the extension handles (#241): the query is
+    /// told to the extension through the input handler its tree names,
+    /// its answer replacing the choices the popup shows.
+    fn designed_select_queried(
+        &mut self,
+        path: &str,
+        text: &str,
+        window: &mut gpui::Window,
+        cx: &mut Context<Self>,
+    ) {
+        let send = self.designed.as_ref().and_then(|controls| {
+            let entry = controls.state.get(path)?;
+            let Held::Select { on_input, .. } = &entry.held else {
+                return None;
+            };
+            Some((*on_input?, entry.render, entry.key.clone()))
+        });
+        let Some((callback, render, key)) = send else {
+            return;
+        };
+        let payload = payload(text);
+        self.designed_event(
+            DesignedHandler::Input,
+            callback,
+            key,
+            render,
+            payload,
+            window,
+            cx,
+        );
+    }
+
     /// The select at `path`'s model, read live each frame it draws: the
     /// choices and the choice the tree on screen names.
     fn designed_select_model(&self, path: &str, cx: &gpui::App) -> crate::ui::select::Model {
         let visuals = crate::settings::launcher_visuals(cx);
         let tree = match self.launcher.screen() {
             pane_core::Screen::DesignedView(view) => Some(view.tree),
+            pane_core::Screen::PaneForm(form) => Some(form.tree),
             _ => None,
         };
         let select = tree
@@ -671,6 +1142,7 @@ impl LauncherWindow {
                             subtitle: None,
                             keywords: Vec::new(),
                             unavailable_reason: None,
+                            section: option.section.clone().map(gpui::SharedString::from),
                         })
                         .collect::<Vec<_>>(),
                     select.value.clone().map(gpui::SharedString::from),
@@ -684,6 +1156,146 @@ impl LauncherWindow {
             committed,
         }
     }
+}
+
+/// What the system's dialog for a designed form's picker chooses: files
+/// or folders (a macOS application is a folder, its bundle), one path or
+/// several (#241).
+#[derive(Clone, Copy)]
+pub(super) struct PathPick {
+    pub(super) files: bool,
+    pub(super) directories: bool,
+    pub(super) multiple: bool,
+}
+
+/// What a form's collection found: the form's key and each field's
+/// value, keyed by its key.
+struct Collected {
+    form: Option<String>,
+    values: Vec<(String, pane_core::FormValue)>,
+}
+
+/// Collects the values of the fields under `node` — the form `form`
+/// holds, when one is given — into `collected`, with the keyed state the
+/// window keeps for them. A field without a key is not collected: its
+/// value has nowhere to be named by.
+fn collect_node(
+    node: &Node,
+    form: Option<&str>,
+    path: &mut String,
+    state: &std::collections::HashMap<String, reconcile::KeyedState>,
+    sent: &std::collections::HashMap<String, String>,
+    collected: &mut Collected,
+    cx: &gpui::App,
+) {
+    let form = match &node.kind {
+        pane_core::NodeKind::Form(_) => node.key.as_deref().or(Some("form")),
+        _ => form,
+    };
+    if form.is_some()
+        && let Some(key) = node.key.clone()
+        && let Some(value) = field_value(node, path, state, sent, cx)
+    {
+        collected.values.push((key, value));
+    }
+    if let pane_core::NodeKind::Form(_) = &node.kind
+        && collected.form.is_none()
+    {
+        collected.form = Some(node.key.clone().unwrap_or_else(|| "form".into()));
+    }
+    let duplicates = tree::duplicate_keys(node);
+    for (index, child) in node.children.iter().enumerate() {
+        let start = path.len();
+        tree::place_child(path, child, index, &duplicates);
+        collect_node(child, form, path, state, sent, collected, cx);
+        path.truncate(start);
+    }
+}
+
+/// The value the field `node` holds, from the state the window keeps for
+/// it: the text a field edits, the state a checkbox or toggle last told
+/// the extension (until the tree carries it), the choice a dropdown
+/// last committed, the tags or paths a picker chose.
+fn field_value(
+    node: &Node,
+    path: &str,
+    state: &std::collections::HashMap<String, reconcile::KeyedState>,
+    sent: &std::collections::HashMap<String, String>,
+    cx: &gpui::App,
+) -> Option<pane_core::FormValue> {
+    use pane_core::FormValue;
+    let key = node.key.as_deref()?;
+    let text = state.get(path).and_then(|entry| match &entry.held {
+        Held::Field { editing, .. } => Some(editing.read(cx).as_str().to_owned()),
+        _ => None,
+    });
+    Some(match &node.kind {
+        pane_core::NodeKind::TextInput(_)
+        | pane_core::NodeKind::PasswordInput(_)
+        | pane_core::NodeKind::TextArea(_) => FormValue::Text(text?),
+        pane_core::NodeKind::DatePicker(date) | pane_core::NodeKind::DateTimePicker(date) => {
+            FormValue::Text(text.unwrap_or_else(|| date.value.clone()))
+        }
+        pane_core::NodeKind::Select(select) => FormValue::Text(
+            sent.get(key)
+                .cloned()
+                .or_else(|| select.value.clone())
+                .unwrap_or_default(),
+        ),
+        pane_core::NodeKind::Toggle(toggle) => FormValue::On(
+            sent.get(key).map(|value| value == "true").unwrap_or(toggle.on),
+        ),
+        pane_core::NodeKind::Checkbox(checkbox) => FormValue::On(
+            sent
+                .get(key)
+                .map(|value| value == "true")
+                .unwrap_or(checkbox.checked),
+        ),
+        pane_core::NodeKind::TagPicker(picker) => {
+            let tags = state.get(path).and_then(|entry| match &entry.held {
+                Held::Tags { chosen, .. } => Some(chosen.clone()),
+                _ => None,
+            });
+            FormValue::List(tags.unwrap_or_else(|| picker.tags.clone()))
+        }
+        pane_core::NodeKind::FilePicker(picker) | pane_core::NodeKind::FolderPicker(picker) => {
+            if picker.multiple {
+                let paths = state.get(path).and_then(|entry| match &entry.held {
+                    Held::Paths { paths, .. } => Some(paths.clone()),
+                    _ => None,
+                });
+                FormValue::List(paths.unwrap_or_else(|| picker.paths.clone()))
+            } else {
+                FormValue::Text(text?)
+            }
+        }
+        _ => return None,
+    })
+}
+
+/// A list as a change event's payload names it: `{"value": ["…", …]}`,
+/// a picker's chosen tags or paths.
+pub(super) fn list_payload(values: &[String]) -> String {
+    let joined = values
+        .iter()
+        .map(|value| format!("\"{}\"", escape(value)))
+        .collect::<Vec<String>>()
+        .join(",");
+    format!("{{\"value\":[{joined}]}}")
+}
+
+/// A string's JSON escapes, for a payload's list.
+fn escape(text: &str) -> String {
+    let mut escaped = String::with_capacity(text.len());
+    for character in text.chars() {
+        match character {
+            '"' => escaped.push_str("\\\""),
+            '\\' => escaped.push_str("\\\\"),
+            '\n' => escaped.push_str("\\n"),
+            other => escaped.push(other),
+        }
+    }
+    escaped
 }
 
 /// A value as a change event's payload names it: `{"value": …}`, a string
@@ -710,6 +1322,54 @@ pub(super) fn payload(value: &str) -> String {
 /// boolean or a number.
 pub(super) fn plain_payload(value: impl std::fmt::Display) -> String {
     format!("{{\"value\":{value}}}")
+}
+
+/// The file or folder picker node at `path` of the screen's tree.
+fn path_node_of(window: &LauncherWindow, path: &str) -> Option<&pane_core::FilePicker> {
+    let tree = match window.launcher.screen() {
+        pane_core::Screen::DesignedView(view) => Some(view.tree),
+        pane_core::Screen::PaneForm(form) => Some(form.tree),
+        _ => None,
+    }?;
+    match &tree::node_at(&tree, path)?.kind {
+        pane_core::NodeKind::FilePicker(picker) | pane_core::NodeKind::FolderPicker(picker) => {
+            Some(picker)
+        }
+        _ => None,
+    }
+}
+
+/// The value a change event's payload names, as a string: a string as it
+/// is, a boolean as `true` or `false`. A submission's collection reads
+/// the same payload a control's change carries.
+pub(super) fn payload_value(payload: &str) -> String {
+    let value = payload
+        .split_once("\"value\"")
+        .map(|(_, rest)| rest.trim_start().trim_start_matches(':').trim_start())
+        .unwrap_or("");
+    if value.starts_with('"') {
+        let rest = &value[1..];
+        let mut result = String::new();
+        let mut characters = rest.chars();
+        while let Some(character) = characters.next() {
+            match character {
+                '"' => break,
+                '\\' => match characters.next() {
+                    Some('n') => result.push('\n'),
+                    Some('r') => result.push('\r'),
+                    Some('t') => result.push('\t'),
+                    Some(escaped) => result.push(escaped),
+                    None => {}
+                },
+                other => result.push(other),
+            }
+        }
+        return result;
+    }
+    value
+        .chars()
+        .take_while(|character| character.is_ascii_alphanumeric())
+        .collect()
 }
 
 /// A key as a key event's payload names it: `{"key": …}`, the keystroke

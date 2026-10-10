@@ -328,8 +328,9 @@ fn the_setup_screen_asks_only_for_required_unset_values_then_launches(fixture: &
         Some("Required"),
         "an empty value is not saved"
     );
-    launcher.set_field_value("apiKey", "abc");
-    block_on(launcher.submit_form());
+    block_on(launcher.submit_pane_form(vec![
+        ("apiKey".to_owned(), ("abc").to_owned()),
+    ]));
     let view = launcher.view();
     assert_eq!(view.screen, Screen::Root { query: "rp".into() });
     assert_eq!(
@@ -350,15 +351,17 @@ fn the_setup_screen_asks_only_for_required_unset_values_then_launches(fixture: &
     );
     // A folder that does not exist is no value.
     let gone = pane.sources.path().join("gone");
-    launcher.set_field_value("show#folder", gone.to_str().unwrap());
-    block_on(launcher.submit_form());
+    block_on(launcher.submit_pane_form(vec![
+        ("show#folder".to_owned(), (gone.to_str().unwrap()).to_owned()),
+    ]));
     assert_eq!(
         launcher.view().form().unwrap().fields[0].error.as_deref(),
         Some("No folder has this path")
     );
     let notes = pane.notes();
-    launcher.set_field_value("show#folder", &notes);
-    block_on(launcher.submit_form());
+    block_on(launcher.submit_pane_form(vec![
+        ("show#folder".to_owned(), (&notes).to_owned()),
+    ]));
     let view = launcher.view();
     assert_eq!(view.screen, Screen::Command);
     assert_eq!(view.title, "Preferences");

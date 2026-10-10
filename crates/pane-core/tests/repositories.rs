@@ -1092,8 +1092,9 @@ fn the_form_in_root_search_asks_for_the_repository() {
 
     select_title(&launcher, "Install extension from Git…");
     block_on(launcher.activate_selected());
-    launcher.set_field_value("repository", &format!(" {}@v0.1.0 ", greeter.url));
-    block_on(launcher.submit_form());
+    block_on(launcher.submit_pane_form(vec![
+        ("repository".to_owned(), (&format!(" {}@v0.1.0 ", greeter.url)).to_owned()),
+    ]));
     assert_eq!(launcher.view().title, "Greeter from Git");
     block_on(launcher.activate_selected());
     assert_eq!(dirs.record("greeter")["pinned"], true);

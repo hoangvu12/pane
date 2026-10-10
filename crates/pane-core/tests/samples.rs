@@ -112,9 +112,10 @@ impl Sample {
 
     /// Fills in the form's name and greeting, submits it and returns the status.
     fn submit(&self, launcher: &Launcher, name: &str, greeting: &str) -> Status {
-        launcher.set_field_value("name", name);
-        launcher.set_field_value("greeting", greeting);
-        block_on(launcher.submit_form());
+        block_on(launcher.submit_pane_form(vec![
+            ("name".to_owned(), (name).to_owned()),
+            ("greeting".to_owned(), (greeting).to_owned()),
+        ]));
         launcher.view().status
     }
 
