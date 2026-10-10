@@ -245,10 +245,10 @@ impl DesignedControls {
             if let Some(handle) = handle {
                 let (on_focus, on_blur) = (node.on_focus, node.on_blur);
                 let path = path.to_owned();
-                let focus = cx.on_focus(&handle, window, move |this, _, window, cx| {
+                let focus = cx.on_focus(&handle, window, move |this, window, cx| {
                     this.designed_focus_event(&path, true, window, cx);
                 });
-                let blur = cx.on_blur(&handle, window, move |this, _, window, cx| {
+                let blur = cx.on_blur(&handle, window, move |this, window, cx| {
                     this.designed_focus_event(&path, false, window, cx);
                 });
                 let entry = self.state.get_mut(&path).expect("the state is held");

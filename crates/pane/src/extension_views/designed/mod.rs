@@ -603,7 +603,8 @@ impl LauncherWindow {
             let Held::Select { on_change, .. } = &entry.held else {
                 return None;
             };
-            Some((*on_change?, entry.render, entry.key.clone()))
+            let callback = *on_change;
+            Some((callback?, entry.render, entry.key.clone()))
         });
         let Some((callback, render, key)) = send else {
             return;

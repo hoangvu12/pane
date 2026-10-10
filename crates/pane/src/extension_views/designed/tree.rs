@@ -14,7 +14,7 @@ use gpui::{
 
 use pane_core::{
     Align, DesignedTree, Finite, Justify, Layout as NodeLayout, Length as NodeLength, Node,
-    NodeKind, Orientation, Paint, Place, RadiusLength, Sizing, Style, Surface,
+    NodeKind, Orientation, Paint, Place, RadiusLength, Sizing, Surface,
 };
 
 use crate::app::LauncherWindow;
@@ -69,7 +69,10 @@ impl Draw<'_> {
 
     /// The keyed select at `path`: the searchable select entity holding
     /// its open state, query and highlight.
-    pub(super) fn select(&self, path: &str) -> Option<&Entity<crate::ui::select::Select>> {
+    pub(super) fn select(
+        &self,
+        path: &str,
+    ) -> Option<&gpui::Entity<crate::ui::select::Select>> {
         match &self.state.get(path)?.held {
             Held::Select { select, .. } => Some(select),
             _ => None,
@@ -759,7 +762,7 @@ fn length(value: NodeLength) -> GpuiLength {
 /// parent's whole size).
 fn length_pixels(value: NodeLength, theme: Option<&Theme>) -> Pixels {
     match value {
-        NodeLength::Space(token) => theme.map_or(px(0.), |theme| tokens::space(token)),
+        NodeLength::Space(token) => theme.map_or(px(0.), |_| tokens::space(token)),
         NodeLength::Px(Finite(pixels)) => px(pixels),
         NodeLength::Fraction(Finite(fraction)) => px(fraction * 4096.),
     }
@@ -788,7 +791,7 @@ fn surface<D: Styled + IntoElement>(div: D, surface: &Surface, theme: &Theme) ->
 }
 
 /// A corner radius, as GPUI takes it.
-fn radius_pixels(radius: RadiusLength, theme: &Theme) -> Pixels {
+fn radius_pixels(radius: RadiusLength, _theme: &Theme) -> Pixels {
     match radius {
         RadiusLength::Token(token) => tokens::radius(token),
         RadiusLength::Px(Finite(pixels)) => px(pixels),

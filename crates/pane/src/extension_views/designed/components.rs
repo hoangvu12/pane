@@ -590,7 +590,7 @@ pub(super) fn icon_tile(icon: &IconNode, path: &str, draw: &Draw) -> AnyElement 
 }
 
 /// The pixels an icon's or image's size names.
-fn extent_of(size: Option<IconExtent>, default: f32, theme: &Theme) -> f32 {
+fn extent_of(size: Option<IconExtent>, default: f32, _theme: &Theme) -> f32 {
     match size {
         Some(IconExtent::Px(Finite(pixels))) => pixels,
         Some(IconExtent::Token(token)) => tokens::icon_size(token).as_f32(),
@@ -1817,12 +1817,12 @@ pub(super) fn text_input(
         );
     // The field's commit: Enter runs it (a text area's Enter inserts a
     // newline), as a blur does.
-    let path = path.to_owned();
+    let field_path = path.to_owned();
     let commit = cx.listener(move |this, _: &Commit, window, cx| {
-        this.designed_field_committed(&path, window, cx);
+        this.designed_field_committed(&field_path, window, cx);
     });
     div()
-        .id(format!("{path}"))
+        .id(path.to_owned())
         .flex()
         .flex_col()
         .gap_1()
