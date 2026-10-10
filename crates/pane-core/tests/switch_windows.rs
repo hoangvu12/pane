@@ -900,7 +900,9 @@ mod extension {
     use futures::executor::block_on;
     use pane_core::PackageIdentity;
 
+    use super::defaults;
     use super::feedback::RecordingWindow;
+    use super::repo_server;
     use super::rows::{select_title, titles, to_root};
     use super::{FakeWindows, WindowsError, listed, window};
     use pane_core::{Screen, Status};

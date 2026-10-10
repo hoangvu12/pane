@@ -1172,8 +1172,10 @@ mod extension {
         ToastStyle,
     };
 
+    use super::defaults;
     use super::feedback::RecordingWindow;
     use super::recording::{Done, RecordingSystemCommands};
+    use super::repo_server;
     use super::rows::{manage, select_title, titles};
     use super::{Appearance, capabilities, guests, microphone, volume};
 

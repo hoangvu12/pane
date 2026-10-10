@@ -946,7 +946,9 @@ mod windows {
     use pane_core::run::WindowsRun;
     use pane_core::{DefaultExtension, PackageIdentity, SearchPath};
 
+    use super::defaults;
     use super::feedback::RecordingWindow;
+    use super::repo_server;
     use serde_json::Value;
 
     /// A number making this test's registry names its own.
