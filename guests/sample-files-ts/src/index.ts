@@ -54,15 +54,11 @@ async function render(): Promise<List> {
   };
 }
 
-async function submitForm(itemId: string): Promise<string> {
-  throw { message: `unknown form: ${itemId}` };
-}
-
-async function openView(itemId: string): Promise<DesignedView> {
+openView(itemId: string): Promise<DesignedView> {
   throw new Error(`unknown designed view: ${itemId}`);
 }
 
-export const command: Command = { render, submitForm, openView };
+export const command: Command = { render, openView };
 
 // A command's own search is the designed List's search-text event now
 // (#240, `command-search` retired): root search still asks this sample for

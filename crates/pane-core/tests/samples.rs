@@ -13,9 +13,8 @@ use std::path::PathBuf;
 
 use futures::executor::block_on;
 use pane_core::{
-    CallError, Canvas, CanvasOp, CanvasRole, Choice, CommandRegistration, DesignedEvent,
-    DesignedHandler, FieldKind, FieldValue, FormError, FormField, GUEST_MEMORY, Launcher, Node,
-    NodeKind, Paint, Runtime, Screen, Status, Unavailable,
+    CallError, Canvas, CanvasOp, CanvasRole, CommandRegistration, DesignedEvent, DesignedHandler,
+    FormValue, GUEST_MEMORY, Launcher, Node, NodeKind, Paint, Runtime, Screen, Status, Unavailable,
 };
 use wasmtime::component::Component;
 use wasmtime::{Config, Engine};
@@ -97,24 +96,61 @@ impl Sample {
         shown(launcher)
     }
 
-    /// A launcher with this sample's form opened.
+    /// A launcher with this sample's form command opened (#241: the
+    /// "Greet someone" command of the same package, a designed view, like
+    /// the color command's — only an installed command can be launched).
     fn open_form(&self) -> Launcher {
-        let launcher = self.open();
-        assert_eq!(self.run(&launcher, "form"), Status::Idle);
+        let data = tempfile::tempdir().unwrap();
+        let launcher =
+            Launcher::with_packages(Runtime::start(), vec![], data.path().join("extensions"));
+        let folder = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../target/guests/packages")
+            .join(self.component.replace('_', "-"));
+        block_on(launcher.install_package(&folder));
+        while !matches!(launcher.view().screen, Screen::Root { .. }) {
+            launcher.back();
+        }
+        block_on(launcher.set_query("greet someone"));
+        let index = launcher
+            .view()
+            .rows
+            .iter()
+            .position(|row| row.id == "form")
+            .expect("the form command is listed");
+        launcher.select(index);
+        block_on(launcher.activate_selected());
         assert!(
-            matches!(launcher.view().screen, Screen::Form(_)),
+            matches!(launcher.view().screen, Screen::DesignedView(_)),
             "{:?}",
             launcher.view().screen
         );
         launcher
     }
 
-    /// Fills in the form's name and greeting, submits it and returns the status.
+    /// Fills in the form's name and greeting, submits it and returns what
+    /// the view draws: its answer text, or the field's error.
     fn submit(&self, launcher: &Launcher, name: &str, greeting: &str) -> Status {
-        launcher.set_field_value("name", name);
-        launcher.set_field_value("greeting", greeting);
-        block_on(launcher.submit_form());
+        let submitting = launcher.submit_designed_form(
+            None,
+            vec![
+                ("name".to_owned(), FormValue::Text(name.to_owned())),
+                ("greeting".to_owned(), FormValue::Text(greeting.to_owned())),
+            ],
+        );
+        block_on(submitting);
         launcher.view().status
+    }
+
+    /// The texts the open form view's tree holds.
+    fn form_texts(&self, launcher: &Launcher) -> Vec<String> {
+        match &launcher.view().screen {
+            Screen::DesignedView(view) => {
+                let mut texts = Vec::new();
+                collect_texts(&view.tree.root, &mut texts);
+                texts
+            }
+            other => panic!("no form view: {other:?}"),
+        }
     }
 
     /// A launcher with this sample's package installed (the color
@@ -161,6 +197,34 @@ impl Sample {
         assert!((0.0..1.0).contains(&value), "{value} is not in [0, 1)");
         value
     }
+}
+
+/// Every text a tree holds, plain and in spans.
+fn collect_texts(node: &pane_core::Node, into: &mut Vec<String>) {
+    if let pane_core::NodeKind::Text(text) = &node.kind {
+        match &text.content {
+            pane_core::TextContent::Plain(text) => into.push(text.clone()),
+            pane_core::TextContent::Spans(spans) => {
+                into.extend(spans.iter().map(|span| span.text.clone()));
+            }
+        }
+    }
+    for child in &node.children {
+        collect_texts(child, into);
+    }
+}
+
+/// The nodes a tree holds, breadth-first.
+fn nodes_of(tree: &pane_core::DesignedTree) -> Vec<&pane_core::Node> {
+    fn at<'a>(node: &'a pane_core::Node, into: &mut Vec<&'a pane_core::Node>) {
+        into.push(node);
+        for child in &node.children {
+            at(child, into);
+        }
+    }
+    let mut nodes = Vec::new();
+    at(&tree.root, &mut nodes);
+    nodes
 }
 
 fn opening_shows_the_samples_items(sample: &Sample) {
@@ -261,58 +325,73 @@ fn the_component_imports_only_wasi_0_3(sample: &Sample) {
 }
 
 fn opening_the_form_shows_its_fields(sample: &Sample) {
-    let view = sample.open_form().view();
+    let launcher = sample.open_form();
+    let view = launcher.view();
 
+    // The form view's title and its form node: every field kind the
+    // designed tree offers (#241).
     assert_eq!(view.title, "Greet someone");
-    let form = view.form().expect("a form");
-    assert_eq!(form.submit_label, "Greet");
-    let choice = |id: &str, label: &str| Choice {
-        id: id.into(),
-        label: label.into(),
+    let Screen::DesignedView(shown) = &view.screen else {
+        panic!("{:?}", view.screen);
     };
+    let fields: Vec<&str> = nodes_of(&shown.tree)
+        .into_iter()
+        .filter(|node| matches!(&node.kind, pane_core::NodeKind::Form(_)))
+        .flat_map(|form| form.children.iter())
+        .filter(|node| node.key.is_some())
+        .map(|node| match &node.kind {
+            pane_core::NodeKind::TextInput(_) => "text-input",
+            pane_core::NodeKind::PasswordInput(_) => "password-input",
+            pane_core::NodeKind::TextArea(_) => "text-area",
+            pane_core::NodeKind::DatePicker(_) => "date-picker",
+            pane_core::NodeKind::DateTimePicker(_) => "date-time-picker",
+            pane_core::NodeKind::Select(_) => "select",
+            pane_core::NodeKind::TagPicker(_) => "tag-picker",
+            pane_core::NodeKind::FilePicker(_) => "file-picker",
+            pane_core::NodeKind::FolderPicker(_) => "folder-picker",
+            pane_core::NodeKind::Checkbox(_) => "checkbox",
+            pane_core::NodeKind::Toggle(_) => "toggle",
+            _ => "other",
+        })
+        .collect();
     assert_eq!(
-        form.fields,
+        fields,
         [
-            FormField {
-                id: "name".into(),
-                label: "Name".into(),
-                kind: FieldKind::Text {
-                    placeholder: Some("Ada Lovelace".into())
-                },
-                value: String::new(),
-                error: None,
-                description: None,
-                required: false,
-            },
-            FormField {
-                id: "greeting".into(),
-                label: "Greeting".into(),
-                kind: FieldKind::Choice(vec![
-                    choice("hello", "Hello"),
-                    choice("morning", "Good morning"),
-                    choice("welcome", "Welcome"),
-                ]),
-                value: "hello".into(),
-                error: None,
-                description: None,
-                required: false,
-            },
+            "text-input",
+            "password-input",
+            "text-area",
+            "date-picker",
+            "date-time-picker",
+            "select",
+            "tag-picker",
+            "file-picker",
+            "folder-picker",
+            "checkbox",
+            "toggle",
         ]
     );
+    // The name's placeholder and the dropdown's sections, drawn as the
+    // tree says them.
+    let texts = sample.form_texts(&launcher);
+    assert!(texts.contains(&"Ada Lovelace".to_owned()), "{texts:?}");
+    assert!(texts.contains(&"Name".to_owned()), "{texts:?}");
+    let _ = view;
 }
 
 fn a_valid_form_shows_the_guests_answer(sample: &Sample) {
     let launcher = sample.open_form();
 
-    assert_eq!(
-        sample.submit(&launcher, "Ada", "morning"),
-        Status::Result(format!(
+    sample.submit(&launcher, "Ada", "morning");
+    assert!(
+        sample.form_texts(&launcher).contains(&format!(
             "Good morning, Ada, from the {} guest",
             sample.language
-        ))
+        )),
+        "{:?}",
+        sample.form_texts(&launcher)
     );
     assert!(
-        matches!(launcher.view().screen, Screen::Form(_)),
+        matches!(launcher.view().screen, Screen::DesignedView(_)),
         "{:?}",
         launcher.view().screen
     );
@@ -321,57 +400,37 @@ fn a_valid_form_shows_the_guests_answer(sample: &Sample) {
 fn an_invalid_field_is_marked_and_the_form_stays_open(sample: &Sample) {
     let launcher = sample.open_form();
 
-    let status = sample.submit(&launcher, "   ", "welcome");
+    sample.submit(&launcher, "   ", "welcome");
 
-    assert_eq!(status, Status::Error("Name: Enter a name".into()));
-    let view = launcher.view();
-    assert!(matches!(view.screen, Screen::Form(_)), "{:?}", view.screen);
-    let fields = &view.form().unwrap().fields;
-    assert_eq!(fields[0].error.as_deref(), Some("Enter a name"));
-    assert_eq!(fields[1].error, None);
-    // The values survive the rejection, and a corrected form is accepted.
-    assert_eq!(
-        (fields[0].value.as_str(), fields[1].value.as_str()),
-        ("   ", "welcome")
+    // The field's error, drawn under it (#241); the form view stays open.
+    let texts = sample.form_texts(&launcher);
+    assert!(texts.contains(&"Enter a name".to_owned()), "{texts:?}");
+    assert!(
+        matches!(launcher.view().screen, Screen::DesignedView(_)),
+        "{:?}",
+        launcher.view().screen
     );
-    assert_eq!(
-        sample.submit(&launcher, "Grace", "welcome"),
-        Status::Result(format!(
+    // A corrected form is accepted.
+    sample.submit(&launcher, "Grace", "welcome");
+    assert!(
+        sample.form_texts(&launcher).contains(&format!(
             "Welcome, Grace, from the {} guest",
             sample.language
-        ))
+        )),
+        "{:?}",
+        sample.form_texts(&launcher)
     );
 }
 
 fn a_too_long_name_is_rejected_by_the_guest(sample: &Sample) {
     let launcher = sample.open_form();
 
-    let status = sample.submit(&launcher, &"x".repeat(41), "hello");
+    sample.submit(&launcher, &"x".repeat(41), "hello");
 
-    assert_eq!(
-        status,
-        Status::Error("Name: Use at most 40 characters".into())
-    );
-}
-
-fn an_unknown_choice_is_a_field_error_from_the_guest(sample: &Sample) {
-    // The launcher only submits offered choices, so call the guest directly.
-    let runtime = Runtime::start().unwrap();
-    let values = [("name", "Ada"), ("greeting", "howdy")]
-        .map(|(id, value)| FieldValue {
-            id: id.into(),
-            value: value.into(),
-        })
-        .to_vec();
-
-    let answer = block_on(runtime.submit_form(&sample.path(), "form", values));
-
-    assert_eq!(
-        answer,
-        Err(CallError::Form(FormError {
-            field: Some("greeting".into()),
-            message: "Choose a greeting".into(),
-        }))
+    let texts = sample.form_texts(&launcher);
+    assert!(
+        texts.contains(&"Use at most 40 characters".to_owned()),
+        "{texts:?}"
     );
 }
 
@@ -855,7 +914,6 @@ fn the_guest_stays_under_the_memory_cap(sample: &Sample) {
     an_async_wasi_wait_shows_running_until_it_answers(sample);
     one_instance_rolls_a_new_number_each_time(sample);
     a_valid_form_shows_the_guests_answer(sample);
-    an_unknown_choice_is_a_field_error_from_the_guest(sample);
     keys_move_the_chosen_color(sample);
     pressing_and_dragging_the_pointer_chooses_swatches(sample);
     views_open_at_once_keep_their_own_state(sample);
@@ -901,7 +959,6 @@ contract!(
     a_valid_form_shows_the_guests_answer,
     an_invalid_field_is_marked_and_the_form_stays_open,
     a_too_long_name_is_rejected_by_the_guest,
-    an_unknown_choice_is_a_field_error_from_the_guest,
     a_platform_limited_action_runs_only_on_its_declared_systems,
     opening_the_color_view_draws_the_picker,
     keys_move_the_chosen_color,

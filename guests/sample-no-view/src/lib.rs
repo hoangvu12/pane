@@ -105,23 +105,18 @@ fn launch(text: Option<&str>) -> Result<String, String> {
     )?;
     let (launch_type, named) = match text.strip_prefix("background ") {
         Some(named) => (LaunchType::Background, named.trim()),
-        None => (LaunchType::UserInitiated, text),
-    };
+        None => (LaunchType::UserInitiated, text)};
     let target = match named.rsplit_once('#') {
         Some((source, command)) => CommandRef {
             source: Some(source.into()),
-            command: command.into(),
-        },
+            command: command.into()},
         None => CommandRef {
             source: None,
-            command: named.into(),
-        },
-    };
+            command: named.into()}};
     commands::launch(&target, launch_type, &[], Some(CONTEXT))?;
     Ok(match launch_type {
         LaunchType::Background => format!("Launched {named} in the background"),
-        LaunchType::UserInitiated => format!("Launched {named}"),
-    })
+        LaunchType::UserInitiated => format!("Launched {named}")})
 }
 
 impl Command for NoView {
@@ -157,8 +152,7 @@ impl Command for NoView {
             "tick" => tick(&launch),
             "last" => last(),
             "launch" => self::launch(launch.fallback_text.as_deref()),
-            other => Err(format!("unknown command: {other}")),
-        }?;
+            other => Err(format!("unknown command: {other}"))}?;
         // Nobody is there to see a background launch's toast.
         if launch.launch_type != LaunchType::Background {
             show_toast(Toast::success(done));

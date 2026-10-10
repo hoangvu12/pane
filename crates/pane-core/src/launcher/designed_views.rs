@@ -52,14 +52,16 @@
 use std::path::Path;
 use std::pin::Pin;
 
+use futures::future::FutureExt as _;
+
 use super::{Launcher, Opening, State, Status, stopped};
-use crate::extension_data::PackageData;
+use crate::extension_data::{DataKind, PackageData};
 use crate::extension_log::LogLevel;
 use crate::icons::{Icon, IconSource, is_web_url};
 use crate::packages::{InstalledPackage, PackageIdentity};
 use crate::runtime::{
-    CallError, DesignedEvent, DesignedHandler, DesignedNext, DesignedRendered, DesignedTree, Node,
-    NodeKind, Runtime, ViewId,
+    CallError, DesignedEvent, DesignedHandler, DesignedNext, DesignedRendered, DesignedTree,
+    FormValue, Node, NodeKind, Runtime, ViewId,
 };
 
 /// The callback id of the pop event, the event that tells a view the one
@@ -311,6 +313,10 @@ impl Launcher {
                     owner.as_ref(),
                     &mut tree,
                 );
+                // A view opened afresh sees every field as new: the values
+                // its form was last submitted with, kept as the package's
+                // settings, prefill its `remember` fields (#241).
+                self.prefill_remembered(&state, &component, Vec::new(), &mut tree);
                 let stack = DesignedStack::root(
                     id,
                     owner,
@@ -383,6 +389,63 @@ impl Launcher {
     /// view shows the view below's last tree and tells it the view above
     /// popped. An error the extension reports is shown while the view stays
     /// open with its last good tree; a crash closes it.
+    /// Submits the form the open designed view's tree holds (#241): the
+    /// form `form` names, by its key (`None` when the tree's only form
+    /// gave none), with the values `values` the window collected from
+    /// its fields, keyed by their keys. The form's `onSubmit` runs with
+    /// the values as its event's payload — and the fields that ask to be
+    /// remembered have their values kept as the package's settings,
+    /// prefilled the next time a view opens holding them, while the
+    /// answer is on its way. Await the returned future to show it.
+    pub fn submit_designed_form(
+        &self,
+        form: Option<&str>,
+        values: Vec<(String, FormValue)>,
+    ) -> impl Future<Output = ()> + Send + 'static {
+        let mut state = self.lock();
+        let form = state
+            .designed_view
+            .as_ref()
+            .map(|stack| form_of(&stack.top().tree, form));
+        let Some((callback, key)) = form.flatten() else {
+            // No form on screen, or the key names none of them: the
+            // submission goes nowhere, exactly as a press of a node the
+            // tree no longer holds does.
+            return async {}.boxed();
+        };
+        // The remembered values, written as the form's own settings while
+        // its answer is on its way.
+        let component = state.open.clone().unwrap_or_default();
+        let remembered: Vec<(String, String)> = state
+            .designed_view
+            .as_ref()
+            .map(|stack| {
+                remembered_of(&stack.top().tree, &values)
+                    .into_iter()
+                    .map(|(key, value)| (key, json_of(&value)))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let data = self.data_in(&state, &component);
+        drop(state);
+        let payload = form_payload(&values);
+        let sending =
+            self.send_designed_seen(DesignedHandler::Submit, callback, Some(&key), None, payload);
+        async move {
+            if let Some(data) = data {
+                for (key, value) in remembered {
+                    if let Err(problem) = data.set(DataKind::Settings, &key, &value).await {
+                        crate::diagnostic!(
+                            "Pane could not remember a form field's value: {problem}"
+                        );
+                    }
+                }
+            }
+            sending.await;
+        }
+        .boxed()
+    }
+
     pub fn send_designed_event(
         &self,
         callback: u32,
@@ -501,6 +564,7 @@ impl Launcher {
             DesignedHandler::Press => "a press",
             DesignedHandler::Change => "a change",
             DesignedHandler::Input => "an input",
+            DesignedHandler::Submit => "a submission",
             DesignedHandler::Focus => "a focus",
             DesignedHandler::Blur => "a blur",
             DesignedHandler::Key => "a key",
@@ -662,7 +726,14 @@ impl Launcher {
         match result {
             Ok(DesignedNext::Tree(rendered)) => {
                 let component = state.open.clone().unwrap_or_default();
-                let (screen, title) = {
+                let previous = {
+                    let stack = state.designed_view.as_ref().expect("a view is open");
+                    // The keys the view's last tree held as `remember`
+                    // fields: a field's remembered value prefills it only
+                    // when its key is new to the view (#241).
+                    remember_keys(&stack.top().tree)
+                };
+                let (screen, title, tree, owner, loading) = {
                     let stack = state.designed_view.as_mut().expect("a view is open");
                     let top = stack.top_mut();
                     top.shown = number;
@@ -673,15 +744,27 @@ impl Launcher {
                     // A tree that lands on screen has its icons resolved in
                     // the open command's package folder and starts the
                     // loads its icons need, as a list's do.
-                    top.loading = landed(
+                    let loading = landed(
                         &state.packages,
                         &state.icon_loads,
                         &component,
                         owner.as_ref(),
                         &mut top.tree,
                     );
-                    stack.shown()
+                    let tree = top.tree.clone();
+                    drop(top);
+                    let shown = stack.shown();
+                    (shown.0, shown.1, tree, owner, loading)
                 };
+                let mut tree = tree;
+                // The remembered values, placed onto the tree on screen.
+                self.prefill_remembered(state, &component, previous, &mut tree);
+                if let Some(stack) = state.designed_view.as_mut() {
+                    let top = stack.top_mut();
+                    top.tree = tree;
+                    top.owner = owner;
+                    top.loading = loading;
+                }
                 state.view.screen = super::Screen::DesignedView(screen);
                 state.view.title = title;
                 state.view.status = Status::Idle;
@@ -693,7 +776,7 @@ impl Launcher {
                 let component = state.open.clone().unwrap_or_default();
                 // The pushed view's first render asks for its own refresh.
                 let ask = rendered.refresh_after_ms;
-                let (screen, title) = {
+                let (screen, title, mut tree) = {
                     let stack = state.designed_view.as_mut().expect("a view is open");
                     stack.top_mut().shown = number;
                     let owner = stack.top().owner.clone();
@@ -705,8 +788,15 @@ impl Launcher {
                         &state.icon_loads,
                         &component,
                     ));
-                    stack.shown()
+                    let shown = stack.shown();
+                    (shown.0, shown.1, stack.top_mut().tree.clone())
                 };
+                // A pushed view is opened afresh: its `remember` fields
+                // prefill as a root view's do (#241).
+                self.prefill_remembered(state, &component, Vec::new(), &mut tree);
+                if let Some(stack) = state.designed_view.as_mut() {
+                    stack.top_mut().tree = tree;
+                }
                 state.view.screen = super::Screen::DesignedView(screen);
                 state.view.title = title;
                 state.view.status = Status::Idle;
@@ -718,7 +808,7 @@ impl Launcher {
                 // The replacing view's first render asks for its own
                 // refresh.
                 let ask = rendered.refresh_after_ms;
-                let (screen, title) = {
+                let (screen, title, mut tree) = {
                     let stack = state.designed_view.as_mut().expect("a view is open");
                     stack.top_mut().shown = number;
                     let owner = stack.top().owner.clone();
@@ -730,8 +820,15 @@ impl Launcher {
                         &state.icon_loads,
                         &component,
                     );
-                    stack.shown()
+                    let shown = stack.shown();
+                    (shown.0, shown.1, stack.top_mut().tree.clone())
                 };
+                // A replacing view is opened afresh: its `remember` fields
+                // prefill as a root view's do (#241).
+                self.prefill_remembered(state, &component, Vec::new(), &mut tree);
+                if let Some(stack) = state.designed_view.as_mut() {
+                    stack.top_mut().tree = tree;
+                }
                 state.view.screen = super::Screen::DesignedView(screen);
                 state.view.title = title;
                 state.view.status = Status::Idle;
@@ -891,21 +988,27 @@ impl Launcher {
     /// draws the rows whose loads arrived (#142): a web image, a system
     /// icon or an application's own icon that is ready takes the place of
     /// the fallback shown for it until then. Whether any icon changed; a
-    /// window that sees one draws again.
+    /// window that sees one draws again. A form Pane itself asks is
+    /// served the same way.
     pub fn refresh_designed_view(&self) -> bool {
         let mut guard = self.lock();
         let state = &mut *guard;
-        let Some(stack) = state.designed_view.as_ref() else {
+        if let Some(stack) = state.designed_view.as_ref()
+            && stack.top().loading
+        {
+            let owner = stack.top().owner.as_ref().map(|identity| identity.key());
+            let super::Screen::DesignedView(snapshot) = &mut state.view.screen else {
+                return false;
+            };
+            return shown(&mut snapshot.tree, owner.as_deref(), &state.icon_loads);
+        }
+        let super::Screen::PaneForm(form) = &mut state.view.screen else {
             return false;
         };
-        if !stack.top().loading {
+        if !form.loading {
             return false;
         }
-        let owner = stack.top().owner.as_ref().map(|identity| identity.key());
-        let super::Screen::DesignedView(snapshot) = &mut state.view.screen else {
-            return false;
-        };
-        shown(&mut snapshot.tree, owner.as_deref(), &state.icon_loads)
+        shown(&mut form.tree, form.owner.as_deref(), &state.icon_loads)
     }
 
     /// Closes the open designed view, if one is open: every view of its
@@ -1031,6 +1134,24 @@ fn landed(
     resolve_node(&mut tree.root, &folder);
     let identity = owner.or_else(|| package.map(|package| &package.identity));
     want_node(&tree.root, identity, loads)
+}
+
+/// A form Pane itself asks, landing on screen: its icons resolved in the
+/// package `identity`'s folder and their loads started, as a designed
+/// view's tree is above. Whether the tree holds an icon Pane loads.
+pub(super) fn land_pane_form(
+    packages: &[InstalledPackage],
+    loads: &super::icon_loads::IconLoads,
+    identity: &PackageIdentity,
+    tree: &mut DesignedTree,
+) -> bool {
+    let folder = packages
+        .iter()
+        .find(|package| &package.identity == identity)
+        .map(|package| package.location.clone())
+        .unwrap_or_default();
+    resolve_node(&mut tree.root, &folder);
+    want_node(&tree.root, Some(identity), loads)
 }
 
 /// Every icon `node` holds, resolved in `folder` (see [`Icon::resolved`]),
@@ -1194,4 +1315,244 @@ fn shown_node(node: &mut Node, owner: Option<&str>, loads: &super::icon_loads::I
         changed |= shown_node(detail, owner, loads);
     }
     changed
+}
+
+/// The form `tree` holds, named by `key` (`None` for the tree's first,
+/// whatever key it gave): its `onSubmit` callback and its key, as the
+/// submit event names it. `None` when the tree holds no such form.
+fn form_of(tree: &DesignedTree, key: Option<&str>) -> Option<(u32, String)> {
+    fn at(node: &Node, key: Option<&str>, in_form: Option<String>) -> Option<(u32, String)> {
+        let own = match &node.kind {
+            NodeKind::Form(form) => {
+                let form_key = node.key.clone().unwrap_or_else(|| "form".to_owned());
+                let matches = key.is_none_or(|wanted| wanted == form_key);
+                if matches && form.on_submit.is_some() {
+                    return Some((form.on_submit.expect("checked above"), form_key));
+                }
+                Some(form_key)
+            }
+            _ => in_form,
+        };
+        if let Some(fallback) = &node.fallback
+            && let Some(found) = at(fallback, key, own.clone())
+        {
+            return Some(found);
+        }
+        node.children
+            .iter()
+            .find_map(|child| at(child, key, own.clone()))
+    }
+    at(&tree.root, key, None)
+}
+
+/// The remembered values of a submission: each `remember` field of
+/// `tree`'s form whose key `values` holds, with the settings key Pane
+/// keeps it under.
+fn remembered_of(tree: &DesignedTree, values: &[(String, FormValue)]) -> Vec<(String, FormValue)> {
+    fn at(
+        node: &Node,
+        form: &str,
+        values: &[(String, FormValue)],
+        into: &mut Vec<(String, FormValue)>,
+    ) {
+        let form = match &node.kind {
+            NodeKind::Form(_) => node.key.as_deref().unwrap_or("form"),
+            _ => form,
+        };
+        if let (Some(key), true) = (&node.key, field_remember(node)) {
+            if let Some((_, value)) = values.iter().find(|(named, _)| named == key) {
+                into.push((format!("pane-form/{form}/{key}"), value.clone()));
+            }
+        }
+        if let Some(fallback) = &node.fallback {
+            at(fallback, form, values, into);
+        }
+        for child in &node.children {
+            at(child, form, values, into);
+        }
+    }
+    let mut remembered = Vec::new();
+    at(&tree.root, "form", values, &mut remembered);
+    remembered
+}
+
+/// Whether the node is a field that asks to be remembered.
+fn field_remember(node: &Node) -> bool {
+    match &node.kind {
+        NodeKind::TextInput(input) | NodeKind::PasswordInput(input) | NodeKind::TextArea(input) => {
+            input.field.remember
+        }
+        NodeKind::Select(select) => select.field.remember,
+        NodeKind::Toggle(toggle) => toggle.field.remember,
+        NodeKind::Checkbox(checkbox) => checkbox.field.remember,
+        NodeKind::DatePicker(date) | NodeKind::DateTimePicker(date) => date.field.remember,
+        NodeKind::TagPicker(picker) => picker.field.remember,
+        NodeKind::FilePicker(picker) | NodeKind::FolderPicker(picker) => picker.field.remember,
+        _ => false,
+    }
+}
+
+/// The payload of a form's submission: the values it was submitted with,
+/// keyed by the fields' keys, as JSON.
+fn form_payload(values: &[(String, FormValue)]) -> String {
+    let fields = values
+        .iter()
+        .map(|(key, value)| format!("{}:{}", json_string(key), json_of(value)))
+        .collect::<Vec<String>>()
+        .join(",");
+    format!("{{\"values\":{{{fields}}}}}")
+}
+
+/// A submitted value as the submission's payload names it, and as the
+/// setting Pane keeps a remembered value as: a string, a boolean, or a
+/// list of strings, as JSON.
+fn json_of(value: &FormValue) -> String {
+    match value {
+        FormValue::Text(text) => json_string(text),
+        FormValue::On(on) => on.to_string(),
+        FormValue::List(values) => {
+            let joined = values
+                .iter()
+                .map(|value| json_string(value))
+                .collect::<Vec<String>>()
+                .join(",");
+            format!("[{joined}]")
+        }
+    }
+}
+
+/// A string as JSON names it.
+fn json_string(text: &str) -> String {
+    let mut escaped = String::with_capacity(text.len() + 2);
+    escaped.push('"');
+    for character in text.chars() {
+        match character {
+            '"' => escaped.push_str("\\\""),
+            '\\' => escaped.push_str("\\\\"),
+            '\n' => escaped.push_str("\\n"),
+            '\r' => escaped.push_str("\\r"),
+            '\t' => escaped.push_str("\\t"),
+            other if (other as u32) < 0x20 => {
+                escaped.push_str(&format!("\\u{:04x}", other as u32));
+            }
+            other => escaped.push(other),
+        }
+    }
+    escaped.push('"');
+    escaped
+}
+
+impl Launcher {
+    /// Prefills a tree landing on screen with its remembered values
+    /// (#241): each `remember` field whose key is new to the view —
+    /// `previous` named no such field — takes the value its form was last
+    /// submitted with, kept as the package's settings, when it has one. A
+    /// field whose key the view already holds is left to the extension's
+    /// own value: the remembered value is the *starting* one, never an
+    /// instruction.
+    fn prefill_remembered(
+        &self,
+        state: &State,
+        component: &Path,
+        previous: Vec<String>,
+        tree: &mut DesignedTree,
+    ) {
+        let Some(data) = self.data_in(state, component) else {
+            return;
+        };
+        let mut seen = previous;
+        prefill_node(&mut tree.root, "form", &data, &mut seen);
+    }
+}
+
+/// The keys of the `remember` fields `tree` holds, with the forms they
+/// belong to.
+fn remember_keys(tree: &DesignedTree) -> Vec<String> {
+    fn at(node: &Node, form: &str, into: &mut Vec<String>) {
+        let form = match &node.kind {
+            NodeKind::Form(_) => node.key.as_deref().unwrap_or("form"),
+            _ => form,
+        };
+        if let (Some(key), true) = (&node.key, field_remember(node)) {
+            into.push(format!("pane-form/{form}/{key}"));
+        }
+        if let Some(fallback) = &node.fallback {
+            at(fallback, form, into);
+        }
+        for child in &node.children {
+            at(child, form, into);
+        }
+    }
+    let mut keys = Vec::new();
+    at(&tree.root, "form", &mut keys);
+    keys
+}
+
+/// Prefills one node's `remember` field, and its subtree's, from `data`.
+fn prefill_node(node: &mut Node, form: &str, data: &PackageData, seen: &mut Vec<String>) {
+    let form = match &node.kind {
+        NodeKind::Form(_) => node.key.clone().unwrap_or_else(|| "form".into()),
+        _ => form.to_owned(),
+    };
+    let key = node.key.clone();
+    if let (Some(key), true) = (key, field_remember(node)) {
+        let setting = format!("pane-form/{form}/{key}");
+        if !seen.contains(&setting) {
+            seen.push(setting.clone());
+            if let Ok(Some(value)) = data.get(DataKind::Settings, &setting) {
+                apply_remembered(node, &value);
+            }
+        }
+    }
+    if let Some(fallback) = &mut node.fallback {
+        prefill_node(fallback, &form, data, seen);
+    }
+    for child in &mut node.children {
+        prefill_node(child, &form, data, seen);
+    }
+}
+
+/// Applies a remembered value to the field `node`: a string sets the
+/// text a field edits or the option a dropdown chose, a boolean sets the
+/// state a checkbox or toggle is in, and a list the tags or paths a
+/// picker chose. A value that does not fit the field is ignored.
+fn apply_remembered(node: &mut Node, value: &str) {
+    let value = value.trim();
+    if let Ok(text) = serde_json::from_str::<String>(value) {
+        match &mut node.kind {
+            NodeKind::TextInput(input)
+            | NodeKind::PasswordInput(input)
+            | NodeKind::TextArea(input) => {
+                input.value = text;
+            }
+            NodeKind::Select(select) => select.value = Some(text),
+            NodeKind::DatePicker(date) | NodeKind::DateTimePicker(date) => date.value = text,
+            NodeKind::Checkbox(checkbox) => checkbox.checked = text == "true",
+            NodeKind::Toggle(toggle) => toggle.on = text == "true",
+            NodeKind::FilePicker(picker) | NodeKind::FolderPicker(picker) => {
+                picker.paths = vec![text];
+            }
+            NodeKind::TagPicker(picker) => picker.tags = vec![text],
+            _ => {}
+        }
+        return;
+    }
+    if value == "true" || value == "false" {
+        let on = value == "true";
+        match &mut node.kind {
+            NodeKind::Checkbox(checkbox) => checkbox.checked = on,
+            NodeKind::Toggle(toggle) => toggle.on = on,
+            _ => {}
+        }
+        return;
+    }
+    if let Ok(list) = serde_json::from_str::<Vec<String>>(value) {
+        match &mut node.kind {
+            NodeKind::TagPicker(picker) => picker.tags = list,
+            NodeKind::FilePicker(picker) | NodeKind::FolderPicker(picker) => {
+                picker.paths = list;
+            }
+            _ => {}
+        }
+    }
 }

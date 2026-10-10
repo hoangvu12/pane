@@ -47,13 +47,12 @@ wit_bindgen::generate!({
     default_bindings_module: "pane_extension",
     // No function names the form and custom-view records any more: the tree
     // carries them as JSON. Authors still build them as these types.
-    generate_unused_types: true,
-});
+    generate_unused_types: true});
 
-pub use exports::pane::extension::command::{
-    Choice, Field, FieldKind, FieldValue, Form, FormError, Platform, TextField,
-};
+pub use exports::pane::extension::command::Platform;
 pub use list::{Action, Command, Item, List, Modifier, Shortcut, Submenu};
+pub mod form;
+pub use form::{FormValues, FormValue};
 pub mod view;
 pub use view::{
     Align, Answer, CanvasBuilder, CanvasEvent, CanvasListener, CanvasRole, Cap, Cx, Draw,
@@ -164,8 +163,7 @@ pub mod commands {
     use core::cell::RefCell;
 
     pub use crate::pane::extension::commands::{
-        ArgumentValue, CommandRef, LaunchRecord, LaunchSource, LaunchType, launch, set_subtitle,
-    };
+        ArgumentValue, CommandRef, LaunchRecord, LaunchSource, LaunchType, launch, set_subtitle};
 
     /// The launch record of the call in progress.
     struct Current(RefCell<Option<LaunchRecord>>);
@@ -191,8 +189,7 @@ pub mod commands {
             arguments: alloc::vec::Vec::new(),
             fallback_text: None,
             context: None,
-            command: alloc::string::String::new(),
-        })
+            command: alloc::string::String::new()})
     }
 
     /// Notes the record Pane passed to the call in progress.
@@ -204,8 +201,7 @@ pub mod commands {
     pub fn launch_type_name(launch_type: LaunchType) -> &'static str {
         match launch_type {
             LaunchType::UserInitiated => "user-initiated",
-            LaunchType::Background => "background",
-        }
+            LaunchType::Background => "background"}
     }
 
     /// `source` as `wit/commands.wit` names it, such as "root-search".
@@ -217,8 +213,7 @@ pub mod commands {
             LaunchSource::Hotkey => "hotkey",
             LaunchSource::QuickSlot => "quick-slot",
             LaunchSource::Command => "command",
-            LaunchSource::Schedule => "schedule",
-        }
+            LaunchSource::Schedule => "schedule"}
     }
 }
 
@@ -245,8 +240,7 @@ impl operations::CallErrorKind {
             Unavailable => "unavailable",
             Failed => "failed",
             Crashed => "crashed",
-            Refused => "refused",
-        }
+            Refused => "refused"}
     }
 }
 
@@ -272,8 +266,7 @@ pub mod publish {
         path: "wit",
         world: "operations-provider",
         pub_export_macro: true,
-        default_bindings_module: "pane_extension::publish",
-    });
+        default_bindings_module: "pane_extension::publish"});
 
     pub use exports::pane::extension::published_operations::Guest;
 }
@@ -298,8 +291,7 @@ pub mod root {
         path: "wit",
         world: "root-results-provider",
         pub_export_macro: true,
-        default_bindings_module: "pane_extension::root",
-    });
+        default_bindings_module: "pane_extension::root"});
 
     pub use exports::pane::extension::root_results::{Guest, RootAction, RootResult};
 }
@@ -317,8 +309,7 @@ pub mod applications {
     wit_bindgen::generate!({
         path: "wit",
         world: "applications-user",
-        default_bindings_module: "pane_extension::applications",
-    });
+        default_bindings_module: "pane_extension::applications"});
 
     pub use pane::extension::applications::{Application, installed, open};
 }
@@ -333,13 +324,11 @@ pub mod clipboard_history {
     wit_bindgen::generate!({
         path: "wit",
         world: "clipboard-history-user",
-        default_bindings_module: "pane_extension::clipboard_history",
-    });
+        default_bindings_module: "pane_extension::clipboard_history"});
 
     pub use pane::extension::clipboard_history::{
         Capture, Entry, HistoryStatus, clear, copy, delete_items, entries, set_capture,
-        set_excluded, set_retention, status, turn_off_and_clear,
-    };
+        set_excluded, set_retention, status, turn_off_and_clear};
 }
 
 /// Native helpers (`pane:extension/helpers`): prebuilt programs the
@@ -351,8 +340,7 @@ pub mod helpers {
     wit_bindgen::generate!({
         path: "wit",
         world: "helpers-user",
-        default_bindings_module: "pane_extension::helpers",
-    });
+        default_bindings_module: "pane_extension::helpers"});
 
     pub use pane::extension::helpers::{HelperError, HelperErrorKind, run};
 
@@ -363,8 +351,7 @@ pub mod helpers {
                 HelperErrorKind::NotFound => "not-found",
                 HelperErrorKind::Unavailable => "unavailable",
                 HelperErrorKind::Failed => "failed",
-                HelperErrorKind::Refused => "refused",
-            }
+                HelperErrorKind::Refused => "refused"}
         }
     }
 }
@@ -382,12 +369,10 @@ pub mod files {
     wit_bindgen::generate!({
         path: "wit",
         world: "files-user",
-        default_bindings_module: "pane_extension::files",
-    });
+        default_bindings_module: "pane_extension::files"});
 
     pub use pane::extension::files::{
-        FolderListing, FolderState, FoundFile, ScanLimits, limits, list_folder,
-    };
+        FolderListing, FolderState, FoundFile, ScanLimits, limits, list_folder};
 }
 
 /// Pane's file index (`pane:extension/file-index`): the names of the files
@@ -406,13 +391,11 @@ pub mod file_index {
     wit_bindgen::generate!({
         path: "wit",
         world: "file-index-user",
-        default_bindings_module: "pane_extension::file_index",
-    });
+        default_bindings_module: "pane_extension::file_index"});
 
     pub use pane::extension::file_index::{
         Category, EntryKind, FileEntry, IndexState, IndexStatus, SearchOptions, Sort, search,
-        status,
-    };
+        status};
 
     impl SearchOptions {
         /// The first `limit` entries by relevance, of any kind.
@@ -422,8 +405,7 @@ pub mod file_index {
                 category: None,
                 sort: Sort::Relevance,
                 limit,
-                offset: 0,
-            }
+                offset: 0}
         }
     }
 }
@@ -451,12 +433,10 @@ pub mod indexed {
         path: "wit",
         world: "indexed-results-provider",
         pub_export_macro: true,
-        default_bindings_module: "pane_extension::indexed",
-    });
+        default_bindings_module: "pane_extension::indexed"});
 
     pub use exports::pane::extension::indexed_results::{
-        Guest, IndexedAction, IndexedResult, OpenTarget,
-    };
+        Guest, IndexedAction, IndexedResult, OpenTarget};
 }
 
 /// A command that searches as the user types into its own search field
@@ -477,8 +457,7 @@ pub mod search {
         path: "wit",
         world: "command-search-provider",
         pub_export_macro: true,
-        default_bindings_module: "pane_extension::search",
-    });
+        default_bindings_module: "pane_extension::search"});
 
     pub use exports::pane::extension::command_search::{Guest, SearchResult};
 }
@@ -502,8 +481,7 @@ pub mod service {
         path: "wit",
         world: "service-provider",
         pub_export_macro: true,
-        default_bindings_module: "pane_extension::service",
-    });
+        default_bindings_module: "pane_extension::service"});
 
     pub use exports::pane::extension::service::{Cycle, Guest};
 }

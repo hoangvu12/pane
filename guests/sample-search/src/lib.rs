@@ -29,12 +29,8 @@ use pane_extension::feedback::{Toast, show_toast};
 use pane_extension::http;
 use pane_extension::view::{
     Cx, IntoAnswer, Pending, Space, View, button, column, empty_state, item, list, text_input,
-use pane_extension::search::SearchResult;
-use pane_extension::{
-    Command, Field, FieldKind, FieldValue, Form, FormError, Item, List,
-    TextField, settings,
 };
-use pane_extension::{Command, CustomView, LaunchRecord, settings};
+use pane_extension::{Command, LaunchRecord, settings};
 use serde::Deserialize;
 
 /// The address used until the user sets another.
@@ -126,74 +122,12 @@ async fn outcome(id: &str) -> Result<String, String> {
 }
 
 impl Command for Packages {
-    type CustomView = CustomView;
     type DesignedView = Search;
 
     async fn open_designed_view(
         command: String,
         _launch: LaunchRecord,
     ) -> Result<Search, String> {
-    type DesignedView = pane_extension::view::NoDesignedView;
-
-    async fn render() -> Result<List, String> {
-        let item =
-            |id: &str, title: &str, subtitle: String| Item::new(id, title).subtitle(subtitle);
-        Ok(List::new("Package search").items([
-            item(
-                "about",
-                "Type to search the package registry",
-                "Results come from the service as you type; Enter shows a package's details".into(),
-            )
-            .on_action(|| act("about")),
-            item("service", "Service address", service()?).form(Form {
-                title: "Service address".into(),
-                fields: vec![Field {
-                    id: "address".into(),
-                    label: "Address".into(),
-                    kind: FieldKind::Text(TextField {
-                        placeholder: Some(DEFAULT_SERVICE.into()),
-                    }),
-                }],
-                submit_label: "Save".into(),
-            }),
-        ]))
-    }
-
-    /// Runs the search result the user chose, by its id
-    /// ("package:<name>"): fetches that package's details and shows them.
-    async fn run_search_result(id: String) -> Result<(), String> {
-        act(&id).await
-    }
-
-    async fn submit_form(item_id: String, values: Vec<FieldValue>) -> Result<String, FormError> {
-        if item_id != "service" {
-            return Err(FormError {
-                field: None,
-                message: format!("unknown form: {item_id}"),
-            });
-        }
-        let address = values
-            .iter()
-            .find(|value| value.id == "address")
-            .map(|value| value.value.trim().trim_end_matches('/').to_owned())
-            .unwrap_or_default();
-        if !(address.starts_with("http://") || address.starts_with("https://")) {
-            return Err(FormError {
-                field: Some("address".into()),
-                message: "Enter an address starting with http:// or https://".into(),
-            });
-        }
-        settings::set(SERVICE, &address).map_err(|message| FormError {
-            field: None,
-            message,
-        })?;
-        Ok(format!("Searching {address} from now on"))
-    }
-
-}
-
-impl pane_extension::search::Guest for Packages {
-    async fn search(command: String, query: String) -> Result<Vec<SearchResult>, String> {
         if command != COMMAND {
             return Err(format!("unknown command: {command}"));
         }

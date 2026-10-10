@@ -20,7 +20,7 @@
       "icon": "create.svg",
       "subtitle": "Name a link, file, folder or application to open from root search",
       "component": "quicklinks.wasm",
-      "mode": "view"
+      "mode": "designed"
     },
     {
       "id": "import",

@@ -16,7 +16,7 @@
 use pane_extension::alloc::{format, string::String, vec::Vec};
 use pane_extension::file_index::{self, FileEntry, IndexState, SearchOptions};
 use pane_extension::root::{RootAction, RootResult};
-use pane_extension::{Command, FieldValue, FormError, Item, List};
+use pane_extension::{Command, Item, List};
 
 struct Sample;
 pane_extension::export!(Sample);
@@ -43,8 +43,7 @@ impl Command for Sample {
             IndexState::Off => "off",
             IndexState::Building => "being built",
             IndexState::Current => "current",
-            IndexState::Stopped => "stopped",
-        };
+            IndexState::Stopped => "stopped"};
         Ok(
             List::new("Rust files sample").item(Item::new("status", "What is searched").subtitle(
                 format!(
@@ -55,15 +54,6 @@ impl Command for Sample {
         )
     }
 
-    async fn submit_form(item_id: String, _values: Vec<FieldValue>) -> Result<String, FormError> {
-        Err(FormError {
-            field: None,
-            message: format!("unknown form: {item_id}"),
-        })
-    }
-}
-
-
 impl pane_extension::root::Guest for Sample {
     async fn results_for(query: String) -> Result<Vec<RootResult>, String> {
         Ok(found(&query)?
@@ -72,8 +62,7 @@ impl pane_extension::root::Guest for Sample {
                 title: entry.name,
                 id: entry.path,
                 subtitle: None,
-                action: RootAction::OpenFile(entry.id),
-            })
+                action: RootAction::OpenFile(entry.id)})
             .collect())
     }
 }

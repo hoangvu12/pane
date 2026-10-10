@@ -145,10 +145,6 @@ export const command: Command = {
     };
   },
 
-  async submitForm(itemId: string): Promise<string> {
-    throw new Error(`The icons sample has no forms: ${itemId}`);
-  },
-
   async openView(itemId: string): Promise<DesignedView> {
     throw new Error(`The icons sample opens no designed view: ${itemId}`);
   },

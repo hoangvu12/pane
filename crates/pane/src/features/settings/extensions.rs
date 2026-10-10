@@ -75,8 +75,8 @@ use gpui::{
 use gpui_elements::editable_text::{EditableTextState, StringStorage, TextChanged, text_input};
 use pane_core::{
     ExtensionMark, ExtensionOperation, InstalledPackage, Launcher, LauncherView, OperationKind,
-    PackageIdentity, PackagePreferences, PathKind, PreferenceField, PreferenceKind, Screen,
-    ShortcutCommand, Status,
+    PackageIdentity, PackagePreferences, PreferenceField, PreferenceKind, Screen, ShortcutCommand,
+    Status,
 };
 
 use super::{Page, SettingsWindow, search};
@@ -2172,6 +2172,7 @@ fn preference_selects(
                     subtitle: None,
                     keywords: vec![option.value.clone().into()],
                     unavailable_reason: None,
+                    section: None,
                 })
                 .collect(),
             committed: effective
@@ -2298,6 +2299,15 @@ fn appended(listed: &str, file: &str) -> String {
 /// The system's picker for a path of `kind`, as a file, folder or
 /// application preference's "Choose…" opens it, here and on the launcher's
 /// Setup screen.
+/// What a path preference's "Choose…" chooses: a file, a folder, or an
+/// application (a program's file, or on macOS its bundle, a folder).
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PathKind {
+    File,
+    Folder,
+    Application,
+}
+
 pub(crate) fn path_prompt(kind: PathKind) -> PathPromptOptions {
     PathPromptOptions {
         files: kind != PathKind::Folder,

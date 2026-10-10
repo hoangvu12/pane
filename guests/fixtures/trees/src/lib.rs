@@ -39,7 +39,7 @@ use core::ffi::c_void;
 wit_bindgen::generate!({ path: "../../../wit", world: "extension" });
 
 use exports::pane::extension::command::{
-    FieldValue, FormError, Guest, GuestView, LaunchRecord, Outcome, Rendered, UiEvent, View,
+    Guest, GuestView, LaunchRecord, Outcome, Rendered, UiEvent, View,
 };
 use pane::extension::feedback::{Toast, ToastStyle, show_toast};
 
@@ -53,16 +53,14 @@ enum Next {
     /// A grid, once.
     Grid,
     /// Text that is not JSON, once.
-    Unreadable,
-}
+    Unreadable}
 
 /// The fixture's state, kept in the instance.
 struct State {
     drawn: Cell<u32>,
     reversed: Cell<bool>,
     removed: Cell<bool>,
-    next: Cell<Next>,
-}
+    next: Cell<Next>}
 
 // SAFETY: a component's code runs on one thread.
 unsafe impl Sync for State {}
@@ -71,8 +69,7 @@ static STATE: State = State {
     drawn: Cell::new(0),
     reversed: Cell::new(false),
     removed: Cell::new(false),
-    next: Cell::new(Next::List),
-};
+    next: Cell::new(Next::List)};
 
 /// The items, (id, title), in their first order.
 const ITEMS: [(&str, &str); 8] = [
@@ -93,8 +90,7 @@ fn quoted(text: &str) -> String {
         match character {
             '"' => json.push_str("\\\""),
             '\\' => json.push_str("\\\\"),
-            other => json.push(other),
-        }
+            other => json.push(other)}
     }
     json.push('"');
     json
@@ -181,16 +177,14 @@ impl Guest for Trees {
             "cb-bad-answer" => return Ok("Handled, but not as JSON".into()),
             "cb-quiet" => return Ok("{\"toast\":{\"title\":\"Not shown yet\"}}".into()),
             "cb-first" => {}
-            other => return Err(format!("unknown callback: {other}")),
-        }
+            other => return Err(format!("unknown callback: {other}"))}
         let status = format!("Handled {callback} with {details}");
         show_toast(&Toast {
             style: ToastStyle::Success,
             title: status.clone(),
             message: None,
             primary: None,
-            secondary: None,
-        });
+            secondary: None});
         // Still the answer Pane once showed, with a field it does not know:
         // Pane must ignore both.
         Ok(format!(
@@ -199,11 +193,6 @@ impl Guest for Trees {
         ))
     }
 
-    async fn submit_form(item_id: String, _values: Vec<FieldValue>) -> Result<String, FormError> {
-        Err(FormError {
-            field: None,
-            message: format!("unknown form: {item_id}"),
-        })
     }
 
     async fn open_view(command: String, _launch: LaunchRecord) -> Result<View, String> {

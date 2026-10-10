@@ -41,8 +41,7 @@ impl Command for Echo {
                 ));
             }
             Some(CRASH) => panic!("Echo crashes on purpose"),
-            Some(text) => format!("Echo heard “{text}”"),
-        };
+            Some(text) => format!("Echo heard “{text}”")};
         if launch.launch_type != LaunchType::Background {
             show_toast(Toast::success(heard));
         }

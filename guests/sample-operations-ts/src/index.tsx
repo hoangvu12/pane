@@ -21,14 +21,15 @@
 import type {
   Command,
   DesignedView,
-  FieldValue,
-  Form,
-  FormError,
+  LaunchRecord,
   List,
   PublishedOperations,
 } from "@pane-app/extension";
+import { launch } from "pane:extension/commands@0.1.0";
 import { call, type CallError } from "pane:extension/operations@0.1.0";
 import { set } from "pane:extension/settings@0.1.0";
+import { Column, Form, Text, createView, useState } from "@pane-app/extension/view";
+import type { Element, FormSubmittedValues } from "@pane-app/extension/view";
 import { waitFor } from "wasi:clocks/monotonic-clock@0.3.0";
 
 /** `greet`'s input and result, version 1. */
@@ -59,42 +60,6 @@ async function greet(source: string, name: string): Promise<string> {
   return greeting;
 }
 
-const greetForm: Form = {
-  title: "Greet through another extension",
-  fields: [
-    {
-      id: "source",
-      label: "Package source",
-      kind: { tag: "text", val: { placeholder: "local:/path/to/sample-operations" } },
-    },
-    { id: "name", label: "Name", kind: { tag: "text", val: { placeholder: "TypeScript" } } },
-    {
-      id: "times",
-      label: "Ask",
-      kind: {
-        tag: "choice",
-        val: [
-          { id: "once", label: "Once" },
-          { id: "twice", label: "Twice at once" },
-        ],
-      },
-    },
-  ],
-  submitLabel: "Greet",
-};
-
-const waitForm: Form = {
-  title: "Wait in another extension",
-  fields: [
-    {
-      id: "source",
-      label: "Package source",
-      kind: { tag: "text", val: { placeholder: "local:/path/to/sample-operations" } },
-    },
-  ],
-  submitLabel: "Wait",
-};
-
 async function render(): Promise<List> {
   return {
     title: "Call from TypeScript",
@@ -103,47 +68,106 @@ async function render(): Promise<List> {
         id: "greet",
         title: "Greet through another extension",
         subtitle: "Calls its greet operation through Pane",
-        form: greetForm,
+        onAction: () => openForm("greet"),
       },
       {
         id: "wait",
         title: "Wait in another extension",
         subtitle: "Calls its wait operation, which takes ten seconds",
-        form: waitForm,
+        onAction: () => openForm("wait"),
       },
     ],
   };
 }
 
-async function submitForm(itemId: string, values: FieldValue[]): Promise<string> {
-  if (itemId !== "greet" && itemId !== "wait") {
-    throw { message: `unknown form: ${itemId}` } satisfies FormError;
+async function openView(
+  commandId: string,
+  _launch: LaunchRecord,
+): Promise<DesignedView> {
+  if (commandId !== "greet" && commandId !== "wait") {
+    throw new Error("this command opens no designed view");
   }
-  const value = (id: string) => values.find((field) => field.id === id)?.value ?? "";
-  const source = value("source").trim();
-  if (source === "") {
-    throw { field: "source", message: "Enter the package's source" } satisfies FormError;
-  }
-  if (itemId === "wait") {
+  return createView(CallForm, { waiting: commandId === "wait" });
+}
+
+/** Opens the form command `which`, as the user would. */
+async function openForm(which: string): Promise<void> {
+  launch({ command: which }, "user-initiated", [], null);
+}
+
+/**
+ * The form command's view (#241): the fields the operation's arguments
+ * ask for, whose submission calls it. The call runs as the listener
+ * itself — an async listener is awaited — and its answer, or why there
+ * is none, draws over the form.
+ */
+function CallForm({ waiting = false }: { waiting?: boolean }): Element {
+  const [answer, setAnswer] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const submit = async (submitted: FormSubmittedValues) => {
+    const source = String(submitted.source ?? "").trim();
+    if (source === "") {
+      setError("Enter the package's source");
+      return;
+    }
+    setError(null);
+    if (waiting) {
+      try {
+        await call(source, "wait", 1, "{}");
+        setAnswer("Waited in the other extension");
+      } catch (problem) {
+        const payload = (problem as { payload?: { kind: string; message: string } }).payload;
+        setAnswer(payload ? `${payload.kind}: ${payload.message}` : String(problem));
+      }
+      return;
+    }
+    const name = String(submitted.name ?? "");
+    const times = submitted.times === "twice" ? 2 : 1;
     try {
-      await call(source, "wait", 1, "{}");
-    } catch (error) {
-      const { kind, message } = (error as { payload: CallError }).payload;
-      throw { message: `${kind}: ${message}` } satisfies FormError;
+      const result = await call(source, "greet", 1, JSON.stringify({ name }));
+      const greeting = JSON.parse(result).greeting as string;
+      setAnswer(times === 2 ? `${greeting} (twice at once)` : greeting);
+    } catch (problem) {
+      const payload = (problem as { payload?: { kind: string; message: string } }).payload;
+      setAnswer(payload ? `${payload.kind}: ${payload.message}` : String(problem));
     }
-    return "Waited in the other extension";
+  };
+  const form = (
+    <Form key="form" submitTitle="Call" onSubmit={submit}>
+      <Form.TextField
+        key="source"
+        id="source"
+        title="Package source"
+        placeholder="local:/path/to/sample-operations"
+        autoFocus
+        error={error ?? undefined}
+      />
+      {!waiting && (
+        <Form.TextField key="name" id="name" title="Name" placeholder="TypeScript" />
+      )}
+      {!waiting && (
+        <Form.Dropdown
+          key="times"
+          id="times"
+          title="Ask"
+          options={[
+            { value: "once", label: "Once" },
+            { value: "twice", label: "Twice at once" },
+          ]}
+          defaultValue="once"
+        />
+      )}
+    </Form>
+  );
+  if (answer === "") {
+    return form;
   }
-  const name = value("name");
-  try {
-    if (value("times") === "twice") {
-      // Both calls are made at once; Pane serves them one after another.
-      const [first, second] = await Promise.all([greet(source, name), greet(source, name)]);
-      return `${first} / ${second}`;
-    }
-    return await greet(source, name);
-  } catch (error) {
-    throw { message: (error as Error).message } satisfies FormError;
-  }
+  return (
+    <Column gap="m">
+      <Text style="title">{answer}</Text>
+      {form}
+    </Column>
+  );
 }
 
 async function openView(itemId: string): Promise<DesignedView> {
@@ -169,6 +193,6 @@ async function runOperation(operation: string, input: string): Promise<string> {
   return JSON.stringify(result);
 }
 
-export const command: Command = { render, submitForm, openView };
+export const command: Command = { render, openView };
 
 export const publishedOperations: PublishedOperations = { runOperation };

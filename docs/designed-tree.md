@@ -299,7 +299,7 @@ A document is one JSON object: its version and its root node.
 
 ```json
 {
-  "version": "1.1",
+  "version": "1.3",
   "root": {
     "type": "column",
     "key": "main",
@@ -327,8 +327,11 @@ A document is one JSON object: its version and its root node.
   (#238); 1.3 added the standard views — the List with its sections,
   keywords, host filtering, controlled search text and selection, the
   search-bar dropdown, pagination, the empty view and the detail pane;
-  the Grid; the Detail, and Markdown images (#240) — and the canvas
-  (#242).
+  the Grid; the Detail, and Markdown images (#240) — the canvas (#242)
+  — and the form: the `form` node whose submission is an action, the
+  fields' titles, notes, errors and remembered values, the date, tag,
+  file and folder pickers, and a select's sections and
+  extension-handled search (#241).
 - Every node has a `type`, and may have:
   - `key`: the node's stable identity among its siblings, which Pane
     keeps node state under (the keyed reconciler, below: the focus of a
@@ -613,6 +616,79 @@ their swatch grid, preview and measured hex code as canvas operations
 inside a layout. The designed fixture's `canvas` command answers one by
 hand, filling its space and drawing what it receives, which
 `crates/pane/tests/designed_canvas.rs` drives.
+
+### Forms
+
+A **`form`** node (#241) is a form: a column of children — the author's
+own layout, the fields anywhere in it — whose submission is an action.
+It has `onSubmit` (the callback a submission runs) and `submitLabel`
+(what its submit button says; "Submit" by default), and Pane draws the
+button under the fields: Enter in a single-line field of the form
+submits it, as Ctrl+Enter does in a text area (whose Enter inserts a
+newline) and the button, the footer's primary action and the invoke
+binding do. A submission collects the values of every field in the
+form's subtree — keyed by each field's **`key`**; a field without one
+carries no value — and runs `onSubmit` with `{"values": {"<key>":
+<value>, …}}` as the event's payload. A form whose `onSubmit` is absent
+is one **Pane itself answers**: the window collects the values and hands
+them to the launcher, which is how Pane's own forms (the argument form,
+the Setup screen, the alias form and the npm and Git install forms) are
+the same components.
+
+Validation is the extension's: a submission's answer is the tree it
+answers with, so the field's **`error`** — drawn under it, in the danger
+tone — is how a rejected value is reported. The remembered values are
+Pane's: a field with **`remember`** has its last submitted value kept as
+the package's *settings* (a record Pane stores for the installed
+package, under the key `pane-form/<form key>/<field key>`) and prefilled
+the next time a view opens holding that field — the value is a starting
+point, never an instruction, and a re-render never fights the field's
+live value.
+
+Every field carries what a field says around its control: **`title`**
+(over it, and naming it to assistive technology when the kind's own
+label does not), **`info`** (the note under it), **`error`**, the
+**`default`** value it starts from when the tree names none, and
+**`remember`**. A field's **`id`** in the SDKs is its key: the identity
+its value is submitted under and its state kept by. The fields:
+
+- **`text-input`**, **`password-input`**, **`text-area`** — as above,
+  wearing the field's chrome; `text-area`'s Enter inserts a newline and
+  Ctrl+Enter submits the form.
+- **`checkbox`**, **`toggle`** — `on`/`checked`, `label` (beside the
+  control), `onChange`; a submission carries `true` or `false`.
+- **`select`** — the searchable dropdown, with `options`' `section`
+  (options of one section are drawn together under its label),
+  `placeholder`, `default` (the option chosen when none is named) and
+  `onInput` (the popup's query as the user types it, for a dropdown
+  whose search the extension handles: `search: false` makes the popup
+  show the options the extension answers with, filtering none of its
+  own). A submission carries the chosen option's `value`.
+- **`date-picker`** — a date field, typed or stepped with the arrow keys
+  (Up and Down step a date by a day), its value `"YYYY-MM-DD"`.
+- **`date-time-picker`** — alike, `"YYYY-MM-DD HH:MM"`, stepped by a
+  minute.
+- **`tag-picker`** — a multi-select of `options`, the chosen `tags`
+  drawn as chips; Enter commits the highlighted matching option, a chip
+  click removes it, and a change tells the extension
+  `{"value": ["…", …]}`. A submission carries the chosen values.
+- **`file-picker`**, **`folder-picker`** — a path typed or chosen with
+  the system's dialog (the "Choose…" button opens it); `multiple` (the
+  SDKs' `allowMultiple`) chooses several paths as chips. A submission
+  carries the path, or the list of them.
+- **`markdown`** — the description between a form's fields (the SDKs'
+  `Form.Description`); **`divider`** — its separator; **`link`** — its
+  link. They are the shared components they always were.
+
+The SDKs name them Raycast-style: `Form`, `Form.TextField`,
+`Form.PasswordField`, `Form.TextArea`, `Form.Checkbox`, `Form.Toggle`,
+`Form.DatePicker`, `Form.DateTimePicker`, `Form.Dropdown`,
+`Form.TagPicker`, `Form.FilePicker`, `Form.FolderPicker`,
+`Form.Description`, `Form.Separator` and `Form.Link` in JSX, whose
+`onSubmit` is told the values object; `pane_extension::form` in Rust
+(`Form::new()`, `form::text_field("name")`, `cx.form_listener(|this,
+values| …)`), the values read by key (`values.text("name")`,
+`values.on("dark")`, `values.list("tags")`).
 
 ### Icons and images
 

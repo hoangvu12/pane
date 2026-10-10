@@ -153,6 +153,44 @@ Grid.Item = Cell;
 /** A canvas: a leaf the view draws into by its `ops`, taking input. */
 export const Canvas = builtin("canvas");
 
+/**
+ * A form (#241): its children are the author's own layout, the fields
+ * anywhere in it, and its submission an action — `onSubmit` runs with
+ * the values the form was submitted with, keyed by the fields' `id`s;
+ * `submitTitle` names its submit button. Enter in a single-line field
+ * submits, as Ctrl+Enter does in a text area; a submission's validation
+ * errors are the fields' `error` in the tree the view answers with.
+ */
+export const Form = builtin("form");
+/** A form's text field. */
+Form.TextField = builtin("text-input");
+/** A form's password field. */
+Form.PasswordField = builtin("password-input");
+/** A form's text area, its Enter a newline and Ctrl+Enter the submit. */
+Form.TextArea = builtin("text-area");
+/** A form's checkbox. */
+Form.Checkbox = builtin("checkbox");
+/** A form's toggle. */
+Form.Toggle = builtin("toggle");
+/** A form's date field, "YYYY-MM-DD". */
+Form.DatePicker = builtin("date-picker");
+/** A form's date and time field, "YYYY-MM-DD HH:MM". */
+Form.DateTimePicker = builtin("date-time-picker");
+/** A form's dropdown, its options searched as the user types. */
+Form.Dropdown = builtin("select");
+/** A form's tag picker: several of its options, chosen as chips. */
+Form.TagPicker = builtin("tag-picker");
+/** A form's file picker: a path typed or chosen with the system's dialog. */
+Form.FilePicker = builtin("file-picker");
+/** A form's folder picker. */
+Form.FolderPicker = builtin("folder-picker");
+/** A form's description, its children its Markdown source. */
+Form.Description = builtin("markdown");
+/** A form's separator: a hairline rule. */
+Form.Separator = builtin("divider");
+/** A form's link. */
+Form.Link = builtin("link");
+
 /** A fragment: its children are drawn where it sits, unwrapped. */
 export const Fragment = Symbol.for("pane.extension.fragment");
 
@@ -370,6 +408,16 @@ function textListener(callbacks, listener) {
   return id;
 }
 
+/** The listener `listener` becomes, told what the event's payload carries
+ * as its value, whatever type it is: a string, a boolean, or the list a
+ * picker chose; the values a form was submitted with, keyed by the
+ * fields' ids (#241). */
+function valueListener(callbacks, listener) {
+  const id = callbacks.size + 1;
+  callbacks.set(id, (payload) => listener(payloadValue(payload)));
+  return id;
+}
+
 /** One built-in node, with the properties `props` gives it. */
 function builtinNode(name, props, path, callbacks, cells, used) {
   const given = props ?? {};
@@ -381,6 +429,16 @@ function builtinNode(name, props, path, callbacks, cells, used) {
   }
   const node = { type: name };
   if (given.key !== undefined) node.key = given.key;
+  // A form field's `id` is its key: the identity its value is collected
+  // under and its state kept by (#241).
+  if (given.id !== undefined && node.key === undefined) node.key = given.id;
+  // What a form field says around its control, and asks for: its title,
+  // note, error, remembered value and the keyboard (#241).
+  if (given.title !== undefined) node.title = given.title;
+  if (given.info !== undefined) node.info = given.info;
+  if (given.error !== undefined) node.error = given.error;
+  if (given.remember === true) node.remember = true;
+  if (given.autoFocus === true) node.focus = true;
   if (given.name !== undefined) node.name = given.name;
   if (given.navigationTitle !== undefined) node.navigationTitle = given.navigationTitle;
   if (given.requires !== undefined) node.requires = given.requires;
@@ -522,11 +580,14 @@ function builtinNode(name, props, path, callbacks, cells, used) {
     }
     case "toggle":
     case "checkbox": {
-      if (name === "toggle") node.on = given.on === true;
-      else node.checked = given.on === true;
+      if (name === "toggle") {
+        node.on = given.on === true || given.defaultValue === true;
+      } else {
+        node.checked = given.on === true || given.defaultValue === true;
+      }
       if (given.label !== undefined) node.label = given.label;
       if (typeof given.onChange === "function") {
-        node.onChange = textListener(callbacks, given.onChange);
+        node.onChange = valueListener(callbacks, given.onChange);
       }
       return node;
     }
@@ -534,9 +595,18 @@ function builtinNode(name, props, path, callbacks, cells, used) {
     case "select": {
       node.options = given.options ?? [];
       if (given.value !== undefined) node.value = given.value;
+      if (given.defaultValue !== undefined) node.default = given.defaultValue;
+      if (given.placeholder !== undefined) node.placeholder = given.placeholder;
       if (given.label !== undefined) node.label = given.label;
       if (typeof given.onChange === "function") {
         node.onChange = textListener(callbacks, given.onChange);
+      }
+      // A dropdown whose search the extension handles: the query is told
+      // to it as the user types, and the popup shows the options the view
+      // answers with, filtering none of its own (#241).
+      if (typeof given.onSearchText === "function") {
+        node.onInput = textListener(callbacks, given.onSearchText);
+        node.search = false;
       }
       return node;
     }
@@ -594,14 +664,10 @@ function builtinNode(name, props, path, callbacks, cells, used) {
         if (given[field] !== undefined) node[field] = given[field];
       }
       if (typeof given.onSearchText === "function") {
-        const id = callbacks.size + 1;
-        callbacks.set(id, given.onSearchText);
-        node.onSearchText = id;
+        node.onSearchText = textListener(callbacks, given.onSearchText);
       }
       if (typeof given.onSelectionChange === "function") {
-        const id = callbacks.size + 1;
-        callbacks.set(id, given.onSelectionChange);
-        node.onSelectionChange = id;
+        node.onSelectionChange = textListener(callbacks, given.onSelectionChange);
       }
       if (typeof given.onLoadMore === "function") {
         const id = callbacks.size + 1;
@@ -670,9 +736,7 @@ function builtinNode(name, props, path, callbacks, cells, used) {
       if (given.value !== undefined) node.value = given.value;
       if (given.placeholder !== undefined) node.placeholder = given.placeholder;
       if (typeof given.onChange === "function") {
-        const id = callbacks.size + 1;
-        callbacks.set(id, given.onChange);
-        node.onChange = id;
+        node.onChange = valueListener(callbacks, given.onChange);
       }
       node.items = asList(given.children).map((child) => {
         const held = isElement(child) ? (child.props ?? {}) : child ?? {};
@@ -692,6 +756,7 @@ function builtinNode(name, props, path, callbacks, cells, used) {
     case "password-input":
     case "text-area": {
       node.value = given.value !== undefined ? String(given.value) : textOf(given.children);
+      if (given.defaultValue !== undefined) node.default = String(given.defaultValue);
       if (given.placeholder !== undefined) node.placeholder = given.placeholder;
       if (given.label !== undefined) node.label = given.label;
       // The field is partially controlled: `onInput` hears its value as
@@ -738,6 +803,47 @@ function builtinNode(name, props, path, callbacks, cells, used) {
           callbacks.set(id, (payload) => given[field]());
           node[field] = id;
         }
+      }
+      return node;
+    }
+    case "form": {
+      if (given.submitTitle !== undefined) node.submitLabel = given.submitTitle;
+      if (typeof given.onSubmit === "function") {
+        node.onSubmit = valueListener(callbacks, given.onSubmit);
+      }
+      return node;
+    }
+    case "date-picker":
+    case "date-time-picker": {
+      node.value = given.value !== undefined ? String(given.value) : "";
+      if (given.defaultValue !== undefined) node.default = String(given.defaultValue);
+      if (given.placeholder !== undefined) node.placeholder = given.placeholder;
+      if (typeof given.onChange === "function") {
+        node.onChange = valueListener(callbacks, given.onChange);
+      }
+      return node;
+    }
+    case "tag-picker": {
+      node.tags = Array.isArray(given.tags)
+        ? given.tags.map(String)
+        : Array.isArray(given.defaultValue)
+          ? given.defaultValue.map(String)
+          : [];
+      node.options = given.options ?? [];
+      if (typeof given.onChange === "function") {
+        node.onChange = valueListener(callbacks, given.onChange);
+      }
+      return node;
+    }
+    case "file-picker":
+    case "folder-picker": {
+      if (Array.isArray(given.value)) node.value = given.value.map(String);
+      else if (given.value !== undefined) node.value = [String(given.value)];
+      else if (Array.isArray(given.defaultValue)) node.value = given.defaultValue.map(String);
+      else if (given.defaultValue !== undefined) node.value = [String(given.defaultValue)];
+      if (given.allowMultiple === true) node.multiple = true;
+      if (typeof given.onChange === "function") {
+        node.onChange = valueListener(callbacks, given.onChange);
       }
       return node;
     }
@@ -920,9 +1026,10 @@ export function createView(component, props = {}) {
       const run = tables.get(event.render)?.get(event.callback);
       let navigation = null;
       if (run !== undefined) {
-        // The listener is told the event's payload as it is: the plain
-        // ones read its text (its `value` or `key`), a canvas's the event
-        // it names.
+        // The listener is told the event's payload as it is: a text
+        // listener reads its text (its `value` or `key`), a value listener
+        // what its `value` or `values` carries whatever type it is (#241),
+        // a canvas's the event it names (#242).
         navigation = await run(event.payload);
       }
       // What the listener answered next: at most one of a push, a replace
@@ -939,6 +1046,25 @@ export function createView(component, props = {}) {
       return outcome;
     },
   };
+}
+
+/** What a value-carrying payload names: its `value` (a field's, a
+ * control's), its `key` (a key pressed) or its `values` (a form's
+ * submission, keyed by the fields' ids, #241) — a string, a boolean, a
+ * list or an object; `undefined` when the payload names none.
+ */
+function payloadValue(payload) {
+  try {
+    const held = JSON.parse(payload);
+    if (held && typeof held === "object") {
+      if ("values" in held) return held.values;
+      if ("value" in held) return held.value;
+      if ("key" in held) return held.key;
+    }
+  } catch {
+    // A payload Pane does not name a value in: nothing to tell.
+  }
+  return undefined;
 }
 
 /** The text a value-carrying payload names: its `value` (a field's, a

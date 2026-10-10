@@ -64,7 +64,7 @@ fn an_alias_and_a_fallback_set_in_the_window_send_the_typed_text_to_the_command(
     enter_flow(&window, cx);
     let view = press_enter_on(&window, cx, "Alias for Echo");
     assert_eq!(view.title, "Alias for Echo");
-    assert!(matches!(view.screen, Screen::Form(_)));
+    assert!(matches!(view.screen, Screen::PaneForm(_)));
     cx.simulate_input("ec");
     cx.simulate_keystrokes("enter");
     let view = settle(&window, cx);
@@ -78,7 +78,9 @@ fn an_alias_and_a_fallback_set_in_the_window_send_the_typed_text_to_the_command(
     // Its form starts with the alias.
     cx.simulate_keystrokes("enter");
     settle(&window, cx);
-    let field = cx.read_entity(&window, |window, _| window.text_field("alias").unwrap());
+    let field = cx.read_entity(&window, |window, cx| {
+        window.designed_field("alias").expect("the field")
+    });
     let text = cx.read_entity(&field, |field, _| field.as_str().to_owned());
     assert_eq!(text, "ec");
     cx.simulate_keystrokes("escape");

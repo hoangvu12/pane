@@ -187,26 +187,85 @@ fn choose(launcher: &Launcher, query: &str, title: &str) {
     block_on(launcher.activate_selected());
 }
 
-/// The open form's title and its fields' values, by id.
+/// The open form view's title and its fields' values, by key: the tree's
+/// fields, each starting at its default (#241).
 fn form(launcher: &Launcher) -> (String, Vec<(String, String)>) {
     let view = launcher.view();
-    let form = view.form().expect("a form is open");
-    let values = form
-        .fields
-        .iter()
-        .map(|field| (field.id.clone(), field.value.clone()))
+    let Screen::DesignedView(shown) = &view.screen else {
+        panic!("no form view: {:?}", view.screen);
+    };
+    let values = fields_of(&shown.tree)
+        .into_iter()
+        .map(|(key, _, _, value)| (key, value))
         .collect();
     (view.title.clone(), values)
 }
 
-/// Fills in the open form's fields and submits it; what the user reads.
-fn submit(launcher: &Launcher, values: &[(&str, &str)]) -> Status {
-    for (field, value) in values {
-        launcher.set_field_value(field, value);
+/// The fields of a form view's tree: each's key, title, error and
+/// starting value.
+fn fields_of(tree: &pane_core::DesignedTree) -> Vec<(String, String, String, String)> {
+    fn at(node: &pane_core::Node, into: &mut Vec<(String, String, String, String)>) {
+        let entry = |title: Option<String>, error: Option<String>, value: String, key: &str| {
+            (
+                key.to_owned(),
+                title.unwrap_or_default(),
+                error.unwrap_or_default(),
+                value,
+            )
+        };
+        match &node.kind {
+            pane_core::NodeKind::TextInput(input) | pane_core::NodeKind::PasswordInput(input) => {
+                if let Some(key) = &node.key {
+                    into.push(entry(
+                        input.field.title.clone(),
+                        input.field.error.clone(),
+                        input.value.clone(),
+                        key,
+                    ));
+                }
+            }
+            _ => {}
+        }
+        for child in &node.children {
+            at(child, into);
+        }
     }
-    block_on(launcher.submit_form());
+    let mut fields = Vec::new();
+    at(&tree.root, &mut fields);
+    fields
+}
+
+/// Submits the open form view with `values`, keyed by the fields' keys;
+/// what the user reads, and the fields' errors a refused submission set
+/// (the status line carries none of them now: the fields' `error` is the
+/// refusal, drawn under them, #241).
+fn submit(launcher: &Launcher, values: &[(&str, &str)]) -> (Status, Vec<String>) {
+    let values = values
+        .iter()
+        .map(|(key, value)| {
+            (
+                (*key).to_owned(),
+                pane_core::FormValue::Text((*value).to_owned()),
+            )
+        })
+        .collect();
+    let submitting = launcher.submit_designed_form(None, values);
+    block_on(submitting);
     launches_done(launcher);
-    shown(launcher)
+    let errors = fields_of(&form_tree(launcher))
+        .into_iter()
+        .filter(|(_, _, error, _)| !error.is_empty())
+        .map(|(key, _, error, _)| format!("{key}: {error}"))
+        .collect();
+    (shown(launcher), errors)
+}
+
+/// The open form view's tree.
+fn form_tree(launcher: &Launcher) -> pane_core::DesignedTree {
+    match &launcher.view().screen {
+        Screen::DesignedView(shown) => shown.tree.clone(),
+        other => panic!("no form view: {other:?}"),
+    }
 }
 
 /// Opens Create Quicklink from root search.
@@ -219,11 +278,12 @@ fn open_create(launcher: &Launcher) {
 /// (empty for the system's handler), through Create Quicklink.
 fn create(launcher: &Launcher, name: &str, link: &str, application: &str) {
     open_create(launcher);
-    let said = submit(
+    let (said, errors) = submit(
         launcher,
         &[("name", name), ("link", link), ("application", application)],
     );
     assert_eq!(said, Status::Result(format!("Created “{name}”")));
+    assert!(errors.is_empty(), "{errors:?}");
     assert!(
         matches!(launcher.view().screen, Screen::Root { .. }),
         "back to root search: {:?}",
@@ -434,16 +494,20 @@ fn the_form_refuses_empty_and_malformed_targets_on_their_fields() {
         ),
     ];
     for ((name, link, application), error) in rejected {
-        let said = submit(
+        let (said, errors) = submit(
             &launcher,
             &[("name", name), ("link", link), ("application", application)],
         );
-        assert_eq!(said, Status::Error(error), "{name} {link} {application}");
-        assert!(launcher.view().form().is_some(), "the form stays open");
+        assert_eq!(said, Status::Idle, "{name} {link} {application}");
+        assert_eq!(errors, vec![error], "{name} {link} {application}");
+        assert!(
+            matches!(launcher.view().screen, Screen::DesignedView(_)),
+            "the form view stays open"
+        );
     }
 
     // Corrected, the same form saves; nothing refused was saved.
-    let said = submit(
+    let (said, errors) = submit(
         &launcher,
         &[
             ("name", "Example"),
@@ -452,6 +516,7 @@ fn the_form_refuses_empty_and_malformed_targets_on_their_fields() {
         ],
     );
     assert_eq!(said, Status::Result("Created “Example”".into()));
+    assert!(errors.is_empty(), "{errors:?}");
     open_search(&launcher);
     assert_eq!(titles(&launcher), ["Docs", "Example"]);
 }
@@ -637,16 +702,20 @@ fn edit_opens_the_form_filled_in_and_saves_back_to_the_list() {
             ]
         )
     );
-    // Renaming onto another quicklink's name is refused.
+    // Renaming onto another quicklink's name is refused: the field's
+    // error, drawn under it.
+    let (said, errors) = submit(&launcher, &[("name", "news")]);
+    assert_eq!(said, Status::Idle);
     assert_eq!(
-        submit(&launcher, &[("name", "news")]),
-        Status::Error("Name: A quicklink named “News” already exists".into())
+        errors,
+        vec!["name: A quicklink named “News” already exists".to_owned()]
     );
-    let said = submit(
+    let (said, errors) = submit(
         &launcher,
         &[("name", "Manual"), ("link", "https://docs.example.org")],
     );
     assert_eq!(said, Status::Result("Saved “Manual”".into()));
+    assert!(errors.is_empty(), "{errors:?}");
     // Back on the list, which shows the change.
     let view = launcher.view();
     assert_eq!(
@@ -694,10 +763,9 @@ fn duplicate_opens_the_form_filled_in_as_a_copy() {
             ]
         )
     );
-    assert_eq!(
-        submit(&launcher, &[]),
-        Status::Result("Created “Docs copy”".into())
-    );
+    let (said, errors) = submit(&launcher, &[]);
+    assert_eq!(said, Status::Result("Created “Docs copy”".into()));
+    assert!(errors.is_empty(), "{errors:?}");
     open_search(&launcher);
     assert_eq!(titles(&launcher), ["Docs", "Docs copy"]);
     // A second copy takes the next free name.
@@ -854,10 +922,9 @@ fn a_pinned_quicklink_keeps_its_slot_through_a_restart_and_a_rename() {
         // Renamed, it is still the one pinned.
         open_search(&launcher);
         run(&launcher, "Docs", EDIT);
-        assert_eq!(
-            submit(&launcher, &[("name", "Manual")]),
-            Status::Result("Saved “Manual”".into())
-        );
+        let (said, errors) = submit(&launcher, &[("name", "Manual")]);
+        assert_eq!(said, Status::Result("Saved “Manual”".into()));
+        assert!(errors.is_empty(), "{errors:?}");
     }
 
     let Started { launcher, .. } = pane.start();
@@ -1051,10 +1118,9 @@ fn quicklinks_the_first_version_saved_survive_the_upgrade_with_its_pin() {
     // Edited and saved, the next start reads what this one saved.
     open_search(&launcher);
     run(&launcher, "Docs", EDIT);
-    assert_eq!(
-        submit(&launcher, &[("application", "Notepad")]),
-        Status::Result("Saved “Docs”".into())
-    );
+    let (said, errors) = submit(&launcher, &[("application", "Notepad")]);
+    assert_eq!(said, Status::Result("Saved “Docs”".into()));
+    assert!(errors.is_empty(), "{errors:?}");
     drop(launcher);
     let Started { launcher, .. } = pane.start();
     search(&launcher, "docs");

@@ -74,9 +74,18 @@ fn launcher_with(links: &[(&str, &str)]) -> (Launcher, Changes, Arc<RecordingSys
             .expect("Create Quicklink is listed");
         launcher.select(index);
         block_on(launcher.activate_selected());
-        launcher.set_field_value("name", name);
-        launcher.set_field_value("link", link);
-        block_on(launcher.submit_form());
+        let values = vec![
+            (
+                "name".to_owned(),
+                pane_core::FormValue::Text((*name).into()),
+            ),
+            (
+                "link".to_owned(),
+                pane_core::FormValue::Text((*link).into()),
+            ),
+        ];
+        let submitting = launcher.submit_designed_form(None, values);
+        block_on(submitting);
     }
     to_root(&launcher);
     block_on(launcher.set_query(""));
@@ -160,19 +169,30 @@ fn done(window: &Entity<LauncherWindow>, cx: &mut VisualTestContext) -> Launcher
     }
 }
 
-/// Runs the window until a form is on screen, drawn; its view.
+/// Runs the window until a form view is on screen, drawn; its view.
 fn form_shown(window: &Entity<LauncherWindow>, cx: &mut VisualTestContext) -> LauncherView {
-    until(window, cx, |view| view.form().is_some())
+    until(window, cx, |view| {
+        matches!(view.screen, Screen::DesignedView(_))
+    })
 }
 
-/// The values of the fields of the form on screen, in order.
+/// The values of the fields of the form view on screen, in order: the
+/// tree's fields, each starting at its default (#241).
 fn values(view: &LauncherView) -> Vec<String> {
-    view.form()
-        .expect("a form is open")
-        .fields
-        .iter()
-        .map(|field| field.value.clone())
-        .collect()
+    let Screen::DesignedView(shown) = &view.screen else {
+        panic!("no form view: {:?}", view.screen);
+    };
+    let mut values = Vec::new();
+    fn at(node: &pane_core::Node, into: &mut Vec<String>) {
+        if let pane_core::NodeKind::TextInput(input) = &node.kind {
+            into.push(input.value.clone());
+        }
+        for child in &node.children {
+            at(child, into);
+        }
+    }
+    at(&shown.tree.root, &mut values);
+    values
 }
 
 fn hidden(window: &Entity<LauncherWindow>, cx: &VisualTestContext) -> bool {

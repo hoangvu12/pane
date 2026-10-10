@@ -22,6 +22,7 @@ use crate::ui::tokens;
 
 use super::canvas;
 use super::components::{self, FieldKind};
+use super::fields;
 use super::reconcile::{FieldEvents, Held, KeyedState};
 
 /// What one node's drawing carries with it down the tree.
@@ -228,6 +229,36 @@ pub(super) fn node_at<'a>(tree: &'a DesignedTree, path: &str) -> Option<&'a Node
         node = child?;
     }
     Some(node)
+}
+
+/// Whether the node at `path` sits inside a form of `tree` (#241): its
+/// ancestors from the root include a `form` node.
+pub(super) fn inside_form(tree: &DesignedTree, path: &str) -> bool {
+    let mut node = &tree.root;
+    let mut inside = false;
+    for segment in path.trim_start_matches('/').split('/') {
+        if segment.is_empty() {
+            continue;
+        }
+        if matches!(node.kind, NodeKind::Form(_)) {
+            inside = true;
+        }
+        let duplicates = duplicate_keys(node);
+        let child = node
+            .children
+            .iter()
+            .enumerate()
+            .find(|(index, child)| {
+                let key = child.key.as_deref().filter(|key| !duplicates.contains(key));
+                key == Some(segment) || (child.key.is_none() && index.to_string() == segment)
+            })
+            .map(|(_, child)| child);
+        let Some(found) = child else {
+            return inside;
+        };
+        node = found;
+    }
+    inside || matches!(node.kind, NodeKind::Form(_))
 }
 
 /// One node of the tree, drawn: `path` is the node's place in the tree
@@ -461,7 +492,46 @@ pub(super) fn draw_node(
             node,
             path,
             draw,
-            components::select(select, path, &draw).into_any_element(),
+            components::select(select, path, &draw, cx).into_any_element(),
+        ),
+        NodeKind::Form(form) => {
+            let children = children(node, path, inner, cx);
+            styled(
+                node,
+                path,
+                draw,
+                fields::form(node, form, path, &draw, children, cx),
+            )
+        }
+        NodeKind::DatePicker(date) => styled(
+            node,
+            path,
+            draw,
+            fields::date_field(node, date, path, &draw, false, cx),
+        ),
+        NodeKind::DateTimePicker(date) => styled(
+            node,
+            path,
+            draw,
+            fields::date_field(node, date, path, &draw, true, cx),
+        ),
+        NodeKind::TagPicker(picker) => styled(
+            node,
+            path,
+            draw,
+            fields::tag_field(node, picker, path, &draw, cx),
+        ),
+        NodeKind::FilePicker(picker) => styled(
+            node,
+            path,
+            draw,
+            fields::path_field(node, picker, path, &draw, false, cx),
+        ),
+        NodeKind::FolderPicker(picker) => styled(
+            node,
+            path,
+            draw,
+            fields::path_field(node, picker, path, &draw, true, cx),
         ),
         // A List or Grid the launcher does not present — a second one in
         // the tree, under the first, which the screen presents (#240) —

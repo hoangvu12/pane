@@ -49,8 +49,7 @@ impl pane_extension::indexed::Guest for Applications {
                         .unwrap_or_else(|| "Application".into()),
                 ),
                 alternate_titles: application.alternate_titles,
-                keywords: application.keywords,
-            })
+                keywords: application.keywords})
             .collect())
     }
 }

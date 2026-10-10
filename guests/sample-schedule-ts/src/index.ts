@@ -116,11 +116,6 @@ export const command: Command = {
     };
   },
 
-  async submitForm(itemId: string): Promise<string> {
-    // A rejected submitForm is a message about the whole form.
-    throw new Error(`The schedule sample has no forms: ${itemId}`);
-  },
-
   async openView(itemId: string): Promise<DesignedView> {
     throw new Error(`The schedule sample opens no designed view: ${itemId}`);
   },

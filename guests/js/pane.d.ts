@@ -33,14 +33,14 @@ export type {
 } from "pane:extension/commands@0.1.0";
 
 /**
- * One entry in a command's list. Choosing it opens its form, else its
+ * One entry in a command's list.
  * custom view, else runs its primary action (its first); an item with none
  * of them cannot be activated, and Pane says so.
  */
 export interface Item {
   /**
    * Identifies the item among the list's items: Pane keeps the selection on
-   * it when the list is drawn again, and passes it to `submitForm`.
+   * it when the list is drawn again, and passes it to `openView`.
    */
   id: string;
   title: string;
@@ -63,16 +63,10 @@ export interface Item {
    */
   actions?: Action[] | null;
   /**
-   * When set, choosing the item opens this form instead of running its
-   * action, and submitting it calls `submitForm`. Omitted or `null` for
-   * none.
-   */
-  form?: Form | null;
-  /**
-   * The operating systems the item's action (or form) works on; omitted or
-   * `null` for every system Pane runs on. Elsewhere Pane still lists the
-   * item but shows it as unavailable with the reason, and never runs its
-   * action or opens the form for it.
+   * The operating systems the item's action works on; omitted or `null`
+   * for every system Pane runs on. Elsewhere Pane still lists the item
+   * but shows it as unavailable with the reason, and never runs its
+   * action.
    */
   platforms?: Platform[] | null;
   /** Drawn before the title (#139); omitted or `null` for none. */
@@ -195,56 +189,8 @@ export interface List {
   items: Item[];
 }
 
-/** A form the user fills in and submits to the command. */
-export interface Form {
-  title: string;
-  fields: Field[];
-  /** The submit button's label. */
-  submitLabel: string;
-}
-
-export interface Field {
-  /** Identifies the field's value in `submitForm`. */
-  id: string;
-  /** Names the field on screen and to assistive technology. */
-  label: string;
-  kind: FieldKind;
-}
 
 /**
- * A single-line text field, which starts empty, or a choice of exactly one
- * option, whose first option starts chosen.
- */
-export type FieldKind =
-  | { tag: "text"; val: TextField }
-  | { tag: "choice"; val: Choice[] };
-
-export interface TextField {
-  /** Shown while the field is empty; omitted or `null` for none. */
-  placeholder?: string | null;
-}
-
-export interface Choice {
-  /** The field's value while this option is chosen. */
-  id: string;
-  label: string;
-}
-
-/** A field's submitted value: its text, or the chosen option's id. */
-export interface FieldValue {
-  id: string;
-  value: string;
-}
-
-/**
- * Why a submitted form was not accepted. Throw it from `submitForm` as a
- * plain object: `throw { field: "name", message: "Enter a name" }`.
- */
-export interface FormError {
-  /** The field the message is about; omitted or `null` for the whole form. */
-  field?: string | null;
-  message: string;
-}
 
 /**
  * A designed view the user has open, holding the view's state: what
@@ -285,7 +231,6 @@ export interface DesignedView {
  *       items: [{ id: "greet", title: "Say hello", onAction: async () => { showToast({ title: "Hello" }); } }],
  *     };
  *   },
- *   async submitForm(id, values) { ... },
  * };
  * ```
  *
@@ -306,8 +251,8 @@ export interface DesignedView {
  * Resolving gives Pane the value. Throwing (rejecting) reports an error to the
  * user, never a crash: from `render`, `run`, an item's `onAction`,
  * `runSearchResult`, `openView` and a view's `handleEvent` an `Error`'s
- * message, or a thrown string as is; from `submitForm` a {@link FormError}
- * object as is, and an `Error` or string as a message about the whole form.
+ * message, or a thrown string as is. A form is a designed view now
+ * (#241), whose submission is an event, so `submitForm` is gone.
  * An action, `run` and `runSearchResult` resolve with nothing: Pane shows
  * nothing of what they resolve with (text is let through and ignored).
  * Resolving with a value of the wrong type, such as an action resolving
@@ -347,13 +292,6 @@ export interface Command {
    * toast. Without it, choosing a result is an error.
    */
   runSearchResult?(id: string): Promise<void>;
-  /**
-   * Handle the submitted form of the item with `itemId`. `values` holds every
-   * field of the form, in order. The text is shown as the result; a thrown
-   * {@link FormError} is shown next to its field. Without it, a submitted
-   * form is refused.
-   */
-  submitForm?(itemId: string, values: FieldValue[]): Promise<string>;
   /**
    * Open the designed view of the command with id `command` (its id in
    * `pane.json`, so one component can serve several commands), launched as

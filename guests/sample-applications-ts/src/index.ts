@@ -10,8 +10,6 @@
 import type {
   Command,
   DesignedView,
-  FieldValue,
-  FormError,
   IndexedResult,
   IndexedResults,
   List,
@@ -61,15 +59,11 @@ async function render(): Promise<List> {
   };
 }
 
-async function submitForm(_itemId: string, _values: FieldValue[]): Promise<string> {
-  throw { message: "this sample has no forms" } satisfies FormError;
-}
-
 async function openView(_itemId: string): Promise<DesignedView> {
   throw new Error("this sample opens no designed view");
 }
 
-export const command: Command = { render, submitForm, openView };
+export const command: Command = { render, openView };
 
 export const indexedResults: IndexedResults = {
   async results(): Promise<IndexedResult[]> {

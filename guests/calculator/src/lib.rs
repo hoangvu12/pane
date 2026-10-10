@@ -38,7 +38,6 @@ impl pane_extension::root::Guest for Calculator {
                 "{} = {answer} · Enter copies the answer",
                 query.trim()
             )),
-            action: RootAction::Copy(answer),
-        }])
+            action: RootAction::Copy(answer)}])
     }
 }

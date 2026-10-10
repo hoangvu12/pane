@@ -66,10 +66,6 @@ export const command = {
     };
   },
 
-  async submitForm() {
-    throw { message: "this sample has no forms" };
-  },
-
   async openView() {
     throw new Error("this sample opens no designed view");
   },

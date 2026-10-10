@@ -182,10 +182,11 @@ fn greet(launcher: &Launcher, source: &str) -> Status {
     select_title(launcher, "Greet through another extension");
     block_on(launcher.activate_selected());
     assert!(launcher.view().form().is_some(), "no form");
-    launcher.set_field_value("source", source);
-    launcher.set_field_value("name", "Ada");
-    launcher.set_field_value("times", "once");
-    block_on(launcher.submit_form());
+    block_on(launcher.submit_pane_form(vec![
+        ("source".to_owned(), (source).to_owned()),
+        ("name".to_owned(), ("Ada").to_owned()),
+        ("times".to_owned(), ("once").to_owned()),
+    ]));
     launcher.view().status
 }
 
@@ -1040,8 +1041,7 @@ fn a_call_by_dependency_id_reaches_only_the_operations_declared_for_it() {
     block_on(launcher.activate_selected());
     select_title(&launcher, "Wait in another extension");
     block_on(launcher.activate_selected());
-    launcher.set_field_value("source", "greeter");
-    block_on(launcher.submit_form());
+    block_on(launcher.submit_pane_form(vec![("source".to_owned(), ("greeter").to_owned())]));
 
     assert_eq!(
         launcher.view().status,

@@ -8,7 +8,7 @@
 
 use pane_extension::alloc::{format, string::String, vec::Vec};
 use pane_extension::feedback::{Toast, show_toast};
-use pane_extension::{Command, FieldValue, FormError, Item, List};
+use pane_extension::{Command, Item, List};
 
 /// What "Say hello" shows.
 const GREETING: &str = "Hello from Rust";
@@ -23,8 +23,7 @@ async fn act(id: &str) -> Result<(), String> {
             show_toast(Toast::success(GREETING));
             Ok(())
         }
-        other => Err(format!("unknown item: {other}")),
-    }
+        other => Err(format!("unknown item: {other}"))}
 }
 
 impl Command for Hello {
@@ -32,13 +31,6 @@ impl Command for Hello {
 
     async fn render() -> Result<List, String> {
         Ok(List::new("Hello").item(Item::new("hello", "Say hello").on_action(|| act("hello"))))
-    }
-
-    async fn submit_form(_item_id: String, _values: Vec<FieldValue>) -> Result<String, FormError> {
-        Err(FormError {
-            field: None,
-            message: "this command has no forms".into(),
-        })
     }
 
 }

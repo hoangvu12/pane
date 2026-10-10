@@ -2,25 +2,11 @@
 wit_bindgen::generate!({ path: "../../../wit", world: "extension" });
 
 use exports::pane::extension::command::{
-    FieldValue, FormError, Frame, Guest, GuestGuestView, LaunchRecord,
-    Outcome, Rendered, UiEvent, View, ViewEvent,
+    Guest, GuestView, LaunchRecord, Outcome, Rendered, UiEvent, View,
 };
 
 struct Mixed;
 export!(Mixed);
-
-/// No view is ever opened; the fixture only has to type-check.
-struct NoView;
-
-impl Guest for NoView {
-    async fn render(&self) -> Frame {
-        unreachable!()
-    }
-
-    async fn handle_event(&self, _event: ViewEvent) -> Result<(), String> {
-        Ok(())
-    }
-}
 
 /// A designed view type that is never opened.
 enum NoDesignedView {}
@@ -55,11 +41,6 @@ impl Guest for Mixed {
     async fn handle_event(callback: String, _details: String) -> Result<String, String> {
         Ok(format!("{{\"status\": \"{callback}\"}}"))
     }
-
-    async fn submit_form(item_id: String, _values: Vec<FieldValue>) -> Result<String, FormError> {
-        Ok(item_id)
-    }
-
 
     async fn open_view(command: String, _launch: LaunchRecord) -> Result<View, String> {
         Err(command)

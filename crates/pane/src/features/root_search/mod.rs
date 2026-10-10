@@ -168,8 +168,8 @@ impl LauncherWindow {
             }
             // A form of Pane's own (the npm or Git package form), or a form
             // or designed view opened from a command's search, has taken
-            // focus already.
-            None if was_shown && self.form.is_none() && self.designed.is_none() => {
+            // focus already: the designed controls cover both.
+            None if was_shown && self.designed.is_none() => {
                 window.focus(&self.focus_handle, cx)
             }
             None => {}

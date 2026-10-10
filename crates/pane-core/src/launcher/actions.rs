@@ -17,6 +17,7 @@
 //! — the same rows, the target still selected, the outcome in the status —
 //! where the same flows opened from the extension list return there.
 
+use super::pane_form::form_submit_of;
 use super::{
     Entry, Launcher, LauncherView, Mode, Screen, SelectedAction, State, Status, quick_slots,
     shortcuts,
@@ -354,17 +355,18 @@ pub(in crate::launcher) fn selected_action(state: &State) -> SelectedAction {
         .selected
         .and_then(|index| state.entries.get(index));
     match (&state.view.screen, entry) {
-        // A form submits: the form's own control keeps the label the
-        // extension gave it, but Enter — and the footer's button with it —
-        // submits the form.
-        (Screen::Form(_), _) => acting("Submit"),
-        // A designed view takes the keys itself, and the network and
-        // program details screens have only Back: Enter does nothing, so
-        // there is no primary action to show.
-        (
-            Screen::DesignedView(_) | Screen::NetworkDetails { .. } | Screen::ProgramDetails { .. },
-            _,
-        ) => unusable(""),
+        // A form Pane itself asks submits: the form's own control keeps
+        // the label it was given, but Enter — and the footer's button with
+        // it — submits the form. A designed view holding a form is the
+        // same: its submission is the view's primary action.
+        (Screen::PaneForm(form), _) => acting(&form.submit),
+        (Screen::DesignedView(view), _) => match form_submit_of(&view.tree) {
+            Some(submit) => acting(&submit),
+            None => unusable(""),
+        },
+        // The network and program details screens have only Back: Enter
+        // does nothing, so there is no primary action to show.
+        (Screen::NetworkDetails { .. } | Screen::ProgramDetails { .. }, _) => unusable(""),
         // A row is selected: what activating it does is the action.
         // A no-view command runs and opens no screen.
         (_, Some(Entry::Open(opening))) if opening.no_view => acting("Run command"),
@@ -396,7 +398,6 @@ pub(in crate::launcher) fn selected_action(state: &State) -> SelectedAction {
         // extension gave it (#137).
         (_, Some(Entry::Actions(listed))) => acting(&listed.primary()),
         (_, Some(Entry::NoActions)) => unusable("No actions"),
-        (_, Some(Entry::Form(..))) => acting("Open form"),
         (_, Some(Entry::ChooseFolder(_))) => acting("Choose folder"),
         (_, Some(Entry::StopSharingFolder(_))) => acting("Stop sharing"),
         (_, Some(Entry::Install(_, Mode::Install, _))) => acting("Install"),

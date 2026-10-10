@@ -81,8 +81,7 @@ impl View for Screen {
                     .child(text("Loaded").style(TextStyle::Title))
                     .child(text(what.as_str()).level(TextLevel::Secondary))
                     .into_answer(),
-                None => loading(text("Loading…").level(TextLevel::Secondary)),
-            };
+                None => loading(text("Loading…").level(TextLevel::Secondary))};
         }
         if matches!(self.which, Which::List) {
             return self.list_tree(cx);
@@ -284,8 +283,7 @@ impl Screen {
             name: RefCell::new("typed".into()),
             notes: RefCell::new("two lines".into()),
             swapped: Cell::new(false),
-            loading: Pending::loading(async { String::new() }),
-        }
+            loading: Pending::loading(async { String::new() })}
     }
 
     /// The gallery's fields, live and keyed (#238): the name field hears

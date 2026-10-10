@@ -27,9 +27,6 @@ export const command: Command = {
       ],
     };
   },
-  async submitForm() {
-    throw { message: "this command has no forms" };
-  },
   async openView() {
     throw new Error("this command opens no designed view");
   },

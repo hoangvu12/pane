@@ -246,19 +246,23 @@ fn a_validation_error_is_rendered(cx: &mut TestAppContext, sample: &Sample) {
     );
 }
 
-/// Opens the sample's command and then its form ("Greet someone", the fifth
-/// item) with the keyboard.
+/// Opens the sample's form command ("Greet someone") with the keyboard:
+/// a designed view now (#241).
 fn open_form(window: &Entity<LauncherWindow>, cx: &mut VisualTestContext) {
     cx.simulate_keystrokes("enter");
     settle(window, cx);
     cx.simulate_keystrokes("down down down down enter");
     let view = settle(window, cx);
-    assert!(matches!(view.screen, Screen::Form(_)), "{:?}", view.screen);
+    assert!(
+        matches!(view.screen, Screen::DesignedView(_)),
+        "{:?}",
+        view.screen
+    );
     assert_eq!(view.title, "Greet someone");
 }
 
 fn the_keyboard_fills_in_and_submits_the_form(cx: &mut TestAppContext, sample: &Sample) {
-    let (window, cx) = open(cx, sample);
+    let (window, _data, cx) = open_installed(cx, &sample.component.replace("_", "-"));
     open_form(&window, cx);
     assert!(
         cx.debug_bounds("field-name").is_some(),
@@ -270,36 +274,32 @@ fn the_keyboard_fills_in_and_submits_the_form(cx: &mut TestAppContext, sample: &
     cx.simulate_input("Ada");
     cx.simulate_keystrokes("tab down enter");
 
+    // The answer draws over the form, in the tree the view answers with
+    // (#241).
     let view = settle(&window, cx);
-    assert_eq!(
-        view.status,
-        Status::Result(format!(
-            "Good morning, Ada, from the {} guest",
-            sample.language
-        ))
-    );
+    let (nodes, _) = accessibility_tree(cx);
     assert!(
-        cx.debug_bounds("status-result").is_some(),
-        "the answer is rendered"
+        nodes.contains(&(
+            "Label".into(),
+            format!("Good morning, Ada, from the {} guest", sample.language).into(),
+            "".into()
+        )),
+        "{nodes:?}"
     );
     cx.simulate_keystrokes("escape");
     let view = settle(&window, cx);
     assert_eq!((view.screen, view.selected), (Screen::Command, Some(4)));
+    let _ = view;
 }
 
 fn a_rejected_field_shows_its_error_and_takes_focus(cx: &mut TestAppContext, sample: &Sample) {
-    let (window, cx) = open(cx, sample);
+    let (window, _data, cx) = open_installed(cx, &sample.component.replace("_", "-"));
     open_form(&window, cx);
 
     // Submit from the greeting with the name left empty.
     cx.simulate_keystrokes("tab enter");
 
-    let view = settle(&window, cx);
-    assert_eq!(view.status, Status::Error("Name: Enter a name".into()));
-    assert!(
-        cx.debug_bounds("field-error-name").is_some(),
-        "the error is rendered next to the field"
-    );
+    settle(&window, cx);
     let (nodes, focused) = accessibility_tree(cx);
     assert_eq!(focused.as_deref(), Some("Name"));
     assert!(
@@ -310,9 +310,15 @@ fn a_rejected_field_shows_its_error_and_takes_focus(cx: &mut TestAppContext, sam
     // Focus is back on the name, so typing fixes it.
     cx.simulate_input("Grace");
     cx.simulate_keystrokes("enter");
-    assert_eq!(
-        settle(&window, cx).status,
-        Status::Result(format!("Hello, Grace, from the {} guest", sample.language))
+    settle(&window, cx);
+    let (nodes, _) = accessibility_tree(cx);
+    assert!(
+        nodes.contains(&(
+            "Label".into(),
+            format!("Hello, Grace, from the {} guest", sample.language).into(),
+            "".into()
+        )),
+        "{nodes:?}"
     );
 }
 
@@ -421,17 +427,19 @@ fn focused_label(cx: &mut VisualTestContext) -> Option<String> {
     accessibility_tree(cx).1
 }
 
-/// The open form's value of field `id`.
+/// The open form's value of field `id`: the keyed state's live text
+/// (#241).
 fn field_value(window: &Entity<LauncherWindow>, cx: &mut VisualTestContext, id: &str) -> String {
-    let view = cx.read_entity(window, |window, _| window.launcher().view());
-    let form = view.form().expect("a form is open");
-    let field = form.fields.iter().find(|field| field.id == id);
-    field.expect("the field exists").value.clone()
+    window.update(cx, |window, cx| {
+        window
+            .designed_field_text(id, cx)
+            .expect("the field exists")
+    })
 }
 
 #[gpui::test]
 fn tab_and_shift_tab_visit_each_control_once_in_order(cx: &mut TestAppContext) {
-    let (window, cx) = open(cx, &RUST);
+    let (window, _data, cx) = open_installed(cx, &RUST.component.replace("_", "-"));
     open_form(&window, cx);
     assert_eq!(focused_label(cx).as_deref(), Some("Name"));
 
@@ -482,7 +490,7 @@ fn tab_and_shift_tab_visit_each_control_once_in_order(cx: &mut TestAppContext) {
 
 #[gpui::test]
 fn editing_keys_change_the_text_field(cx: &mut TestAppContext) {
-    let (window, cx) = open(cx, &RUST);
+    let (window, _data, cx) = open_installed(cx, &RUST.component.replace("_", "-"));
     open_form(&window, cx);
 
     cx.simulate_input("Ad");
@@ -507,10 +515,10 @@ fn editing_keys_change_the_text_field(cx: &mut TestAppContext) {
 fn input_method_composition_commits_into_the_text_field(cx: &mut TestAppContext) {
     use gpui::{EntityInputHandler, Focusable};
 
-    let (window, cx) = open(cx, &RUST);
+    let (window, _data, cx) = open_installed(cx, &RUST.component.replace("_", "-"));
     open_form(&window, cx);
     let input = cx
-        .read_entity(&window, |window, _| window.text_field("name"))
+        .read_entity(&window, |window, cx| window.designed_field("name"))
         .expect("the name field has an editing state");
     let focused = cx.update(|window, cx| input.focus_handle(cx).is_focused(window));
     assert!(focused, "the name field has keyboard focus");
@@ -541,7 +549,7 @@ fn input_method_composition_commits_into_the_text_field(cx: &mut TestAppContext)
 
 #[gpui::test]
 fn clicking_a_choice_and_the_submit_button_submits_the_form(cx: &mut TestAppContext) {
-    let (window, cx) = open(cx, &RUST);
+    let (window, _data, cx) = open_installed(cx, &RUST.component.replace("_", "-"));
     open_form(&window, cx);
     cx.simulate_input("Ada");
 
@@ -567,7 +575,7 @@ fn clicking_a_choice_and_the_submit_button_submits_the_form(cx: &mut TestAppCont
 /// white 8%. A rejected field's error stands under its control.
 #[gpui::test]
 fn the_form_draws_the_settings_field_families(cx: &mut TestAppContext) {
-    let (window, cx) = open(cx, &RUST);
+    let (window, _data, cx) = open_installed(cx, &RUST.component.replace("_", "-"));
     open_form(&window, cx);
     // The form arrives over the view transition's fade; its fills are read
     // once it has settled.
@@ -612,7 +620,7 @@ fn the_form_draws_the_settings_field_families(cx: &mut TestAppContext) {
 
 #[gpui::test]
 fn the_focused_submit_button_submits_with_space(cx: &mut TestAppContext) {
-    let (window, cx) = open(cx, &RUST);
+    let (window, _data, cx) = open_installed(cx, &RUST.component.replace("_", "-"));
     open_form(&window, cx);
     cx.simulate_input("Ada");
 
@@ -647,7 +655,7 @@ fn node<'a>(nodes: &'a [serde_json::Value], role: &str, label: &str) -> &'a serd
 
 #[gpui::test]
 fn assistive_technology_sees_the_forms_labelled_controls_and_values(cx: &mut TestAppContext) {
-    let (window, cx) = open(cx, &RUST);
+    let (window, _data, cx) = open_installed(cx, &RUST.component.replace("_", "-"));
     open_form(&window, cx);
     cx.simulate_input("Ada");
 
@@ -1049,6 +1057,70 @@ fn open_color<'a>(
     );
     assert_eq!(view.title, "Choose a color");
     (window, data, cx)
+}
+
+/// Asserts that the screen shown has no heading line above its content
+/// and that the footer's left, at rest, names it: the command's icon and
+/// the screen's title, inside the footer strip and left of its buttons
+/// (#162).
+fn assert_named_in_the_footer(cx: &mut VisualTestContext, what: &str) {
+    assert!(
+        cx.debug_bounds("screen-heading").is_none(),
+        "{what}: a heading line above the content"
+    );
+    let lead = cx
+        .debug_bounds("footer-command")
+        .unwrap_or_else(|| panic!("{what}: the footer names no command"));
+    let strip = cx
+        .debug_bounds("status-idle")
+        .unwrap_or_else(|| panic!("{what}: the footer is not at rest"));
+    assert!(
+        strip.contains(&lead.center()),
+        "{what}: the command's name is not in the footer: {lead:?} outside {strip:?}"
+    );
+    assert!(
+        lead.center().x < strip.center().x,
+        "{what}: the command's name is not on the footer's left"
+    );
+    assert!(
+        cx.debug_bounds("footer-command-title").is_some(),
+        "{what}: the footer shows no title"
+    );
+}
+
+/// An extension's views start with their content (#162): its list and the
+/// form and color commands its items launch draw no heading line, and the
+/// footer's left names the open command instead, as Raycast's footer does.
+/// Root search has neither, and its section label stays.
+#[gpui::test]
+fn an_extension_view_has_no_heading_and_the_footer_names_it(cx: &mut TestAppContext) {
+    let (window, _data, cx) = open_installed(cx, &RUST.component.replace("_", "-"));
+    settle(&window, cx);
+    assert!(cx.debug_bounds("screen-heading").is_none());
+    assert!(
+        cx.debug_bounds("footer-command").is_none(),
+        "root search names no command in its footer"
+    );
+    assert!(
+        cx.debug_bounds("section-Commands").is_some(),
+        "root search's section label stays"
+    );
+
+    cx.simulate_keystrokes("enter");
+    let view = settle(&window, cx);
+    assert_eq!(view.screen, Screen::Command);
+    assert_named_in_the_footer(cx, "the command's list");
+
+    open_form(&window, cx);
+    assert_named_in_the_footer(cx, "a form");
+}
+
+/// A designed view opened from an extension's item has no heading line
+/// either; the footer's left names it (#162).
+#[gpui::test]
+fn a_designed_view_has_no_heading_and_the_footer_names_it(cx: &mut TestAppContext) {
+    let (window, _data, cx) = open_color(cx, &RUST);
+    assert_named_in_the_footer(cx, "the color view");
 }
 
 /// Waits until the open view shows `expected` as its value, which it does
@@ -1964,7 +2036,7 @@ fn the_footer_button_runs_the_selected_action_like_enter(cx: &mut TestAppContext
 /// form's own submit control.
 #[gpui::test]
 fn the_footer_button_submits_the_form_like_enter(cx: &mut TestAppContext) {
-    let (window, cx) = open(cx, &RUST);
+    let (window, _data, cx) = open_installed(cx, &RUST.component.replace("_", "-"));
     open_form(&window, cx);
     cx.simulate_input("Ada");
 
@@ -2345,7 +2417,11 @@ fn a_click_that_opens_nothing_leaves_the_next_keyboard_open_settled(cx: &mut Tes
 
     cx.simulate_keystrokes("down down down down enter");
     let view = settle(&window, cx);
-    assert!(matches!(view.screen, Screen::Form(_)), "{:?}", view.screen);
+    assert!(
+        matches!(view.screen, Screen::PaneForm(_)),
+        "{:?}",
+        view.screen
+    );
     assert!(
         arriving(&window, cx).is_none(),
         "Enter after a click that opened nothing drew the form settled"

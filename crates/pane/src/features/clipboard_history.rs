@@ -205,6 +205,7 @@ fn type_choices() -> Vec<Choice> {
             subtitle: None,
             keywords: Vec::new(),
             unavailable_reason: None,
+            section: None,
         })
         .collect()
 }
@@ -433,7 +434,7 @@ impl LauncherWindow {
         }
         let kept = matches!(
             self.launcher.screen(),
-            Screen::Form(_) | Screen::DesignedView(_)
+            Screen::PaneForm(_) | Screen::DesignedView(_)
         );
         if !kept && self.clipboard.take().is_some() {
             self.fit_client(shell::LAUNCHER_CLIENT, window, cx);

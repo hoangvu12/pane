@@ -5,7 +5,7 @@
 #![no_std]
 
 use pane_extension::alloc::{format, string::String, vec::Vec};
-use pane_extension::{Command, FieldValue, FormError, List};
+use pane_extension::{Command, List};
 
 struct RefusingView;
 pane_extension::export!(RefusingView);
@@ -17,10 +17,5 @@ impl Command for RefusingView {
         Err("sign in first".into())
     }
 
-    async fn submit_form(item_id: String, _values: Vec<FieldValue>) -> Result<String, FormError> {
-        Err(FormError {
-            field: None,
-            message: format!("unknown form: {item_id}"),
-        })
     }
 }

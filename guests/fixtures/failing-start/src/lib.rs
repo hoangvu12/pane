@@ -5,9 +5,7 @@
 
 use pane_extension::alloc::{format, string::String, vec::Vec};
 use pane_extension::feedback::{Toast, show_toast};
-use pane_extension::{
-    Command, FieldValue, FormError, Item, List,
-};
+use pane_extension::{Command, Item, List, settings};
 
 /// The settings key recording that a start was attempted.
 const ATTEMPTED: &str = "start-attempted";
@@ -38,11 +36,5 @@ impl Command for FailingStart {
         act(&id).await
     }
 
-    async fn submit_form(item_id: String, _values: Vec<FieldValue>) -> Result<String, FormError> {
-        Err(FormError {
-            field: None,
-            message: format!("unknown form: {item_id}"),
-        })
-    }
 
 }

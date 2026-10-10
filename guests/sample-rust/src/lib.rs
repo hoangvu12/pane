@@ -6,20 +6,18 @@
 //! samples.
 #![no_std]
 
-use core::cell::Cell;
+use core::cell::{Cell, RefCell};
 
 use pane_extension::alloc::{format, string::String, vec, vec::Vec};
 use pane_extension::feedback::{Toast, show_toast};
+use pane_extension::form;
 use pane_extension::root::{RootAction, RootResult};
 use pane_extension::commands::{self, CommandRef, LaunchType, LaunchRecord};
 use pane_extension::view::{
-    CanvasEvent, CanvasRole, Cx, Draw, Length, Paint, TextMeasure, TextStyle, View, canvas, column,
-    measure_text,
+    Answer, CanvasEvent, CanvasRole, Cx, Draw, IntoAnswer, Length, Paint, TextMeasure, TextStyle,
+    View, canvas, column, measure_text,
 };
-use pane_extension::{
-    Choice, Color, Command, Field, FieldKind, FieldValue, Form, FormError, Item, List, Platform,
-    TextField,
-};
+use pane_extension::{Color, Command, Item, List, Platform, choice};
 
 struct Sample;
 pane_extension::export!(Sample);
@@ -27,8 +25,7 @@ pane_extension::export!(Sample);
 /// Settings the "validate" item checks; the port is out of range on purpose.
 struct Settings {
     name: &'static str,
-    port: u32,
-}
+    port: u32}
 
 impl Settings {
     fn validate(&self) -> Result<(), &'static str> {
@@ -49,33 +46,102 @@ const GREETINGS: [(&str, &str); 3] = [
     ("welcome", "Welcome"),
 ];
 
-/// The "form" item's form: a name to greet and a greeting to choose.
-fn greeting_form() -> Form {
-    Form {
-        title: "Greet someone".into(),
-        fields: vec![
-            Field {
-                id: "name".into(),
-                label: "Name".into(),
-                kind: FieldKind::Text(TextField {
-                    placeholder: Some("Ada Lovelace".into()),
-                }),
-            },
-            Field {
-                id: "greeting".into(),
-                label: "Greeting".into(),
-                kind: FieldKind::Choice(
+/// The form command's view (#241): the greeting form — every field the
+/// designed tree's forms offer, so the sample shows each kind. A
+/// submission validates the name and answers with the greeting; the
+/// fields' values arrive with the submission, keyed by their keys, and
+/// the name's is remembered: Pane keeps it as the package's settings and
+/// prefills it the next time the form opens.
+struct Greeting {
+    /// The name the last submission answered with, shown as the answer.
+    answered: RefCell<String>,
+    /// Why the last submission was refused, on the name's field.
+    error: RefCell<Option<&'static str>>}
+
+impl Greeting {
+    /// The form's tree, as the command's view renders it: the listeners the
+    /// tree names run with the command's view, whichever command opened it.
+    fn render(&self, cx: &mut Cx<Designed>) -> Answer {
+        let submit = cx.form_listener(|view, values| {
+            let Designed::Form(Greeting { answered, error }) = view else {
+                return;
+            };
+            let name = values.text("name").unwrap_or_default().trim().to_owned();
+            let greeting = values
+                .text("greeting")
+                .and_then(|value| {
                     GREETINGS
                         .iter()
-                        .map(|&(id, label)| Choice {
-                            id: id.into(),
-                            label: label.into(),
-                        })
-                        .collect(),
-                ),
-            },
-        ],
-        submit_label: "Greet".into(),
+                        .find(|&&(id, _)| id == value)
+                        .map(|&(_, label)| label)
+                })
+                .unwrap_or("Hello");
+            if name.is_empty() {
+                *error.borrow_mut() = Some("Enter a name");
+                return;
+            }
+            if name.chars().count() > 40 {
+                *error.borrow_mut() = Some("Use at most 40 characters");
+                return;
+            }
+            *error.borrow_mut() = None;
+            *answered.borrow_mut() = format!("{greeting}, {name}, from the Rust guest");
+        });
+        let error = self.error.borrow().clone();
+        let answered = self.answered.borrow().clone();
+        let choice = |value: &str, label: &str| choice(value).label(label);
+        let fields = || {
+            vec![
+                form::text_field("name")
+                    .title("Name")
+                    .placeholder("Ada Lovelace")
+                    .remember()
+                    .error(error.clone().map(str::to_owned).unwrap_or_default())
+                    .auto_focus(),
+                form::password_field("secret").title("Secret"),
+                form::text_area("notes").title("Notes"),
+                form::date_picker("day").title("Day"),
+                form::date_time_picker("at").title("At"),
+                form::dropdown("greeting")
+                    .title("Greeting")
+                    .options([
+                        choice("hello", "Hello").section("Plain"),
+                        choice("morning", "Good morning").section("Warm"),
+                        choice("welcome", "Welcome").section("Warm"),
+                    ])
+                    .default_value("hello"),
+                form::tag_picker("tags")
+                    .title("Tags")
+                    .options([
+                        choice("friend", "Friend"),
+                        choice("colleague", "Colleague"),
+                        choice("family", "Family"),
+                    ]),
+                form::file_picker("file").title("File"),
+                form::folder_picker("folder").title("Folder").allow_multiple(),
+                form::checkbox("updates").label("Send updates"),
+                form::toggle("quiet").label("Quiet mode"),
+            ]
+        };
+        let mut view = form::Form::new()
+            .key("form")
+            .submit_title("Greet")
+            .on_submit(submit);
+        for field in fields() {
+            view = view.child(field);
+        }
+        if answered.is_empty() {
+            view.into_answer()
+        } else {
+            pane_extension::view::column()
+                .gap(pane_extension::view::Space::M)
+                .child(
+                    pane_extension::view::text(answered.as_str())
+                        .style(pane_extension::view::TextStyle::Title),
+                )
+                .child(view)
+                .into_answer()
+        }
     }
 }
 
@@ -106,8 +172,7 @@ const ROWS: i32 = SHADES.len() as i32;
 struct ColorPicker {
     column: Cell<i32>,
     row: Cell<i32>,
-    dragging: Cell<bool>,
-}
+    dragging: Cell<bool>}
 
 impl ColorPicker {
     fn new() -> ColorPicker {
@@ -115,8 +180,7 @@ impl ColorPicker {
         ColorPicker {
             column: Cell::new(5),
             row: Cell::new(1),
-            dragging: Cell::new(false),
-        }
+            dragging: Cell::new(false)}
     }
 
     /// Chooses the swatch nearest to `x`, `y`.
@@ -154,8 +218,9 @@ fn hex(rgb: u32) -> String {
     format!("#{rgb:06X}")
 }
 
-impl View for ColorPicker {
-    fn render(&mut self, cx: &mut Cx<Self>) -> impl IntoAnswer {
+impl ColorPicker {
+    /// The picker's tree, as the command's view renders it.
+    fn render(&mut self, cx: &mut Cx<Designed>) -> Answer {
         let (column, row) = self.at();
         let (hue, shades) = COLORS[column as usize];
         let chosen = shades[row as usize];
@@ -213,12 +278,29 @@ impl View for ColorPicker {
                     .role(CanvasRole::ColorWell)
                     .label("Color")
                     .value(format!("{name}, {}", hex(chosen)))
-                    .on_key(cx.value_listener(|this, key| this.keyed(key)))
-                    .on_pointer_down(cx.canvas_listener(|this, event| this.pointed(event)))
-                    .on_pointer_move(cx.canvas_listener(|this, event| this.pointed(event)))
-                    .on_pointer_up(cx.canvas_listener(|this, _| this.dragging.set(false)))
+                    .on_key(cx.value_listener(|view, key| {
+                        if let Designed::Color(picker) = view {
+                            picker.keyed(key);
+                        }
+                    }))
+                    .on_pointer_down(cx.canvas_listener(|view, event| {
+                        if let Designed::Color(picker) = view {
+                            picker.pointed(event);
+                        }
+                    }))
+                    .on_pointer_move(cx.canvas_listener(|view, event| {
+                        if let Designed::Color(picker) = view {
+                            picker.pointed(event);
+                        }
+                    }))
+                    .on_pointer_up(cx.canvas_listener(|view, _| {
+                        if let Designed::Color(picker) = view {
+                            picker.dragging.set(false);
+                        }
+                    }))
                     .ops(ops),
             )
+            .into_answer()
     }
 }
 
@@ -264,11 +346,20 @@ impl ColorPicker {
     }
 }
 
-/// An error about the field `field`.
-fn invalid(field: &str, message: &str) -> FormError {
-    FormError {
-        field: Some(field.into()),
-        message: message.into(),
+/// The view either designed command of this package opens: the greeting
+/// form's, or the color picker's, whichever command Pane launched
+/// ([`Command::open_designed_view`] hands one of these to Pane).
+enum Designed {
+    Form(Greeting),
+    Color(ColorPicker),
+}
+
+impl View for Designed {
+    fn render(&mut self, cx: &mut Cx<Self>) -> impl IntoAnswer {
+        match self {
+            Designed::Form(form) => form.render(cx),
+            Designed::Color(picker) => picker.render(cx),
+        }
     }
 }
 
@@ -301,8 +392,7 @@ async fn outcome(id: &str) -> Result<String, String> {
         "validate" => {
             let settings = Settings {
                 name: "Pane",
-                port: 70000,
-            };
+                port: 70000};
             settings
                 .validate()
                 .map_err(|problem| format!("Invalid settings: {problem}"))?;
@@ -318,12 +408,11 @@ async fn outcome(id: &str) -> Result<String, String> {
         }
         "windows-only" => Ok("Ran the Windows-only action in the Rust guest".into()),
         "not-windows" => Ok("Ran the macOS and Linux action in the Rust guest".into()),
-        other => Err(format!("unknown item: {other}")),
-    }
+        other => Err(format!("unknown item: {other}"))}
 }
 
 impl Command for Sample {
-    type DesignedView = ColorPicker;
+    type DesignedView = Designed;
 
     async fn render() -> Result<List, String> {
         let item =
@@ -348,7 +437,19 @@ impl Command for Sample {
                 "Roll a number",
                 "A random number from this instance",
             ),
-            item("form", "Greet someone", "Fill in a form the guest checks").form(greeting_form()),
+            item(
+                "form",
+                "Greet someone",
+                "A form the guest checks, on the designed tree",
+            )
+            .on_action(|| async {
+                let form = CommandRef {
+                    source: None,
+                    command: "form".into(),
+                };
+                commands::launch(&form, LaunchType::UserInitiated, &[], None)
+                    .map_err(|problem| format!("could not open the form: {problem}"))
+            }),
             acting(
                 "color",
                 "Choose a color",
@@ -371,41 +472,18 @@ impl Command for Sample {
         ]))
     }
 
-    async fn submit_form(item_id: String, values: Vec<FieldValue>) -> Result<String, FormError> {
-        if item_id != "form" {
-            return Err(FormError {
-                field: None,
-                message: format!("unknown form: {item_id}"),
-            });
-        }
-        let value = |id: &str| {
-            values
-                .iter()
-                .find(|field| field.id == id)
-                .map_or("", |field| field.value.as_str())
-        };
-        let name = value("name").trim();
-        if name.is_empty() {
-            return Err(invalid("name", "Enter a name"));
-        }
-        if name.chars().count() > 40 {
-            return Err(invalid("name", "Use at most 40 characters"));
-        }
-        let greeting = value("greeting");
-        let Some(&(_, greeting)) = GREETINGS.iter().find(|&&(id, _)| id == greeting) else {
-            return Err(invalid("greeting", "Choose a greeting"));
-        };
-        Ok(format!("{greeting}, {name}, from the Rust guest"))
-    }
-
     async fn open_designed_view(
         command: String,
         _launch: LaunchRecord,
-    ) -> Result<ColorPicker, String> {
-        if command != "color" {
-            return Err(format!("unknown designed view: {command}"));
+    ) -> Result<Designed, String> {
+        match command.as_str() {
+            "form" => Ok(Designed::Form(Greeting {
+                answered: RefCell::new(String::new()),
+                error: RefCell::new(None),
+            })),
+            "color" => Ok(Designed::Color(ColorPicker::new())),
+            _ => Err(format!("unknown designed view: {command}")),
         }
-        Ok(ColorPicker::new())
     }
 }
 
@@ -425,8 +503,7 @@ impl pane_extension::root::Guest for Sample {
                 id: "website".into(),
                 title: "Pane's website".into(),
                 subtitle: Some("Opened by the Rust guest".into()),
-                action: RootAction::OpenUrl(WEBSITE.into()),
-            }]);
+                action: RootAction::OpenUrl(WEBSITE.into())}]);
         }
         let text = query.strip_prefix("reverse ").unwrap_or_default().trim();
         if text.is_empty() {
@@ -437,7 +514,6 @@ impl pane_extension::root::Guest for Sample {
             id: "reversed".into(),
             title: reversed.clone(),
             subtitle: Some("Reversed by the Rust guest".into()),
-            action: RootAction::Copy(reversed),
-        }])
+            action: RootAction::Copy(reversed)}])
     }
 }

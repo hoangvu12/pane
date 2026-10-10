@@ -32,7 +32,7 @@ use pane_extension::alloc::{format, string::String, vec::Vec};
 use pane_extension::feedback::{Toast, show_toast};
 use pane_extension::helpers::{self, HelperError};
 use pane_extension::{
-    Command, FieldValue, FormError, Item, List, settings,
+    Command, Item, List, settings,
 };
 
 /// The helper's name in the package's `pane.json`.
@@ -107,8 +107,7 @@ async fn outcome(item_id: &str) -> Result<String, String> {
                 Ok(answer) => answer,
                 // The run was dropped when the timer won: Pane ended the
                 // helper's process.
-                Err(()) => Ok("Stopped the helper after one second".into()),
-            }
+                Err(()) => Ok("Stopped the helper after one second".into())}
         }
         "long" => {
             let answer = echo(&["--wait", "40"], "after a long wait").await?;
@@ -119,8 +118,7 @@ async fn outcome(item_id: &str) -> Result<String, String> {
         "undeclared" => helpers::run("absent".into(), Vec::new(), String::new())
             .await
             .map_err(explain),
-        other => Err(format!("unknown item: {other}")),
-    }
+        other => Err(format!("unknown item: {other}"))}
 }
 
 impl Command for HelperSample {
@@ -165,12 +163,4 @@ impl Command for HelperSample {
             ),
         ]))
     }
-
-    async fn submit_form(item_id: String, _values: Vec<FieldValue>) -> Result<String, FormError> {
-        Err(FormError {
-            field: None,
-            message: format!("unknown form: {item_id}"),
-        })
-    }
-
 }

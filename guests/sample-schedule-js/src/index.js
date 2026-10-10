@@ -129,11 +129,6 @@ export const command = {
     };
   },
 
-  async submitForm(itemId) {
-    // Any Error thrown from submitForm is a message about the whole form.
-    throw new Error(`The schedule sample has no forms: ${itemId}`);
-  },
-
   async openView(/** @type {string} */ commandId) {
     throw new Error(`The schedule sample opens no designed view: ${commandId}`);
   },

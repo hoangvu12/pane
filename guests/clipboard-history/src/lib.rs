@@ -23,14 +23,13 @@ use pane_extension::alloc::{
     format,
     string::{String, ToString},
     vec,
-    vec::Vec,
-};
+    vec::Vec};
 use pane_extension::clipboard_history::{self as history, Capture, Entry, HistoryStatus};
 use pane_extension::feedback::{Toast, ToastStyle, show_hud, show_toast};
 use pane_extension::system::{self, Clip, SystemError};
 use pane_extension::window::{PopToRootType, close};
 use pane_extension::{
-    Action, Command, FieldValue, FormError, Item, List,
+    Action, Command, Item, List,
 };
 
 struct ClipboardHistory;
@@ -77,12 +76,10 @@ fn recording(status: &HistoryStatus) -> Item {
                 "Paused · {} kept · Nothing you copy is kept until you resume",
                 plural(status.items, "item", "items")
             ),
-        ),
-    };
+        )};
     let subtitle = match &status.problem {
         Some(problem) => format!("{problem} · {subtitle}"),
-        None => subtitle,
-    };
+        None => subtitle};
     let id = String::from(id);
     item(&id, title.into(), subtitle).on_action(move || act(id))
 }
@@ -110,8 +107,7 @@ fn age(seconds: u64) -> String {
         60..3600 => format!("{} min ago", seconds / 60),
         3600..86400 => format!("{} h ago", seconds / 3600),
         _ if seconds < 2 * 86400 => "1 day ago".into(),
-        _ => format!("{} days ago", seconds / 86400),
-    }
+        _ => format!("{} days ago", seconds / 86400)}
 }
 
 fn entry_item(entry: &Entry) -> Item {
@@ -147,8 +143,7 @@ async fn paste(id: String, text: String) -> Result<(), String> {
             show_hud(PASTE_FALLBACK, ToastStyle::Success);
             Ok(())
         }
-        Err(SystemError::Failed(why)) => Err(why),
-    }
+        Err(SystemError::Failed(why)) => Err(why)}
 }
 
 /// Copy: puts the kept item `id` on the clipboard again, closes the window
@@ -183,8 +178,7 @@ async fn act(item_id: String) -> Result<(), String> {
             history::set_capture(Capture::On)?;
             "Recording resumed"
         }
-        _ => return Err(format!("unknown item: {item_id}")),
-    };
+        _ => return Err(format!("unknown item: {item_id}"))};
     show_toast(Toast::success(done.to_string()));
     Ok(())
 }
@@ -204,13 +198,6 @@ impl Command for ClipboardHistory {
     /// drawn before, whose item is gone now.
     async fn run_search_result(id: String) -> Result<(), String> {
         act(id).await
-    }
-
-    async fn submit_form(item_id: String, _values: Vec<FieldValue>) -> Result<String, FormError> {
-        Err(FormError {
-            field: None,
-            message: format!("unknown form: {item_id}"),
-        })
     }
 
 }
