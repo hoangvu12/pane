@@ -34,6 +34,7 @@ use core::pin::Pin;
 
 use alloc::boxed::Box;
 use alloc::collections::BTreeMap;
+use alloc::sync::Arc;
 use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
@@ -60,9 +61,10 @@ pub use registering::{Provision, RootItem, Timer, Watcher};
 /// failure toast.
 type Answer = Pin<Box<dyn Future<Output = Result<(), String>>>>;
 
-/// What an action runs, again and again while the item is registered:
-/// unlike a list item's, which runs once per drawing.
-type Run = Box<dyn Fn() -> Answer>;
+/// What an action runs, again and again while the item is registered,
+/// unlike a list item's, which runs once per drawing: shared, so the table
+/// can hand the same closure to each firing.
+type Run = Arc<dyn Fn() -> Answer>;
 
 /// The callbacks of the timers registered, by their tags.
 static TIMERS: Callbacks = Callbacks(RefCell::new(BTreeMap::new()));
@@ -78,8 +80,21 @@ static ITEMS: Callbacks = Callbacks(RefCell::new(BTreeMap::new()));
 /// Callbacks by id, kept while the registration that made them lives.
 struct Callbacks(RefCell<BTreeMap<String, Run>>);
 
-/// A watcher's callbacks by tag: what a change answers.
-struct Watchers(RefCell<BTreeMap<String, Box<dyn Fn(&WatcherChanges) -> Answer>>>);
+/// A watcher's callbacks by tag: what a change answers, shared as an
+/// action's is.
+struct Watchers(RefCell<BTreeMap<String, Arc<dyn Fn(&WatcherChanges) -> Answer>>>);
+
+impl Watchers {
+    /// Keeps `watch` under `tag`.
+    fn insert(&self, tag: String, watch: Arc<dyn Fn(&WatcherChanges) -> Answer>) {
+        self.0.borrow_mut().insert(tag, watch);
+    }
+
+    /// The callback `tag` names, run for each of the watcher's events.
+    fn of(&self, tag: &str) -> Option<Arc<dyn Fn(&WatcherChanges) -> Answer>> {
+        self.0.borrow().get(tag).cloned()
+    }
+}
 
 // SAFETY: a component's code runs on one thread, and no borrow of the
 // maps is held across an `await`.
@@ -122,7 +137,7 @@ impl events_exported::Guest for Events {
             }
             Event::Watcher(watched) => {
                 let tag = watched.tag;
-                let watch = WATCHERS.0.borrow().get(&tag).cloned().ok_or_else(|| {
+                let watch = WATCHERS.of(&tag).ok_or_else(|| {
                     format!("this watcher's tag “{tag}” was not registered by this component")
                 })?;
                 watch(&watched.changes).await
@@ -188,7 +203,7 @@ where
     let tag = tag("watcher");
     WATCHERS.insert(
         tag.clone(),
-        Box::new(move |changes: &WatcherChanges| {
+        Arc::new(move |changes: &WatcherChanges| {
             let change = match changes {
                 WatcherChanges::Paths(paths) => Change::Paths(paths.clone()),
                 WatcherChanges::Rescan => Change::Rescan,
@@ -230,11 +245,12 @@ where
 }
 
 impl RootItem {
-    /// Replaces the item this handle owns: the row shows what `item`
-    /// says, keeping its id.
-    pub fn update(&self, item: Item) -> Result<(), String> {
+    /// Replaces the item this handle owns with `item`: the row shows what
+    /// the new item says, keeping its id. (The bindings' own `update`
+    /// takes the item's JSON; this takes the item.)
+    pub fn replace(&self, item: Item) -> Result<(), String> {
         let (json, _) = item.written();
-        registering::root_item_update(self, &json)
+        self.update(&json)
     }
 }
 
@@ -249,7 +265,7 @@ impl Item {
         string(&mut tree, &self.title);
         if let Some(subtitle) = &self.subtitle {
             tree.push_str(",\"subtitle\":");
-            string(tree, subtitle);
+            string(&mut tree, subtitle);
         }
         if !self.actions.is_empty() {
             tree.push_str(",\"actions\":");

@@ -148,7 +148,7 @@ fn counted_item() -> Item {
 /// Replaces the registered item with `item`.
 fn update(item: Item) -> Result<(), String> {
     match ITEM.0.borrow().as_ref() {
-        Some(handle) => handle.update(item),
+        Some(handle) => handle.replace(item),
         None => Err("the item was not registered".into()),
     }
 }
@@ -203,7 +203,9 @@ impl Command for Registrations {
                     "Sign in to the provision"
                 },
             )
-            .subtitle("Provides pane-samples:greet@1 while held; the capabilities sample answers from it")
+            .subtitle(
+                "Provides pane-samples:greet@1 while held; the capabilities sample answers from it",
+            )
             .on_action(|| async {
                 if PROVISION.0.borrow().is_some() {
                     PROVISION.set(None);

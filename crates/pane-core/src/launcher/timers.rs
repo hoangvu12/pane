@@ -25,7 +25,7 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::{Arc, Weak};
+use std::sync::{Arc, Mutex, MutexGuard, Weak};
 use std::time::Duration;
 
 use super::schedules::Wake;
@@ -48,9 +48,6 @@ pub(super) struct Timers {
     state: Mutex<Timing>,
     wake: Arc<Wake>,
 }
-
-use std::sync::Mutex;
-use std::sync::MutexGuard;
 
 /// What the timers thread keeps: the clock it follows and one entry per
 /// timer still held.

@@ -697,14 +697,18 @@ impl Launcher {
         // as the hotkey screen's rows and the Shortcuts catalog's decide. A
         // catalog the page has not redrawn can still ask after the packages
         // changed, so the rule is here too.
-        match offered(&state.packages)
+        let offered = offered(&state.packages)
             .into_iter()
-            .find(|(offered, _)| offered.id == command)
-        {
+            .find(|(offered, _)| offered.id == command);
+        // A dynamic command a package registered at run time (#158) is
+        // offered while its item is registered.
+        let dynamic = offered.is_none() && offered_dynamic(state).contains(&command.to_owned());
+        match offered {
             Some((_, None)) => {}
             Some((_, Some(why))) => {
                 return Err(format!("A hotkey cannot be recorded for {title}: {why}"));
             }
+            None if dynamic => {}
             None => {
                 return Err(format!(
                     "A hotkey cannot be recorded for {title}: its extension is not enabled here"

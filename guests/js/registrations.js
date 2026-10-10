@@ -82,12 +82,24 @@ function wired(item) {
 
 /**
  * Registers a dynamic root item under the command with manifest id
- * `command`, from `item`. @see registrations.d.ts
+ * `command`, from `item`. The handle the host returns is wrapped, so
+ * `update` takes an item and `dispose` undoes the registration (the
+ * underlying resource is `pane:extension/registrations@0.1.0`'s
+ * `RootItem`).
  * @param {string} command
  * @param {import("./registrations.d.ts").Item} item
+ * @returns {import("./registrations.d.ts").RootItem}
  */
 function rootItem(command, item) {
-  return registrations.addRootItem(command, wired(item));
+  const handle = registrations.addRootItem(command, wired(item));
+  const drop = () => handle.drop();
+  return {
+    update(next) {
+      handle.update(wired(next));
+    },
+    dispose: drop,
+    [Symbol.dispose]: drop,
+  };
 }
 
 /**

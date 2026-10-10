@@ -2815,6 +2815,9 @@ impl Launcher {
                 opening: Opening { component, .. },
                 ..
             }) => Some(component),
+            // A dynamic root item's action is a call into the package's
+            // component (#158), with its generation as of now.
+            Pending::DynamicAction(action) => Some(&action.component),
             Pending::Run(_) | Pending::CustomView(..) => open.as_ref(),
             _ => None,
         };

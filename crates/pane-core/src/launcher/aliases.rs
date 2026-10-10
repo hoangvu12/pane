@@ -443,14 +443,24 @@ impl Launcher {
                 if super::dynamic::pinned_by_id(state, id).is_some() {
                     continue;
                 }
+                // The command's title names what no longer lists it,
+                // as a missing indexed result's does.
                 let title = owner
                     .map(|owner| {
+                        let manifest = split(command).1;
+                        let manifest = manifest.split(':').next().unwrap_or(manifest);
+                        let command = owner
+                            .commands()
+                            .into_iter()
+                            .find(|offered| offered.manifest_id() == manifest)
+                            .map(|offered| offered.title)
+                            .unwrap_or_else(|| owner.title());
                         if !owner.enabled {
                             format!("{} is disabled", owner.title())
                         } else if state.paused.is_paused(&owner.identity) {
                             paused_reason(&owner.title())
                         } else {
-                            format!("{} no longer lists it", owner.title())
+                            format!("{command} no longer lists it")
                         }
                     })
                     .unwrap_or_else(|| "its extension is not installed".to_owned());

@@ -101,7 +101,13 @@ async fn act(item_id: &str) -> Result<(), String> {
 /// What the action of the item `item_id` does, answering what it did or
 /// the refusal it met: the refusals are the edges the tests assert.
 fn outcome(item_id: &str) -> Result<String, String> {
-    let count = |name: &str| settings::get(name).ok().flatten().and_then(|many| many.parse().ok()).unwrap_or(0);
+    let count = |name: &str| {
+        settings::get(name)
+            .ok()
+            .flatten()
+            .and_then(|many| many.parse().ok())
+            .unwrap_or(0)
+    };
     match item_id {
         "held" => {
             let item = registrations::root_item(COMMAND, held_item("held"))?;
@@ -111,7 +117,7 @@ fn outcome(item_id: &str) -> Result<String, String> {
         "update" => {
             let item = held_item("replaced");
             match HELD.0.borrow().as_ref() {
-                Some(handle) => handle.update(item).map(|()| "Updated the held item".into()),
+                Some(handle) => handle.replace(item).map(|()| "Updated the held item".into()),
                 None => Err("no item is held".into()),
             }
         }
