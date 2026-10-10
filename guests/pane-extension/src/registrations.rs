@@ -524,19 +524,17 @@ pub(crate) async fn run_item_action(callback: &str) -> Result<bool, String> {
 /// Exports the events entry point ([`Events`]), as the timers and
 /// watchers registered are delivered to. Beside
 /// [`pane_extension::export!`](crate::export!) the command's own export
-/// is:
+/// is, importing the entry point beside:
 ///
 /// ```ignore
 /// pane_extension::export!(Registrations);
-/// pane_extension::registrations::export_events!();
+/// use pane_extension::registrations::Events;
+/// pane_extension::registrations::export_events!(Events);
 /// ```
 #[macro_export]
 macro_rules! export_events {
-    () => {
-        // The generated `export!` takes the type's identifier, so the
-        // entry point is aliased into the caller's scope first.
-        use $crate::registrations::Events as PaneEvents;
-        $crate::registrations::export!(PaneEvents);
+    ($ty:ident) => {
+        $crate::registrations::export!($ty);
     };
 }
 

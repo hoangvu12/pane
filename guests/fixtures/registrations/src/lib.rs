@@ -27,7 +27,7 @@ use core::cell::RefCell;
 
 use pane_extension::alloc::{format, string::String, string::ToString};
 use pane_extension::feedback::{Toast, show_toast};
-use pane_extension::registrations::{self, Change, Item};
+use pane_extension::registrations::{self, Change, Events, Item};
 use pane_extension::{Command, List, NoCustomView, content, publish, settings};
 
 /// The command's id in the pane.json the test writes.
@@ -61,7 +61,7 @@ unsafe impl Sync for Held {}
 struct Fixture;
 pane_extension::export!(Fixture);
 pane_extension::publish::export!(Fixture);
-pane_extension::registrations::export_events!();
+pane_extension::registrations::export_events!(Events);
 pane_extension::lifecycle::export!(Fixture);
 
 impl pane_extension::lifecycle::Guest for Fixture {

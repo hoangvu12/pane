@@ -2153,7 +2153,8 @@ due while one is pending, or while the package
 [waits](../docs/dependencies.md#waiting-for-a-required-dependency) for
 what it needs, are coalesced into one. A component that registers timers
 or watchers exports the events entry point (`pane_extension::
-registrations::export_events!` in Rust, `"pane": { "events": true }` and
+registrations::export_events!(Events)` in Rust (importing
+`pane_extension::registrations::Events` beside it), `"pane": { "events": true }` and
 `export const events = { handleEvent: registrations.handleEvent }` in
 JavaScript and TypeScript) — the SDK keeps the callback table, as for
 actions.

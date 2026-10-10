@@ -2876,8 +2876,8 @@ impl GuestState {
         Err(format!(
             "this component does not export {EVENTS_INTERFACE}, which timer firings and \
              folder watcher changes are delivered to; export it beside `command` \
-             (pane_extension::registrations::export_events! in Rust, \"pane\": {{ \"events\": \
-             true }} in a JS/TS package.json)"
+             (pane_extension::registrations::export_events!(Events) in Rust, \"pane\": {{ \
+             \"events\": true }} in a JS/TS package.json)"
         ))
     }
 }
