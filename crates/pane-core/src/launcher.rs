@@ -199,7 +199,7 @@ impl CommandRegistration {
 }
 
 /// Which screen the launcher shows, with what only that screen has.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Screen {
     /// Root search: the root results matching `query`, the text typed into
     /// it, best match first, or every root result when it is empty.
@@ -484,7 +484,7 @@ pub struct FormField {
 /// The designed view on screen, as the window draws it (`Screen::DesignedView`,
 /// ADR 0036): the tree its extension described, typed, so the window never
 /// meets the JSON the extension answered with.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct DesignedViewSnapshot {
     /// Which opened view this is: a view opened again has another id.
     pub id: ViewId,
@@ -498,7 +498,7 @@ pub struct DesignedViewSnapshot {
 }
 
 /// A snapshot of what the launcher shows.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct LauncherView {
     pub screen: Screen,
     pub title: String,

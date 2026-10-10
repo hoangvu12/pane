@@ -98,7 +98,7 @@ pub const MAX_PX: f32 = 4096.;
  * A designed view's tree: its root node. The version it named is checked
  * while reading; a tree that was read is of a version Pane renders.
  */
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct DesignedTree {
     pub root: Node,
 }
@@ -225,7 +225,7 @@ impl Node {
 /// itself. A focusable node may ask for the keyboard (`focus`) and name
 /// handlers for the events Pane raises on it (`on-focus`, `on-blur`,
 /// `on-key`).
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Node {
     pub kind: NodeKind,
     /// The sizing and surface every node may carry, with their `hover` and
@@ -266,7 +266,7 @@ pub struct Node {
 }
 
 /// What a node is.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum NodeKind {
     Column(Layout),
     Row(Layout),
