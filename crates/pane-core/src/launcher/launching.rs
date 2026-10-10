@@ -37,6 +37,7 @@
 //! it answers).
 
 use std::sync::{Condvar, Mutex, MutexGuard};
+use std::time::Instant;
 
 use super::{Launcher, Opening, Screen, State, Status, argument_form, owner, stopped};
 use crate::arguments;
@@ -142,7 +143,9 @@ impl Launcher {
     /// was launched from stays typed.
     pub(super) fn begin_run(state: &mut State) {
         state.sent_from = state.view.query().map(str::to_owned);
-        state.view.status = Status::Running;
+        state.view.status = Status::Running {
+            since: Instant::now(),
+        };
     }
 
     /// Runs the no-view command of `opening` (`run`) with its launch
@@ -159,6 +162,7 @@ impl Launcher {
         let Opening {
             component,
             command,
+            search,
             launch,
             ..
         } = opening;
@@ -188,6 +192,32 @@ impl Launcher {
         // for it again.
         state.indexes.stale();
         let ended = stopped(state, &component, &data);
+        // A developed package's crash, or error its command answered with,
+        // shows as the error overlay (see `error_overlay`) over whatever
+        // the launcher is showing, in place of the status line and the
+        // failure toast: a no-view command has no view of its own to cover.
+        if let Err(error) = &result
+            && !background
+            && state.screen_epoch == epoch
+            && ended.is_none()
+            && self.show_error_overlay(
+                state,
+                &component,
+                error,
+                super::Opening {
+                    component: component.clone(),
+                    command: command.clone(),
+                    search,
+                    no_view: true,
+                    launch: launch.clone(),
+                    initial_search: None,
+                },
+            )
+        {
+            drop(guard);
+            self.changed();
+            return;
+        }
         // A toast is not about a screen: an error the command answered with
         // is shown wherever the user is now, unless it ran in the
         // background.
@@ -366,7 +396,9 @@ impl Launcher {
                 // As its hotkey opens it: whatever Pane shows makes way,
                 // and the window is shown for it.
                 self.show_root(state, Some(opening.component.clone()));
-                state.view.status = Status::Running;
+                state.view.status = Status::Running {
+                    since: Instant::now(),
+                };
                 state.window_wanted = true;
             }
         }

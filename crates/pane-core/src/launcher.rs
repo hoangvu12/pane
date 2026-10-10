@@ -34,6 +34,7 @@ use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::{Arc, Mutex, MutexGuard};
+use std::time::Instant;
 
 mod acquire;
 mod actions;
@@ -48,6 +49,7 @@ pub mod clipboard_view;
 mod command_search;
 mod confirmations;
 mod crash_notice;
+mod create;
 mod feedback;
 mod hotkeys;
 mod icon_loads;
@@ -91,6 +93,7 @@ use crate::search::{self, Keys, Query};
 
 mod dependents;
 mod developing;
+mod error_overlay;
 mod extensions;
 mod file_search;
 mod files;
@@ -119,9 +122,12 @@ pub use application_update::ApplicationUpdate;
 use application_update::{Application, Updates};
 use choices::Record;
 pub use crash_notice::{LogNotice, UNEXPECTED_QUIT};
+pub use create::FolderAsk;
+use create::{CREATE_EXTENSION, IMPORT_EXTENSION};
 use developing::Developing;
 pub use developing::{BuildFailure, Development};
 pub(crate) use developing::{BuildNow, Remote};
+use error_overlay::Shown;
 pub use extensions::{ExtensionMark, ExtensionOperation, OperationKind};
 pub use hotkeys::HotkeyOutcome;
 use hotkeys::{Bindings, Game, OpenPane};
@@ -239,6 +245,16 @@ pub enum Screen {
     /// Why Pane paused an installed package, as lines of information under
     /// the title, with a row that retries it.
     PauseDetails {
+        identity: PackageIdentity,
+        details: Vec<String>,
+    },
+    /// The error overlay of a developed package's command that crashed,
+    /// trapped, threw or failed to start (see `error_overlay`): the message
+    /// and the stack trace as lines of information under the title, with
+    /// rows that open the package's Logs screen, copy the message and
+    /// trace, and run the command again. Shown over what the launcher was
+    /// showing, which [`State::error_overlay`] holds for Back to put back.
+    Crash {
         identity: PackageIdentity,
         details: Vec<String>,
     },
@@ -419,8 +435,14 @@ impl Unavailable {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Status {
     Idle,
-    /// An extension call or package operation is in progress.
-    Running,
+    /// Work the user is waiting for has begun: an invoked action or a
+    /// command call, or an opened command's search. `since` is when it
+    /// began, the core's own clock — what [`Launcher::pending_since`]
+    /// answers, so the window can hold its late loading bar back until
+    /// the work has outlasted a moment (#248).
+    Running {
+        since: Instant,
+    },
     /// Work Pane does in the background is in progress, saying what, such
     /// as building a package being developed.
     Progress(String),
@@ -560,6 +582,7 @@ impl LauncherView {
             | Screen::Extensions { details }
             | Screen::Confirm { details, .. }
             | Screen::PauseDetails { details, .. }
+            | Screen::Crash { details, .. }
             | Screen::NetworkDetails { details, .. }
             | Screen::ProgramDetails { details, .. }
             | Screen::BuildDetails { details, .. }
@@ -746,6 +769,13 @@ struct State {
     /// dropping it, when the query changes or root search is left, cancels
     /// those still pending (see [`State::next_screen`]).
     search_alive: Option<tokio::sync::oneshot::Sender<()>>,
+    /// Root search waiting on its providers for the current query, since
+    /// when: asked something for the query and not answered yet. This is
+    /// work the user waits for, like [`Status::Running`] is, so the
+    /// window's loading bar shows for it too (#248; see
+    /// [`Launcher::pending_since`]). `None` while the query is blank,
+    /// every provider has answered, or root search is not on screen.
+    root_search_since: Option<Instant>,
     /// The folders granted to packages and their listings, shared with the
     /// runtime; `None` without a runtime.
     files: Option<FileAccess>,
@@ -893,9 +923,17 @@ struct State {
     /// as last noted: their rows in root search say "Needs setup" (see
     /// `setup`).
     setup_needed: HashSet<String>,
+    /// The error overlay on show (see `error_overlay`): the covered view
+    /// and its rows, put back when it leaves.
+    error_overlay: Option<Shown>,
     /// What this start forgot because its command is a root provider (see
     /// `providers`), for the toast naming it.
     provider_forgotten: providers::Forgotten,
+    /// The package whose install preview is shown for Create Extension or
+    /// Import Extension (see `create`), which Pane develops once it is
+    /// installed: the author confirming the preview. Leaving the preview
+    /// drops it, so not installing the package is the author's answer.
+    develop_after: Option<PackageIdentity>,
 }
 
 /// What is happening to a package, which stops another change to it
@@ -1012,6 +1050,7 @@ impl State {
     fn next_screen(&mut self) {
         self.screen_epoch += 1;
         self.search_alive = None;
+        self.root_search_since = None;
         // A submenu belongs to the screen it opened on; an answer still on
         // its way finds it gone.
         self.submenus.close_all();
@@ -1056,6 +1095,10 @@ enum FormPurpose {
     Npm,
     /// Previews the Git repository it names (Pane's own).
     Git,
+    /// Writes the new package the form names into this parent folder,
+    /// builds it once and previews it for installing, which Pane develops
+    /// once installed (Pane's own Create Extension; see `create`).
+    Create(PathBuf),
     /// Saves the preferences the Setup screen asks for, then launches the
     /// command it held back (Pane's own; see `setup`).
     Setup(Box<setup::SetupGate>),
@@ -1181,6 +1224,14 @@ enum Entry {
     AskNpm,
     /// Ask which Git repository to install from (root).
     AskGit,
+    /// Nothing in the launcher: the window asks for the parent folder a
+    /// new package is written into, then shows the Create Extension form
+    /// (root; see `create`).
+    CreateExtension,
+    /// Nothing in the launcher: the window asks for the folder of a
+    /// package that already exists, whose install preview Pane then
+    /// shows and develops once installed (root; see `create`).
+    ImportExtension,
     /// Acquire this default extension again, after Pane could not (root).
     Acquire(String),
     /// Install the offered Pane application update, which the user chose
@@ -1264,6 +1315,15 @@ enum Entry {
     /// Show the extension log of this developed package (extension list,
     /// build details).
     ExtensionLog(PackageIdentity),
+    /// Show the extension log of the developed package whose error overlay
+    /// is on display, leaving the overlay for it (error overlay).
+    CrashLogs(PackageIdentity),
+    /// Copy the message and stack trace the error overlay shows (error
+    /// overlay); the window writes the clipboard.
+    CrashCopy,
+    /// Run the failed command again, or start the failed package again
+    /// (error overlay).
+    CrashRetry,
     /// Show the update results of the latest pass that recorded (the
     /// extension list, the failure toast's View Details).
     UpdateResults,
@@ -1526,6 +1586,7 @@ impl Launcher {
             indexes: indexed::Indexes::default(),
             search_epoch: 0,
             search_alive: None,
+            root_search_since: None,
             files: runtime.as_ref().ok().map(Runtime::file_access),
             open: None,
             launch: LaunchRecord::default(),
@@ -1575,7 +1636,9 @@ impl Launcher {
             confirmations,
             confirmation_saves: Arc::default(),
             setup_needed: HashSet::new(),
+            error_overlay: None,
             provider_forgotten: providers::Forgotten::default(),
+            develop_after: None,
         };
         if let (Some(installation), Some(files)) = (&installation, &state.files) {
             files.open_record(&installation.dir);
@@ -1959,6 +2022,23 @@ impl Launcher {
         self.lock().view.status.clone()
     }
 
+    /// When work the user is waiting for began, if any is pending: an
+    /// invoked action or command call or an opened command's search (the
+    /// status running, `since` when it began), or root search waiting on
+    /// its providers for the current query. The window's loading bar and
+    /// its busy announcement measure from this (#248), so the work a
+    /// moment's wait outruns shows nothing; `None` when no such work is
+    /// pending. Work Pane describes in words in the footer (the
+    /// [`Status::Progress`] it keeps) is not waited-for and is not named
+    /// here.
+    pub fn pending_since(&self) -> Option<Instant> {
+        let state = self.lock();
+        match &state.view.status {
+            Status::Running { since } => Some(*since),
+            _ => state.root_search_since,
+        }
+    }
+
     /// The installed packages, as read from their managed copies.
     pub fn packages(&self) -> Vec<InstalledPackage> {
         self.lock().packages.clone()
@@ -2114,6 +2194,10 @@ impl Launcher {
         let mut state = self.lock();
         let in_command = match &state.view.screen {
             Screen::CommandSearch { query: current } if current != query => {
+                // The command's search has taken the field: root search is
+                // not waiting on anything (#248; its own wait is the
+                // status running, `command_search` stamps it).
+                state.root_search_since = None;
                 self.search_in_command(&mut state, query)
             }
             _ => None,
@@ -2126,19 +2210,22 @@ impl Launcher {
         {
             self.search_update_results(&mut state, query);
         }
-        let (asked, indexing, cancelled) = match &state.view.screen {
+        let (asked, indexing, cancelled, searched) = match &state.view.screen {
             Screen::Root { query: current } if current != query => {
                 let cancelled = self.search(&mut state, query);
                 let indexing = self.ask_for_indexed_results(&mut state, query);
-                (
-                    self.ask_for_root_results(&state, query),
-                    indexing,
-                    Some(cancelled),
-                )
+                let asked = self.ask_for_root_results(&state, query);
+                // Root search is waiting on its providers for this query
+                // (#248): the computed results asked of them, or the
+                // indexed ones this search still owes. A blank query asks
+                // nothing and waits on nothing.
+                state.root_search_since =
+                    (!asked.is_empty() || !indexing.is_empty()).then(Instant::now);
+                (asked, indexing, Some(cancelled), true)
             }
             // Searching the same query again changes nothing, not even the
             // selection.
-            _ => (Vec::new(), Vec::new(), None),
+            _ => (Vec::new(), Vec::new(), None, false),
         };
         let query = query.to_owned();
         let epoch = state.screen_epoch;
@@ -2151,6 +2238,12 @@ impl Launcher {
             }
             let Some(mut cancelled) = cancelled.filter(|_| !asked.is_empty()) else {
                 launcher.show_indexed_results(indexing).await;
+                // Asked no computed results, so the indexed ones were the
+                // whole wait and it is over. A same-again search dispatched
+                // nothing and waits as it did.
+                if searched {
+                    launcher.search_ended(search);
+                }
                 return;
             };
             let listing = launcher
@@ -2170,6 +2263,20 @@ impl Launcher {
                     return;
                 }
             }
+            // Every provider the query was asked of has answered, so the
+            // wait is over (a search replaced meanwhile stamps its own).
+            launcher.search_ended(search);
+        }
+    }
+
+    /// Notes that the search numbered `search` has all its results, so
+    /// root search waits on its providers no longer (#248). A newer
+    /// search (or leaving root search) has stamped or cleared the wait of
+    /// its own, so nothing is done for it here.
+    fn search_ended(&self, search: u64) {
+        let mut state = self.lock();
+        if state.search_epoch == search {
+            state.root_search_since = None;
         }
     }
 
@@ -2335,6 +2442,10 @@ impl Launcher {
         // Dropping the earlier search's cancels its pending calls.
         state.search_alive = Some(alive);
         state.computed.clear();
+        // The earlier query's wait is over: a blank query (Escape, or
+        // backing out) waits on nothing, and a new one stamps its own
+        // wait once it is asked of a provider (#248).
+        state.root_search_since = None;
         // A command's answer to the query sent is not an answer to this one.
         if state.sent_from.take().is_some_and(|sent| sent != query) {
             state.view.status = Status::Idle;
@@ -2545,6 +2656,9 @@ impl Launcher {
             .and_then(|index| state.entries.get(index));
         match entry {
             Some(Entry::Copy(text)) => Some(text.clone()),
+            // The error overlay's copy: the message and the trace, the
+            // lines its screen shows.
+            Some(Entry::CrashCopy) => Some(state.view.details().join("\n")),
             _ => None,
         }
     }
@@ -2559,6 +2673,25 @@ impl Launcher {
             .selected
             .and_then(|index| state.entries.get(index));
         matches!(entry, Some(Entry::InstallFromFolder))
+    }
+
+    /// Which of Pane's own authoring rows is selected, whose activation
+    /// the window completes by asking for a folder before the launcher
+    /// acts (#222): Create Extension's parent folder, or Import
+    /// Extension's package folder. `None` for every other row; the
+    /// window calls [`Launcher::show_create_form`] or
+    /// [`Launcher::import_extension`] with the folder it picks.
+    pub fn selected_folder_ask(&self) -> Option<FolderAsk> {
+        let state = self.lock();
+        let entry = state
+            .view
+            .selected
+            .and_then(|index| state.entries.get(index));
+        match entry {
+            Some(Entry::CreateExtension) => Some(FolderAsk::Create),
+            Some(Entry::ImportExtension) => Some(FolderAsk::Import),
+            _ => None,
+        }
     }
 
     /// Whether the selected row opens Pane's Settings window. Activating
@@ -2642,6 +2775,9 @@ impl Launcher {
                     |entry| matches!(entry, Entry::PauseDetails(shown) if *shown == identity),
                 );
             }
+            // The error overlay leaves for what it covered; the command it
+            // was about stays open underneath, as it was.
+            Screen::Crash { .. } => self.leave_error_overlay(&mut state),
             Screen::NetworkDetails { identity, .. } => {
                 let identity = identity.clone();
                 self.show_extensions_at(
@@ -2684,10 +2820,17 @@ impl Launcher {
             Screen::CommandSearch { query } if !query.is_empty() => {
                 self.clear_search_in_command(&mut state);
             }
-            Screen::Command
-            | Screen::CommandSearch { .. }
-            | Screen::Package { .. }
-            | Screen::Extensions { .. } => self.show_root(&mut state, None),
+            Screen::Command | Screen::CommandSearch { .. } | Screen::Extensions { .. } => {
+                self.show_root(&mut state, None)
+            }
+            // Leaving an install preview drops what Create Extension or
+            // Import Extension asked Pane to do once the package was
+            // installed (see `create`): not installing it is the author's
+            // answer.
+            Screen::Package { .. } => {
+                state.develop_after = None;
+                self.show_root(&mut state, None);
+            }
             Screen::Root { query } => {
                 if !query.is_empty() {
                     self.search(&mut state, "");
@@ -2837,7 +2980,9 @@ impl Launcher {
                 }
                 None => {
                     state.sent_from = state.view.query().map(str::to_owned);
-                    state.view.status = Status::Running;
+                    state.view.status = Status::Running {
+                        since: Instant::now(),
+                    };
                     Pending::Send(sending)
                 }
             },
@@ -2856,7 +3001,9 @@ impl Launcher {
             // Any scheme, as Raycast opens it (ADR 0037): the extension is
             // trusted, and a filter here would protect nothing.
             Entry::OpenUrl(url) => {
-                state.view.status = Status::Running;
+                state.view.status = Status::Running {
+                    since: Instant::now(),
+                };
                 Pending::OpenUrl(url)
             }
             Entry::StopSharingFolder(identity) => Pending::StopSharing(identity),
@@ -2922,15 +3069,19 @@ impl Launcher {
                 self.show_extension_log(state, &identity);
                 Pending::Nothing
             }
+            Entry::CrashLogs(identity) => {
+                self.open_crash_logs(state, &identity);
+                Pending::Nothing
+            }
+            Entry::CrashCopy => {
+                state.view.status = Status::Result("Copied the message and trace".into());
+                Pending::Nothing
+            }
+            Entry::CrashRetry => self.retry_crash(state),
             Entry::UpdateResults => {
                 self.show_update_results(state);
                 Pending::Nothing
             }
-            // The window acts on these, not the launcher.
-            Entry::ShowExtension(_)
-            | Entry::InstallFromFolder
-            | Entry::ChooseFolder(_)
-            | Entry::Settings => Pending::Nothing,
             Entry::AskUninstall(identity) => {
                 let closure = dependencies::required_dependents(&state.packages, &identity);
                 if closure.is_empty() {
@@ -3006,23 +3157,33 @@ impl Launcher {
                 .begin_install(state, request, mode, assumptions)
                 .map_or(Pending::Nothing, Pending::Install),
             Entry::Acquire(id) => {
-                state.view.status = Status::Running;
+                state.view.status = Status::Running {
+                    since: Instant::now(),
+                };
                 Pending::Acquire(id)
             }
             Entry::InstallUpdate => {
-                state.view.status = Status::Running;
+                state.view.status = Status::Running {
+                    since: Instant::now(),
+                };
                 Pending::InstallUpdate
             }
             Entry::CheckUpdate => {
-                state.view.status = Status::Running;
+                state.view.status = Status::Running {
+                    since: Instant::now(),
+                };
                 Pending::CheckUpdate
             }
             Entry::CheckExtensionUpdates => {
-                state.view.status = Status::Running;
+                state.view.status = Status::Running {
+                    since: Instant::now(),
+                };
                 Pending::CheckExtensionUpdates
             }
             Entry::OpenLogFolder => {
-                state.view.status = Status::Running;
+                state.view.status = Status::Running {
+                    since: Instant::now(),
+                };
                 Pending::OpenLogFolder
             }
             Entry::AskNpm => {
@@ -3033,21 +3194,34 @@ impl Launcher {
                 self.show_git_form(state);
                 Pending::Nothing
             }
+            // The window acts on these, not the launcher.
+            Entry::InstallFromFolder
+            | Entry::ChooseFolder(_)
+            | Entry::Settings
+            | Entry::ShowExtension(_)
+            | Entry::CreateExtension
+            | Entry::ImportExtension => Pending::Nothing,
             Entry::Open(opening) => {
                 if opening.no_view {
                     Launcher::begin_run(state);
                 } else {
-                    state.view.status = Status::Running;
+                    state.view.status = Status::Running {
+                        since: Instant::now(),
+                    };
                 }
                 Pending::Open(opening)
             }
             Entry::Run(callback) => {
-                state.view.status = Status::Running;
+                state.view.status = Status::Running {
+                    since: Instant::now(),
+                };
                 Pending::Run(callback)
             }
             Entry::Actions(listed) => match listed.actions[0].callback() {
                 Some(callback) => {
-                    state.view.status = Status::Running;
+                    state.view.status = Status::Running {
+                        since: Instant::now(),
+                    };
                     Pending::Run(callback.to_owned())
                 }
                 // A primary action that opens a submenu (#140): the window
@@ -3059,11 +3233,15 @@ impl Launcher {
                 Pending::Nothing
             }
             Entry::CustomView(item_id, info) => {
-                state.view.status = Status::Running;
+                state.view.status = Status::Running {
+                    since: Instant::now(),
+                };
                 Pending::CustomView(item_id, info)
             }
             Entry::OpenApplication { id, name } => {
-                state.view.status = Status::Running;
+                state.view.status = Status::Running {
+                    since: Instant::now(),
+                };
                 Pending::OpenApplication { id, name }
             }
             Entry::OpenTarget {
@@ -3071,7 +3249,9 @@ impl Launcher {
                 application,
                 name,
             } => {
-                state.view.status = Status::Running;
+                state.view.status = Status::Running {
+                    since: Instant::now(),
+                };
                 Pending::OpenTarget {
                     target,
                     application,
@@ -3086,7 +3266,9 @@ impl Launcher {
                 Pending::Own(work)
             }
             Entry::ClearCache(identity) => {
-                state.view.status = Status::Running;
+                state.view.status = Status::Running {
+                    since: Instant::now(),
+                };
                 Pending::ClearCache(identity)
             }
         }
@@ -3160,7 +3342,9 @@ impl Launcher {
         for identity in &identities {
             self.apply_enabled(state, identity, enabled);
         }
-        state.view.status = Status::Running;
+        state.view.status = Status::Running {
+            since: Instant::now(),
+        };
         Some(Change {
             identities,
             enabled,
@@ -3261,7 +3445,9 @@ impl Launcher {
 
     fn start_running(&self) -> u64 {
         let mut state = self.lock();
-        state.view.status = Status::Running;
+        state.view.status = Status::Running {
+            since: Instant::now(),
+        };
         state.screen_epoch
     }
 
@@ -3502,6 +3688,10 @@ impl Launcher {
             | Screen::CustomView(_)
             | Screen::Confirm { .. }
             | Screen::Hotkey { .. } => {}
+            // The error overlay covers the screen it stands over: what it
+            // was about does not change underneath it. A new development
+            // event of the package ends it (see `show_development`).
+            Screen::Crash { .. } => {}
             // Its lines stay, also once development ended: the window reads
             // them as they are.
             Screen::ExtensionLog { .. } => {}
@@ -3697,6 +3887,24 @@ impl Launcher {
                 unavailable: None,
             };
             add(row, Entry::AskGit, None, None);
+            // The authoring rows (ADR 0047, #222): an author starts in the
+            // app, writing a new package or importing one that exists;
+            // both hand the folder to the install preview the author
+            // confirms, and Pane develops the package once it is installed.
+            let row = Row {
+                id: CREATE_EXTENSION.into(),
+                title: "Create Extension…".into(),
+                subtitle: Some("Write a new extension package from a template".into()),
+                unavailable: None,
+            };
+            add(row, Entry::CreateExtension, None, None);
+            let row = Row {
+                id: IMPORT_EXTENSION.into(),
+                title: "Import Extension…".into(),
+                subtitle: Some("Develop an extension package that already exists".into()),
+                unavailable: None,
+            };
+            add(row, Entry::ImportExtension, None, None);
         }
         // A default extension Pane could not acquire can be tried again;
         // the row is gone while one is being acquired, or once it is
@@ -3828,12 +4036,18 @@ impl Launcher {
                 ),
             ) => {
                 open.submitting = true;
-                state.view.status = Status::Running;
+                state.view.status = Status::Running {
+                    since: Instant::now(),
+                };
                 let git = matches!(open.purpose, FormPurpose::Git);
                 form.fields.first().map(|field| (git, field.value.clone()))
             }
             _ => None,
         };
+        // Pane's own Create Extension form: the package is written from
+        // the templates, built once and handed to the install preview the
+        // author confirms, after which Pane develops it (see `create`).
+        let creation = Launcher::begun_creation(state);
         let submission = match (&state.view.screen, &mut state.form, &state.open) {
             (
                 Screen::Form(form),
@@ -3864,7 +4078,9 @@ impl Launcher {
             _ => None,
         };
         if submission.is_some() {
-            state.view.status = Status::Running;
+            state.view.status = Status::Running {
+                since: Instant::now(),
+            };
         }
         let epoch = state.screen_epoch;
         let data = submission
@@ -3885,6 +4101,9 @@ impl Launcher {
                 Some((false, spec)) => launcher.preview_npm(&spec).await,
                 Some((true, spec)) => launcher.preview_git(&spec).await,
                 None => {}
+            }
+            if let Some(creation) = creation {
+                launcher.finish_creation(epoch, creation).await;
             }
             if let Some((component, item_id, values)) = submission {
                 launcher
@@ -4177,7 +4396,20 @@ impl Launcher {
                 });
                 state.next_screen();
             }
-            Err(error) => state.view.status = Status::Error(error.to_string()),
+            Err(error) => {
+                // A developed package's crash, or error its command answered
+                // with, while the custom view opens shows as the error
+                // overlay (see `error_overlay`), in place of the status
+                // line; every other case, including a command whose
+                // package Pane does not know (its own registered
+                // commands), keeps the status line.
+                let shown = Launcher::open_again(&state, &component).is_some_and(|retry| {
+                    self.show_error_overlay(&mut state, &component, &error, retry)
+                });
+                if !shown {
+                    state.view.status = Status::Error(error.to_string());
+                }
+            }
         }
     }
 
@@ -4395,6 +4627,17 @@ impl Launcher {
             };
             let state = &mut *state;
             let ended = stopped(state, &component, &data);
+            // A developed package's crash, or error its command answered
+            // with, shows as the error overlay over the command's view
+            // (see `error_overlay`), in place of the status line and the
+            // failure toast.
+            if ended.is_none()
+                && let Err(error) = &result
+                && let Some(retry) = Launcher::open_again(state, &component)
+                && self.show_error_overlay(state, &component, error, retry)
+            {
+                return;
+            }
             let list_again = handled && ended.is_none();
             state.view.status = match (ended, result) {
                 // Stopped while it was running: its answer is not shown.
@@ -4557,7 +4800,7 @@ impl Launcher {
                 // are in root search again. Unless the reload or update has
                 // reported its outcome meanwhile, this opening is still shown as
                 // running, so it ends here.
-                if state.view.status == Status::Running {
+                if matches!(state.view.status, Status::Running { .. }) {
                     state.view.status = Status::Error(
                         "The extension changed while its command was opening; open it again".into(),
                     );
@@ -4573,7 +4816,7 @@ impl Launcher {
                 // Paused before it was asked (by its hotkey), or while it was
                 // opening (this opening crashed or could not start, which said
                 // so).
-                if state.view.status == Status::Running {
+                if matches!(state.view.status, Status::Running { .. }) {
                     state.view.status = Status::Error(paused(&state, &component));
                 }
                 return;
@@ -4626,7 +4869,23 @@ impl Launcher {
                         searching = self.ask_files(state, "", 0);
                     }
                 }
-                Err(error) => state.view.status = Status::Error(error.to_string()),
+                Err(error) => {
+                    // A developed package's crash, or error its command
+                    // answered with, while the command opens shows as the
+                    // error overlay (see `error_overlay`) over what the
+                    // launcher is showing, in place of the status line.
+                    let retry = Opening {
+                        component: component.clone(),
+                        command: command.clone(),
+                        search,
+                        launch: launch.clone(),
+                        initial_search: None,
+                        no_view: false,
+                    };
+                    if !self.show_error_overlay(state, &component, &error, retry) {
+                        state.view.status = Status::Error(error.to_string());
+                    }
+                }
             }
             searching
         };
