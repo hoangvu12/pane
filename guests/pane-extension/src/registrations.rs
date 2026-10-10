@@ -533,7 +533,10 @@ pub(crate) async fn run_item_action(callback: &str) -> Result<bool, String> {
 #[macro_export]
 macro_rules! export_events {
     () => {
-        $crate::registrations::export!($crate::registrations::Events);
+        // The generated `export!` takes the type's identifier, so the
+        // entry point is aliased into the caller's scope first.
+        use $crate::registrations::Events as PaneEvents;
+        $crate::registrations::export!(PaneEvents);
     };
 }
 
