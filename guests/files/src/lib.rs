@@ -28,7 +28,7 @@ use pane_extension::feedback::{Toast, show_toast};
 use pane_extension::file_index::{self, FileEntry, IndexState, SearchOptions};
 use pane_extension::root::{RootAction, RootResult};
 use pane_extension::search::SearchResult;
-use pane_extension::{Command, CustomView, FieldValue, FormError, Item, List, NoCustomView};
+use pane_extension::{Command, FieldValue, FormError, Item, List};
 
 struct Files;
 pane_extension::export!(Files);
@@ -82,7 +82,6 @@ fn found(query: &str, limit: u32) -> Result<Vec<FileEntry>, String> {
 }
 
 impl Command for Files {
-    type CustomView = NoCustomView;
     type DesignedView = pane_extension::view::NoDesignedView;
 
     async fn render() -> Result<List, String> {
@@ -100,9 +99,6 @@ impl Command for Files {
         })
     }
 
-    async fn open_custom_view(item_id: String) -> Result<CustomView, String> {
-        Err(format!("unknown view: {item_id}"))
-    }
 }
 
 impl pane_extension::search::Guest for Files {

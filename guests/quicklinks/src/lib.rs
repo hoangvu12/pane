@@ -31,7 +31,7 @@ use pane_extension::system::{self, Clip};
 use pane_extension::window;
 use pane_extension::{
     Action, Command, Field, FieldKind, FieldValue, Form, FormError, Item, LaunchRecord, List,
-    Modifier, NoCustomView, Shortcut, TextField, actions, applications,
+    Modifier, NoShortcut, TextField, actions, applications,
 };
 
 use links::Quicklink;
@@ -360,7 +360,6 @@ fn new_quicklink(
 }
 
 impl Command for Quicklinks {
-    type CustomView = NoCustomView;
     type DesignedView = pane_extension::view::NoDesignedView;
 
     async fn render() -> Result<List, String> {

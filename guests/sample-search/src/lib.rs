@@ -23,7 +23,7 @@ use pane_extension::feedback::{Toast, show_toast};
 use pane_extension::http;
 use pane_extension::search::SearchResult;
 use pane_extension::{
-    Command, CustomView, Field, FieldKind, FieldValue, Form, FormError, Item, List, NoCustomView,
+    Command, Field, FieldKind, FieldValue, Form, FormError, Item, List,
     TextField, settings,
 };
 use serde::Deserialize;
@@ -125,7 +125,6 @@ async fn outcome(id: &str) -> Result<String, String> {
 }
 
 impl Command for Packages {
-    type CustomView = NoCustomView;
     type DesignedView = pane_extension::view::NoDesignedView;
 
     async fn render() -> Result<List, String> {
@@ -183,9 +182,6 @@ impl Command for Packages {
         Ok(format!("Searching {address} from now on"))
     }
 
-    async fn open_custom_view(_item_id: String) -> Result<CustomView, String> {
-        Err("Package search has no custom views".into())
-    }
 }
 
 impl pane_extension::search::Guest for Packages {

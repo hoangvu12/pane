@@ -92,13 +92,14 @@ use core::time::Duration;
 
 use crate::exports::pane::extension::command as wit;
 use crate::icon::{self, Color, Icon};
+use crate::pane::extension::view::measure_text as wit_measure_text;
 use crate::pane::extension::view::ask_to_render;
 use wit::{GuestView, Outcome, Rendered, UiEvent};
 use wit_bindgen::spawn_local;
 
 /// The version of the UI component set this SDK writes
 /// (`docs/designed-tree.md`).
-const COMPONENT_SET: &str = "1.2";
+const COMPONENT_SET: &str = "1.3";
 
 /// The callback id of the pop event, the event Pane sends a view when the
 /// one above it popped: an id no tree names (this SDK's ids start at 1),
@@ -159,6 +160,19 @@ impl<V: View> Cx<'_, V> {
         let id = self.listeners.len() as u32 + 1;
         self.listeners.push(Run::Value(Box::new(run)));
         ValueListener(id)
+    }
+
+    /// The listener `run` becomes, told the canvas event that reached it
+    /// with the view's state mutably: `cx.canvas_listener(|this: &mut V,
+    /// event: CanvasEvent| ...)`, handed to a canvas's
+    /// [`on_pointer_down`](CanvasBuilder::on_pointer_down) and its kind.
+    pub fn canvas_listener(
+        &mut self,
+        run: impl FnOnce(&mut V, CanvasEvent) + 'static,
+    ) -> CanvasListener {
+        let id = self.listeners.len() as u32 + 1;
+        self.listeners.push(Run::Canvas(Box::new(run)));
+        CanvasListener(id)
     }
 
     /// A press that pushes a view above this one: `open` builds the
@@ -243,6 +257,12 @@ pub struct Listener(u32);
 #[derive(Debug)]
 pub struct ValueListener(u32);
 
+/// A named listener of a canvas's input: what [`Cx::canvas_listener`]
+/// answers, handed to a canvas's pointer, wheel, double-click, secondary
+/// and resize handlers, told the event that reached it.
+#[derive(Debug)]
+pub struct CanvasListener(u32);
+
 /// What a listener of the tree does when its node is pressed: run it and
 /// answer nothing next (the view re-renders, as it always does), or
 /// answer the navigation one of [`Cx`]'s push, replace and pop listeners
@@ -252,6 +272,9 @@ enum Run<V> {
     Listener(Box<dyn FnOnce(&mut V)>),
     /// Runs the listener with the event's text; nothing next.
     Value(Box<dyn FnOnce(&mut V, &str)>),
+    /// Runs the listener with the canvas event the payload names; nothing
+    /// next.
+    Canvas(Box<dyn FnOnce(&mut V, CanvasEvent)>),
     /// Builds the state of a view pushed above this one, `on_pop` (when
     /// given) kept to answer this view when it pops.
     Push {
@@ -452,6 +475,9 @@ pub enum NodeKind {
     TextInput(TextInput),
     PasswordInput(TextInput),
     TextArea(TextInput),
+    /// A canvas: a leaf the view draws into with drawing operations
+    /// (#242).
+    Canvas(CanvasNode),
 }
 
 /// The layout of a `column`, `row` or `card`: its gap, padding,
@@ -751,6 +777,623 @@ pub struct TextInput {
     label: Option<String>,
 }
 
+/// What a canvas node holds (#242): its drawing operations, what it is to
+/// assistive technology, and the handlers its input names.
+#[derive(Debug, Default)]
+pub struct CanvasNode {
+    /// The operations it paints, in order.
+    pub ops: Vec<Draw>,
+    /// What the one node the canvas is to assistive technology says.
+    pub a11y: CanvasA11y,
+    /// The handlers the canvas's input names.
+    pub handlers: CanvasHandlers,
+}
+
+/// What the one node a canvas is to assistive technology says.
+#[derive(Debug, Default)]
+pub struct CanvasA11y {
+    /// What kind of control the canvas is; a generic one when `None`.
+    pub role: Option<CanvasRole>,
+    /// What names the canvas.
+    pub label: Option<String>,
+    /// What the canvas currently holds.
+    pub value: Option<String>,
+}
+
+/// What kind of control a canvas is to assistive technology.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CanvasRole {
+    /// A color chooser, whose value names its chosen color.
+    ColorWell,
+    /// A value between bounds, adjustable by increment and decrement.
+    Slider,
+    /// A picture, whose label names what it shows.
+    Image,
+    /// A figure: a picture with its caption in the label.
+    Figure,
+    /// A group of things the label names.
+    Group,
+    /// Whatever else the canvas is.
+    Generic,
+}
+
+/// The handlers a canvas's input names, each the listener its tree runs
+/// when that input happens. Keys ride the node's own `on_key` as every
+/// focusable node's do; `on_increment` and `on_decrement` are the semantic
+/// handlers the up and down arrows run, `on_activate` the one Space runs,
+/// so a control-like canvas needs no key parsing.
+#[derive(Debug, Default)]
+pub struct CanvasHandlers {
+    /// The up arrow.
+    pub on_increment: Option<Listener>,
+    /// The down arrow.
+    pub on_decrement: Option<Listener>,
+    /// Space.
+    pub on_activate: Option<Listener>,
+    /// The primary button pressed over the canvas.
+    pub on_pointer_down: Option<Listener>,
+    /// That button released.
+    pub on_pointer_up: Option<Listener>,
+    /// The pointer moved while that button is held — a drag, coalesced to
+    /// the latest while one is in flight.
+    pub on_pointer_move: Option<Listener>,
+    /// The pointer entering the canvas's hover.
+    pub on_pointer_enter: Option<Listener>,
+    /// The pointer leaving it.
+    pub on_pointer_leave: Option<Listener>,
+    /// The wheel turned over the canvas.
+    pub on_wheel: Option<Listener>,
+    /// The primary button pressed twice over the canvas.
+    pub on_double_click: Option<Listener>,
+    /// The secondary button pressed over the canvas.
+    pub on_secondary: Option<Listener>,
+    /// The canvas's size changing.
+    pub on_resize: Option<Listener>,
+}
+
+/// One drawing operation of a canvas: what it paints, or how it moves the
+/// state the painting that follows paints in. Coordinates are logical
+/// pixels in the canvas's own space, its origin its top-left corner.
+#[derive(Clone, Debug)]
+pub enum Draw {
+    /// A rectangle, filled and/or stroked, its corners rounded by `radius`.
+    Rect {
+        x: f32,
+        y: f32,
+        width: f32,
+        height: f32,
+        radius: f32,
+        fill: Option<Paint>,
+        stroke: Option<CanvasStroke>,
+    },
+    /// A circle, `x` and `y` its center.
+    Circle {
+        x: f32,
+        y: f32,
+        radius: f32,
+        fill: Option<Paint>,
+        stroke: Option<CanvasStroke>,
+    },
+    /// One line of text, its top-left corner at `x`, `y`.
+    Text {
+        x: f32,
+        y: f32,
+        content: String,
+        style: Option<TextStyle>,
+        level: Option<TextLevel>,
+        color: Option<Paint>,
+        size: Option<f32>,
+        weight: Option<f32>,
+    },
+    /// An image of the icon model, at a position and size.
+    Image {
+        image: Icon,
+        x: f32,
+        y: f32,
+        width: f32,
+        height: f32,
+    },
+    /// Move the current path's point, starting a new sub-path.
+    MoveTo { x: f32, y: f32 },
+    /// A straight line to a point.
+    LineTo { x: f32, y: f32 },
+    /// A quadratic curve to a point, through a control point.
+    QuadTo { cx: f32, cy: f32, x: f32, y: f32 },
+    /// A cubic curve to a point, through two control points.
+    CubicTo {
+        c1x: f32,
+        c1y: f32,
+        c2x: f32,
+        c2y: f32,
+        x: f32,
+        y: f32,
+    },
+    /// An arc of a circle, `x` and `y` its center, from `start` to `end`
+    /// radians, drawn the short way unless `ccw`.
+    Arc {
+        x: f32,
+        y: f32,
+        radius: f32,
+        start: f32,
+        end: f32,
+        ccw: bool,
+    },
+    /// Close the current sub-path with a line to where it began.
+    Close,
+    /// Fill the current path, which it ends.
+    Fill { color: Paint },
+    /// Stroke the current path, which it ends.
+    Stroke { stroke: CanvasStroke },
+    /// Clip what follows to this rectangle, intersected with the clips
+    /// before it.
+    Clip {
+        x: f32,
+        y: f32,
+        width: f32,
+        height: f32,
+    },
+    /// Move the origin the operations that follow draw at.
+    Translate { x: f32, y: f32 },
+    /// Scale the space the operations that follow draw in, from the origin.
+    Scale { x: f32, y: f32 },
+    /// Rotate the space the operations that follow draw in, around the
+    /// origin, clockwise by this many degrees.
+    Rotate { degrees: f32 },
+}
+
+/// One stroke: its colour, its width, and the shapes of its ends and
+/// corners.
+#[derive(Clone, Debug)]
+pub struct CanvasStroke {
+    pub color: Paint,
+    /// One pixel when the tree gives none.
+    pub width: f32,
+    pub cap: Option<Cap>,
+    pub join: Option<Join>,
+}
+
+/// How a stroke's ends are drawn.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Cap {
+    Butt,
+    Round,
+    Square,
+}
+
+/// How a stroke's corners are drawn.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Join {
+    Miter,
+    Round,
+    Bevel,
+}
+
+impl Draw {
+    /// A rectangle at `x`, `y` of `width` and `height`.
+    pub fn rect(x: f32, y: f32, width: f32, height: f32) -> Draw {
+        Draw::Rect {
+            x,
+            y,
+            width,
+            height,
+            radius: 0.,
+            fill: None,
+            stroke: None,
+        }
+    }
+
+    /// A rectangle with its corners rounded by `radius`.
+    pub fn rounded(x: f32, y: f32, width: f32, height: f32, radius: f32) -> Draw {
+        Draw::Rect {
+            x,
+            y,
+            width,
+            height,
+            radius,
+            fill: None,
+            stroke: None,
+        }
+    }
+
+    /// A circle, `x` and `y` its center.
+    pub fn circle(x: f32, y: f32, radius: f32) -> Draw {
+        Draw::Circle {
+            x,
+            y,
+            radius,
+            fill: None,
+            stroke: None,
+        }
+    }
+
+    /// One line of text. Place it with [`Draw::at`].
+    pub fn text(content: impl Into<String>) -> Draw {
+        Draw::Text {
+            x: 0.,
+            y: 0.,
+            content: content.into(),
+            style: None,
+            level: None,
+            color: None,
+            size: None,
+            weight: None,
+        }
+    }
+
+    /// An image of the icon model. Place and size it with [`Draw::at`] and
+    /// [`Draw::size`].
+    pub fn image(image: Icon) -> Draw {
+        Draw::Image {
+            image,
+            x: 0.,
+            y: 0.,
+            width: 16.,
+            height: 16.,
+        }
+    }
+
+    /// A fill of the current path.
+    pub fn fill(color: impl Into<Paint>) -> Draw {
+        Draw::Fill {
+            color: color.into(),
+        }
+    }
+
+    /// A stroke of the current path, one pixel wide.
+    pub fn stroke(color: impl Into<Paint>) -> Draw {
+        Draw::Stroke {
+            stroke: CanvasStroke {
+                color: color.into(),
+                width: 1.,
+                cap: None,
+                join: None,
+            },
+        }
+    }
+
+    /// Clip what follows to a rectangle.
+    pub fn clip(x: f32, y: f32, width: f32, height: f32) -> Draw {
+        Draw::Clip {
+            x,
+            y,
+            width,
+            height,
+        }
+    }
+
+    /// Move the origin the operations that follow draw at.
+    pub fn translate(x: f32, y: f32) -> Draw {
+        Draw::Translate { x, y }
+    }
+
+    /// Scale the space the operations that follow draw in, from the origin.
+    pub fn scale(x: f32, y: f32) -> Draw {
+        Draw::Scale { x, y }
+    }
+
+    /// Rotate the space the operations that follow draw in, around the
+    /// origin, clockwise by this many degrees.
+    pub fn rotate(degrees: f32) -> Draw {
+        Draw::Rotate { degrees }
+    }
+
+    /// This rectangle or circle filled.
+    pub fn filled(mut self, paint: impl Into<Paint>) -> Draw {
+        match &mut self {
+            Draw::Rect { fill, .. } | Draw::Circle { fill, .. } => {
+                *fill = Some(paint.into());
+            }
+            _ => {}
+        }
+        self
+    }
+
+    /// This rectangle or circle stroked, one pixel wide.
+    pub fn stroked(mut self, paint: impl Into<Paint>) -> Draw {
+        match &mut self {
+            Draw::Rect { stroke, .. } | Draw::Circle { stroke, .. } => {
+                *stroke = Some(CanvasStroke {
+                    color: paint.into(),
+                    width: 1.,
+                    cap: None,
+                    join: None,
+                });
+            }
+            _ => {}
+        }
+        self
+    }
+
+    /// This text or image's top-left corner.
+    pub fn at(mut self, x: f32, y: f32) -> Draw {
+        match &mut self {
+            Draw::Text { x: own, y: own_y, .. } | Draw::Image { x: own, y: own_y, .. } => {
+                *own = x;
+                *own_y = y;
+            }
+            _ => {}
+        }
+        self
+    }
+
+    /// This image's width and height.
+    pub fn size(mut self, width: f32, height: f32) -> Draw {
+        if let Draw::Image {
+            width: own,
+            height: own_height,
+            ..
+        } = &mut self
+        {
+            *own = width;
+            *own_height = height;
+        }
+        self
+    }
+
+    /// This text's token style.
+    pub fn style(mut self, style: TextStyle) -> Draw {
+        if let Draw::Text { style: own, .. } = &mut self {
+            *own = Some(style);
+        }
+        self
+    }
+
+    /// This text's token level.
+    pub fn level(mut self, level: TextLevel) -> Draw {
+        if let Draw::Text { level: own, .. } = &mut self {
+            *own = Some(level);
+        }
+        self
+    }
+
+    /// This text's colour.
+    pub fn color(mut self, paint: impl Into<Paint>) -> Draw {
+        if let Draw::Text { color: own, .. } = &mut self {
+            *own = Some(paint.into());
+        }
+        self
+    }
+
+    /// This text's size in pixels.
+    pub fn text_size(mut self, size: f32) -> Draw {
+        if let Draw::Text { size: own, .. } = &mut self {
+            *own = Some(size);
+        }
+        self
+    }
+
+    /// This text's weight, 100 to 900.
+    pub fn weight(mut self, weight: f32) -> Draw {
+        if let Draw::Text { weight: own, .. } = &mut self {
+            *own = Some(weight);
+        }
+        self
+    }
+
+    /// This stroke's width.
+    pub fn width(mut self, width: f32) -> Draw {
+        match &mut self {
+            Draw::Stroke { stroke } => stroke.width = width,
+            Draw::Rect { stroke: Some(stroke), .. }
+            | Draw::Circle { stroke: Some(stroke), .. } => stroke.width = width,
+            _ => {}
+        }
+        self
+    }
+
+    /// This stroke's end caps.
+    pub fn cap(mut self, cap: Cap) -> Draw {
+        match &mut self {
+            Draw::Stroke { stroke } => stroke.cap = Some(cap),
+            Draw::Rect { stroke: Some(stroke), .. }
+            | Draw::Circle { stroke: Some(stroke), .. } => stroke.cap = Some(cap),
+            _ => {}
+        }
+        self
+    }
+
+    /// This stroke's corner joins.
+    pub fn join(mut self, join: Join) -> Draw {
+        match &mut self {
+            Draw::Stroke { stroke } => stroke.join = Some(join),
+            Draw::Rect { stroke: Some(stroke), .. }
+            | Draw::Circle { stroke: Some(stroke), .. } => stroke.join = Some(join),
+            _ => {}
+        }
+        self
+    }
+}
+
+/// Measures `text` in `style` (#242, `pane:extension/view.measure-text`):
+/// the width and height it occupies when the canvas draws it, laid out
+/// exactly, at the size and weight the tree's text styles resolve to. A
+/// canvas's drawing calls this while the view renders, so the text it
+/// draws fits what it says.
+pub fn measure_text(text: &str, style: TextMeasure) -> (f32, f32) {
+    let style = style.json();
+    let held = wit_measure_text(text, &style);
+    (held.width, held.height)
+}
+
+/// How text is measured ([`measure_text`]): a token style, a size in
+/// pixels, a weight from 100 to 900.
+#[derive(Debug, Default)]
+pub struct TextMeasure {
+    pub style: Option<TextStyle>,
+    pub size: Option<f32>,
+    pub weight: Option<f32>,
+}
+
+impl TextMeasure {
+    /// The style as `measure-text` reads it: the same JSON a canvas text
+    /// operation names.
+    fn json(&self) -> String {
+        let mut style = String::new();
+        if let Some(style) = self.style.map(text_style_name) {
+            let _ = write!(style, "\"style\":\"{style}\",");
+        }
+        if let Some(size) = self.size {
+            let _ = write!(style, "\"size\":{size},");
+        }
+        if let Some(weight) = self.weight {
+            let _ = write!(style, "\"weight\":{weight},");
+        }
+        style.pop();
+        format!("{{{style}}}")
+    }
+}
+
+/// The input a canvas receives, as its listener is told it
+/// ([`Cx::canvas_listener`]): the payload of the canvas's event, read
+/// into what it names. A canvas's pointer events carry the point in the
+/// canvas's own space and the modifiers held.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum CanvasEvent {
+    /// The primary button pressed over the canvas.
+    PointerDown {
+        x: f32,
+        y: f32,
+        /// How many clicks this press is: two is a double one.
+        clicks: f32,
+        ctrl: bool,
+        alt: bool,
+        shift: bool,
+    },
+    /// That button released.
+    PointerUp { x: f32, y: f32 },
+    /// The pointer moved while that button is held.
+    PointerMove { x: f32, y: f32 },
+    /// The pointer entering the canvas's hover, carrying no point.
+    PointerEnter,
+    /// The pointer leaving it.
+    PointerLeave,
+    /// The wheel turned over the canvas, its delta in pixels or lines.
+    Wheel {
+        x: f32,
+        y: f32,
+        dx: f32,
+        dy: f32,
+        /// Whether the delta is in pixels (else lines).
+        pixel: bool,
+    },
+    /// The primary button pressed twice over the canvas.
+    DoubleClick { x: f32, y: f32 },
+    /// The secondary button pressed over the canvas.
+    Secondary { x: f32, y: f32 },
+    /// The canvas's size changing.
+    Resize { width: f32, height: f32 },
+}
+
+impl CanvasEvent {
+    /// The event `payload` names, when it reads: an event of another kind,
+    /// or a payload that does not name one, answers `None`.
+    pub fn of(payload: &str) -> Option<CanvasEvent> {
+        let kind = field_text(payload, "event")?;
+        let at = || (field_number(payload, "x"), field_number(payload, "y"));
+        match kind.as_str() {
+            "pointer-down" => {
+                let (x, y) = at();
+                Some(CanvasEvent::PointerDown {
+                    x: x?,
+                    y: y?,
+                    clicks: field_number(payload, "clicks").unwrap_or(1.),
+                    ctrl: field_bool(payload, "ctrl"),
+                    alt: field_bool(payload, "alt"),
+                    shift: field_bool(payload, "shift"),
+                })
+            }
+            "pointer-up" => {
+                let (x, y) = at();
+                Some(CanvasEvent::PointerUp { x: x?, y: y? })
+            }
+            "pointer-move" => {
+                let (x, y) = at();
+                Some(CanvasEvent::PointerMove { x: x?, y: y? })
+            }
+            "pointer-enter" => Some(CanvasEvent::PointerEnter),
+            "pointer-leave" => Some(CanvasEvent::PointerLeave),
+            "wheel" => Some(CanvasEvent::Wheel {
+                x: field_number(payload, "x")?,
+                y: field_number(payload, "y")?,
+                dx: field_number(payload, "dx")?,
+                dy: field_number(payload, "dy")?,
+                pixel: field_text(payload, "unit").as_deref() == Some("pixel"),
+            }),
+            "double-click" => {
+                let (x, y) = at();
+                Some(CanvasEvent::DoubleClick { x: x?, y: y? })
+            }
+            "secondary" => {
+                let (x, y) = at();
+                Some(CanvasEvent::Secondary { x: x?, y: y? })
+            }
+            "resize" => Some(CanvasEvent::Resize {
+                width: field_number(payload, "width")?,
+                height: field_number(payload, "height")?,
+            }),
+            _ => None,
+        }
+    }
+}
+
+/// The string a payload's `"name"` field holds, when it names one.
+fn field_text(payload: &str, name: &str) -> Option<String> {
+    let at = payload.find(&format!("\"{name}\""))?;
+    let rest = payload[at + name.len() + 2..].trim_start();
+    let rest = rest.strip_prefix(':')?.trim_start();
+    let rest = rest.strip_prefix('"')?;
+    let end = rest.find('"')?;
+    Some(unescape(&rest[..end]))
+}
+
+/// The number a payload's `"name"` field holds, when it names one.
+fn field_number(payload: &str, name: &str) -> Option<f32> {
+    let at = payload.find(&format!("\"{name}\""))?;
+    let rest = payload[at + name.len() + 2..].trim_start();
+    let rest = rest.strip_prefix(':')?.trim_start();
+    let end = rest
+        .find([',', '}'])
+        .unwrap_or_else(|| rest.rfind('"').unwrap_or(rest.len()));
+    let text = rest[..end].trim();
+    let text = text.strip_suffix('}').unwrap_or(text);
+    text.parse().ok()
+}
+
+/// Whether a payload's `"name"` field holds `true`.
+fn field_bool(payload: &str, name: &str) -> bool {
+    field_number(payload, name).is_some_and(|held| held > 0.5)
+        || field_text(payload, name).is_some_and(|held| held == "true")
+}
+
+/// A payload string's content, unescaped.
+fn unescape(text: &str) -> String {
+    let mut result = String::new();
+    let mut characters = text.chars();
+    while let Some(character) = characters.next() {
+        match character {
+            '\\' => match characters.next() {
+                Some('"') => result.push('"'),
+                Some('\\') => result.push('\\'),
+                Some('/') => result.push('/'),
+                Some('n') => result.push('\n'),
+                Some('r') => result.push('\r'),
+                Some('t') => result.push('\t'),
+                Some('u') => {
+                    let digits: String = characters.by_ref().take(4).collect();
+                    if let Ok(code) = u32::from_str_radix(&digits, 16)
+                        && let Some(character) = char::from_u32(code)
+                    {
+                        result.push(character);
+                    }
+                }
+                _ => return result,
+            },
+            other => result.push(other),
+        }
+    }
+    result
+}
+
 /// A space token: the named distances of the UI component set, resolved
 /// onto Pane's spacing rhythm.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -842,6 +1485,9 @@ pub trait IntoNode {
 pub struct Answer {
     node: Node,
     refresh: Option<Refresh>,
+    /// An error this render answers instead of its tree, shown to the
+    /// user with the view keeping its last good one.
+    error: Option<String>,
 }
 
 /// When Pane asks for a view's tree again.
@@ -858,6 +1504,18 @@ impl Answer {
         self.refresh = Some(Refresh::After(after));
         self
     }
+
+    /// This render answers `message` as its error: shown to the user, the
+    /// view keeping its last good tree, as an event the extension
+    /// refused. A `Result` answer carries one too
+    /// ([`IntoAnswer` for `Result`]).
+    pub fn error(message: impl Into<String>) -> Answer {
+        Answer {
+            node: Node::of(NodeKind::Column(Layout::default())),
+            refresh: None,
+            error: Some(message.into()),
+        }
+    }
 }
 
 /// What a view's `render` answers: every tree (anything [`IntoNode`])
@@ -872,6 +1530,22 @@ impl<N: IntoNode> IntoAnswer for N {
         Answer {
             node: self.into_node(),
             refresh: None,
+            error: None,
+        }
+    }
+}
+
+/// A view's `render` answering an error: the message is shown to the user,
+/// the view keeping its last good tree.
+impl<N: IntoNode> IntoAnswer for Result<N, String> {
+    fn into_answer(self) -> Answer {
+        match self {
+            Ok(node) => Answer {
+                node: node.into_node(),
+                refresh: None,
+                error: None,
+            },
+            Err(message) => Answer::error(message),
         }
     }
 }
@@ -892,6 +1566,7 @@ pub fn loading(tree: impl IntoNode) -> Answer {
     Answer {
         node: tree.into_node(),
         refresh: None,
+        error: None,
     }
 }
 
@@ -1200,6 +1875,22 @@ pub fn divider() -> Divider {
 /// A loading indicator, indeterminate.
 pub fn loading() -> Loading {
     Loading(Node::of(NodeKind::Loading { label: None }))
+}
+
+/// A canvas: a leaf this view draws into with drawing operations
+/// ([`Draw`]), taking input ([`CanvasBuilder::on_pointer_down`] and its
+/// kind) and named to assistive technology. Its size comes from its style
+/// as any node's does — a `.width()` and `.height()`, or the space the
+/// layout gives it, which the render context names and a change of which
+/// is the resize event.
+pub fn canvas() -> CanvasBuilder {
+    CanvasBuilder(Node::of(NodeKind::Canvas(CanvasNode {
+        ops: Vec::new(),
+        role: None,
+        label: None,
+        value: None,
+        handlers: CanvasHandlers::default(),
+    })))
 }
 
 /// One line of text.
@@ -1645,6 +2336,10 @@ pub struct EmptyState(Node);
 #[derive(Debug)]
 pub struct TextInput(Node);
 
+/// A canvas being built.
+#[derive(Debug)]
+pub struct CanvasBuilder(Node);
+
 builder!(Container);
 builder!(Stack);
 builder!(Scroll);
@@ -1669,6 +2364,7 @@ builder!(SectionHeader);
 builder!(MetadataList);
 builder!(EmptyState);
 builder!(TextInput);
+builder!(CanvasBuilder);
 
 /// The properties of a column, a row or a card, as it is built.
 macro_rules! lays_out {
@@ -2388,6 +3084,12 @@ impl<V: View> GuestView for Open<V> {
             self.state.borrow_mut().render(&mut cx).into_answer()
         };
         ASKING_VIEW.store(0, Ordering::Relaxed);
+        // A render answering an error: shown to the user, the view keeping
+        // its last good tree. Its listeners go with it — no tree of this
+        // render was drawn.
+        if let Some(error) = answer.error {
+            return Err(error);
+        }
         let mut tree = String::new();
         write_node(&mut tree, &answer.node)?;
         let document = format!("{{\"version\":\"{COMPONENT_SET}\",\"root\":{tree}}}");
@@ -2454,6 +3156,14 @@ impl<V: View> GuestView for Open<V> {
             }
             Some(Run::Value(run)) => {
                 run(&mut self.state.borrow_mut(), &text);
+                None
+            }
+            Some(Run::Canvas(run)) => {
+                // The canvas event the payload names; one that does not
+                // read is dropped, never an error.
+                if let Some(event) = CanvasEvent::of(&payload) {
+                    run(&mut self.state.borrow_mut(), event);
+                }
                 None
             }
             Some(Run::Push { open, on_pop }) => {
@@ -3150,7 +3860,278 @@ fn kind_of(node: &Node) -> &'static str {
         NodeKind::TextInput(_) => "text-input",
         NodeKind::PasswordInput(_) => "password-input",
         NodeKind::TextArea(_) => "text-area",
+        NodeKind::Canvas(_) => "canvas",
     }
+}
+
+/// Writes one drawing operation of a canvas as the tree's JSON.
+fn write_draw(tree: &mut String, op: &Draw) -> Result<(), String> {
+    let number = |tree: &mut String, name: &str, value: f32| {
+        let _ = write!(tree, ",\"{name}\":{value}");
+    };
+    tree.push_str("{\"op\":");
+    string(
+        tree,
+        match op {
+            Draw::Rect { .. } => "rect",
+            Draw::Circle { .. } => "circle",
+            Draw::Text { .. } => "text",
+            Draw::Image { .. } => "image",
+            Draw::MoveTo { .. } => "move",
+            Draw::LineTo { .. } => "line",
+            Draw::QuadTo { .. } => "quad",
+            Draw::CubicTo { .. } => "cubic",
+            Draw::Arc { .. } => "arc",
+            Draw::Close => "close",
+            Draw::Fill { .. } => "fill",
+            Draw::Stroke { .. } => "stroke",
+            Draw::Clip { .. } => "clip",
+            Draw::Translate { .. } => "translate",
+            Draw::Scale { .. } => "scale",
+            Draw::Rotate { .. } => "rotate",
+        },
+    )?;
+    match op {
+        Draw::Rect {
+            x,
+            y,
+            width,
+            height,
+            radius,
+            fill,
+            stroke,
+        } => {
+            number(tree, "x", *x);
+            number(tree, "y", *y);
+            number(tree, "width", *width);
+            number(tree, "height", *height);
+            if *radius > 0. {
+                number(tree, "radius", *radius);
+            }
+            if let Some(fill) = fill {
+                tree.push_str(",\"fill\":");
+                write_paint(tree, fill)?;
+            }
+            if let Some(stroke) = stroke {
+                tree.push_str(",\"stroke\":");
+                write_paint(tree, &stroke.color)?;
+                number(tree, "strokeWidth", stroke.width);
+                if let Some(cap) = stroke.cap {
+                    tree.push_str(",\"cap\":");
+                    string(
+                        tree,
+                        match cap {
+                            Cap::Butt => "butt",
+                            Cap::Round => "round",
+                            Cap::Square => "square",
+                        },
+                    )?;
+                }
+                if let Some(join) = stroke.join {
+                    tree.push_str(",\"join\":");
+                    string(
+                        tree,
+                        match join {
+                            Join::Miter => "miter",
+                            Join::Round => "round",
+                            Join::Bevel => "bevel",
+                        },
+                    )?;
+                }
+            }
+        }
+        Draw::Circle {
+            x,
+            y,
+            radius,
+            fill,
+            stroke,
+        } => {
+            number(tree, "x", *x);
+            number(tree, "y", *y);
+            number(tree, "radius", *radius);
+            if let Some(fill) = fill {
+                tree.push_str(",\"fill\":");
+                write_paint(tree, fill)?;
+            }
+            if let Some(stroke) = stroke {
+                tree.push_str(",\"stroke\":");
+                write_paint(tree, &stroke.color)?;
+                number(tree, "strokeWidth", stroke.width);
+                if let Some(cap) = stroke.cap {
+                    tree.push_str(",\"cap\":");
+                    string(
+                        tree,
+                        match cap {
+                            Cap::Butt => "butt",
+                            Cap::Round => "round",
+                            Cap::Square => "square",
+                        },
+                    )?;
+                }
+                if let Some(join) = stroke.join {
+                    tree.push_str(",\"join\":");
+                    string(
+                        tree,
+                        match join {
+                            Join::Miter => "miter",
+                            Join::Round => "round",
+                            Join::Bevel => "bevel",
+                        },
+                    )?;
+                }
+            }
+        }
+        Draw::Text {
+            x,
+            y,
+            content,
+            style,
+            level,
+            color,
+            size,
+            weight,
+        } => {
+            number(tree, "x", *x);
+            number(tree, "y", *y);
+            tree.push_str(",\"text\":");
+            string(tree, content)?;
+            if let Some(style) = style {
+                tree.push_str(",\"style\":");
+                string(tree, text_style_name(*style))?;
+            }
+            if let Some(level) = level {
+                tree.push_str(",\"level\":");
+                string(tree, text_level_name(*level))?;
+            }
+            if let Some(color) = color {
+                tree.push_str(",\"color\":");
+                write_paint(tree, color)?;
+            }
+            if let Some(size) = size {
+                number(tree, "size", *size);
+            }
+            if let Some(weight) = weight {
+                number(tree, "weight", *weight);
+            }
+        }
+        Draw::Image {
+            image,
+            x,
+            y,
+            width,
+            height,
+        } => {
+            tree.push_str(",\"image\":");
+            crate::icon::write_icon(tree, image);
+            number(tree, "x", *x);
+            number(tree, "y", *y);
+            number(tree, "width", *width);
+            number(tree, "height", *height);
+        }
+        Draw::MoveTo { x, y } => {
+            number(tree, "x", *x);
+            number(tree, "y", *y);
+        }
+        Draw::LineTo { x, y } => {
+            number(tree, "x", *x);
+            number(tree, "y", *y);
+        }
+        Draw::QuadTo { cx, cy, x, y } => {
+            number(tree, "cx", *cx);
+            number(tree, "cy", *cy);
+            number(tree, "x", *x);
+            number(tree, "y", *y);
+        }
+        Draw::CubicTo {
+            c1x,
+            c1y,
+            c2x,
+            c2y,
+            x,
+            y,
+        } => {
+            number(tree, "c1x", *c1x);
+            number(tree, "c1y", *c1y);
+            number(tree, "c2x", *c2x);
+            number(tree, "c2y", *c2y);
+            number(tree, "x", *x);
+            number(tree, "y", *y);
+        }
+        Draw::Arc {
+            x,
+            y,
+            radius,
+            start,
+            end,
+            ccw,
+        } => {
+            number(tree, "x", *x);
+            number(tree, "y", *y);
+            number(tree, "radius", *radius);
+            number(tree, "start", *start);
+            number(tree, "end", *end);
+            if *ccw {
+                tree.push_str(",\"ccw\":true");
+            }
+        }
+        Draw::Close => {}
+        Draw::Fill { color } => {
+            tree.push_str(",\"color\":");
+            write_paint(tree, color)?;
+        }
+        Draw::Stroke { stroke } => {
+            tree.push_str(",\"color\":");
+            write_paint(tree, &stroke.color)?;
+            number(tree, "width", stroke.width);
+            if let Some(cap) = stroke.cap {
+                tree.push_str(",\"cap\":");
+                string(
+                    tree,
+                    match cap {
+                        Cap::Butt => "butt",
+                        Cap::Round => "round",
+                        Cap::Square => "square",
+                    },
+                )?;
+            }
+            if let Some(join) = stroke.join {
+                tree.push_str(",\"join\":");
+                string(
+                    tree,
+                    match join {
+                        Join::Miter => "miter",
+                        Join::Round => "round",
+                        Join::Bevel => "bevel",
+                    },
+                )?;
+            }
+        }
+        Draw::Clip {
+            x,
+            y,
+            width,
+            height,
+        } => {
+            number(tree, "x", *x);
+            number(tree, "y", *y);
+            number(tree, "width", *width);
+            number(tree, "height", *height);
+        }
+        Draw::Translate { x, y } => {
+            number(tree, "x", *x);
+            number(tree, "y", *y);
+        }
+        Draw::Scale { x, y } => {
+            number(tree, "x", *x);
+            number(tree, "y", *y);
+        }
+        Draw::Rotate { degrees } => {
+            number(tree, "degrees", *degrees);
+        }
+    }
+    tree.push('}');
+    Ok(())
 }
 
 /// Writes `span` as the tree's JSON.

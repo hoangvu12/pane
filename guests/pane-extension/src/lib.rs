@@ -51,15 +51,14 @@ wit_bindgen::generate!({
 });
 
 pub use exports::pane::extension::command::{
-    Choice, CustomView, CustomViewInfo, CustomViewRole, Field, FieldKind, FieldValue, Form,
-    FormError, Frame, GuestCustomView, Key, Platform, Point, Rect, Shape, Text, TextField,
-    ViewEvent,
+    Choice, Field, FieldKind, FieldValue, Form, FormError, Platform, TextField,
 };
 pub use list::{Action, Command, Item, List, Modifier, Shortcut, Submenu};
 pub mod view;
 pub use view::{
-    Align, Answer, Cx, IntoAnswer, IntoNode, Justify, Listener, Node, Pending, Space, TextLevel,
-    TextStyle, View, button, column, loading, row, text,
+    Align, Answer, CanvasBuilder, CanvasEvent, CanvasListener, CanvasRole, Cap, Cx, Draw,
+    IntoAnswer, IntoNode, Join, Justify, Listener, Node, Paint, Pending, Space, TextLevel,
+    TextMeasure, TextStyle, View, button, canvas, column, loading, row, text,
 };
 /// The designed view type of a command that opens none: `type DesignedView
 /// = view::NoDesignedView;` in its [`Command`] implementation.
@@ -293,7 +292,7 @@ pub mod publish {
 /// A command whose only job is this, as the calculator's, also says
 /// `"mode": "provider"` (a root provider): it has no row of its own and
 /// Pane never opens or runs it, so its [`Command`](crate::Command) keeps
-/// the defaults (`type CustomView = NoCustomView;` and nothing else).
+/// the defaults (nothing but its `type DesignedView`).
 pub mod root {
     wit_bindgen::generate!({
         path: "wit",
@@ -584,21 +583,6 @@ macro_rules! eprintln {
     ($($arg:tt)*) => {
         $crate::eprint!($($arg)*)
     };
-}
-
-/// The custom view type of a command that has none: `type CustomView =
-/// NoCustomView;` in its [`Command`] implementation, with an `open_view`
-/// that returns `Err`. It has no values, so no view of it can be opened.
-pub enum NoCustomView {}
-
-impl GuestCustomView for NoCustomView {
-    async fn render(&self) -> Frame {
-        match *self {}
-    }
-
-    async fn handle_event(&self, _event: ViewEvent) -> Result<(), alloc::string::String> {
-        match *self {}
-    }
 }
 
 #[global_allocator]

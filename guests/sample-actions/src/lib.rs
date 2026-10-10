@@ -81,8 +81,8 @@ use pane_extension::feedback::{
 use pane_extension::system::{self, Clip, HostSystem, SystemError};
 use pane_extension::window::{PopToRootType, clear_search, close, pop_to_root};
 use pane_extension::{
-    Action, Command, CustomView, FieldValue, FormError, Item, LaunchRecord, List, Modifier,
-    NoCustomView, Shortcut, Submenu,
+    Action, Command, FieldValue, FormError, Item, LaunchRecord, List, Modifier,
+    NoShortcut, Submenu,
 };
 
 use Modifier::{Cmd, Ctrl, Shift};
@@ -507,7 +507,6 @@ fn paste_item() -> Item {
 }
 
 impl Command for Actions {
-    type CustomView = NoCustomView;
     type DesignedView = pane_extension::view::NoDesignedView;
 
     async fn render() -> Result<List, String> {
@@ -668,7 +667,4 @@ impl Command for Actions {
         })
     }
 
-    async fn open_custom_view(_item_id: String) -> Result<CustomView, String> {
-        Err("The actions sample has no custom views".into())
-    }
 }

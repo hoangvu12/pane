@@ -8,7 +8,7 @@
 
 use pane_extension::alloc::{format, string::String, vec::Vec};
 use pane_extension::feedback::{Toast, show_toast};
-use pane_extension::{Command, CustomView, FieldValue, FormError, Item, List, NoCustomView};
+use pane_extension::{Command, FieldValue, FormError, Item, List};
 
 /// What "Say hello" shows.
 const GREETING: &str = "Hello from Rust";
@@ -28,7 +28,6 @@ async fn act(id: &str) -> Result<(), String> {
 }
 
 impl Command for Hello {
-    type CustomView = NoCustomView;
     type DesignedView = pane_extension::view::NoDesignedView;
 
     async fn render() -> Result<List, String> {
@@ -42,7 +41,4 @@ impl Command for Hello {
         })
     }
 
-    async fn open_custom_view(_item_id: String) -> Result<CustomView, String> {
-        Err("this command has no custom views".into())
-    }
 }

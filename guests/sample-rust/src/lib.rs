@@ -1,8 +1,9 @@
 //! Pane's Rust sample command: a list with one action per item, a form, a
-//! color picker the command draws itself, two actions each declared for
-//! some operating systems only, and a root result computed from the query
-//! ("reverse <text>"). Items, titles, results, errors and drawings match the
-//! JavaScript and TypeScript samples.
+//! color picker the command draws itself as a canvas of its designed view,
+//! two actions each declared for some operating systems only, and a root
+//! result computed from the query ("reverse <text>"). Items, titles,
+//! results, errors and drawings match the JavaScript and TypeScript
+//! samples.
 #![no_std]
 
 use core::cell::Cell;
@@ -10,10 +11,14 @@ use core::cell::Cell;
 use pane_extension::alloc::{format, string::String, vec, vec::Vec};
 use pane_extension::feedback::{Toast, show_toast};
 use pane_extension::root::{RootAction, RootResult};
+use pane_extension::commands::{self, CommandRef, LaunchType, LaunchRecord};
+use pane_extension::view::{
+    CanvasEvent, CanvasRole, Cx, Draw, Length, Paint, TextMeasure, TextStyle, View, canvas, column,
+    measure_text,
+};
 use pane_extension::{
-    Choice, Command, CustomView, CustomViewInfo, CustomViewRole, Field, FieldKind, FieldValue,
-    Form, FormError, Frame, GuestCustomView, Item, Key, List, Platform, Rect, Shape, Text,
-    TextField, ViewEvent,
+    Choice, Color, Command, Field, FieldKind, FieldValue, Form, FormError, Item, List, Platform,
+    TextField,
 };
 
 struct Sample;
@@ -94,9 +99,10 @@ const COLUMNS: i32 = COLORS.len() as i32;
 const ROWS: i32 = SHADES.len() as i32;
 
 /// An open color picker: a grid of swatches and a preview of the chosen
-/// color. Arrow keys, Home and End move the choice; pressing or dragging the
-/// pointer over the grid chooses the swatch under it. Pane creates one per
-/// opened view (`open_custom_view`) and drops it when the view closes.
+/// color, drawn as the canvas of its designed view. Arrow keys, Home and
+/// End move the choice; pressing or dragging the pointer over the grid
+/// chooses the swatch under it. Pane opens one per opened view (the
+/// "color" command) and drops it when the view closes.
 struct ColorPicker {
     column: Cell<i32>,
     row: Cell<i32>,
@@ -114,20 +120,33 @@ impl ColorPicker {
     }
 
     /// Chooses the swatch nearest to `x`, `y`.
-    fn choose(&self, x: i32, y: i32) {
-        self.column.set(x.div_euclid(STEP).clamp(0, COLUMNS - 1));
-        self.row.set(y.div_euclid(STEP).clamp(0, ROWS - 1));
+    fn choose(&self, x: f32, y: f32) {
+        self.column.set((x as i32).div_euclid(STEP).clamp(0, COLUMNS - 1));
+        self.row.set((y as i32).div_euclid(STEP).clamp(0, ROWS - 1));
+    }
+
+    /// Where the choice now is.
+    fn at(&self) -> (i32, i32) {
+        (self.column.get(), self.row.get())
+    }
+
+    /// Moves the choice by `columns` and `rows`, clamped at the edges.
+    fn moved(&self, columns: i32, rows: i32) {
+        let (column, row) = self.at();
+        self.column.set((column + columns).clamp(0, COLUMNS - 1));
+        self.row.set((row + rows).clamp(0, ROWS - 1));
     }
 }
 
-fn rect(x: i32, y: i32, size: u32, fill: u32) -> Shape {
-    Shape::Rect(Rect {
-        x,
-        y,
-        width: size,
-        height: size,
-        fill,
-    })
+/// The frame colour the chosen swatch and the hex code are drawn in.
+fn frame() -> Paint {
+    Paint::Color(Color::hex("#f1f3f5"))
+}
+
+/// A swatch's own colour, drawn exactly as the sample authored it: the
+/// smoke checks the pixels of these.
+fn swatch(fill: u32) -> Paint {
+    Paint::Exact(Color::hex(hex(fill)))
 }
 
 /// "#RRGGBB" for 0xRRGGBB.
@@ -135,67 +154,113 @@ fn hex(rgb: u32) -> String {
     format!("#{rgb:06X}")
 }
 
-impl GuestCustomView for ColorPicker {
-    async fn render(&self) -> Frame {
-        let (column, row) = (self.column.get(), self.row.get());
+impl View for ColorPicker {
+    fn render(&mut self, cx: &mut Cx<Self>) -> impl IntoAnswer {
+        let (column, row) = self.at();
         let (hue, shades) = COLORS[column as usize];
         let chosen = shades[row as usize];
-        // A light frame around the chosen swatch, then the swatches.
-        let mut shapes = vec![rect(column * STEP, row * STEP, STEP as u32, 0xf1f3f5)];
+        // A light frame around the chosen swatch, then the swatches, the
+        // preview and its hex code. The hex code is measured
+        // (`pane:extension/view.measure-text`), so the text drawn under
+        // the preview fits what it says.
+        let code = hex(chosen);
+        let measured = measure_text(
+            &code,
+            TextMeasure {
+                style: Some(TextStyle::Caption),
+                ..TextMeasure::default()
+            },
+        );
+        let mut ops = vec![Draw::rect(
+            (column * STEP) as f32,
+            (row * STEP) as f32,
+            STEP as f32,
+            STEP as f32,
+        )
+        .filled(frame())];
         for (x, (_, column)) in (0..).zip(COLORS) {
             for (y, fill) in (0..).zip(column) {
-                shapes.push(rect(x * STEP + 2, y * STEP + 2, SWATCH, fill));
+                ops.push(Draw::rect(
+                    (x * STEP + 2) as f32,
+                    (y * STEP + 2) as f32,
+                    SWATCH as f32,
+                    SWATCH as f32,
+                )
+                .filled(swatch(fill)));
             }
         }
-        shapes.push(rect(COLUMNS * STEP + 12, 2, 64, chosen));
-        shapes.push(Shape::Text(Text {
-            x: COLUMNS * STEP + 12,
-            y: 74,
-            content: hex(chosen),
-            color: 0xf1f3f5,
-        }));
+        ops.push(
+            Draw::rect((COLUMNS * STEP + 12) as f32, 2., 64., 64.).filled(swatch(chosen)),
+        );
+        ops.push(
+            Draw::text(code)
+                .at((COLUMNS * STEP + 12) as f32, 68. + measured.1)
+                .style(TextStyle::Caption)
+                .color(frame()),
+        );
         let name = match SHADES[row as usize] {
             "" => String::from(hue),
             shade => format!("{shade} {}", hue.to_lowercase()),
         };
-        Frame {
-            width: (COLUMNS * STEP + 88) as u32,
-            height: (ROWS * STEP) as u32,
-            shapes,
-            value: format!("{name}, {}", hex(chosen)),
+        column()
+            .key("picker")
+            .navigation_title("Choose a color")
+            .child(
+                canvas()
+                    .key("grid")
+                    .width(Length::Px((COLUMNS * STEP + 88) as f32))
+                    .height(Length::Px((ROWS * STEP) as f32))
+                    .role(CanvasRole::ColorWell)
+                    .label("Color")
+                    .value(format!("{name}, {}", hex(chosen)))
+                    .on_key(cx.value_listener(|this, key| this.keyed(key)))
+                    .on_pointer_down(cx.canvas_listener(|this, event| this.pointed(event)))
+                    .on_pointer_move(cx.canvas_listener(|this, event| this.pointed(event)))
+                    .on_pointer_up(cx.canvas_listener(|this, _| this.dragging.set(false)))
+                    .ops(ops),
+            )
+    }
+}
+
+impl ColorPicker {
+    /// A key the canvas is focused for: the arrows, Home and End move the
+    /// choice.
+    fn keyed(&self, key: &str) {
+        match key {
+            "left" => self.moved(-1, 0),
+            "right" => self.moved(1, 0),
+            "up" => self.moved(0, -1),
+            "down" => self.moved(0, 1),
+            "home" => {
+                self.column.set(0);
+            }
+            "end" => {
+                self.column.set(COLUMNS - 1);
+            }
+            _ => {}
         }
     }
 
-    async fn handle_event(&self, event: ViewEvent) -> Result<(), String> {
-        match event {
-            ViewEvent::Key(key) => {
-                let (column, row) = (self.column.get(), self.row.get());
-                let (column, row) = match key {
-                    Key::Left => (column - 1, row),
-                    Key::Right => (column + 1, row),
-                    Key::Up => (column, row - 1),
-                    Key::Down => (column, row + 1),
-                    Key::Home => (0, row),
-                    Key::End => (COLUMNS - 1, row),
-                };
-                self.column.set(column.clamp(0, COLUMNS - 1));
-                self.row.set(row.clamp(0, ROWS - 1));
-            }
+    /// A pointer event the canvas is dragged with: a press on the grid
+    /// chooses a swatch and starts the drag; a move during one chooses
+    /// under the pointer.
+    fn pointed(&self, event: CanvasEvent) {
+        let (x, y, pressed) = match event {
+            CanvasEvent::PointerDown { x, y, .. } => (x, y, true),
+            CanvasEvent::PointerMove { x, y } => (x, y, false),
+            _ => return,
+        };
+        let on_grid = (0..COLUMNS * STEP).contains(&(x as i32))
+            && (0..ROWS * STEP).contains(&(y as i32));
+        if pressed {
             // Only a press on the grid chooses a swatch and starts a drag.
-            ViewEvent::PointerDown(at) => {
-                if (0..COLUMNS * STEP).contains(&at.x) && (0..ROWS * STEP).contains(&at.y) {
-                    self.dragging.set(true);
-                    self.choose(at.x, at.y);
-                }
+            if on_grid {
+                self.dragging.set(true);
+                self.choose(x, y);
             }
-            ViewEvent::PointerMove(at) => {
-                if self.dragging.get() {
-                    self.choose(at.x, at.y);
-                }
-            }
-            ViewEvent::PointerUp(_) => self.dragging.set(false),
+        } else if self.dragging.get() {
+            self.choose(x, y);
         }
-        Ok(())
     }
 }
 
@@ -208,8 +273,17 @@ fn invalid(field: &str, message: &str) -> FormError {
 }
 
 /// Runs the action of the item `id` and shows a toast with what [`outcome`]
-/// answers; each item's action is this with its id.
+/// answers; each item's action is this with its id. The "Choose a color"
+/// item launches the command of its designed view instead.
 async fn act(id: &str) -> Result<(), String> {
+    if id == "color" {
+        let color = CommandRef {
+            source: None,
+            command: "color".into(),
+        };
+        return commands::launch(&color, LaunchType::UserInitiated, &[], None)
+            .map_err(|problem| format!("could not open the color picker: {problem}"));
+    }
     let done = outcome(id).await?;
     show_toast(Toast::success(done));
     Ok(())
@@ -249,8 +323,7 @@ async fn outcome(id: &str) -> Result<String, String> {
 }
 
 impl Command for Sample {
-    type CustomView = ColorPicker;
-    type DesignedView = pane_extension::view::NoDesignedView;
+    type DesignedView = ColorPicker;
 
     async fn render() -> Result<List, String> {
         let item =
@@ -276,16 +349,11 @@ impl Command for Sample {
                 "A random number from this instance",
             ),
             item("form", "Greet someone", "Fill in a form the guest checks").form(greeting_form()),
-            item(
+            acting(
                 "color",
                 "Choose a color",
                 "Pick a color in a view the guest draws",
-            )
-            .custom_view(CustomViewInfo {
-                title: "Choose a color".into(),
-                label: "Color".into(),
-                role: CustomViewRole::ColorWell,
-            }),
+            ),
             // Elsewhere Pane lists these as unavailable, says why, and
             // never runs their actions.
             acting(
@@ -330,11 +398,14 @@ impl Command for Sample {
         Ok(format!("{greeting}, {name}, from the Rust guest"))
     }
 
-    async fn open_custom_view(item_id: String) -> Result<CustomView, String> {
-        if item_id != "color" {
-            return Err(format!("unknown view: {item_id}"));
+    async fn open_designed_view(
+        command: String,
+        _launch: LaunchRecord,
+    ) -> Result<ColorPicker, String> {
+        if command != "color" {
+            return Err(format!("unknown designed view: {command}"));
         }
-        Ok(CustomView::new(ColorPicker::new()))
+        Ok(ColorPicker::new())
     }
 }
 

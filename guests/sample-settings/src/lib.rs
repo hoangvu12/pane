@@ -28,7 +28,7 @@
 use pane_extension::alloc::{format, string::String, vec::Vec};
 use pane_extension::feedback::{Toast, show_toast};
 use pane_extension::{
-    Command, CustomView, FieldValue, FormError, Item, List, NoCustomView, cache, content,
+    Command, FieldValue, FormError, Item, List, Nocache, content,
     credentials, settings,
 };
 
@@ -159,7 +159,6 @@ async fn outcome(id: &str) -> Result<String, String> {
 }
 
 impl Command for Greeting {
-    type CustomView = NoCustomView;
     type DesignedView = pane_extension::view::NoDesignedView;
 
     async fn render() -> Result<List, String> {
@@ -238,7 +237,4 @@ impl Command for Greeting {
         })
     }
 
-    async fn open_custom_view(item_id: String) -> Result<CustomView, String> {
-        Err(format!("unknown view: {item_id}"))
-    }
 }

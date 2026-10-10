@@ -109,7 +109,6 @@ struct Sample;
 pane_extension::export!(Sample);
 
 impl Command for Sample {
-    type CustomView = pane_extension::NoCustomView;
     type DesignedView = Screen;
 
     async fn open_designed_view(

@@ -40,8 +40,7 @@ export type {
 export interface Item {
   /**
    * Identifies the item among the list's items: Pane keeps the selection on
-   * it when the list is drawn again, and passes it to `submitForm` and
-   * `openCustomView`.
+   * it when the list is drawn again, and passes it to `submitForm`.
    */
   id: string;
   title: string;
@@ -76,12 +75,6 @@ export interface Item {
    * action or opens the form for it.
    */
   platforms?: Platform[] | null;
-  /**
-   * When set, choosing the item opens this custom view instead of running
-   * its action: Pane calls `openCustomView` and shows what the view draws. Ignored
-   * when `form` is set. Omitted or `null` for none.
-   */
-  customView?: CustomViewInfo | null;
   /** Drawn before the title (#139); omitted or `null` for none. */
   icon?: Icon | null;
   /** Shown while the pointer rests on the title: all of it, say. */
@@ -253,93 +246,6 @@ export interface FormError {
   message: string;
 }
 
-/** What Pane shows of an item's custom view besides the view's drawing. */
-export interface CustomViewInfo {
-  /** The screen's title. */
-  title: string;
-  /** Names the view to assistive technology. */
-  label: string;
-  /** What kind of control the view is to assistive technology. */
-  role: CustomViewRole;
-}
-
-/** `"color-well"`: a color chooser; its frame's value names the chosen color. */
-export type CustomViewRole = "color-well";
-
-/**
- * A filled rectangle. Coordinates are logical pixels from the view's top-left
- * corner; `fill` is a color as 0xRRGGBB.
- */
-export interface Rect {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-  fill: number;
-}
-
-/** One line of text in Pane's font, its top-left corner at `x`, `y`. */
-export interface Text {
-  x: number;
-  y: number;
-  content: string;
-  /** 0xRRGGBB. */
-  color: number;
-}
-
-export type Shape = { tag: "rect"; val: Rect } | { tag: "text"; val: Text };
-
-/**
- * What a custom view shows: `shapes` painted in order, later ones over earlier
- * ones, clipped to `width` x `height` logical pixels.
- */
-export interface Frame {
-  width: number;
-  height: number;
-  shapes: Shape[];
-  /** The view's current value for assistive technology, such as the chosen color's name. */
-  value: string;
-}
-
-/**
- * A position in the view, in logical pixels from its top-left corner. It can
- * lie outside the view while a pointer drag continues outside it.
- */
-export interface Point {
-  x: number;
-  y: number;
-}
-
-/** The keys a focused custom view receives; Tab, Enter and Escape stay with Pane. */
-export type Key = "left" | "right" | "up" | "down" | "home" | "end";
-
-/**
- * The user's input to a custom view: a key pressed while it has focus; the
- * primary pointer button pressed over it; the pointer moved while that button
- * is held; the button released, over the view or not.
- */
-export type ViewEvent =
-  | { tag: "key"; val: Key }
-  | { tag: "pointer-down"; val: Point }
-  | { tag: "pointer-move"; val: Point }
-  | { tag: "pointer-up"; val: Point };
-
-/**
- * A custom view the user has open, holding the view's state: any object with
- * these methods, such as an instance of a class. `openCustomView` returns a new
- * one for each opened view; Pane drops it when the view closes and never uses
- * it again.
- */
-export interface CustomView {
-  /** Draws the view as it is now. Throwing is a crash. */
-  render(): Promise<Frame>;
-  /**
-   * Handles the user's input to the view; Pane then calls `render`. Throwing
-   * reports an error to the user; the view stays open.
-   */
-  handleEvent(event: ViewEvent): Promise<void>;
-}
-
 /**
  * A designed view the user has open, holding the view's state: what
  * `createView` makes, or any object with these methods. `openView` returns
@@ -380,7 +286,6 @@ export interface DesignedView {
  *     };
  *   },
  *   async submitForm(id, values) { ... },
- *   async openCustomView(id) { return new MyView(); },
  * };
  * ```
  *
@@ -400,8 +305,7 @@ export interface DesignedView {
  *
  * Resolving gives Pane the value. Throwing (rejecting) reports an error to the
  * user, never a crash: from `render`, `run`, an item's `onAction`,
- * `runSearchResult`, `openView`, `openCustomView` and a view's `handleEvent` an
- * `Error`'s
+ * `runSearchResult`, `openView` and a view's `handleEvent` an `Error`'s
  * message, or a thrown string as is; from `submitForm` a {@link FormError}
  * object as is, and an `Error` or string as a message about the whole form.
  * An action, `run` and `runSearchResult` resolve with nothing: Pane shows
@@ -410,7 +314,7 @@ export interface DesignedView {
  * with `null` or a number, or a provider's `results` resolving with a
  * string, is a crash: Pane reports it and starts a fresh instance for the
  * next call, and repeated crashes pause the extension.
- * A crash closes any open custom view, whose state was in the old instance.
+ * A crash closes any open view, whose state was in the old instance.
  * A list Pane cannot read, such as one whose title is not a string, is the
  * command's failure, which Pane reports, not a crash.
  */
@@ -449,13 +353,6 @@ export interface Command {
    * form is refused.
    */
   submitForm?(itemId: string, values: FieldValue[]): Promise<string>;
-  /**
-   * Open the custom view of the item with `itemId`: a new {@link CustomView}
-   * with its own state. Throwing reports an error and opens nothing. Without
-   * it, opening one is an error. The canvas retires it (#242), which moves a
-   * custom view's shapes onto the designed tree.
-   */
-  openCustomView?(itemId: string): Promise<CustomView>;
   /**
    * Open the designed view of the command with id `command` (its id in
    * `pane.json`, so one component can serve several commands), launched as

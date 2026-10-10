@@ -51,10 +51,7 @@ use core::pin::Pin;
 
 use crate::exports::pane::extension::command as wit;
 use crate::pane::extension::commands::LaunchRecord;
-use wit::{
-    CustomView, CustomViewInfo, CustomViewRole, FieldKind, FieldValue, Form, FormError,
-    GuestCustomView, Platform,
-};
+use wit::{FieldKind, FieldValue, Form, FormError, Platform};
 
 /// The version of the tree this SDK writes (`docs/list-tree.md`).
 const TREE_VERSION: u32 = 1;
@@ -404,7 +401,6 @@ pub struct Item {
     actions: Vec<Action>,
     form: Option<Form>,
     platforms: Option<Vec<Platform>>,
-    custom_view: Option<CustomViewInfo>,
     /// Its icon, tooltips and accessories (`crate::icon`, #139).
     pub(crate) look: crate::icon::Look,
 }
@@ -421,7 +417,6 @@ impl Item {
             actions: Vec::new(),
             form: None,
             platforms: None,
-            custom_view: None,
             look: crate::icon::Look::default(),
         }
     }
@@ -485,13 +480,6 @@ impl Item {
         self
     }
 
-    /// This item opening a custom view when chosen, instead of running its
-    /// action: Pane calls [`Command::open_view`] with the item's id. Ignored
-    /// when the item has a form.
-    pub fn custom_view(mut self, info: CustomViewInfo) -> Item {
-        self.custom_view = Some(info);
-        self
-    }
 }
 
 /// An extension command: one whose screen is a list (a view command), one
@@ -505,7 +493,6 @@ impl Item {
 /// pane_extension::export!(Hello);
 ///
 /// impl pane_extension::Command for Hello {
-///     type CustomView = pane_extension::NoCustomView;
 ///     type DesignedView = pane_extension::view::NoDesignedView;
 ///
 ///     async fn render() -> Result<List, String> {
@@ -514,20 +501,18 @@ impl Item {
 ///             Ok(())
 ///         })))
 ///     }
-///     // submit_form, open_custom_view ...
+///     // submit_form ...
 /// }
 /// ```
 ///
 /// A root provider (`"mode": "provider"`, a command that only answers root
 /// search through [`crate::root`] or [`crate::indexed`]) implements neither:
-/// Pane never opens or runs it, so `type CustomView` and `type DesignedView`
-/// are all it needs.
+/// Pane never opens or runs it, so `type DesignedView` is all it needs.
 ///
 /// A no-view command implements [`Command::run`] instead of `render`:
 ///
 /// ```ignore
 /// impl pane_extension::Command for Toggle {
-///     type CustomView = pane_extension::NoCustomView;
 ///     type DesignedView = pane_extension::view::NoDesignedView;
 ///
 ///     async fn run(command: String, launch: LaunchRecord) -> Result<(), String> {
@@ -553,7 +538,6 @@ impl Item {
 /// }
 ///
 /// impl pane_extension::Command for Sample {
-///     type CustomView = pane_extension::NoCustomView;
 ///     type DesignedView = Counter;
 ///
 ///     async fn open_designed_view(command: String, launch: LaunchRecord) -> Result<Counter, String> {
@@ -562,10 +546,6 @@ impl Item {
 /// }
 /// ```
 pub trait Command: 'static {
-    /// The custom view the command opens ([`NoCustomView`](crate::NoCustomView)
-    /// for none).
-    type CustomView: GuestCustomView;
-
     /// The state of the designed view the command opens
     /// ([`view::NoDesignedView`](crate::view::NoDesignedView) for none):
     /// a [`view::View`](crate::view::View) whose `render` answers the
@@ -626,15 +606,6 @@ pub trait Command: 'static {
         }
     }
 
-    /// Opens the custom view of the item with `item_id`. Each call opens a
-    /// new view with its own state. Without it, opening one is an error.
-    /// The canvas retires it (#242), which moves a custom view's shapes
-    /// onto the designed tree.
-    fn open_custom_view(item_id: String) -> impl Future<Output = Result<CustomView, String>> {
-        let _ = item_id;
-        async { Err("this command has no custom views".into()) }
-    }
-
     /// Opens the designed view of the command `command` (its id in
     /// `pane.json`, so one component can serve several commands), launched
     /// as `launch` says: the screen a `"mode": "designed"` command opens,
@@ -651,7 +622,6 @@ pub trait Command: 'static {
 }
 
 impl<T: Command> wit::Guest for T {
-    type CustomView = <T as Command>::CustomView;
     type View = crate::view::Open<<T as Command>::DesignedView>;
 
     async fn render(launch: LaunchRecord) -> Result<String, String> {
@@ -699,10 +669,6 @@ impl<T: Command> wit::Guest for T {
 
     async fn submit_form(item_id: String, values: Vec<FieldValue>) -> Result<String, FormError> {
         <T as Command>::submit_form(item_id, values).await
-    }
-
-    async fn open_custom_view(item_id: String) -> Result<CustomView, String> {
-        <T as Command>::open_custom_view(item_id).await
     }
 
     async fn open_view(command: String, launch: LaunchRecord) -> Result<wit::View, String> {
@@ -815,20 +781,6 @@ fn remember(list: List) -> String {
                 );
             }
             tree.push(']');
-        }
-        if let Some(view) = &item.custom_view {
-            tree.push_str(",\"customView\":{\"title\":");
-            string(&mut tree, &view.title);
-            tree.push_str(",\"label\":");
-            string(&mut tree, &view.label);
-            tree.push_str(",\"role\":");
-            string(
-                &mut tree,
-                match view.role {
-                    CustomViewRole::ColorWell => "color-well",
-                },
-            );
-            tree.push('}');
         }
         crate::icon::write_look(&mut tree, &item.look);
         tree.push('}');

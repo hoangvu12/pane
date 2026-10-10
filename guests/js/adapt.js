@@ -38,9 +38,9 @@
 //   whole form;
 // - from every other handler that answers with an error (`render`, an
 //   item's `onAction`, a submenu's `onOpen`, `runSearchResult`, `run`,
-//   `openCustomView`, a custom view's `handleEvent`, `openView`, a designed
-//   view's `handleEvent`, `resultsFor`, `results`, `runOperation`,
-//   `runCycle`), the message of an `Error` or of an object with a
+//   `openView`, a designed view's `handleEvent`, `resultsFor`, `results`,
+//   `runOperation`, `runCycle`), the message of an `Error` or of an object
+//   with a
 //   `message`, or the text of anything else. A submenu's `onOpen`
 //   resolving with something other than a list is such an error too.
 //
@@ -50,9 +50,8 @@
 // A crash is then only what a crash should be: an action, `run` or
 // `runSearchResult` resolving with a value (it resolves with nothing; text,
 // which Pane no longer shows, is let through), a provider resolving with a
-// value of the wrong type, or a custom view's `render` throwing (it has no
-// error to answer with). A list Pane cannot read (a title that is not text,
-// say) is the command's failure, which Pane reports, not a crash.
+// value of the wrong type. A list Pane cannot read (a title that is not
+// text, say) is the command's failure, which Pane reports, not a crash.
 
 import { logThrown } from "./console.js";
 import { look } from "./look.js";
@@ -101,26 +100,6 @@ function adapted(target, name, error, then = (value) => value) {
     return then(value);
   };
 }
-
-/** `view`, a custom view, with `handleEvent` answering errors as text. */
-function adaptView(view) {
-  if (view !== null && typeof view === "object" && typeof view.handleEvent === "function") {
-    const handleEvent = adapted(view, "handleEvent", message);
-    try {
-      Object.defineProperty(view, "handleEvent", { value: handleEvent, configurable: true });
-    } catch {
-      // A frozen view keeps its own handler.
-    }
-  }
-  return view;
-}
-
-/**
- * `view`, a designed view, with `handleEvent` answering errors as text: the
- * same wrapping a custom view's gets, its `render` throwing being a crash
- * (the tree it answers is checked host-side).
- */
-const adaptDesignedView = adaptView;
 
 /** A form as the tree carries it, from the `Form` the command gives. */
 function treeForm(form) {
@@ -200,7 +179,6 @@ function tree(list, actions) {
         }
         if (item?.form != null) node.form = treeForm(item.form);
         if (item?.platforms != null) node.platforms = item.platforms;
-        if (item?.customView != null) node.customView = item.customView;
         // Its icon, tooltips and accessories (#139).
         Object.assign(node, look(item));
         return node;
@@ -216,9 +194,6 @@ const missing = {
   },
   async submitForm() {
     throw new Error("this command has no forms");
-  },
-  async openCustomView() {
-    throw new Error("this command has no custom views");
   },
   async openView() {
     throw new Error("this command opens no designed view");
@@ -335,8 +310,7 @@ export function adaptCommand(command) {
       return answer(value);
     },
     submitForm: adapted(own, "submitForm", formError),
-    openCustomView: adapted(own, "openCustomView", message, adaptView),
-    openView: adapted(own, "openView", message, adaptDesignedView),
+    openView: adapted(own, "openView", message),
   };
 }
 

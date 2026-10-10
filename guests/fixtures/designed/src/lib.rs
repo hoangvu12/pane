@@ -69,8 +69,7 @@ use core::ffi::c_void;
 wit_bindgen::generate!({ path: "../../../wit", world: "extension" });
 
 use exports::pane::extension::command::{
-    CustomView, FieldValue, FormError, Frame, Guest, GuestCustomView, GuestView, LaunchRecord,
-    Outcome, Rendered, UiEvent, View, ViewEvent,
+    FieldValue, FormError, Guest, GuestView, LaunchRecord, Outcome, Rendered, UiEvent, View,
 };
 
 /// The version of the UI component set the fixture writes.
@@ -620,20 +619,7 @@ struct Fixture;
 export!(Fixture);
 
 /// A view type that is never opened.
-enum NoView {}
-
-impl GuestCustomView for NoView {
-    async fn render(&self) -> Frame {
-        match *self {}
-    }
-
-    async fn handle_event(&self, _event: ViewEvent) -> Result<(), String> {
-        match *self {}
-    }
-}
-
 impl Guest for Fixture {
-    type CustomView = NoView;
     type View = Designed;
 
     async fn render(_launch: LaunchRecord) -> Result<String, String> {
@@ -653,10 +639,6 @@ impl Guest for Fixture {
             field: None,
             message: format!("unknown form: {item_id}"),
         })
-    }
-
-    async fn open_custom_view(item_id: String) -> Result<CustomView, String> {
-        Err(format!("unknown view: {item_id}"))
     }
 
     async fn open_view(_command: String, _launch: LaunchRecord) -> Result<View, String> {

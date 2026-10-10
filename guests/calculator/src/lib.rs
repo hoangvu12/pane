@@ -9,7 +9,7 @@ mod expression;
 
 use pane_extension::alloc::{format, string::String, vec, vec::Vec};
 use pane_extension::root::{RootAction, RootResult};
-use pane_extension::{Command, NoCustomView};
+use pane_extension::Command;
 
 use expression::Outcome;
 
@@ -20,7 +20,6 @@ pane_extension::root::export!(Calculator);
 /// A root provider: Pane never opens or runs it, so the command keeps the
 /// defaults (opening it is an error).
 impl Command for Calculator {
-    type CustomView = NoCustomView;
     type DesignedView = pane_extension::view::NoDesignedView;
 }
 
