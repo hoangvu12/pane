@@ -77,7 +77,7 @@ pub(super) struct ListHeld {
 
 /// One row of a designed List's or Grid's presentation: what activating
 /// it does, and what the row alone cannot show.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct DesignedRow {
     /// The item's key, as the selection names it.
     pub key: String,
@@ -126,7 +126,7 @@ pub struct DesignedDropdown {
 /// A designed view's List or Grid as the launcher presents it (the
 /// snapshot's `list`, beside the rows it fills): what the rows alone do
 /// not say.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct DesignedList {
     /// The node's key, as the events raised on the list name it.
     pub key: String,

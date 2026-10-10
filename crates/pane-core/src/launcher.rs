@@ -85,8 +85,8 @@ use crate::packages::{
 };
 use crate::platform;
 use crate::runtime::{
-    CallError, DesignedTree, Item, ResultListing, RootAction, RootResult as ComputedResult,
-    Runtime, View, ViewId, WeakRuntime,
+    CallError, DesignedHandler, DesignedTree, Item, ResultListing, RootAction,
+    RootResult as ComputedResult, Runtime, View, ViewId, WeakRuntime,
 };
 use crate::search::{self, Keys, Query};
 pub use pane_form::{PaneFieldKind, PaneForm, PaneFormField, PathPick};
@@ -3320,8 +3320,6 @@ impl Launcher {
     /// the runtime, and replies for the old screen are discarded.
     fn leave_command(&self, state: &mut State) {
         self.close_designed_view(state);
-        // Its search in progress, if any, is stopped.
-        state.searching = None;
         state.open = None;
         state.open_command = None;
         state.launch = LaunchRecord::default();

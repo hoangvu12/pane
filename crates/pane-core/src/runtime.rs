@@ -3828,7 +3828,16 @@ impl Host {
             .and_then(|open| open.selected.borrow().clone());
         let canvases = open.canvases.borrow().clone();
         let context = render_context(view, render, why, selected.as_deref(), &canvases);
-rendered = self.settle(path, result, CallError::Guest)?;
+        let result = self
+            .run_guest(path, chain, async |instance| {
+                let view = instance.bindings.pane_extension_command().view();
+                instance
+                    .store
+                    .run_concurrent(async |store| view.call_render(store, resource, context).await)
+                    .await
+            })
+            .await?;
+        let rendered = self.settle(path, result, CallError::Guest)?;
         let tree = DesignedTree::read(&rendered.tree).map_err(|error| match error {
             designed::ReadError::Guest(message) => CallError::Guest(message),
             designed::ReadError::Unreadable(message) => CallError::Unreadable(message),

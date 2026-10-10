@@ -127,4 +127,10 @@ pub use runtime::{
     SubmenuEntries, Surface, TREE_VERSION, Tag, TagPicker, Text, TextContent, TextInput, TextLevel,
     TextStyle, Toggle, UNRESPONSIVE_LIMIT, View, ViewId, WARN_AFTER, key_problems,
 };
+pub use search::{SettingsEntry, settings_matches, title_matches};
+pub use tokens::{IconSize, Radius};
+// Icons, accessories and tooltips (#139).
+pub use icons::{Color, Icon, IconSource, Mask, Tint, Tone};
+
+pub use launcher::{AccessoryKind, ShownAccessory, absolute_date, relative_date};
 pub use runtime::{Accessory, AccessoryContent, ItemLook, MAX_ACCESSORIES};

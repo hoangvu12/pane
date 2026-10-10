@@ -35,7 +35,7 @@ use crate::runtime::{
 /// (`Screen::PaneForm`). The tree's `form` node names no `onSubmit` —
 /// Pane itself answers its submission, through
 /// [`Launcher::submit_pane_form`].
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct PaneForm {
     /// Which open form this is: a number given as each form opens, so the
     /// window's keyed state follows one whose tree changes (a field's

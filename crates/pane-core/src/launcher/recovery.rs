@@ -293,15 +293,6 @@ mod tests {
     /// command (a designed view) open.
     fn with_view_open() -> (Runtime, Launcher) {
         let runtime = Runtime::start().unwrap();
-        let command = CommandRegistration {
-            id: "rust".into(),
-            title: "Rust sample".into(),
-            subtitle: None,
-            component,
-            takes_query: false,
-        };
-        let launcher = Launcher::new(Ok(runtime.clone()), vec![command]);
-        block_on(launcher.activate_selected());
         let data = tempfile::tempdir().unwrap();
         let source = data.path().join("sample");
         std::fs::create_dir_all(&source).unwrap();

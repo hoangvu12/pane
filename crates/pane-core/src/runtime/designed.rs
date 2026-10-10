@@ -825,7 +825,7 @@ pub struct TextInput {
 /// the note under it, the error the extension's last answer set, and
 /// whether its last submitted value is kept as the package's settings and
 /// prefilled the next time the field appears.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct FieldProps {
     /// The field's title, drawn over its control; also names it to
     /// assistive technology when the field's own label does not.
@@ -843,7 +843,7 @@ pub struct FieldProps {
 /// One field's value in a form's submission (#241), as the window
 /// collects it from the field's own state: the text a field edits, the
 /// state a checkbox or toggle is in, the tags or paths a picker chose.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum FormValue {
     /// A text field's, password field's, text area's, date field's,
     /// dropdown's or single-path picker's value.
@@ -875,7 +875,7 @@ impl FormValue {
 /// inserts a newline). A form with no `on-submit` is one Pane itself
 /// answers: the window collects its values and hands them to the
 /// launcher (Pane's own argument, Setup, alias, npm and Git forms).
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct FormNode {
     /// The callback a submission runs, with every field's value.
     pub on_submit: Option<u32>,
@@ -886,7 +886,7 @@ pub struct FormNode {
 /// One date field (`date-picker`) or date and time field
 /// (`date-time-picker`): its value typed or stepped with the arrow keys,
 /// the part the caret is in — "YYYY-MM-DD" or "YYYY-MM-DD HH:MM".
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct DateField {
     /// The field's text, which parses as a date or date and time or does
     /// not; the extension validates it, as a text field's value.
@@ -897,7 +897,7 @@ pub struct DateField {
 /// One tag picker: a multi-select of its options, the chosen tags drawn
 /// as chips. Enter adds the highlighted option; Backspace over an empty
 /// query removes the last chip.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct TagPicker {
     /// The tags chosen, by their options' values.
     pub tags: Vec<String>,
@@ -910,7 +910,7 @@ pub struct TagPicker {
 
 /// One file or folder picker: a path typed or chosen with the system's
 /// dialog (its "Choose…" opens it), one path or several.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct FilePicker {
     /// The paths chosen, one unless the picker allows many.
     pub paths: Vec<String>,
@@ -936,7 +936,7 @@ pub const MAX_PAGE_SIZE: u64 = 100;
 /// search-bar dropdown; any other child is the empty view drawn when no
 /// item is shown. An item's `detail` is the detail pane's content when it
 /// is selected and `is-showing-detail` names the pane.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct ListNode {
     /// The search field's placeholder.
     pub search_placeholder: Option<String>,
@@ -969,7 +969,7 @@ pub struct ListNode {
 }
 
 /// One section of a List's or Grid's items, under its title and subtitle.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct ListSection {
     pub title: Option<String>,
     pub subtitle: Option<String>,
@@ -989,7 +989,7 @@ pub struct ListSection {
 /// vocabulary on the designed tree. Its children are its own row subtree,
 /// drawn in the place of the standard row while Pane still selects and
 /// activates it.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct ListItem {
     pub title: String,
     pub subtitle: Option<String>,
