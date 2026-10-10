@@ -2004,12 +2004,12 @@ mod tests {
 
         // Raw lengths clamp, opacity clamps, and a non-positive aspect
         // ratio is left out.
-        let tree = tree(
+        let clamped = tree(
             r#"{"type":"text","text":"Hi","width":99999,"minWidth":-5,"opacity":9,
                 "aspectRatio":0}"#,
         )
         .unwrap();
-        let style = &tree.root.style;
+        let style = &clamped.root.style;
         assert_eq!(style.sizing.width, Some(Length::Px(Finite(4096.))));
         assert_eq!(style.sizing.min_width, Some(Length::Px(Finite(0.))));
         assert_eq!(style.surface.opacity, Some(Finite(1.)));
@@ -2195,7 +2195,11 @@ mod tests {
     #[test]
     fn markdown_reads_and_is_bounded() {
         let tree = tree(
-            r#"{"type":"markdown","markdown":"# Hi\n\nSome *prose*.\n\n- [x] done"}"#,
+            r##"{"type":"markdown","markdown":"# Hi
+
+Some *prose*.
+
+- [x] done"}"##,
         )
         .unwrap();
         let NodeKind::Markdown(markdown) = &tree.root.kind else {

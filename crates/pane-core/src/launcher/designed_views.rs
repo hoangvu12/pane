@@ -311,7 +311,8 @@ impl Launcher {
     /// the fallback shown for it until then. Whether any icon changed; a
     /// window that sees one draws again.
     pub fn refresh_designed_view(&self) -> bool {
-        let mut state = self.lock();
+        let mut guard = self.lock();
+        let state = &mut *guard;
         let Some(open) = state.designed_view.as_ref() else {
             return false;
         };

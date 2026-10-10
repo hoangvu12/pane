@@ -365,8 +365,6 @@ fn list(lines: &mut Lines) -> Block {
 /// `text` as a task item: its checkbox and the item's blocks. The
 /// checkbox `[ ]` or `[x]` opens the item.
 fn task(text: &str) -> (Option<bool>, Vec<Block>) {
-    let checked = text
-        .strip_prefix("[ ] ")
     let checked = if text.starts_with("[ ] ") {
         Some(false)
     } else if text.starts_with("[x] ") || text.starts_with("[X] ") {
