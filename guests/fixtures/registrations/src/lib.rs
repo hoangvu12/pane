@@ -29,7 +29,7 @@ use pane_extension::alloc::{format, string::String};
 use pane_extension::feedback::{Toast, show_toast};
 use pane_extension::registrations::{self, Change, Item};
 use pane_extension::{
-    Command, CustomView, FieldValue, FormError, List, NoCustomView, content, settings,
+    Command, CustomView, FieldValue, FormError, List, NoCustomView, content, publish, settings,
 };
 
 /// The command's id in the pane.json the test writes.
@@ -62,6 +62,7 @@ unsafe impl Sync for Held {}
 
 struct Fixture;
 pane_extension::export!(Fixture);
+pane_extension::publish::export!(Fixture);
 pane_extension::registrations::export_events!();
 pane_extension::lifecycle::export!(Fixture);
 
@@ -202,6 +203,19 @@ fn held_item(id: &str) -> Item {
         "the fixture registered this; {} firings",
         counted(FIRED)
     ))
+}
+
+/// The operations the manifests' `provides` entries name, served through
+/// the export that serves published operations: the fixture answers the
+/// one operation its test manifests declare, `greet` of the fixture's
+/// capability, qualified by the capability as a capability call arrives.
+impl publish::Guest for Fixture {
+    async fn run_operation(operation: String, _input: String) -> Result<String, String> {
+        match operation.as_str() {
+            "fixture:held@1/greet" => Ok("{\"greeting\":\"the fixture greets\"}".into()),
+            _ => Err(format!("this component serves no `{operation}`")),
+        }
+    }
 }
 
 impl Command for Fixture {
