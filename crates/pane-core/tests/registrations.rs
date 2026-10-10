@@ -327,9 +327,13 @@ fn a_dynamic_root_item_appears_updates_and_disappears_in_root_search() {
         assert_eq!(row.title, "Registrations: counting");
         assert_eq!(row.subtitle, Some(item_subtitle(&sample, 0, 0)));
         // The undo list holds what the activation registered: the item
-        // and the timer (no watcher: no folder is named).
+        // and the timer (no watcher: no folder is named). The row appears
+        // as the item is registered, before the activation has come to the
+        // timer, so the timer is waited for.
         assert!(launcher.undo_list(&identity).contains(&"dynamic root item"));
-        assert!(launcher.undo_list(&identity).contains(&"timer"));
+        pane.until("the activation's timer", true, || {
+            launcher.undo_list(&identity).contains(&"timer")
+        });
         // The timer fires and updates the row: the thread has begun the
         // timer's interval where the clock stands.
         pane.timers_settled(&launcher);

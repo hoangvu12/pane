@@ -235,6 +235,28 @@ fn offered_dynamic(state: &State) -> Vec<String> {
 /// title and that the item is gone. `None` when the hotkey names nothing
 /// of the kind. The surfaces that hold a dynamic item say so while it is
 /// not registered (#158), as one of a missing target does.
+/// The action a `shortcut` runs, if it is recorded for a dynamic root
+/// item that runs an action rather than launching a command: the hotkey
+/// runs the action, as activating its row does.
+fn dynamic_action_of(state: &State, shortcut: &Shortcut) -> Option<super::dynamic::DynamicAction> {
+    let command = command_of(state, shortcut)?;
+    let row = super::dynamic::pinned_by_id(state, &command)?;
+    match row.entry {
+        Entry::DynamicAction(action) => Some(action),
+        _ => None,
+    }
+}
+
+/// The row id a `shortcut` is recorded for, if any.
+fn command_of(state: &State, shortcut: &Shortcut) -> Option<String> {
+    state
+        .bindings
+        .registered
+        .iter()
+        .find(|(_, registered)| registered.shortcut == *shortcut)
+        .map(|(command, _)| command.as_str().to_owned())
+}
+
 fn gone_dynamic(state: &State, shortcut: &Shortcut) -> Option<String> {
     let command = state
         .bindings
@@ -453,22 +475,34 @@ impl Launcher {
             Some(_) => None,
             None => gone_dynamic(&state, shortcut),
         };
-        if opening.is_none() && gone.is_none() {
+        // One recorded for a dynamic root item that runs an action runs
+        // the action, as activating its row does.
+        let action = if opening.is_none() && gone.is_none() {
+            dynamic_action_of(&state, shortcut)
+        } else {
+            None
+        };
+        if opening.is_none() && gone.is_none() && action.is_none() {
             return None;
         }
         // Its data as the package is now, so a disable or reload meanwhile
         // stops the opening.
         let data = opening
             .as_ref()
-            .and_then(|opening| self.data_in(&state, &opening.component));
-        match &opening {
-            Some(opening) if !opening.no_view => {
+            .and_then(|opening| self.data_in(&state, &opening.component))
+            .or_else(|| {
+                action
+                    .as_ref()
+                    .and_then(|action| self.data_in(&state, &action.component))
+            });
+        match (&opening, &action) {
+            (Some(opening), _) if !opening.no_view => {
                 self.show_root(&mut state, Some(opening.component.clone()));
                 state.view.status = Status::Running;
             }
-            // Root search stays while a no-view command runs.
-            Some(_) => Launcher::begin_run(&mut state),
-            None => {
+            // Root search stays while a no-view command or an action runs.
+            (Some(_), _) | (None, Some(_)) => Launcher::begin_run(&mut state),
+            (None, None) => {
                 let reason = gone.clone().expect("checked above");
                 self.show_root(&mut state, None);
                 state.view.status = Status::Error(reason);
@@ -480,6 +514,8 @@ impl Launcher {
         Some(async move {
             if let Some(opening) = opening {
                 launcher.launch_opening(epoch, opening, data).await;
+            } else if let Some(action) = action {
+                launcher.run_dynamic_action(epoch, action, data).await;
             }
         })
     }
