@@ -21,10 +21,7 @@ use std::time::Duration;
 
 use futures::executor::block_on;
 use pane_core::hotkeys::{HotkeyError, Hotkeys, Shortcut};
-use pane_core::{
-    Launcher, PackageIdentity, ResultAction, Runtime,
-    Screen, Status,
-};
+use pane_core::{Launcher, PackageIdentity, ResultAction, Runtime, Screen, Status};
 use tempfile::TempDir;
 
 #[path = "support/feedback.rs"]

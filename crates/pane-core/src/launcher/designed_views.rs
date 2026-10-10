@@ -889,7 +889,8 @@ impl Launcher {
 
     /// How many designed views are open in guest instances. A diagnostic
     /// for tests and logs, as [`Runtime::view_count`] is.
-    pub fn designed_view_count(&self) -> impl Future<Output = usize> + Send + 'static {        let runtime = self.runtime().ok().cloned();
+    pub fn designed_view_count(&self) -> impl Future<Output = usize> + Send + 'static {
+        let runtime = self.runtime().ok().cloned();
         async move {
             match runtime {
                 Some(runtime) => runtime.designed_view_count().await,

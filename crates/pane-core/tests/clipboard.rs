@@ -376,7 +376,6 @@ impl Pane {
         assert_eq!(run(launcher, TURN_ON), result("Clipboard history is on"));
     }
 
-
     /// The only package's history as the file holds it, once `launcher`
     /// wrote what it batched (#192).
     fn history_of_the_package(&self, launcher: &Launcher) -> Value {

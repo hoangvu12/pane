@@ -34,11 +34,9 @@
 use std::collections::{BTreeMap, HashSet};
 use std::future::Future;
 
-use super::pane_form::{self, PaneFieldKind, PaneFormField, PaneForm, PathPick};
 use super::designed_views;
-use super::{
-    FormPurpose, Launcher, Opening, Screen, State, Status, choices, next_form_id, owner,
-};
+use super::pane_form::{self, PaneFieldKind, PaneForm, PaneFormField, PathPick};
+use super::{FormPurpose, Launcher, Opening, Screen, State, Status, choices, next_form_id, owner};
 use crate::extension_data::DataKind;
 use crate::packages::{InstalledPackage, Manifest, PackageIdentity};
 use crate::preferences::{self, Declared, Preference, PreferenceKind};

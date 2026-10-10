@@ -23,7 +23,7 @@
 use std::future::Future;
 use std::path::{Path, PathBuf};
 
-use super::pane_form::{self, PaneFieldKind, PaneFormField, PaneForm};
+use super::pane_form::{self, PaneFieldKind, PaneForm, PaneFormField};
 use super::{
     Changing, Entry, FormPurpose, GIT_REPOSITORY_FIELD, Launcher, LauncherView, Mode,
     NPM_PACKAGE_FIELD, Row, Screen, State, Status, next_form_id, off_thread,

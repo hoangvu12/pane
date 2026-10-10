@@ -26,8 +26,8 @@
 
 use super::{FormPurpose, Launcher, LauncherView, OpenForm, Screen, State, Status};
 use crate::runtime::{
-    Checkbox, DesignedTree, FieldProps, FilePicker, FormNode, Layout, Node, NodeKind, Select,
-    Segment, TextInput,
+    Checkbox, DesignedTree, FieldProps, FilePicker, FormNode, Layout, Node, NodeKind, Segment,
+    Select, TextInput,
 };
 
 /// A form Pane itself asks the user, as its tree says: the argument form,
@@ -269,7 +269,8 @@ impl Node {
     }
 }
 
-impl Launcher {    /// Notes what the discrete control of the open Pane form keyed `key`
+impl Launcher {
+    /// Notes what the discrete control of the open Pane form keyed `key`
     /// now holds — a dropdown's choice, a checkbox's state — moving it
     /// into the tree the screen holds, as an extension's change event
     /// moves it into the tree its answer holds. Text fields tell nothing

@@ -10,9 +10,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use futures::executor::block_on;
-use pane_core::{
-    CallError, Launcher, PackageIdentity, Row, Runtime, Screen, Status, Unavailable,
-};
+use pane_core::{CallError, Launcher, PackageIdentity, Row, Runtime, Screen, Status, Unavailable};
 use tempfile::TempDir;
 
 #[path = "support/feedback.rs"]

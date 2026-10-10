@@ -343,9 +343,10 @@ fn a_valid_form_shows_the_guests_answer(sample: &Sample) {
 
     sample.submit(&launcher, "Ada", "morning");
     assert!(
-        sample
-            .form_texts(&launcher)
-            .contains(&format!("Good morning, Ada, from the {} guest", sample.language)),
+        sample.form_texts(&launcher).contains(&format!(
+            "Good morning, Ada, from the {} guest",
+            sample.language
+        )),
         "{:?}",
         sample.form_texts(&launcher)
     );

@@ -171,7 +171,9 @@ fn done(window: &Entity<LauncherWindow>, cx: &mut VisualTestContext) -> Launcher
 
 /// Runs the window until a form view is on screen, drawn; its view.
 fn form_shown(window: &Entity<LauncherWindow>, cx: &mut VisualTestContext) -> LauncherView {
-    until(window, cx, |view| matches!(view.screen, Screen::DesignedView(_)))
+    until(window, cx, |view| {
+        matches!(view.screen, Screen::DesignedView(_))
+    })
 }
 
 /// The values of the fields of the form view on screen, in order: the

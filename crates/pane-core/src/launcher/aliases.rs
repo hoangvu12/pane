@@ -37,7 +37,7 @@ use std::future::Future;
 use serde_json::{Map, Value};
 
 use super::choices::{Choices, Record, provider_title, split};
-use super::pane_form::{self, PaneFieldKind, PaneFormField, PaneForm};
+use super::pane_form::{self, PaneFieldKind, PaneForm, PaneFormField};
 use super::{
     CommandRegistration, Entry, FormPurpose, Launcher, Opening, Row, Screen, State, Status,
     Unavailable, next_form_id, off_thread,
