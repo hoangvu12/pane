@@ -13,8 +13,8 @@ use std::path::PathBuf;
 
 use futures::executor::block_on;
 use pane_core::{
-    CommandRegistration, CustomViewRole, DesignedHandler, FormValue, GUEST_MEMORY, Key, Launcher,
-    Point, Rgb, Runtime, Screen, Shape, Status, Unavailable, ViewEvent,
+    CallError, CommandRegistration, CustomViewRole, DesignedHandler, FormValue, GUEST_MEMORY, Key,
+    Launcher, Point, Rgb, Runtime, Screen, Shape, Status, Unavailable, ViewEvent,
 };
 use wasmtime::component::Component;
 use wasmtime::{Config, Engine};

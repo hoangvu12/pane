@@ -677,10 +677,7 @@ impl LauncherWindow {
                     return None;
                 };
                 let before = paths.len();
-                let arrived: Vec<String> = paths
-                    .iter()
-                    .map(|picked| picked.to_string_lossy().into_owned())
-                    .collect();
+                let arrived = paths.clone();
                 for text in arrived {
                     if !paths.contains(&text) {
                         paths.push(text);

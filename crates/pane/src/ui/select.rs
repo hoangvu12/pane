@@ -1139,6 +1139,7 @@ impl Render for Select {
 /// A section's label above the choices of one section, as the launcher's
 /// own lists group theirs (#241).
 fn section_label(label: SharedString, theme: &Theme) -> AnyElement {
+    let drawn = label.clone();
     div()
         .id(SharedString::from(label.clone()))
         .debug_selector(move || format!("{label}-section"))
@@ -1148,7 +1149,7 @@ fn section_label(label: SharedString, theme: &Theme) -> AnyElement {
         .text_size(theme.typography.settings_text_size)
         .font_weight(theme.typography.medium)
         .text_color(theme.text_muted)
-        .child(label)
+        .child(drawn)
         .into_any_element()
 }
 

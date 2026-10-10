@@ -241,7 +241,7 @@ pub(super) fn tag_field(
             .iter()
             .enumerate()
             .map(|(at, option)| {
-                let (option, at) = (*option, at);
+                let (option, at) = (option.clone(), at);
                 let path = path.to_owned();
                 let value = option.value.clone();
                 let callback = picker.on_change;
@@ -365,9 +365,10 @@ pub(super) fn path_field(
                 ))
             })
             .collect::<Vec<_>>();
+        let well_id = field_id.clone();
         let well = controls::well(false, theme)
             .id(SharedString::from(format!("{path}/well")))
-            .debug_selector(move || format!("field-{field_id}"))
+            .debug_selector(move || format!("field-{well_id}"))
             .track_focus(focus)
             .role(Role::Group)
             .map(|well| well.aria_label(label.clone()))

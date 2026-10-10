@@ -242,7 +242,12 @@ fn fields_of(tree: &pane_core::DesignedTree) -> Vec<(String, String, String, Str
 fn submit(launcher: &Launcher, values: &[(&str, &str)]) -> (Status, Vec<String>) {
     let values = values
         .iter()
-        .map(|(key, value)| ((*key).to_owned(), (*value).to_owned()))
+        .map(|(key, value)| {
+            (
+                (*key).to_owned(),
+                pane_core::FormValue::Text((*value).to_owned()),
+            )
+        })
         .collect();
     let submitting = launcher.submit_designed_form(None, values);
     block_on(submitting);

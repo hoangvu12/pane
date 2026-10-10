@@ -337,7 +337,7 @@ fn field_error(launcher: &Launcher, key: &str) -> Option<String> {
         }
         node.children.iter().find_map(|child| at(child, key))
     }
-    at(&form.tree, key)
+    at(&form.tree.root, key)
 }
 
 /// The command id of the command `command` of the package from `folder`.
@@ -406,9 +406,9 @@ fn the_setup_screen_asks_only_for_required_unset_values_then_launches(fixture: &
     // Submitting saves the value and launches it with its original launch
     // record: from its alias.
     assert_eq!(pane.send("rp"), Status::Idle);
-    block_on(launcher.submit_form());
+    block_on(launcher.submit_pane_form(Vec::new()));
     assert_eq!(
-        launcher.view().form().unwrap().fields[0].error.as_deref(),
+        field_error(launcher, "apiKey").as_deref(),
         Some("Required"),
         "an empty value is not saved"
     );

@@ -334,7 +334,7 @@ fn an_alias_finds_the_command_first_and_sends_the_text_after_it_only_when_invoke
     // Removed by leaving the field empty; its form starts with it.
     manage(&launcher);
     activate(&launcher, "Alias for Echo");
-    assert_eq!(form_value(launcher, "alias"), "ec");
+    assert_eq!(form_value(&launcher, "alias"), "ec");
     assert_eq!(
         submit_alias(&launcher, ""),
         Status::Result("Echo has no alias now".into())

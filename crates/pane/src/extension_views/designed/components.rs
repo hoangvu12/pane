@@ -306,7 +306,7 @@ pub(super) fn button(
     // tree the user saw.
     let key = node.key.clone().unwrap_or_default();
     let (for_press, key_for_press) = (callback, key.clone());
-    let (for_click, key_for_click) = (callback, key);
+    let (for_click, key_for_click) = (callback, key.clone());
     let seen = draw.render;
     let (press, click) = (
         cx.listener(move |this, _: &Press, window, cx| {
@@ -486,7 +486,7 @@ fn link_of(
     };
     let key = key.to_owned();
     let (for_press, key_for_press) = (callback, key.clone());
-    let (for_click, key_for_click) = (callback, key);
+    let (for_click, key_for_click) = (callback, key.clone());
     let seen = draw.render;
     let (press, click) = (
         cx.listener(move |this, _: &Press, window, cx| {
@@ -815,7 +815,7 @@ pub(super) fn rich_row(
     // node with `key` on the tree the user saw.
     let key = node.key.clone().unwrap_or_default();
     let (for_press, key_for_press) = (callback, key.clone());
-    let (for_click, key_for_click) = (callback, key);
+    let (for_click, key_for_click) = (callback, key.clone());
     let seen = draw.render;
     let (press, click) = (
         cx.listener(move |this, _: &Press, window, cx| {
@@ -973,7 +973,7 @@ pub(super) fn toggle(
     let key = key.unwrap_or_default().to_owned();
 
     let (for_press, key_for_press) = (callback, key.clone());
-    let (for_click, key_for_click) = (callback, key);
+    let (for_click, key_for_click) = (callback, key.clone());
     let next = !toggle.on;
     let seen = draw.render;
     let (press, click) = (
@@ -1061,7 +1061,7 @@ pub(super) fn checkbox(
     let key = key.unwrap_or_default().to_owned();
 
     let (for_press, key_for_press) = (callback, key.clone());
-    let (for_click, key_for_click) = (callback, key);
+    let (for_click, key_for_click) = (callback, key.clone());
     let next = !checkbox.checked;
     let seen = draw.render;
     let (press, click) = (
