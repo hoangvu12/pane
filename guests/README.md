@@ -99,6 +99,14 @@ Rust's standard library on `wasm32-wasip2`) is rejected with an explanation.
   [designed-tree.md](../docs/designed-tree.md)); held by
   `crates/pane-core/tests/designed_views.rs` and the window tests of
   `crates/pane/tests/designed_views.rs`.
+- `sample-nav`, `sample-nav-js`, `sample-nav-ts`: the navigation sample in
+  Rust, JavaScript and TypeScript (#239): a designed view with a stack
+  Pane owns — rows push a detail view that pushes deeper, the detail pops
+  with a result the rows answer through `onPop`, and the deeper view drops
+  the whole stack through the `window.pop-to-root` host function — using
+  the SDKs' `push`, `replace`, `pop`, the Raycast-style `Action.Push` and
+  `navigationTitle`; held by `crates/pane-core/tests/navigation_stack.rs`
+  and the window tests of `crates/pane/tests/navigation_stack.rs`.
 - `sample-icons`, `sample-icons-js`, `sample-icons-ts`: the icons sample in
   Rust, JavaScript and TypeScript (#139): rows with a built-in icon, a
   packaged image with `@light` and `@dark` variants, a light and dark pair,
@@ -279,7 +287,9 @@ Rust's standard library on `wasm32-wasip2`) is rejected with an explanation.
 - `fixtures/designed`: test fixture whose designed view's trees and answers
   are JSON written by hand, not by `pane-extension`, with an unknown node
   with and without a fallback, a newer minor and another major version, a
-  tree over the node limit, an error, and text that is not JSON
+  tree over the node limit, an error, and text that is not JSON, and whose
+  answers navigate by hand — a push, a pop with a result and a replace —
+  drawing the pop events it receives
   ([designed-tree.md](../docs/designed-tree.md)).
 
 ## Writing a Rust command

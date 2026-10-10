@@ -104,6 +104,8 @@ const PREBUILT: &[&str] = &[
     "sample_programs_ts",
     "sample_view_js",
     "sample_view_ts",
+    "sample_nav_js",
+    "sample_nav_ts",
 ];
 
 fn main() -> ExitCode {
@@ -206,6 +208,7 @@ fn guests() -> Result<(), String> {
                 "sample_rust",
                 "sample_settings",
                 "sample_view",
+                "sample_nav",
                 "calculator",
                 "applications",
                 "quicklinks",
@@ -424,7 +427,7 @@ fn git_sample(root: &Path, out: &Path) -> Result<(), String> {
 /// (package folder in `guests/packages`, component) of each sample package,
 /// and of the default extensions (the calculator, applications and
 /// quicklinks).
-const SAMPLE_PACKAGES: [(&str, &str); 63] = [
+const SAMPLE_PACKAGES: [(&str, &str); 66] = [
     ("sample-rust", "sample_rust"),
     ("sample-settings", "sample_settings"),
     ("sample-js", "sample_js"),
@@ -487,6 +490,9 @@ const SAMPLE_PACKAGES: [(&str, &str); 63] = [
     ("sample-view", "sample_view"),
     ("sample-view-js", "sample_view_js"),
     ("sample-view-ts", "sample_view_ts"),
+    ("sample-nav", "sample_nav"),
+    ("sample-nav-js", "sample_nav_js"),
+    ("sample-nav-ts", "sample_nav_ts"),
     ("designed", "designed_fixture"),
 ];
 

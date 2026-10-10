@@ -37,18 +37,31 @@ pub const MAX_TREE_BYTES: usize = 4 * 1024 * 1024;
 /// The most characters one text node may hold.
 pub const MAX_TEXT_CHARS: usize = 64 * 1024;
 
-/// A designed view's tree: its root node. The version it named is checked
-/// while reading; a tree that was read is of a version Pane renders.
+/**
+ * A designed view's tree: its root node. The version it named is checked
+ * while reading; a tree that was read is of a version Pane renders.
+ */
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DesignedTree {
     pub root: Node,
+}
+
+impl DesignedTree {
+    /// The view's navigation title: the name its root node carries, shown
+    /// where a screen's title is (the footer names it as it names a custom
+    /// view's; the search header, once the List's search field owns it,
+    /// #240). `None` when the tree names none.
+    pub fn navigation_title(&self) -> Option<&str> {
+        self.root.navigation_title.as_deref()
+    }
 }
 
 /// One node of a designed view's tree: a layout primitive or UI component,
 /// or a type this Pane does not know (drawn by its `fallback`, else its
 /// children). Every node may carry a `key` (the stable identity Pane keeps
 /// node state under, #238), a `name` assistive technology reads it by, a
-/// `requires` minimum minor version, and a `fallback` subtree.
+/// `requires` minimum minor version, and a `fallback` subtree; the root
+/// node's `navigation-title` names the view itself.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Node {
     pub kind: NodeKind,
@@ -57,6 +70,10 @@ pub struct Node {
     /// The name assistive technology reads the node by, when the node's own
     /// content does not name it (a column's or row's).
     pub name: Option<String>,
+    /// The view's navigation title, read from the root node only: what
+    /// names the view where a screen's title is. `None` on the others,
+    /// which Pane ignores.
+    pub navigation_title: Option<String>,
     /// The minimum minor version of the UI component set this node needs.
     pub requires: Option<u64>,
     /// Drawn instead of this node when Pane does not know it.
@@ -304,6 +321,8 @@ struct WireNode {
     key: Option<String>,
     #[serde(default)]
     name: Option<String>,
+    #[serde(default, rename = "navigationTitle")]
+    navigation_title: Option<String>,
     #[serde(default)]
     requires: Option<u64>,
     #[serde(default)]
@@ -364,6 +383,7 @@ fn node(wire: WireNode, depth: usize, nodes: &mut usize) -> Result<Node, ReadErr
         kind,
         key: wire.key,
         name: wire.name,
+        navigation_title: wire.navigation_title,
         requires: wire.requires,
         fallback,
         children,

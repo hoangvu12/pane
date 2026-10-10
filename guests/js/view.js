@@ -17,6 +17,13 @@
 // view has rendered since, and an older one is dropped. React is not
 // used: its scheduler needs timers that run only inside calls.
 //
+// A listener may navigate (#239), returning what `push`, `replace`, `pop`
+// or `Push` answer: the pushed or replacing view is a view of the same
+// kind, and the `onPop` a push was given runs when the pushed view pops,
+// with the result its pop answered. The back key pops a view without
+// asking; its pop event carries no result. A root node's
+// `navigationTitle` names the view, shown where a screen's title is.
+//
 // The tree is JSON with the version of the UI component set it targets;
 // a Pane that renders another major refuses it naming both versions, and
 // one that knows less draws what it understands.
@@ -27,8 +34,14 @@ const COMPONENT_SET = "1.0";
 /** What the view answers for `refresh-after-ms` until timers land. */
 const NO_REFRESH = null;
 
-/** The empty outcome: what the navigation stack lands with (#239). */
+/** The empty outcome: what a handler that navigates nowhere answers. */
 const NOTHING_NEXT = { push: null, replace: null, pop: null };
+
+/** The callback id of the pop event, the event Pane sends a view when the
+ * one above it popped: an id no tree names (this SDK's ids start at 1),
+ * its payload `{"pop": <result>}`, the result the pop answered (`null`
+ * when the back key popped, so no view's result reached the one below). */
+const POP_CALLBACK = 0;
 
 /**
  * A built-in component of the tree, named `name`: a function only so JSX
@@ -197,6 +210,7 @@ function builtinNode(name, props, path, callbacks, cells, used) {
   const node = { type: name };
   if (given.key !== undefined) node.key = given.key;
   if (given.name !== undefined) node.name = given.name;
+  if (given.navigationTitle !== undefined) node.navigationTitle = given.navigationTitle;
   if (given.requires !== undefined) node.requires = given.requires;
   if (given.fallback != null) {
     // The fallback is drawn in the node's place when Pane does not know
@@ -250,12 +264,20 @@ function textOf(children) {
  * The view a command's `openView` answers with: `component` rendered as
  * its tree, its state kept across renders, its listeners called by the
  * events Pane sends. `props`, when given, are passed to the component.
+ *
+ * A listener may navigate, returning what [`push`], [`replace`], [`pop`]
+ * or [`Push`] answer (or an object of the same shape): the pushed or
+ * replacing view is a `createView` view too, and the `onPop` a push was
+ * given runs when the pushed view pops, with the result its pop
+ * answered, the view re-rendering after.
  */
 export function createView(component, props = {}) {
   /** The hook cells of each component instance, by its place in the tree. */
   const cells = new Map();
   /** The listeners of the last two renders, by render number and id. */
   const tables = new Map();
+  /** The `onPop` the view's last push registered, run when it pops. */
+  let onPop = null;
   /** The newest render asked, to number a context that names none. */
   let newest = 0;
   return {
@@ -286,15 +308,90 @@ export function createView(component, props = {}) {
       };
     },
     async handleEvent(event) {
+      // The pop event: the view above this one popped. Its payload is the
+      // result that pop answered; the view re-renders after it, as after
+      // every event.
+      if (event.callback === POP_CALLBACK) {
+        const run = onPop;
+        onPop = null;
+        if (run !== null) {
+          await run(popResultOf(event.payload));
+        }
+        return NOTHING_NEXT;
+      }
       // A press of a button the tree named: the table of the render the
       // user saw holds it. An older event is stale, dropped.
       const run = tables.get(event.render)?.get(event.callback);
+      let navigation = null;
       if (run !== undefined) {
-        await run();
+        navigation = await run();
       }
-      return NOTHING_NEXT;
+      // What the listener answered next: at most one of a push, a replace
+      // and a pop is acted on — a pop first, then a replace, then a push,
+      // as Pane does; the `onPop` a push was given stays here, never sent.
+      const given = navigation === null || typeof navigation !== "object" ? null : navigation;
+      const outcome = { push: null, replace: null, pop: null };
+      if (given !== null) {
+        if (given.push != null) outcome.push = viewOf(given.push);
+        if (given.replace != null) outcome.replace = viewOf(given.replace);
+        if (given.pop !== undefined) outcome.pop = given.pop ?? null;
+        if (typeof given.onPop === "function") onPop = given.onPop;
+      }
+      return outcome;
     },
   };
+}
+
+/** The result the pop event's payload carries: `"…"` for a pop that
+ * answered one, `null` for a pop that carried none (the back key's). */
+function popResultOf(payload) {
+  try {
+    const result = JSON.parse(payload)?.pop;
+    return typeof result === "string" ? result : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The view `target` names: a view `createView` made, or an element,
+ * rendered as the tree of a new view of its own. */
+function viewOf(target) {
+  if (target !== null && typeof target === "object" && typeof target.render === "function") {
+    return target;
+  }
+  if (target !== null && typeof target === "object" && typeof target.type === "function") {
+    return createView(target.type, target.props);
+  }
+  throw new Error("a push or replace names what it opens: an element or a view");
+}
+
+/** What a listener returns to push a view above this one: `target`, an
+ * element or a view, this view staying below it. `onPop`, when given, runs
+ * with the result the pushed view's pop answered — or none, the back
+ * key's — before this view re-renders. */
+export function push(target, onPop) {
+  return { push: viewOf(target), onPop };
+}
+
+/** What a listener returns to replace this view with `target`: this view
+ * is dropped, the views below it staying. */
+export function replace(target) {
+  return { replace: viewOf(target) };
+}
+
+/** What a listener returns to pop this view, answering `result` (or an
+ * empty one) to the view below. */
+export function pop(result) {
+  return { pop: result ?? "" };
+}
+
+/** A press that pushes a view — the Raycast-style `Action.Push`, as a
+ * button's `onClick`: `Push(<Detail />)` where Raycast writes
+ * `<Action.Push target={<Detail />} />`. `target` is an element or a view;
+ * `onPop`, when given, runs with the result the pushed view's pop
+ * answered (or none, the back key's) before this view re-renders. */
+export function Push(target, onPop) {
+  return () => push(target, onPop);
 }
 
 /** The render number `context` names, or `fallback` when it says none. */

@@ -762,8 +762,14 @@ struct State {
     /// The custom view on screen, if one is open.
     custom_view: Option<OpenCustomView>,
     /// The designed view on screen, if one is open: the command's own
-    /// screen, rather than one opened from an item of its list.
-    designed_view: Option<designed_views::OpenDesignedView>,
+    /// screen, a navigation stack of views (its root the command opened,
+    /// each further one a push added), rather than one opened from an item
+    /// of its list (see `designed_views`).
+    designed_view: Option<designed_views::DesignedStack>,
+    /// The designed view events the launcher delivers in the background
+    /// (the pop event the back key or a view's own pop sends) that are
+    /// still running.
+    designed_events: Arc<launching::InFlight>,
     /// The open command's items' icons, tooltips and accessories, by item
     /// id (see `looks`).
     looks: looks::Looks,
@@ -1503,6 +1509,7 @@ impl Launcher {
             actions_return: None,
             custom_view: None,
             designed_view: None,
+            designed_events: Arc::default(),
             looks: looks::Looks::default(),
             icon_loads,
             application_icons,
@@ -2517,7 +2524,9 @@ impl Launcher {
 
     /// Leaves an open form or custom view for its command's list, or an open
     /// command, package preview or the extension list for root search. A
-    /// custom view is closed. On root search it clears the query. The
+    /// custom view is closed, and a designed view's stack pops one view at
+    /// a time — the back key's order, its root leaving the command as
+    /// leaving its list does. On root search it clears the query. The
     /// answer is whether something was left: on root search with an empty
     /// query there is nothing left to back out of — `false`, which the
     /// window takes as the end of the Escape chain (the specification's
@@ -2546,9 +2555,15 @@ impl Launcher {
                 state.view.status = Status::Idle;
             }
             Screen::CustomView(_) => self.return_from_custom_view(&mut state, Status::Idle),
-            // The designed view is the command's own screen: leaving it
-            // leaves the command, as leaving its list does.
-            Screen::DesignedView(_) => self.show_root(&mut state, None),
+            // The designed view is the command's own screen, with a stack
+            // of views: the back key pops the top one, showing the view
+            // below at once and telling it the view above popped. The root
+            // view's own back leaves the command, as leaving its list does.
+            Screen::DesignedView(_) => {
+                if !self.pop_designed_stack(&mut state) {
+                    self.show_root(&mut state, None);
+                }
+            }
             Screen::Confirm { .. } => self.leave_confirm(&mut state),
             Screen::Hotkey { command, .. } => {
                 let command = command.clone();

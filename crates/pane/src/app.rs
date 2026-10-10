@@ -1055,10 +1055,34 @@ impl LauncherWindow {
     /// hotkey. Keys the launcher binds (Enter, Escape, arrows, Tab) do not
     /// reach here; pressing a modifier alone is not a key press.
     fn key_down(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        // Backspace pops the open designed view's stack, as it pops a view
+        // whose search field is empty (the List's, #240): a designed view
+        // shows no search field of its own yet, so Backspace is otherwise
+        // unused on its screen, and root search's field keeps its own —
+        // its caret keys never reaching here. Not on key repeat: a held
+        // Backspace pops once, as a held Enter activates nothing twice. An
+        // open footer menu or Actions panel keeps its keys: the back key
+        // closes those first.
+        let keystroke = &event.keystroke;
+        if !event.is_held
+            && keystroke.modifiers == gpui::Modifiers::default()
+            && keystroke.key == "backspace"
+            && self.menu.is_none()
+            && self.actions.is_none()
+            && self.launcher.pop_designed_view()
+        {
+            // Popping lands at once, as the back key's pop does: the view
+            // below's last tree shows immediately, the pop event's
+            // re-render arriving after.
+            self.motion.land_at_once();
+            self.sync_screen(window, cx);
+            cx.notify();
+            cx.stop_propagation();
+            return;
+        }
         if !matches!(self.launcher.screen(), Screen::Hotkey { .. }) {
             return;
         }
-        let keystroke = &event.keystroke;
         let modifiers = keystroke.modifiers;
         let shortcut = Shortcut::new(
             modifiers.control,

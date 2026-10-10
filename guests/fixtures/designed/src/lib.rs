@@ -1,7 +1,8 @@
 //! Test fixture: a designed view whose tree and answers are JSON written
 //! by hand against Pane's current contract (`wit/extension.wit`), not by
 //! pane-extension, so that Pane's reading of them is checked on its own
-//! (see `crates/pane-core/tests/designed_views.rs`).
+//! (see `crates/pane-core/tests/designed_views.rs` and
+//! `crates/pane-core/tests/navigation_stack.rs`).
 //!
 //! Its screen is a counter — a column of a text ("Count: N") and a row of
 //! the buttons below, each naming its own callback id — whose presses
@@ -20,6 +21,13 @@
 //! - "Answer an unreadable tree" makes it answer text that is not JSON;
 //! - "Answer an unknown callback" answers the event itself with an error.
 //!
+//! The navigation stack (#239) is answered by hand too: "Push a view"
+//! answers a pushed view (a text "Pushed" with the same navigation
+//! buttons), "Pop with a result" pops answering "the result", and
+//! "Replace this view" replaces it with a pushed view. The pop event —
+//! the event with callback id 0 — is recorded and drawn ("Popped: …",
+//! or "Popped" when it carried no result), so a test can see it arrive.
+//!
 //! It cannot use `pane-extension`, which writes the tree itself, so it
 //! supplies the allocator, panic handler, byte comparisons and
 //! `cabi_realloc`.
@@ -30,7 +38,7 @@ extern crate alloc;
 use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
-use core::cell::Cell;
+use core::cell::{Cell, RefCell};
 use core::ffi::c_void;
 
 wit_bindgen::generate!({ path: "../../../wit", world: "extension" });
@@ -42,6 +50,9 @@ use exports::pane::extension::command::{
 
 /// The version of the UI component set the fixture writes.
 const COMPONENT_SET: &str = "1.0";
+
+/// The callback id of the pop event Pane sends the view below a pop.
+const POP_CALLBACK: u32 = 0;
 
 /// What the next drawing answers.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -64,7 +75,7 @@ enum Next {
     Unreadable,
 }
 
-/// The view's state, kept in the resource.
+/// The root view's state, kept in the resource.
 struct State {
     count: Cell<u32>,
     next: Cell<Next>,
@@ -73,14 +84,32 @@ struct State {
 // SAFETY: a component's code runs on one thread.
 unsafe impl Sync for State {}
 
-/// The fixture's open view, answering Pane's calls.
-struct Designed;
+/// The fixture's open view: the root (the counter, whose buttons name
+/// every case above), or one a push opened above it. The pop event it
+/// last received is drawn, so a test can see it arrive.
+struct Designed {
+    /// Whether this is the root view (the counter): a pushed view draws
+    /// its own tree, with the navigation buttons only.
+    root: bool,
+    /// The pop event this view last received, if any: the result it
+    /// carried (`None` for one that carried none).
+    popped: RefCell<Option<Option<String>>>,
+}
 
 impl GuestView for Designed {
     async fn render(&self, _context: String) -> Result<Rendered, String> {
+        let popped = popped_text(&self.popped.borrow());
+        // A pushed view draws its own tree, with the navigation buttons
+        // only; the root draws the counter, with every case's button.
+        if !self.root {
+            return Ok(Rendered {
+                tree: pushed(popped),
+                refresh_after_ms: None,
+            });
+        }
         let next = STATE.next.replace(Next::Counter);
         let tree = match next {
-            Next::Counter => counter(),
+            Next::Counter => counter(popped),
             Next::Error => return Err("the view failed on purpose".into()),
             Next::OverLimit => over_limit(),
             Next::UnknownWithFallback => format!(
@@ -113,6 +142,12 @@ impl GuestView for Designed {
     }
 
     async fn handle_event(&self, event: UiEvent) -> Result<Outcome, String> {
+        // The pop event: the view above this one popped, its payload the
+        // result that pop answered. It is drawn by the next render.
+        if event.callback == POP_CALLBACK {
+            *self.popped.borrow_mut() = Some(pop_result_of(&event.payload));
+            return Ok(outcome());
+        }
         match event.callback {
             1 if event.key == "increment" => {
                 STATE.count.set(STATE.count.get() + 1);
@@ -124,14 +159,77 @@ impl GuestView for Designed {
             6 => STATE.next.set(Next::NewerMinor),
             7 => STATE.next.set(Next::OtherMajor),
             8 => STATE.next.set(Next::Unreadable),
+            9 => return Err(format!("unknown callback: {}", event.callback)),
+            // The navigation stack: a push, a pop with a result, a replace.
+            10 => {
+                return Ok(Outcome {
+                    push: Some(View::new(Designed::pushed_view())),
+                    replace: None,
+                    pop: None,
+                })
+            }
+            11 => {
+                return Ok(Outcome {
+                    push: None,
+                    replace: None,
+                    pop: Some("the result".into()),
+                })
+            }
+            12 => {
+                return Ok(Outcome {
+                    push: None,
+                    replace: Some(View::new(Designed::pushed_view())),
+                    pop: None,
+                })
+            }
             _ => return Err(format!("unknown callback: {}", event.callback)),
         }
-        Ok(Outcome {
-            push: None,
-            replace: None,
-            pop: None,
-        })
+        Ok(outcome())
     }
+}
+
+impl Designed {
+    /// A view to push above the root or replace it with.
+    fn pushed_view() -> Designed {
+        Designed {
+            root: false,
+            popped: RefCell::new(None),
+        }
+    }
+}
+
+/// The outcome with nothing next.
+fn outcome() -> Outcome {
+    Outcome {
+        push: None,
+        replace: None,
+        pop: None,
+    }
+}
+
+/// The text naming the pop event the view last received, when it received
+/// one: `Popped: …`, or `Popped` when it carried no result.
+fn popped_text(popped: &Option<Option<String>>) -> Option<String> {
+    match popped {
+        None => None,
+        Some(None) => Some("Popped".into()),
+        Some(Some(result)) => Some(format!("Popped: {result}")),
+    }
+}
+
+/// The result the pop event's payload carries: `{"pop": "…"}` for a pop
+/// that answered one, `{"pop": null}` for one that carried none. Read
+/// without parsing the whole document; the plain-ASCII strings the
+/// fixture is asked to answer need no unescaping.
+fn pop_result_of(payload: &str) -> Option<String> {
+    let at = payload.find("\"pop\"")?;
+    let rest = payload[at + 5..].trim_start().strip_prefix(':')?.trim_start();
+    if rest.starts_with("null") {
+        return None;
+    }
+    let rest = rest.strip_prefix('"')?;
+    let end = rest.find('"')?;
+    Some(rest[..end].into())
 }
 
 static STATE: State = State {
@@ -139,8 +237,10 @@ static STATE: State = State {
     next: Cell::new(Next::Counter),
 };
 
-/// The buttons the counter's tree names: (label, key, callback id).
-const BUTTONS: [(&str, &str, u32); 9] = [
+/// The buttons the counter's tree names: (label, key, callback id). The
+/// last three answer the navigation stack, and a pushed view's tree names
+/// them alone.
+const BUTTONS: [(&str, &str, u32); 12] = [
     ("Increment", "increment", 1),
     ("Answer an error", "error", 2),
     ("Answer an over-limit tree", "over-limit", 3),
@@ -150,11 +250,34 @@ const BUTTONS: [(&str, &str, u32); 9] = [
     ("Draw another major's tree", "other-major", 7),
     ("Answer an unreadable tree", "unreadable", 8),
     ("Answer an unknown callback", "unknown-callback", 9),
+    ("Push a view", "push", 10),
+    ("Pop with a result", "pop", 11),
+    ("Replace this view", "replace", 12),
 ];
 
-/// The counter as its tree, with one button per case above.
-fn counter() -> String {
-    let buttons: Vec<String> = BUTTONS
+/// The buttons a pushed view's tree names: the navigation ones.
+const PUSHED_BUTTONS: [(&str, &str, u32); 3] = [
+    ("Push a view", "push", 10),
+    ("Pop with a result", "pop", 11),
+    ("Replace this view", "replace", 12),
+];
+
+/// The counter as its tree, with one button per case above, naming the
+/// pop event the view last received.
+fn counter(popped: Option<String>) -> String {
+    let count = format!("Count: {}", STATE.count.get());
+    view(&BUTTONS, &count, popped)
+}
+
+/// A pushed view as its tree, with the navigation buttons.
+fn pushed(popped: Option<String>) -> String {
+    view(&PUSHED_BUTTONS, "Pushed", popped)
+}
+
+/// The view's tree: its `title` text, the pop event it last received
+/// (when it received one), and one button per case.
+fn view(buttons: &[(&str, &str, u32)], title: &str, popped: Option<String>) -> String {
+    let drawn: Vec<String> = buttons
         .iter()
         .map(|&(label, key, callback)| {
             format!(
@@ -165,10 +288,12 @@ fn counter() -> String {
         .collect();
     format!(
         "{{\"version\":\"{COMPONENT_SET}\",\"root\":{{\"type\":\"column\",\"gap\":\"m\",\
-         \"children\":[{{\"type\":\"text\",\"text\":\"Count: {}\",\"style\":\"title\"}},\
+         \"children\":[{{\"type\":\"text\",\"text\":\"{title}\",\"style\":\"title\"}}{},\
          {{\"type\":\"row\",\"gap\":\"s\",\"children\":[{}]}}]}}}}",
-        STATE.count.get(),
-        buttons.join(","),
+        popped
+            .map(|text| format!(",{{\"type\":\"text\",\"text\":\"{text}\"}}"))
+            .unwrap_or_default(),
+        drawn.join(","),
     )
 }
 
@@ -231,7 +356,10 @@ impl Guest for Fixture {
     async fn open_view(_command: String, _launch: LaunchRecord) -> Result<View, String> {
         STATE.count.set(0);
         STATE.next.set(Next::Counter);
-        Ok(View::new(Designed))
+        Ok(View::new(Designed {
+            root: true,
+            popped: RefCell::new(None),
+        }))
     }
 }
 

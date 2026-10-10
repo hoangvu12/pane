@@ -544,6 +544,33 @@ pub struct DesignedEvent {
     pub payload: String,
 }
 
+/// The most views one command's navigation stack may hold: a push that
+/// would go beyond it is the extension's error, the view keeping its last
+/// good tree (the specification's proposed default, #239).
+pub const MAX_NAVIGATION_DEPTH: usize = 32;
+
+/// What a designed view's event answered it does next, as the launcher
+/// owns the navigation stack: nothing (the view re-rendered, as a custom
+/// view does), a view the answer pushed above it or replaced it with (now
+/// the top of the stack, its first tree drawn), or a pop of the view
+/// itself — dropped in the runtime, its result answered to the view below.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum DesignedNext {
+    /// The view answered nothing next: its tree, as re-rendered.
+    Tree(DesignedRendered),
+    /// The view pushed a view: the top of the stack, its first tree
+    /// drawn; the pushing view stays below it.
+    Pushed(ViewId, DesignedRendered),
+    /// The view replaced itself: the new view is the top, at the replaced
+    /// view's depth, which is dropped in the runtime.
+    Replaced(ViewId, DesignedRendered),
+    /// The view popped itself, answering `result` to the view below: the
+    /// view is dropped, the view below's last tree shows, and it is then
+    /// told the view above popped. A pop of the root view leaves the
+    /// command with it.
+    Popped { result: String },
+}
+
 /// Identifies a custom view open in a [`Runtime`]. Ids are never reused,
 /// even by a runtime thread that replaced a crashed one.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -901,7 +928,7 @@ enum Request {
     DesignedViewEvent {
         view: ViewId,
         event: DesignedEvent,
-        reply: oneshot::Sender<Result<DesignedRendered, CallError>>,
+        reply: oneshot::Sender<Result<DesignedNext, CallError>>,
     },
     CloseDesignedView {
         view: ViewId,
@@ -1670,8 +1697,11 @@ impl Runtime {
         .await
     }
 
-    /// Has the open designed view `view` handle `event`, then draws it
-    /// again. A view that has closed answers [`CallError::ViewClosed`].
+    /// Has the open designed view `view` handle `event`, then draws what
+    /// the event answered it does next ([`DesignedNext`]): the view again,
+    /// the view the answer pushed or replaced (now the top of the stack,
+    /// drawn for the first time), or nothing when the view popped itself.
+    /// A view that has closed answers [`CallError::ViewClosed`].
     ///
     /// The event is sent when this is called, not when the returned future
     /// is first polled: events are handled one at a time, in the order of
@@ -1680,7 +1710,7 @@ impl Runtime {
         &self,
         view: ViewId,
         event: DesignedEvent,
-    ) -> impl Future<Output = Result<DesignedRendered, CallError>> + Send + 'static {
+    ) -> impl Future<Output = Result<DesignedNext, CallError>> + Send + 'static {
         let (reply, response) = oneshot::channel();
         self.call(Request::DesignedViewEvent { view, event, reply }, response)
     }
@@ -2723,6 +2753,10 @@ struct LiveDesignedView {
     /// callbacks, and each event carries the number of the tree the user
     /// saw.
     rendered: u64,
+    /// The view's depth in its command's navigation stack: the root view
+    /// the command opened is 1, each view a push added one deeper. A push
+    /// that would go beyond [`MAX_NAVIGATION_DEPTH`] is refused.
+    depth: usize,
 }
 
 /// The engine and the host interfaces guests link against, shared by the
@@ -3889,6 +3923,7 @@ impl Host {
             resource,
             serial,
             rendered: 1,
+            depth: 1,
         };
         self.designed_views.borrow_mut().insert(view, open);
         match self.render_designed(view, 1, &chain).await {
@@ -3903,15 +3938,19 @@ impl Host {
         }
     }
 
-    /// Has the open designed view `open` handle `event`, then draws it
-    /// again: the next render after the last one asked. An answer to an
-    /// event older than another already shown is dropped by the caller
-    /// (the launcher), as a custom view's is.
+    /// Has the open designed view `open` handle `event`, then draws what
+    /// the event answered it does next: the view again when the answer
+    /// carried nothing, the view the answer pushed above it or replaced it
+    /// with (now the top of the stack, drawn for the first time), or
+    /// nothing when the view popped itself — dropped, its result answered
+    /// to the launcher. An answer to an event older than another already
+    /// shown is dropped by the caller (the launcher), as a custom view's
+    /// is.
     async fn designed_view_event(
         &self,
         open: LiveDesignedView,
         event: DesignedEvent,
-    ) -> Result<DesignedRendered, CallError> {
+    ) -> Result<DesignedNext, CallError> {
         let chain = self.chain();
         let view = open.id;
         let path = open.component.clone();
@@ -3936,22 +3975,95 @@ impl Host {
                     .await
             })
             .await?;
-        // What the event does next (push, replace, pop) is ignored until the
-        // navigation stack lands (#239).
-        self.settle(&path, result, CallError::Guest)?;
-        // The next render's number: taken now, so each render of a view is
-        // numbered however many were asked before it.
-        let render = {
-            let mut views = self.designed_views.borrow_mut();
-            match views.get_mut(&view) {
-                Some(open) => {
-                    open.rendered += 1;
-                    open.rendered
-                }
-                None => return Err(CallError::ViewClosed),
+        let outcome = self.settle(&path, result, CallError::Guest)?;
+        // What the event does next: at most one field of the outcome is
+        // acted on, a pop first, then a replace, then a push (the SDKs
+        // answer exactly one).
+        if let Some(result) = outcome.pop {
+            // The view is dropped, never used again, and the launcher
+            // drops the stack entry with it, answering the view below.
+            self.designed_views.borrow_mut().remove(&view);
+            self.drop_designed_view(&open).await;
+            return Ok(DesignedNext::Popped { result });
+        }
+        let (resource, depth, replacing) = match (outcome.replace, outcome.push) {
+            // A replace swaps this view, at its own depth; a push adds one
+            // above it, one deeper.
+            (Some(resource), _) => (resource, open.depth, true),
+            (None, Some(resource)) => (resource, open.depth + 1, false),
+            (None, None) => {
+                // The next render's number: taken now, so each render of a
+                // view is numbered however many were asked before it.
+                let render = {
+                    let mut views = self.designed_views.borrow_mut();
+                    match views.get_mut(&view) {
+                        Some(open) => {
+                            open.rendered += 1;
+                            open.rendered
+                        }
+                        None => return Err(CallError::ViewClosed),
+                    }
+                };
+                return self
+                    .render_designed(view, render, &chain)
+                    .await
+                    .map(DesignedNext::Tree);
             }
         };
-        self.render_designed(view, render, &chain).await
+        // The depth bound: a push that would go beyond it is refused as
+        // the extension's error, the view keeping its last good tree; the
+        // view it would have opened is closed again, as an unanswered
+        // custom view is.
+        if depth > MAX_NAVIGATION_DEPTH {
+            let serial = self.serial(&path).ok_or(CallError::ViewClosed)?;
+            self.drop_designed(&path, serial, resource).await;
+            return Err(CallError::Guest(format!(
+                "the navigation stack already holds {MAX_NAVIGATION_DEPTH} views; \
+                 a further push is refused"
+            )));
+        }
+        let opened = ViewId {
+            thread: self.number,
+            id: self.next_view.fetch_add(1, Ordering::Relaxed),
+        };
+        let serial = self.serial(&path).ok_or(CallError::ViewClosed)?;
+        self.designed_views.borrow_mut().insert(
+            opened,
+            LiveDesignedView {
+                id: opened,
+                component: path.clone(),
+                resource,
+                serial,
+                rendered: 1,
+                depth,
+            },
+        );
+        match self.render_designed(opened, 1, &chain).await {
+            Ok(rendered) => {
+                if replacing {
+                    // The replaced view's resource goes, now that the view
+                    // replacing it drew; the launcher's stack entry with it.
+                    let replaced = self.designed_views.borrow_mut().remove(&view);
+                    if let Some(replaced) = replaced {
+                        self.drop_designed_view(&replaced).await;
+                    }
+                    Ok(DesignedNext::Replaced(opened, rendered))
+                } else {
+                    Ok(DesignedNext::Pushed(opened, rendered))
+                }
+            }
+            // The view the answer opened could not be drawn: it is closed
+            // again, as a view whose first drawing fails at open is, and
+            // the answering view keeps its last good tree (the error is
+            // shown; a replacing view was not replaced).
+            Err(error) => {
+                let closed = self.designed_views.borrow_mut().remove(&opened);
+                if let Some(closed) = closed {
+                    self.drop_designed_view(&closed).await;
+                }
+                Err(error)
+            }
+        }
     }
 
     /// Asks the guest to draw the open designed view `view`, in its
@@ -4020,10 +4132,21 @@ impl Host {
     /// Runs the destructor of the designed view `open`; the caller holds its
     /// instance's turn.
     async fn drop_designed_view(&self, open: &LiveDesignedView) {
-        if self.live_designed(open).is_err() {
+        self.drop_designed(&open.component, open.serial, open.resource)
+            .await;
+    }
+
+    /// Drops the guest's designed view resource `resource`, of the instance
+    /// of `path` in `serial`, running its destructor; the caller holds the
+    /// instance's turn. A view whose instance has gone (a crash, a reload,
+    /// a generation's end) is already dropped with it.
+    async fn drop_designed(&self, path: &Path, serial: u64, resource: ResourceAny) {
+        let live = self.instances.borrow().get(path).is_some_and(|instance| {
+            instance.serial == serial && instance.store.data().stopped().is_none()
+        });
+        if !live {
             return;
         }
-        let path = &open.component;
         let Some((mut instance, taken)) = self.take_out(path) else {
             return;
         };
@@ -4031,7 +4154,7 @@ impl Host {
         let dropped = deadlines::metered(
             self.watch.clone(),
             self.limits.clone(),
-            open.resource.resource_drop_async(&mut instance.store),
+            resource.resource_drop_async(&mut instance.store),
         )
         .await;
         let health = match dropped {
