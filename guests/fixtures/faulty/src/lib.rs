@@ -224,7 +224,6 @@ impl Command for Faulty {
             refuse: Cell::new(false),
         })
     }
-    }
 }
 
 pane_extension::root::export!(Faulty);

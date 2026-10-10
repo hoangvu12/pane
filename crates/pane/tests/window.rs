@@ -269,10 +269,10 @@ fn the_keyboard_fills_in_and_submits_the_form(cx: &mut TestAppContext, sample: &
         "the form is rendered"
     );
 
-    // The name field has focus; Tab moves to the greeting, Down chooses the
-    // next greeting, and Enter submits.
+    // The name field has focus (the view's opening ask) and Enter in a
+    // single-line field submits the form, the greeting at its default.
     cx.simulate_input("Ada");
-    cx.simulate_keystrokes("tab down enter");
+    cx.simulate_keystrokes("enter");
 
     // The answer draws over the form, in the tree the view answers with
     // (#241).
@@ -281,7 +281,7 @@ fn the_keyboard_fills_in_and_submits_the_form(cx: &mut TestAppContext, sample: &
     assert!(
         nodes.contains(&(
             "Label".into(),
-            format!("Good morning, Ada, from the {} guest", sample.language).into(),
+            format!("Hello, Ada, from the {} guest", sample.language).into(),
             "".into()
         )),
         "{nodes:?}"
@@ -296,8 +296,11 @@ fn a_rejected_field_shows_its_error_and_takes_focus(cx: &mut TestAppContext, sam
     let (window, _data, cx) = open_installed(cx, &sample.component.replace("_", "-"));
     open_form(&window, cx);
 
-    // Submit from the greeting with the name left empty.
-    cx.simulate_keystrokes("tab enter");
+    // Submit with the name field focused and empty: Enter submits from
+    // it, the guest refuses, and the field's error — read by assistive
+    // technology as the field's description — draws under it. The focus
+    // never left the field the tree now marks, so typing fixes it.
+    cx.simulate_keystrokes("enter");
 
     settle(&window, cx);
     let (nodes, focused) = accessibility_tree(cx);
@@ -307,7 +310,7 @@ fn a_rejected_field_shows_its_error_and_takes_focus(cx: &mut TestAppContext, sam
         "{nodes:?}"
     );
 
-    // Focus is back on the name, so typing fixes it.
+    // Focus is on the name, so typing fixes it.
     cx.simulate_input("Grace");
     cx.simulate_keystrokes("enter");
     settle(&window, cx);
@@ -443,49 +446,41 @@ fn tab_and_shift_tab_visit_each_control_once_in_order(cx: &mut TestAppContext) {
     open_form(&window, cx);
     assert_eq!(focused_label(cx).as_deref(), Some("Name"));
 
-    // Two full rounds each way: a control with two tab stops (such as the
-    // text field and a wrapper tracking its focus) would appear twice in a
-    // row. The greeting group reports its chosen option as focused, like a
-    // list reports its selected row. The footer's menu button joins the
-    // order after the form's controls.
+    // A full round each way, one stop more than the round: the form's
+    // fields in tree order — the name, the secret, the notes, the two
+    // date fields, the greeting (the select's trigger, named by its
+    // chosen option), the tags, the file, the folder — then the form's
+    // submit button, and the footer's menu button. The checkbox and the
+    // toggle name no change of their own, so they take no focus. The
+    // cycle repeats from the name.
+    let stops = [
+        "Name", "Secret", "Notes", "Day", "At", "Hello", "Tags", "File", "Folder", "Greet",
+        "Pane menu",
+    ];
     let mut forward = Vec::new();
-    for _ in 0..8 {
+    for _ in 0..stops.len() + 1 {
         cx.simulate_keystrokes("tab");
         forward.push(focused_label(cx));
     }
     let mut backward = Vec::new();
-    for _ in 0..8 {
+    for _ in 0..stops.len() + 1 {
         cx.simulate_keystrokes("shift-tab");
         backward.push(focused_label(cx));
     }
 
-    let labels = |order: [&str; 8]| order.map(|label| Some(label.to_owned()));
-    assert_eq!(
-        forward,
-        labels([
-            "Hello",
-            "Greet",
-            "Pane menu",
-            "Name",
-            "Hello",
-            "Greet",
-            "Pane menu",
-            "Name"
-        ])
-    );
-    assert_eq!(
-        backward,
-        labels([
-            "Pane menu",
-            "Greet",
-            "Hello",
-            "Name",
-            "Pane menu",
-            "Greet",
-            "Hello",
-            "Name"
-        ])
-    );
+    let labels =
+        |order: &[&str]| order.iter().map(|label| Some(label.to_string())).collect::<Vec<_>>();
+    let mut expected = labels(&stops[1..]);
+    expected.push(Some("Name".into()));
+    assert_eq!(forward, expected);
+    // From the name, backward: the menu button, the submit, and the
+    // fields in reverse, back to the name.
+    let back: Vec<Option<String>> = stops
+        .iter()
+        .rev()
+        .map(|label| Some(label.to_string()))
+        .collect();
+    assert_eq!(backward, back);
 }
 
 #[gpui::test]
@@ -541,9 +536,11 @@ fn input_method_composition_commits_into_the_text_field(cx: &mut TestAppContext)
     assert_eq!(field_value(&window, cx, "name"), "日本");
 
     cx.simulate_keystrokes("enter");
-    assert_eq!(
-        settle(&window, cx).status,
-        Status::Result("Hello, 日本, from the Rust guest".into())
+    settle(&window, cx);
+    let (nodes, _) = accessibility_tree(cx);
+    assert!(
+        nodes.contains(&("Label".into(), "Hello, 日本, from the Rust guest".into(), "".into())),
+        "{nodes:?}"
     );
 }
 
@@ -553,26 +550,38 @@ fn clicking_a_choice_and_the_submit_button_submits_the_form(cx: &mut TestAppCont
     open_form(&window, cx);
     cx.simulate_input("Ada");
 
+    // The greeting is the searchable select: a click on its trigger opens
+    // the choices, a click on one commits it — the chosen option is what
+    // the trigger then names — and the form's submit button submits.
+    let trigger = cx
+        .debug_bounds("designed-select-Hello")
+        .expect("the greeting's trigger is rendered");
+    cx.simulate_click(trigger.center(), Modifiers::none());
+    cx.run_until_parked();
     let welcome = cx
-        .debug_bounds("choice-greeting-welcome")
-        .expect("choice rendered");
+        .debug_bounds("designed-select-Hello-welcome")
+        .expect("the choices are listed");
     cx.simulate_click(welcome.center(), Modifiers::none());
-    assert_eq!(field_value(&window, cx, "greeting"), "welcome");
+    settle(&window, cx);
+    let nodes = accessible_nodes(cx);
+    node(&nodes, "ComboBox", "Welcome");
     let submit = cx.debug_bounds("submit").expect("submit button rendered");
     cx.simulate_click(submit.center(), Modifiers::none());
 
-    assert_eq!(
-        settle(&window, cx).status,
-        Status::Result("Welcome, Ada, from the Rust guest".into())
+    settle(&window, cx);
+    let (nodes, _) = accessibility_tree(cx);
+    assert!(
+        nodes.contains(&("Label".into(), "Welcome, Ada, from the Rust guest".into(), "".into())),
+        "{nodes:?}"
     );
 }
 
 /// The form is drawn with the Settings field families (#99), the
 /// launcher's own copies of their styling gone: each field a label 8px
 /// over its control — a text field a 34px well (black 24% under its
-/// ring), a choice the segmented track (black 24%) whose chosen segment
-/// takes the white 12% wash — and the submit control a 30px button on
-/// white 8%. A rejected field's error stands under its control.
+/// ring), the greeting the searchable select whose 30px trigger is the
+/// same well — and the submit control a 30px button on white 8%. A
+/// rejected field's error stands under its control.
 #[gpui::test]
 fn the_form_draws_the_settings_field_families(cx: &mut TestAppContext) {
     let (window, _data, cx) = open_installed(cx, &RUST.component.replace("_", "-"));
@@ -589,19 +598,22 @@ fn the_form_draws_the_settings_field_families(cx: &mut TestAppContext) {
         .expect("the name's label");
     assert_eq!(name.top(), label.bottom() + px(8.), "the label over it");
 
-    let greeting = cx.debug_bounds("field-greeting").expect("the choice");
-    assert_eq!(greeting.size.height, px(36.), "a segmented track");
-    assert!(paint::paints_fill_at(cx, greeting, 0x0000003D), "black 24%");
-    let welcome = cx
-        .debug_bounds("choice-greeting-welcome")
-        .expect("a segment");
-    cx.simulate_click(welcome.center(), Modifiers::none());
-    cx.run_until_parked();
-    assert_eq!(field_value(&window, cx, "greeting"), "welcome");
-    assert_eq!(welcome.size.height, px(30.), "a segment");
-    assert!(
-        paint::paints_fill_at(cx, welcome, 0xFFFFFF1F),
-        "the chosen segment's white 12%"
+    let greeting = cx
+        .debug_bounds("field-Greeting")
+        .expect("the greeting's group");
+    let trigger = cx
+        .debug_bounds("designed-select-Hello")
+        .expect("the greeting's trigger");
+    assert_eq!(trigger.size.height, px(30.), "a select's trigger");
+    assert!(paint::paints_fill_at(cx, trigger, 0x0000003D), "black 24%");
+    let label = cx
+        .debug_bounds("field-label-Greeting")
+        .expect("the greeting's label");
+    assert_eq!(trigger.top(), label.bottom() + px(8.), "the label over it");
+    assert_eq!(
+        (greeting.left(), greeting.right()),
+        (label.left(), label.right()),
+        "the group holds the label and the trigger"
     );
 
     let submit = cx.debug_bounds("submit").expect("the submit button");
@@ -624,11 +636,18 @@ fn the_focused_submit_button_submits_with_space(cx: &mut TestAppContext) {
     open_form(&window, cx);
     cx.simulate_input("Ada");
 
-    cx.simulate_keystrokes("tab tab space");
-
-    assert_eq!(
-        settle(&window, cx).status,
-        Status::Result("Hello, Ada, from the Rust guest".into())
+    // Tab through the form's controls to its submit button: Space on the
+    // focused button submits, as Enter does from a field.
+    for _ in 0..9 {
+        cx.simulate_keystrokes("tab");
+    }
+    assert_eq!(focused_label(cx).as_deref(), Some("Greet"));
+    cx.simulate_keystrokes("space");
+    settle(&window, cx);
+    let (nodes, _) = accessibility_tree(cx);
+    assert!(
+        nodes.contains(&("Label".into(), "Hello, Ada, from the Rust guest".into(), "".into())),
+        "{nodes:?}"
     );
 }
 
@@ -660,18 +679,22 @@ fn assistive_technology_sees_the_forms_labelled_controls_and_values(cx: &mut Tes
     cx.simulate_input("Ada");
 
     let nodes = accessible_nodes(cx);
-    node(&nodes, "Form", "Greet someone");
+    // The form's own node is unlabelled (the view's title is the footer's,
+    // not a label the form carries); its fields are the labelled
+    // controls: the name by its title, with its typed value and its
+    // placeholder, the greeting the searchable select whose trigger
+    // names its chosen option, and the submit button by its label.
+    assert!(
+        nodes.iter().any(|node| node["role"] == "Form"),
+        "{nodes:#?}"
+    );
     let name = node(&nodes, "TextInput", "Name");
     assert_eq!(
         (&name["value"], &name["placeholder"]),
         (&"Ada".into(), &"Ada Lovelace".into())
     );
-    node(&nodes, "RadioGroup", "Greeting");
-    assert_eq!(node(&nodes, "RadioButton", "Hello")["toggled"], "True");
-    assert_eq!(
-        node(&nodes, "RadioButton", "Good morning")["toggled"],
-        "False"
-    );
+    let greeting = node(&nodes, "ComboBox", "Hello");
+    assert_eq!(greeting["value"], "Hello");
     node(&nodes, "Button", "Greet");
 }
 
@@ -2048,9 +2071,11 @@ fn the_footer_button_submits_the_form_like_enter(cx: &mut TestAppContext) {
         .expect("the action button is rendered");
     cx.simulate_click(button.center(), Modifiers::none());
 
-    assert_eq!(
-        settle(&window, cx).status,
-        Status::Result("Hello, Ada, from the Rust guest".into())
+    settle(&window, cx);
+    let (nodes, _) = accessibility_tree(cx);
+    assert!(
+        nodes.contains(&("Label".into(), "Hello, Ada, from the Rust guest".into(), "".into())),
+        "{nodes:?}"
     );
 }
 

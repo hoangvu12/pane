@@ -535,10 +535,11 @@ pub trait Command: 'static {
         }
     }
 
-    /// Runs the search result with `id` the user chose, for a command that
-    /// searches as the user types (`pane_extension::search`): its id is the
-    /// callback Pane hands back. An error is shown as a failure toast.
-    /// Without it, choosing an id no item names is an error.
+    /// Runs the search result with `id` the user chose — an id no item of
+    /// the command's list names, as an older contract's command search
+    /// answered through `run-search` (retired, #240: a command's search is
+    /// the designed List's search-text event now). An error is shown as a
+    /// failure toast. Without it, choosing an id no item names is an error.
     fn run_search_result(id: String) -> impl Future<Output = Result<(), String>> {
         async move { Err(format!("unknown action: {id}")) }
     }

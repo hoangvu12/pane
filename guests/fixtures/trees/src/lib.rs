@@ -193,8 +193,6 @@ impl Guest for Trees {
         ))
     }
 
-    }
-
     async fn open_view(command: String, _launch: LaunchRecord) -> Result<View, String> {
         Err(format!("unknown designed view: {command}"))
     }

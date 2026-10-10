@@ -43,6 +43,12 @@
 //! answering slowly" the same with the drawing it asks for held back a
 //! moment, so a test can leave the view before the drawing answers.
 //!
+//! The `form` command's view (#241) is answered by hand as well: a form
+//! of every field kind, whose submission's values are drawn — as the
+//! fields' tree draws the events it received — so a test can see what
+//! Pane sent, and whose empty name is refused with the field's error in
+//! the next drawing.
+//!
 //! Every render also answers `refresh-after-ms` as the state's
 //! `refresh_ms` says, so the tests of #236 drive Pane's refreshing of a
 //! view through it — each button below sets it, its presses' answers
@@ -104,7 +110,10 @@ enum Next {
     Fields,
     /// A tree whose keys two siblings share and whose text input has
     /// none, which a developed package's log reports.
-    KeyProblems}
+    KeyProblems,
+    /// The form (#241): every field kind, whose submission's values are
+    /// drawn, as the fields' tree draws the events it receives.
+    Form}
 
 /// The root view's state, kept in the resource.
 struct State {
@@ -128,24 +137,49 @@ struct State {
     /// How many renders away answers slowly: the slow push button sets 2,
     /// so the render that asks answers promptly and the drawing Pane
     /// sends for the ask is the one held back.
-    slow_in: Cell<u32>}
+    slow_in: Cell<u32>,
+    /// Whether the form's name field is refused, as an empty submission
+    /// refuses it: the field's error in the next drawing (#241).
+    form_error: Cell<bool>}
 
 // SAFETY: a component's code runs on one thread.
 unsafe impl Sync for State {}
 
 /// The fixture's open view: the root (the counter, whose buttons name
-/// every case above), or one a push opened above it. The pop event it
-/// last received is drawn, so a test can see it arrive.
-struct Designed {
-    /// Whether this is the root view (the counter): a pushed view draws
-    /// its own tree, with the navigation buttons only.
-    root: bool,
-    /// The pop event this view last received, if any: the result it
-    /// carried (`None` for one that carried none).
-    popped: RefCell<Option<Option<String>>>}
+/// every case above), one a push opened above it, or the `canvas`
+/// command's filler. One type serves every view the component opens, as
+/// the resource's one representation; the pop event a screen view last
+/// received is drawn, so a test can see it arrive.
+enum Designed {
+    /// The counter's, or a pushed view's: the pop event it last received
+    /// is drawn, so a test can see it arrive.
+    Screen {
+        /// Whether this is the root view (the counter): a pushed view
+        /// draws its own tree, with the navigation buttons only.
+        root: bool,
+        /// The pop event this view last received, if any: the result it
+        /// carried (`None` for one that carried none).
+        popped: RefCell<Option<Option<String>>>},
+    /// The `canvas` command's view (#242): a canvas that fills the space
+    /// the layout gives it, drawing the size the render context names for
+    /// it and every event it receives, so the tests can see both arrive.
+    Filler {
+        /// The size the last render's context named for the canvas, as
+        /// "WxH", when it named one.
+        size: RefCell<String>,
+        /// What every event the view received says, drawn in the canvas's
+        /// value, so a test can see what Pane sent.
+        received: RefCell<Vec<String>>}}
 
 impl GuestView for Designed {
     async fn render(&self, context: String) -> Result<Rendered, String> {
+        // The filler draws its own tree, whose canvas answers the size
+        // the context names and the events it received.
+        if let Designed::Filler { size, received } = self {
+            return filler_rendered(size, received, &context);
+        }
+        let Designed::Screen { root, popped } = self else {
+            unreachable!("a screen or filler view")};
         let renders = STATE.renders.get();
         STATE.renders.set(renders + 1);
         // The push a button asked for (#243): the render after its press
@@ -164,10 +198,10 @@ impl GuestView for Designed {
                 wasip3::clocks::monotonic_clock::wait_for(300_000_000).await;
             }
         }
-        let popped = popped_text(&self.popped.borrow());
+        let popped = popped_text(&popped.borrow());
         // A pushed view draws its own tree, with the navigation buttons
         // only; the root draws the counter, with every case's button.
-        if !self.root {
+        if !root {
             return Ok(Rendered {
                 tree: pushed(popped),
                 refresh_after_ms: STATE.refresh_ms.get()});
@@ -176,7 +210,10 @@ impl GuestView for Designed {
         // The component set stays on screen until the counter's buttons
         // are pressed again; its toggle flips within it, as the fields'
         // and the key problems' trees answer their own events.
-        if matches!(next, Next::Components | Next::Fields | Next::KeyProblems) {
+        if matches!(
+            next,
+            Next::Components | Next::Fields | Next::KeyProblems | Next::Form
+        ) {
             STATE.next.set(next);
         }
         let tree = match next {
@@ -206,17 +243,25 @@ impl GuestView for Designed {
             }
             Next::Components => components(),
             Next::Fields => fields(&received_texts()),
-            Next::KeyProblems => key_problems()};
+            Next::KeyProblems => key_problems(),
+            Next::Form => form_tree(&received_texts())};
         Ok(Rendered {
             tree,
             refresh_after_ms: STATE.refresh_ms.get()})
     }
 
     async fn handle_event(&self, event: UiEvent) -> Result<Outcome, String> {
+        // The filler's events: every one but the pop and the resize is
+        // recorded, drawn in the next render's value.
+        if let Designed::Filler { received, .. } = self {
+            return filler_event(received, &event);
+        }
+        let Designed::Screen { popped, .. } = self else {
+            unreachable!("a screen or filler view")};
         // The pop event: the view above this one popped, its payload the
         // result that pop answered. It is drawn by the next render.
         if event.callback == POP_CALLBACK {
-            *self.popped.borrow_mut() = Some(pop_result_of(&event.payload));
+            *popped.borrow_mut() = Some(pop_result_of(&event.payload));
             return Ok(outcome());
         }
         // Every event is recorded, drawn in the fields' tree, so a test
@@ -262,6 +307,16 @@ impl GuestView for Designed {
             18 => STATE.next.set(Next::Fields),
             19 => STATE.next.set(Next::KeyProblems),
             20 => STATE.next.set(Next::Counter),
+            // The form's submission (#241): the event is recorded above,
+            // drawn in the form's tree, so a test can see the values Pane
+            // sent. An empty name is refused: the field's error in the
+            // next drawing, the form staying open.
+            31 => {
+                STATE.form_error.set(
+                    submitted_text(&event.payload, "name").is_some_and(|name| name.is_empty()),
+                );
+                STATE.next.set(Next::Form);
+            }
             // The fields' input and change handlers: the event is
             // recorded above, drawn in the fields' tree; nothing next.
             29 => {}
@@ -298,7 +353,7 @@ impl GuestView for Designed {
 impl Designed {
     /// A view to push above the root or replace it with.
     fn pushed_view() -> Designed {
-        Designed {
+        Designed::Screen {
             root: false,
             popped: RefCell::new(None)}
     }
@@ -363,7 +418,8 @@ static STATE: State = State {
     refresh_ms: Cell::new(None),
     received: RefCell::new(Vec::new()),
     push: Cell::new(false),
-    slow_in: Cell::new(0)};
+    slow_in: Cell::new(0),
+    form_error: Cell::new(false)};
 
 /// The buttons the counter's tree names: (label, key, callback id). The
 /// navigation ones answer the stack (#239), the component set's draws
@@ -526,6 +582,73 @@ fn fields(received: &[String]) -> String {
     )
 }
 
+/// The form's tree (#241): a `form` node whose children are every field
+/// kind, each keyed and titled, the name's carrying the error an empty
+/// submission set and asking to be remembered — and the events the view
+/// received drawn under them, the submission's payload among them, so a
+/// test can see the values Pane sent. Written by hand, as the counter's
+/// is.
+fn form_tree(received: &[String]) -> String {
+    let error = if STATE.form_error.get() {
+        ",\"error\":\"Enter a name\""
+    } else {
+        ""
+    };
+    let mut children = Vec::from([
+        format!(
+            "{{\"type\":\"text-input\",\"key\":\"name\",\"title\":\"Name\",\
+             \"placeholder\":\"Ada Lovelace\",\"focus\":true,\"remember\":true{error}}}"
+        ),
+        String::from("{\"type\":\"password-input\",\"key\":\"secret\",\"title\":\"Secret\"}"),
+        String::from("{\"type\":\"text-area\",\"key\":\"notes\",\"title\":\"Notes\"}"),
+        String::from("{\"type\":\"date-picker\",\"key\":\"day\",\"title\":\"Day\"}"),
+        String::from("{\"type\":\"date-time-picker\",\"key\":\"at\",\"title\":\"At\"}"),
+        String::from(
+            "{\"type\":\"select\",\"key\":\"greeting\",\"title\":\"Greeting\",\
+             \"options\":[{\"value\":\"hello\",\"label\":\"Hello\",\"section\":\"Plain\"},\
+             {\"value\":\"morning\",\"label\":\"Good morning\",\"section\":\"Warm\"}],\
+             \"value\":\"hello\"}",
+        ),
+        String::from(
+            "{\"type\":\"tag-picker\",\"key\":\"tags\",\"title\":\"Tags\",\
+             \"options\":[{\"value\":\"friend\",\"label\":\"Friend\"},\
+             {\"value\":\"colleague\",\"label\":\"Colleague\"}]}",
+        ),
+        String::from("{\"type\":\"file-picker\",\"key\":\"file\",\"title\":\"File\"}"),
+        String::from(
+            "{\"type\":\"folder-picker\",\"key\":\"folder\",\"title\":\"Folder\",\"multiple\":true}",
+        ),
+        String::from(
+            "{\"type\":\"checkbox\",\"key\":\"updates\",\"title\":\"Send updates\",\"checked\":true}",
+        ),
+        String::from(
+            "{\"type\":\"toggle\",\"key\":\"quiet\",\"title\":\"Quiet mode\",\"on\":false}",
+        ),
+    ]);
+    for text in received {
+        children.push(format!("{{\"type\":\"text\",\"text\":\"{text}\"}}"));
+    }
+    children.push(String::from(
+        "{\"type\":\"button\",\"key\":\"again\",\"label\":\"Answer the counter again\",\"onPress\":20}",
+    ));
+    format!(
+        "{{\"version\":\"{COMPONENT_SET}\",\"root\":{{\"type\":\"form\",\"key\":\"form\",\
+         \"onSubmit\":31,\"submitLabel\":\"Send\",\"children\":[{}]}}}}",
+        children.join(",")
+    )
+}
+
+/// The text the field `name` of a form's submission payload holds, when
+/// it names one: read without parsing the whole document, as the pop
+/// result is.
+fn submitted_text(payload: &str, name: &str) -> Option<String> {
+    let needle = format!("\"{name}\":\"");
+    let at = payload.find(&needle)? + needle.len();
+    let rest = &payload[at..];
+    let end = rest.find('"')?;
+    Some(rest[..end].into())
+}
+
 /// A tree whose keys two siblings share and whose text input has none:
 /// what a developed package's log reports, and what Pane matches by
 /// position instead.
@@ -602,71 +725,58 @@ fn over_limit() -> String {
 struct Fixture;
 export!(Fixture);
 
-/// A view type that is never opened.
-/// The `canvas` command's view (#242): a canvas that fills the space the
-/// layout gives it, drawing the size the render context names for it and
-/// every event it receives, so the tests can see both arrive. Its tree is
-/// written by hand, as the counter's is.
-struct CanvasView {
-    /// The size the last render's context named for the canvas, as
-    /// "WxH", when it named one.
-    size: RefCell<String>,
-    /// What every event the view received says, drawn in the canvas's
-    /// value, so a test can see what Pane sent.
-    received: RefCell<Vec<String>>,
-}
-
-impl GuestView for CanvasView {
-    async fn render(&self, context: String) -> Result<Rendered, String> {
-        // The context names the size each canvas was laid out at:
-        // {"canvases":{"fill":{"width":W,"height":H}}}. Read without a
-        // parser, as the fields' payloads are.
-        let mut size = String::from("0x0");
-        if let Some(at) = context.find("\"canvases\"") {
-            let rest = &context[at..];
-            if let Some(width) = number_after(rest, "\"width\":") {
-                if let Some(height) = number_after(rest, "\"height\":") {
-                    size = format!("{width}x{height}");
-                }
+/// The filler's tree, written by hand as the counter's is: a canvas that
+/// fills the space the layout gives it, drawing the size the render
+/// context named for it and every event the view received (#242).
+fn filler_rendered(size: &RefCell<String>, received: &RefCell<Vec<String>>, context: &str) -> Result<Rendered, String> {
+    // The context names the size each canvas was laid out at:
+    // {\"canvases\":{\"fill\":{\"width\":W,\"height\":H}}}. Read without a
+    // parser, as the fields' payloads are.
+    let mut drawn = String::from("0x0");
+    if let Some(at) = context.find("\"canvases\"") {
+        let rest = &context[at..];
+        if let Some(width) = number_after(rest, "\"width\":") {
+            if let Some(height) = number_after(rest, "\"height\":") {
+                drawn = format!("{width}x{height}");
             }
         }
-        *self.size.borrow_mut() = size.clone();
-        let received = self.received.borrow().join("; ");
-        let value = if received.is_empty() {
-            size.clone()
-        } else {
-            format!("{size}; {received}")
-        };
-        let ops = format!(
-            "[{{\"op\":\"text\",\"x\":4,\"y\":4,\"text\":\"{value}\"}}]"
-        );
-        let tree = format!(
-            "{{\"version\":\"{COMPONENT_SET}\",\"root\":{{\"type\":\"column\",\"children\":[\
-             {{\"type\":\"canvas\",\"key\":\"fill\",\"grow\":1,\"role\":\"slider\",\"label\":\"Filler\",\
-             \"value\":\"{value}\",\"onResize\":1,\"onKey\":2,\"onPointerDown\":3,\"onPointerUp\":4,\
-             \"onPointerMove\":5,\"onPointerEnter\":6,\"onPointerLeave\":7,\"onWheel\":8,\
-             \"onDoubleClick\":9,\"onSecondary\":10,\"onIncrement\":11,\
-             \"ops\":{ops}}}]}}}}"
-        );
-        Ok(Rendered {
-            tree,
-            refresh_after_ms: None,
-        })
     }
+    *size.borrow_mut() = drawn.clone();
+    let said = received.borrow().join("; ");
+    let value = if said.is_empty() {
+        drawn.clone()
+    } else {
+        format!("{drawn}; {said}")
+    };
+    let ops = format!(
+        "[{{\"op\":\"text\",\"x\":4,\"y\":4,\"text\":\"{value}\"}}]"
+    );
+    let tree = format!(
+        "{{\"version\":\"{COMPONENT_SET}\",\"root\":{{\"type\":\"column\",\"children\":[\
+         {{\"type\":\"canvas\",\"key\":\"fill\",\"grow\":1,\"role\":\"slider\",\"label\":\"Filler\",\
+         \"value\":\"{value}\",\"onResize\":1,\"onKey\":2,\"onPointerDown\":3,\"onPointerUp\":4,\
+         \"onPointerMove\":5,\"onPointerEnter\":6,\"onPointerLeave\":7,\"onWheel\":8,\
+         \"onDoubleClick\":9,\"onSecondary\":10,\"onIncrement\":11,\
+         \"ops\":{ops}}}]}}}}"
+    );
+    Ok(Rendered {
+        tree,
+        refresh_after_ms: None,
+    })
+}
 
-    async fn handle_event(&self, event: UiEvent) -> Result<Outcome, String> {
-        // Every event is recorded, drawn in the next render's value, but
-        // the pop (callback 0) and the resize (callback 1): the resize is
-        // the size the value already names.
-        if event.callback <= 1 {
-            return Ok(outcome());
-        }
-        let said = event_summary(&event.payload);
-        self.received.borrow_mut().push(said);
-        let excess = self.received.borrow().len().saturating_sub(6);
-        self.received.borrow_mut().drain(0..excess);
-        Ok(outcome())
+/// The filler's answer to an event: every one but the pop (callback 0)
+/// and the resize (callback 1) is recorded, drawn in the next render's
+/// value — the resize is the size the value already names.
+fn filler_event(received: &RefCell<Vec<String>>, event: &UiEvent) -> Result<Outcome, String> {
+    if event.callback <= 1 {
+        return Ok(outcome());
     }
+    let said = event_summary(&event.payload);
+    received.borrow_mut().push(said);
+    let excess = received.borrow().len().saturating_sub(6);
+    received.borrow_mut().drain(0..excess);
+    Ok(outcome())
 }
 
 /// What an event's payload says, as the canvas's value draws it: the kind
@@ -722,17 +832,29 @@ impl Guest for Fixture {
 
     async fn open_view(command: String, _launch: LaunchRecord) -> Result<View, String> {
         match command.as_str() {
-            "canvas" => Ok(View::new(CanvasView {
+            "canvas" => Ok(View::new(Designed::Filler {
                 size: RefCell::new(String::from("0x0")),
                 received: RefCell::new(Vec::new()),
             })),
+            "form" => {
+                STATE.count.set(0);
+                STATE.next.set(Next::Form);
+                STATE.renders.set(0);
+                STATE.refresh_ms.set(None);
+                STATE.received.borrow_mut().clear();
+                STATE.form_error.set(false);
+                Ok(View::new(Designed::Screen {
+                    root: true,
+                    popped: RefCell::new(None),
+                }))
+            }
             _ => {
                 STATE.count.set(0);
                 STATE.next.set(Next::Counter);
                 STATE.renders.set(0);
                 STATE.refresh_ms.set(None);
                 STATE.received.borrow_mut().clear();
-                Ok(View::new(Designed {
+                Ok(View::new(Designed::Screen {
                     root: true,
                     popped: RefCell::new(None),
                 }))

@@ -19,7 +19,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 
 use exports::pane::extension::command::{
-    Guest, GuestView, LaunchRecord, Outcome, Rendered, UiEvent, View,
+    FieldValue, FormError, Guest, GuestView, LaunchRecord, Outcome, Rendered, UiEvent, View,
 };
 
 struct Mismatched;
@@ -54,6 +54,10 @@ impl Guest for Mismatched {
 
     async fn handle_event(callback: String, _details: String) -> Result<String, String> {
         Err(callback)
+    }
+
+    async fn submit_form(item_id: String, _values: Vec<FieldValue>) -> Result<String, FormError> {
+        Ok(item_id)
     }
 
     async fn open_view(_command: String, _launch: LaunchRecord) -> Result<View, String> {

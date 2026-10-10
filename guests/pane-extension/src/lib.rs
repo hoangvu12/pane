@@ -57,7 +57,7 @@ pub mod view;
 pub use view::{
     Align, Answer, CanvasBuilder, CanvasEvent, CanvasListener, CanvasRole, Cap, Cx, Draw,
     IntoAnswer, IntoNode, Join, Justify, Listener, Node, Paint, Pending, Space, TextLevel,
-    TextMeasure, TextStyle, View, button, canvas, column, loading, row, text,
+    TextMeasure, TextStyle, View, button, canvas, choice, column, loading, row, text,
 };
 /// The designed view type of a command that opens none: `type DesignedView
 /// = view::NoDesignedView;` in its [`Command`] implementation.
@@ -437,29 +437,6 @@ pub mod indexed {
 
     pub use exports::pane::extension::indexed_results::{
         Guest, IndexedAction, IndexedResult, OpenTarget};
-}
-
-/// A command that searches as the user types into its own search field
-/// (`pane:extension/command-search`), such as one searching an online
-/// service. Pane asks it only once the user has opened it, never while they
-/// type in root search. A command whose `pane.json` entry sets
-/// `"search": true` implements [`search::Guest`] too and calls
-/// [`search::export!`](crate::search::export) beside [`export!`]. Choosing
-/// a result calls [`crate::Command::run_search_result`] with its id, so the id
-/// should say which result it is:
-///
-/// ```ignore
-/// pane_extension::export!(Packages);
-/// pane_extension::search::export!(Packages);
-/// ```
-pub mod search {
-    wit_bindgen::generate!({
-        path: "wit",
-        world: "command-search-provider",
-        pub_export_macro: true,
-        default_bindings_module: "pane_extension::search"});
-
-    pub use exports::pane::extension::command_search::{Guest, SearchResult};
 }
 
 /// A continuing service a command runs while its package's code may run
