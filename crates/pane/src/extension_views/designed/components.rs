@@ -1042,7 +1042,7 @@ pub(super) fn toggle(
         .into_any_element();
     // The form field's chrome around it: its title over, its note and
     // error under (#241).
-    fields::field_group(&key, &toggle.field, None, switch, theme).into_any_element()
+    fields::field_group(&key.clone(), &toggle.field, None, switch, theme).into_any_element()
 }
 
 /// One checkbox: a box with a check, its label beside it, focusable,
@@ -1130,7 +1130,7 @@ pub(super) fn checkbox(
         .into_any_element();
     // The form field's chrome around it: its title over, its note and
     // error under (#241).
-    fields::field_group(&key, &checkbox.field, None, control, theme).into_any_element()
+    fields::field_group(&key.clone(), &checkbox.field, None, control, theme).into_any_element()
 }
 
 /// A checkbox's box, with its check.

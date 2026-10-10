@@ -217,7 +217,7 @@ impl Pane {
     /// Points the open Package search at `address` through its form.
     fn set_service(&self, address: &str) {
         self.activate("Service address");
-        let values = vec![("address".to_owned(), address.to_owned())];
+        let values = vec![("address".to_owned(), pane_core::FormValue::Text(address.to_owned()))];
         let submitting = self.launcher.submit_designed_form(None, values);
         block_on(submitting);
         assert_eq!(

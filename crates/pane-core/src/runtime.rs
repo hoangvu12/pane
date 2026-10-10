@@ -599,6 +599,13 @@ pub struct ViewId {
 }
 
 impl ViewId {
+    /// A view id with number `id`: a Pane form's identity is its own
+    /// number, not a view's, so the window's keyed state follows either.
+    #[doc(hidden)]
+    pub fn of_number(id: u64) -> ViewId {
+        ViewId { thread: 0, id }
+    }
+
     /// The number of the runtime thread that holds the view: a crash of
     /// that thread (see [`supervisor::CrashReport`]) closes it.
     pub(crate) fn thread(&self) -> u64 {

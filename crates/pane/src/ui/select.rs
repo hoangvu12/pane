@@ -1140,9 +1140,9 @@ impl Render for Select {
 /// own lists group theirs (#241).
 fn section_label(label: SharedString, theme: &Theme) -> AnyElement {
     div()
-        .id(())
+        .id(SharedString::from(label.clone()))
         .debug_selector(move || format!("{label}-section"))
-        .px(theme.geometry.actions.item_padding_x)
+        .px(theme.geometry.actions.empty_padding_x)
         .pt(theme.geometry.actions.list_padding)
         .pb(theme.geometry.actions.empty_padding_y)
         .text_size(theme.typography.settings_text_size)

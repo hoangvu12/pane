@@ -726,7 +726,7 @@ impl LauncherWindow {
         let key = (!key.is_empty()).then_some(key);
         if handler == DesignedHandler::Change {
             if let Some(named) = key.as_deref() {
-                self.note_sent(named, &payload_value(&payload));
+                self.note_sent(named, payload_value(&payload));
             }
         }
         let pending = self.launcher.send_designed_seen(

@@ -46,10 +46,10 @@ use super::tree;
 /// its tree's nodes, and the window's keystroke observer while any node
 /// asks for key events.
 pub(crate) struct DesignedControls {
-    /// The opened view these controls are for: a view's id number, or a
-    /// Pane form's own identity (#241) — either way one number per
-    /// screen the controls follow.
-    pub(super) view: u64,
+    /// The opened view these controls are for: a designed view's id, or a
+    /// Pane form's identity as one (#241) — either way one id per screen
+    /// the controls follow.
+    pub(super) view: ViewId,
     /// The keyed state of every stateful and focusable node the last tree
     /// named, by its path.
     pub(super) state: HashMap<String, KeyedState>,
@@ -71,7 +71,7 @@ impl DesignedControls {
     /// state its tree asks for, and the keyboard on the first focusable
     /// control — or the one that asks for it.
     pub(super) fn new(
-        view: u64,
+        view: ViewId,
         tree: &DesignedTree,
         render: u64,
         window: &mut Window,

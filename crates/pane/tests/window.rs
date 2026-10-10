@@ -206,14 +206,18 @@ fn a_validation_error_is_rendered(cx: &mut TestAppContext, sample: &Sample) {
     );
 }
 
-/// Opens the sample's command and then its form ("Greet someone", the fifth
-/// item) with the keyboard.
+/// Opens the sample's form command ("Greet someone") with the keyboard:
+/// a designed view now (#241).
 fn open_form(window: &Entity<LauncherWindow>, cx: &mut VisualTestContext) {
     cx.simulate_keystrokes("enter");
     settle(window, cx);
     cx.simulate_keystrokes("down down down down enter");
     let view = settle(window, cx);
-    assert!(matches!(view.screen, Screen::Form(_)), "{:?}", view.screen);
+    assert!(
+        matches!(view.screen, Screen::DesignedView(_)),
+        "{:?}",
+        view.screen
+    );
     assert_eq!(view.title, "Greet someone");
 }
 
@@ -230,21 +234,18 @@ fn the_keyboard_fills_in_and_submits_the_form(cx: &mut TestAppContext, sample: &
     cx.simulate_input("Ada");
     cx.simulate_keystrokes("tab down enter");
 
+    // The answer draws over the form, in the tree the view answers with
+    // (#241).
     let view = settle(&window, cx);
-    assert_eq!(
-        view.status,
-        Status::Result(format!(
-            "Good morning, Ada, from the {} guest",
-            sample.language
-        ))
-    );
+    let (nodes, _) = accessibility_tree(cx);
     assert!(
-        cx.debug_bounds("status-result").is_some(),
-        "the answer is rendered"
+        nodes.contains(&("Label".into(), format!("Good morning, Ada, from the {} guest", sample.language).into(), "".into())),
+        "{nodes:?}"
     );
     cx.simulate_keystrokes("escape");
     let view = settle(&window, cx);
     assert_eq!((view.screen, view.selected), (Screen::Command, Some(4)));
+    let _ = view;
 }
 
 fn a_rejected_field_shows_its_error_and_takes_focus(cx: &mut TestAppContext, sample: &Sample) {
@@ -254,12 +255,7 @@ fn a_rejected_field_shows_its_error_and_takes_focus(cx: &mut TestAppContext, sam
     // Submit from the greeting with the name left empty.
     cx.simulate_keystrokes("tab enter");
 
-    let view = settle(&window, cx);
-    assert_eq!(view.status, Status::Error("Name: Enter a name".into()));
-    assert!(
-        cx.debug_bounds("field-error-name").is_some(),
-        "the error is rendered next to the field"
-    );
+    settle(&window, cx);
     let (nodes, focused) = accessibility_tree(cx);
     assert_eq!(focused.as_deref(), Some("Name"));
     assert!(
@@ -270,9 +266,11 @@ fn a_rejected_field_shows_its_error_and_takes_focus(cx: &mut TestAppContext, sam
     // Focus is back on the name, so typing fixes it.
     cx.simulate_input("Grace");
     cx.simulate_keystrokes("enter");
-    assert_eq!(
-        settle(&window, cx).status,
-        Status::Result(format!("Hello, Grace, from the {} guest", sample.language))
+    settle(&window, cx);
+    let (nodes, _) = accessibility_tree(cx);
+    assert!(
+        nodes.contains(&("Label".into(), format!("Hello, Grace, from the {} guest", sample.language).into(), "".into())),
+        "{nodes:?}"
     );
 }
 
@@ -381,12 +379,12 @@ fn focused_label(cx: &mut VisualTestContext) -> Option<String> {
     accessibility_tree(cx).1
 }
 
-/// The open form's value of field `id`.
+/// The open form's value of field `id`: the keyed state's live text
+/// (#241).
 fn field_value(window: &Entity<LauncherWindow>, cx: &mut VisualTestContext, id: &str) -> String {
-    let view = cx.read_entity(window, |window, _| window.launcher().view());
-    let form = view.form().expect("a form is open");
-    let field = form.fields.iter().find(|field| field.id == id);
-    field.expect("the field exists").value.clone()
+    window.update(cx, |window, _| {
+        window.designed_field_text(id, cx).expect("the field exists")
+    })
 }
 
 #[gpui::test]

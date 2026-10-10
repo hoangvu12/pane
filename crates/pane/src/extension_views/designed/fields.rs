@@ -131,12 +131,13 @@ pub(super) fn date_field(
     );
     // Up and Down step the date; the field's other keys are the text
     // field's own.
-    let stepping = path.to_owned();
+    let up_path = path.to_owned();
     let up = cx.listener(move |this, _: &super::StepDateUp, window, cx| {
-        this.designed_date_stepped(&stepping, 1, window, cx);
+        this.designed_date_stepped(&up_path, 1, window, cx);
     });
+    let down_path = path.to_owned();
     let down = cx.listener(move |this, _: &super::StepDateDown, window, cx| {
-        this.designed_date_stepped(&stepping, -1, window, cx);
+        this.designed_date_stepped(&down_path, -1, window, cx);
     });
     field_group(
         node.key.as_deref().unwrap_or_default(),
@@ -212,7 +213,7 @@ pub(super) fn tag_field(
                 node.key.clone().unwrap_or_default(),
                 draw.render,
             );
-            components::chosen_chip(tag, theme)
+            components::chosen_chip(tag.as_str(), theme)
                 .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                     this.designed_tag_removed(
                         &path,
@@ -357,7 +358,7 @@ pub(super) fn path_field(
             .map(|picked| {
                 let path = path.to_owned();
                 let picked = picked.clone();
-                components::chosen_chip(picked, theme).on_click(cx.listener(
+                components::chosen_chip(picked.as_str(), theme).on_click(cx.listener(
                     move |this, _: &ClickEvent, window, cx| {
                         this.designed_path_removed(&path, window, cx);
                     },

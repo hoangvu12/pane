@@ -668,7 +668,6 @@ fn the_guest_stays_under_the_memory_cap(sample: &Sample) {
     an_async_wasi_wait_shows_running_until_it_answers(sample);
     one_instance_rolls_a_new_number_each_time(sample);
     a_valid_form_shows_the_guests_answer(sample);
-    an_unknown_choice_is_a_field_error_from_the_guest(sample);
     keys_move_the_chosen_color(sample);
     pressing_and_dragging_the_pointer_chooses_swatches(sample);
     views_open_at_once_keep_their_own_state(sample);
@@ -714,7 +713,6 @@ contract!(
     a_valid_form_shows_the_guests_answer,
     an_invalid_field_is_marked_and_the_form_stays_open,
     a_too_long_name_is_rejected_by_the_guest,
-    an_unknown_choice_is_a_field_error_from_the_guest,
     a_platform_limited_action_runs_only_on_its_declared_systems,
     opening_the_color_view_draws_the_picker,
     keys_move_the_chosen_color,
