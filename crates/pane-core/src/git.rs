@@ -1145,7 +1145,7 @@ impl Remote {
         }
         body.extend_from_slice(FLUSH);
         let url = format!("{}/git-upload-pack", self.repository.url);
-        let answer = post(self.repository, &url, body, most)?;
+        let answer = post(&self.repository, &url, body, most)?;
         Ok(answer.body)
     }
 
@@ -2010,10 +2010,10 @@ fn write_tree(
             "100644" | "100755" | "100664" => {
                 write_file(objects, &entry.id, &entry.shown, &path, limits, tally)?;
             }
-            "120000" => return entry.refuse("a symbolic link"),
-            "160000" => return entry.refuse("a submodule, which Pane does not fetch"),
+            "120000" => return Err(entry.refuse("a symbolic link")),
+            "160000" => return Err(entry.refuse("a submodule, which Pane does not fetch")),
             other => {
-                return entry.refuse(&format!("an entry of mode {}", self::shown(other)));
+                return Err(entry.refuse(&format!("an entry of mode {}", self::shown(other))));
             }
         }
     }

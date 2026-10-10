@@ -156,7 +156,7 @@ pub(crate) fn parse(text: &str) -> Result<Collection, String> {
             ));
         }
     }
-    Ok(Some(Collection { extensions }))
+    Ok(Collection { extensions })
 }
 
 /// The index as `pane-collection.json` writes it. A field it does not know
