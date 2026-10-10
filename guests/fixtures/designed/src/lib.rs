@@ -728,7 +728,11 @@ export!(Fixture);
 /// The filler's tree, written by hand as the counter's is: a canvas that
 /// fills the space the layout gives it, drawing the size the render
 /// context named for it and every event the view received (#242).
-fn filler_rendered(size: &RefCell<String>, received: &RefCell<Vec<String>>, context: &str) -> Result<Rendered, String> {
+fn filler_rendered(
+    size: &RefCell<String>,
+    received: &RefCell<Vec<String>>,
+    context: &str,
+) -> Result<Rendered, String> {
     // The context names the size each canvas was laid out at:
     // {\"canvases\":{\"fill\":{\"width\":W,\"height\":H}}}. Read without a
     // parser, as the fields' payloads are.
