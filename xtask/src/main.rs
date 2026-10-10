@@ -106,6 +106,8 @@ const PREBUILT: &[&str] = &[
     "sample_run_ts",
     "sample_system_commands_js",
     "sample_system_commands_ts",
+    "sample_switch_windows_js",
+    "sample_switch_windows_ts",
 ];
 
 fn main() -> ExitCode {
@@ -214,6 +216,7 @@ fn guests() -> Result<(), String> {
                 "clipboard_history",
                 "run",
                 "system_commands",
+                "switch_windows",
                 "sample_operations",
                 "sample_dependencies",
                 "sample_query",
@@ -229,6 +232,7 @@ fn guests() -> Result<(), String> {
                 "sample_programs",
                 "sample_run",
                 "sample_system_commands",
+                "sample_switch_windows",
                 "sample_files",
                 "faulty",
                 "folder_files",
@@ -428,7 +432,7 @@ fn git_sample(root: &Path, out: &Path) -> Result<(), String> {
 /// (package folder in `guests/packages`, component) of each sample package,
 /// and of the default extensions (the calculator, applications and
 /// quicklinks).
-const SAMPLE_PACKAGES: [(&str, &str); 67] = [
+const SAMPLE_PACKAGES: [(&str, &str); 71] = [
     ("sample-rust", "sample_rust"),
     ("sample-settings", "sample_settings"),
     ("sample-js", "sample_js"),
@@ -442,6 +446,7 @@ const SAMPLE_PACKAGES: [(&str, &str); 67] = [
     ("clipboard-history", "clipboard_history"),
     ("run", "run"),
     ("system-commands", "system_commands"),
+    ("switch-windows", "switch_windows"),
     ("sample-operations", "sample_operations"),
     ("sample-operations-js", "sample_operations_js"),
     ("sample-operations-ts", "sample_operations_ts"),
@@ -496,6 +501,9 @@ const SAMPLE_PACKAGES: [(&str, &str); 67] = [
     ("sample-system-commands", "sample_system_commands"),
     ("sample-system-commands-js", "sample_system_commands_js"),
     ("sample-system-commands-ts", "sample_system_commands_ts"),
+    ("sample-switch-windows", "sample_switch_windows"),
+    ("sample-switch-windows-js", "sample_switch_windows_js"),
+    ("sample-switch-windows-ts", "sample_switch_windows_ts"),
 ];
 
 /// Rebuilds `guests/prebuilt/` from the JS/TS sample sources, then refreshes

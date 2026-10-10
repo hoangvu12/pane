@@ -59,7 +59,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-mod front;
+pub(crate) mod front;
 #[cfg(target_os = "linux")]
 mod linux;
 #[cfg(target_os = "macos")]
@@ -69,6 +69,14 @@ mod programs;
 pub mod selected;
 #[cfg(target_os = "windows")]
 mod windows;
+
+// The Windows power features' own halves of the paste worker and the
+// front application's reading (#125), which the Switch Windows host
+// functions reuse (#263): the path that brings a window to the front,
+// the reading of a window's title and its own AppUserModelID, and
+// whether a process is running as administrator.
+#[cfg(target_os = "windows")]
+pub(crate) use windows::{app_user_model_id, bring_to_front, elevated, window_title};
 
 /// The most text `read-clipboard` and `selected-text` answer, in bytes of
 /// UTF-8: a command reading more is told so rather than given it, since

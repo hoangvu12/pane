@@ -22,6 +22,7 @@
 /// <reference path="./file-index.d.ts" />
 /// <reference path="./clipboard.d.ts" />
 /// <reference path="./run.d.ts" />
+/// <reference path="./windows.d.ts" />
 
 import type { LaunchRecord } from "pane:extension/commands@0.1.0";
 

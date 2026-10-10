@@ -187,6 +187,14 @@ impl HostFunctions for Hosted {
             })
     }
 
+    fn switch_windows(&self) -> Arc<dyn crate::switch_windows::SwitchWindows> {
+        self.0
+            .upgrade()
+            .map_or_else(crate::switch_windows::none, |launcher| {
+                launcher.switch_windows()
+            })
+    }
+
     fn confirm(&self, caller: &Caller, confirmation: GivenConfirmation) -> Asking {
         match self.0.upgrade() {
             Some(launcher) => launcher.ask_to_confirm(caller, confirmation),

@@ -60,14 +60,14 @@ use crate::zip;
 /// user's recorded choice — the calculator, applications, quicklinks,
 /// files and clipboard history), the same in every build, joined on
 /// Windows by the Windows power features' default extensions (ADR 0040):
-/// Run (#254) and System Commands (#255), whose commands are
-/// Windows-only: only the Windows build's default set lists them
-/// (`pane::default_extensions`), but every system's artifacts describe
-/// their payloads. The helper sample is no default extension (#162): it
-/// is installed by hand, with `pane --install
+/// Run (#254), System Commands (#255) and Switch Windows (#263), whose
+/// commands are Windows-only: only the Windows build's default set lists
+/// them (`pane::default_extensions`), but every system's artifacts
+/// describe their payloads. The helper sample is no default extension
+/// (#162): it is installed by hand, with `pane --install
 /// target/guests/packages/sample-helper`. The ids are the ones Pane's
 /// application build acquires (`pane::default_extensions`).
-const DEFAULTS: [(&str, &str); 7] = [
+const DEFAULTS: [(&str, &str); 8] = [
     ("calculator", "calculator"),
     ("applications", "applications"),
     ("quicklinks", "quicklinks"),
@@ -75,6 +75,7 @@ const DEFAULTS: [(&str, &str); 7] = [
     ("clipboard-history", "clipboard-history"),
     ("run", "run"),
     ("system-commands", "system-commands"),
+    ("switch-windows", "switch-windows"),
 ];
 
 /// The pane program's version, as the package names it: this workspace's

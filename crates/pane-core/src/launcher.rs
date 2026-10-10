@@ -63,6 +63,7 @@ mod quick_slots;
 mod run;
 pub mod search_files;
 mod submenus;
+mod switch_windows;
 mod system_commands;
 
 use crate::clipboard::{Capture, ClipboardSystem};
@@ -869,6 +870,9 @@ struct State {
     /// The session and power commands the `system-commands` host
     /// functions act on (see `system_commands`).
     system_commands: Arc<dyn crate::system_commands::SystemCommands>,
+    /// The open windows the `windows` host functions act on (see
+    /// `switch_windows`).
+    switch_windows: Arc<dyn crate::switch_windows::SwitchWindows>,
     /// The answers the user told Pane to remember for confirmations (see
     /// `confirmations`).
     confirmations: Record<confirmations::Confirmations>,
@@ -1538,6 +1542,7 @@ impl Launcher {
             system: crate::system::none(),
             run: crate::run::none(),
             system_commands: crate::system_commands::none(),
+            switch_windows: crate::switch_windows::none(),
             confirmations,
             confirmation_saves: Arc::default(),
             setup_needed: HashSet::new(),

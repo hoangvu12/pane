@@ -61,20 +61,24 @@ EXPORT_OPTIONS = {
 }
 # `"pane"` option -> the interface a command setting it also imports, beyond
 # what every command may import (`js-extension`): a command that sets none
-# of them does not import it at all.
+# of them does not import it at all. `run` and `windows` are Windows-only
+# capabilities: a command importing them elsewhere has every call answer
+# not-available, which is not a failure.
 IMPORT_OPTIONS = {
     "files": "pane:extension/files@0.1.0",
     "fileIndex": "pane:extension/file-index@0.1.0",
     "clipboardHistory": "pane:extension/clipboard-history@0.1.0",
     "run": "pane:extension/run@0.1.0",
+    "windows": "pane:extension/windows@0.1.0",
 }
 PREBUILT = REPO / "guests" / "prebuilt"
 MANIFEST = PREBUILT / "manifest.json"
 # (component file in guests/prebuilt and target/guests, source package).
 # A new sample also joins PREBUILT and SAMPLE_PACKAGES in
-# xtask/src/main.rs (a Rust one the workspaces list there too), so that
-# `cargo xtask guests` assembles its package and `cargo xtask js-guests`
-# rebuilds its component.
+# xtask/src/main.rs, and a Rust one the workspaces list and the guests
+# workspace's members and Cargo.lock too (``cargo xtask guests`` builds
+# with --locked), so that `cargo xtask guests` assembles its package and
+# `cargo xtask js-guests` rebuilds its component.
 SAMPLES = [
     ("sample_js.wasm", "guests/sample-js"),
     ("sample_ts.wasm", "guests/sample-ts"),
@@ -115,13 +119,15 @@ SAMPLES = [
     ("sample_run_ts.wasm", "guests/sample-run-ts"),
     ("sample_system_commands_js.wasm", "guests/sample-system-commands-js"),
     ("sample_system_commands_ts.wasm", "guests/sample-system-commands-ts"),
+    ("sample_switch_windows_js.wasm", "guests/sample-switch-windows-js"),
+    ("sample_switch_windows_ts.wasm", "guests/sample-switch-windows-ts"),
 ]
 # Pane's WIT, copied beside the world in guests/js/wit. A new wit/*.wit
 # joins this list, and is mirrored to guests/pane-extension/wit/ for the
 # Rust SDK, whose copy `cargo xtask sdks` checks is identical.
 PANE_WIT = ["extension.wit", "commands.wit", "feedback.wit", "system.wit", "system-commands.wit", "data.wit", "preferences.wit", "root-results.wit",
             "operations.wit", "applications.wit", "search.wit", "helpers.wit", "files.wit", "clipboard.wit", "service.wit",
-            "programs.wit", "file-index.wit", "run.wit"]
+            "programs.wit", "file-index.wit", "run.wit", "windows.wit"]
 # WASI's WIT (clocks, and `wasi:http` with the packages it names), copied from
 # wit/deps into the world's deps/.
 WASI_WIT = sorted((REPO / "wit" / "deps").glob("*.wit"))

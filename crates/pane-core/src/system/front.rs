@@ -10,23 +10,26 @@
 //! best-effort, through its AppUserModelID, its program's path or its
 //! process's package identity matched against the installed
 //! applications (ADR 0038), which the "Applications done properly"
-//! specification (#124) refines later. The Windows half — the system
-//! foreground hook and the window facts it reads — is in `windows`
+//! specification (#124) refines later. The Switch Windows host functions
+//! (#263) reuse the same rules and the same resolution: which windows
+//! Alt+Tab would show is decided with `is_shell_surface`, and each
+//! window's application is `front_application`. The Windows half — the
+//! system foreground hook and the window facts it reads — is in `windows`
 //! beside this.
 
-// The Windows watcher is this module's only user; the rules are tested
-// on every system, but nothing else reaches them.
+// The rules are tested on every system, and the Switch Windows host
+// functions reach them too; only the watcher is Windows'.
 #![cfg_attr(not(target_os = "windows"), allow(dead_code))]
 
 #[cfg(target_os = "windows")]
-pub(in crate::system) mod windows;
+pub(crate) mod windows;
 
 use super::FrontApplication;
 use crate::applications::identity::{Catalog, Key};
 
 /// What the watcher reads of a window that came to the front: enough to
 /// say whether it is a paste target, and nothing of what it shows.
-pub(super) struct WindowFacts {
+pub(crate) struct WindowFacts {
     /// The window's class name, as `GetClassNameW` reads it.
     pub class: String,
     /// The full path of the program of the window's process, if it could
@@ -109,7 +112,7 @@ fn is_host(program: String) -> bool {
 /// shell Xaml surface, or by being an owned tool window — a helper, as
 /// the taskbar's flyouts are. An application's own dialogs, which are
 /// owned but not tool windows, stay targets.
-fn is_shell_surface(facts: &WindowFacts) -> bool {
+pub(crate) fn is_shell_surface(facts: &WindowFacts) -> bool {
     let class = facts.class.trim().to_lowercase();
     if SHELL_CLASSES.contains(&class.as_str()) {
         return true;
@@ -132,7 +135,7 @@ fn is_target(facts: &WindowFacts) -> bool {
 /// A window the watcher recorded, as the front application and the paste
 /// read it: its title and its own AppUserModelID read when asked, its
 /// program's path and its package family as the watcher read them.
-pub(super) struct Target {
+pub(crate) struct Target {
     /// The window's title, as the system shows it ("notes.txt -
     /// Notepad").
     pub title: String,
@@ -155,7 +158,7 @@ pub(super) struct Target {
 /// without one, the window's title stands in, and the icon is what the
 /// system's icon of it is: the `shell:AppsFolder` name of its
 /// AppUserModelID, or its program's path.
-pub(super) fn front_application(target: &Target, installed: &Catalog) -> FrontApplication {
+pub(crate) fn front_application(target: &Target, installed: &Catalog) -> FrontApplication {
     if let Some(aumid) = trimmed(target.aumid.as_deref()) {
         let reference = format!("shell:AppsFolder\\{aumid}");
         let name = installed
@@ -238,7 +241,7 @@ pub(super) const NO_TARGET: &str = "There is no application in front to paste in
 /// answers the command with a failure saying so. What Pane put on the
 /// clipboard stays there, still tagged, so the user can paste it by
 /// hand; what it held before is not put back.
-pub(super) enum PasteRefusal {
+pub(crate) enum PasteRefusal {
     /// The window is gone: its application closed.
     Gone,
     /// The window is not responding, and would not take the keys.

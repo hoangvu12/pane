@@ -159,6 +159,7 @@ fn memory_peaks_of_the_samples_and_default_extensions() {
         "files",
         "clipboard_history",
         "run",
+        "switch_windows",
         "sample_rust",
         "sample_settings",
         "sample_operations",

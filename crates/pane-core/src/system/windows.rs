@@ -390,9 +390,10 @@ fn token_of(process: u32) -> Option<HANDLE> {
 /// Whether `process` is running elevated, as far as Pane can tell: the
 /// elevation of its token — a process whose token Pane cannot read
 /// counts as elevated, since the keys Pane would send it would be
-/// dropped just the same. The selected-text read's simulated copy asks
-/// this too (`selected::windows`), for the same reason.
-pub(super) fn elevated(process: u32) -> bool {
+/// dropped just the same. Read for the paste target, for each listed
+/// window's record (#263), and for the selected-text read's simulated
+/// copy (#262).
+pub(crate) fn elevated(process: u32) -> bool {
     let Some(token) = token_of(process) else {
         return true;
     };
@@ -417,9 +418,10 @@ pub(super) fn elevated(process: u32) -> bool {
 /// really be there: the plain foreground call first, then, when another
 /// thread's window is in front, attaching to that thread's input and
 /// trying again, which is the way an application takes the foreground
-/// where Windows would not let it. The selected-text read's simulated
-/// copy uses this too (`selected::windows`).
-pub(super) fn bring_to_front(window: HWND) -> Result<(), PasteRefusal> {
+/// where Windows would not let it. The paste worker follows this path
+/// (#253), so does activating a window of the Switch Windows list
+/// (#263), and so does the selected-text read's simulated copy (#262).
+pub(crate) fn bring_to_front(window: HWND) -> Result<(), PasteRefusal> {
     // SAFETY: plain values.
     let _ = unsafe { SetForegroundWindow(window) };
     if waited_front(window) {
@@ -510,8 +512,9 @@ fn send_paste_keys() -> Result<(), SystemError> {
     Ok(())
 }
 
-/// `window`'s title, as the system shows it, if it has one.
-fn window_title(window: HWND) -> String {
+/// `window`'s title, as the system shows it, if it has one: read for the
+/// front application, and for each listed window (#263).
+pub(crate) fn window_title(window: HWND) -> String {
     let mut title = vec![0u16; 512];
     // SAFETY: `window` is a window handle; `title` is writable for its
     // length.
@@ -529,8 +532,9 @@ const APP_USER_MODEL_ID: PROPERTYKEY = PROPERTYKEY {
 /// `window`'s own AppUserModelID, if it has one, read through the shell's
 /// property store for the window: what the taskbar groups and launches
 /// the window by, which a packaged application or a web app has and a
-/// plain desktop program usually does not.
-fn app_user_model_id(window: HWND) -> Option<String> {
+/// plain desktop program usually does not. Read for the front
+/// application's resolution, and for each listed window's (#263).
+pub(crate) fn app_user_model_id(window: HWND) -> Option<String> {
     // The shell's property store needs COM on the calling thread; without
     // it there is simply no AppUserModelID to read.
     let _com = Com::new().ok()?;

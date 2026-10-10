@@ -201,7 +201,8 @@ choice): all five enabled by default and each individually disableable,
 with clipboard history's capture still off until the user turns it on.
 Every build acquires the same five, except that the Windows default set
 also lists Run, which runs what the Run dialog (Win+R) runs and shares
-its history (ADR 0040): no sample is a default extension
+its history, and Switch Windows, which lists the open windows and brings
+one of them to the front (ADR 0040): no sample is a default extension
 ([#162](https://github.com/pane-app/pane/issues/162)). Until #162 a
 development build also acquired the prebuilt-helper sample; an install
 that acquired it keeps it as an ordinary installed package (Pane removes

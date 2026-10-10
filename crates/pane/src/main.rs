@@ -150,7 +150,10 @@ fn main() {
         // What commands lock, log out, restart, shut down, sleep, hibernate,
         // turn the displays off of and start the screen saver of reaches the
         // system's own session and power (#255).
-        .with_system_commands(pane_core::system_commands::native());
+        .with_system_commands(pane_core::system_commands::native())
+        // What commands list of the open windows and which one they bring
+        // to the front reaches the system's own windows (#263).
+        .with_switch_windows(pane_core::switch_windows::native());
         // That Pane quit unexpectedly last time, told in root search and on
         // the About page; a clean quit removes this run's marker.
         let launcher = match crash_record.clone() {

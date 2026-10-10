@@ -932,6 +932,63 @@ Check "83-tap-opened.png" "selected" 3000   # Greeting's first item, selected
 $shots = "82-tap-unfocused", "83-tap-opened" | ForEach-Object { Join-Path $OutDir "$_.png" }
 python "$PSScriptRoot/check_screenshot.py" --distinct @shots
 if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: the tapped hotkey opened nothing" }
+
+# Switch Windows (#263, ADR 0040): the default extension lists the open
+# windows as Alt+Tab does -- with their titles, their applications' names
+# and icons, in z-order with the front application's window first -- and
+# Enter brings the chosen one to the front, restoring it if it is
+# minimized. The phase opens a Notepad of its own, on a file the smoke
+# makes so the window's title says which window it is; Pane's window
+# opens over it, so Notepad is the front application and its window is
+# the first row, selected, and one Enter switches to it. Pane's window
+# closed as the switch happened: the open-pane hotkey brings it back,
+# and typing in the command's search field filters by title, so the
+# second switch finds the window by what is typed. A data folder of its
+# own.
+$data = Join-Path $OutDir "switch-windows-data"
+if (Test-Path $data) { Remove-Item -Recurse -Force $data }
+$env:PANE_DATA_DIR = $data
+$notes = Join-Path $OutDir "switch-me.txt"
+Set-Content -Path $notes -Value "switch to me"
+$notepad = Start-Process notepad -PassThru -ArgumentList @("`"$notes`"")
+for ($i = 0; $i -lt 100 -and $notepad.MainWindowHandle -eq 0; $i++) {
+    Start-Sleep -Milliseconds 100; $notepad.Refresh()
+}
+if ($notepad.MainWindowHandle -eq 0) { throw "the smoke's Notepad window did not appear" }
+$process = Start-Pane "stderr-switch-windows.log" @("--install", "target/guests/packages/switch-windows")
+Send "{ENTER}"; Start-Sleep -Seconds 2   # Install; Switch Windows is selected
+Send "switch"; Start-Sleep -Seconds 2
+Send "{ENTER}"; Start-Sleep -Seconds 2   # the open windows, Notepad's first, selected
+Capture "610-switch-listed.png"
+Check "610-switch-listed.png" "selected" 3000   # a window's row is selected
+Send "{ENTER}"; Start-Sleep -Seconds 1   # switch to the selected window
+$switched = $false
+for ($i = 0; $i -lt 150; $i++) {
+    if ([Win]::GetForegroundWindow() -eq $notepad.MainWindowHandle) { $switched = $true; break }
+    Start-Sleep -Milliseconds 100
+}
+if (-not $switched) { throw "Switch Windows did not bring the smoke's window to the front" }
+Capture "612-switch-in-front.png"   # evidence only: Notepad is in front, Pane hidden
+# The open-pane hotkey brings the launcher back over Notepad, whose
+# window is the front application's again; typing filters the list by
+# title before the second switch.
+Send "^% "; Start-Sleep -Seconds 2
+Send "switch"; Start-Sleep -Seconds 2
+Send "{ENTER}"; Start-Sleep -Seconds 2
+Send "switch-me"; Start-Sleep -Seconds 2   # the command's search field filters by title
+Capture "613-switch-filtered.png"
+Check "613-switch-filtered.png" "selected" 3000   # the filtered window's row, selected
+Send "{ENTER}"; Start-Sleep -Seconds 1
+$switched = $false
+for ($i = 0; $i -lt 150; $i++) {
+    if ([Win]::GetForegroundWindow() -eq $notepad.MainWindowHandle) { $switched = $true; break }
+    Start-Sleep -Milliseconds 100
+}
+if (-not $switched) { throw "the filtered window did not come to the front" }
+$shots = "610-switch-listed", "612-switch-in-front" | ForEach-Object { Join-Path $OutDir "$_.png" }
+python "$PSScriptRoot/check_screenshot.py" --distinct @shots
+if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: switching changed nothing on screen" }
+[void]$notepad.CloseMainWindow()
 Stop-Pane $process
 
 # Pausing a broken extension: the settings sample's last item, Crash, crashes
@@ -2113,7 +2170,7 @@ try {
     if ($process.HasExited) { throw "the installed Pane exited during setup" }
     # The default extensions (#60): all five, in every build; no sample
     # is acquired (#162).
-    foreach ($default in "calculator", "applications", "quicklinks", "files", "clipboard-history", "run") {
+    foreach ($default in "calculator", "applications", "quicklinks", "files", "clipboard-history", "run", "switch-windows") {
         Wait-For (Join-Path $extensions "installed.json") ('"default": "' + $default + '"') $true 1200
     }
     Start-Sleep -Seconds 1
@@ -2304,7 +2361,7 @@ $process = $null
 try {
     $process = Start-Pane "stderr-clipboard.log"
     # The default set (#60), acquired at this first start.
-    foreach ($default in "calculator", "applications", "quicklinks", "files", "clipboard-history", "run") {
+    foreach ($default in "calculator", "applications", "quicklinks", "files", "clipboard-history", "run", "switch-windows") {
         Wait-For $registry ('"default": "' + $default + '"') $true 1200
     }
     Start-Sleep -Seconds 3   # Clipboard History runs, and the watch with it
@@ -2520,7 +2577,7 @@ try {
     # per payload), and Pane's own check reads the index once more.
     if ($process.HasExited) { throw "the installed Pane exited during setup" }
     # The default set (#60).
-    foreach ($default in "calculator", "applications", "quicklinks", "files", "clipboard-history", "run") {
+    foreach ($default in "calculator", "applications", "quicklinks", "files", "clipboard-history", "run", "switch-windows") {
         Wait-For $registry ('"default": "' + $default + '"') $true 1200
     }
     # The check has read the index (its request is the third): the offer

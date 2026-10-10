@@ -76,6 +76,7 @@ mod search_files;
 mod services;
 mod stopping;
 mod submenus;
+mod switch_windows;
 mod system;
 mod system_commands;
 mod system_icon_adapters;

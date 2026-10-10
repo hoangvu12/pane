@@ -111,8 +111,10 @@ pub const APP_VERSION: &str = match option_env!("PANE_PACKAGE_VERSION") {
 /// what is copied from the first start (#166, ADR 0042). The Windows
 /// default set also lists the Windows power features' default extensions
 /// (ADR 0040): Run runs what the Run dialog runs and shares its history
-/// (#254), and System Commands holds the session and power commands
-/// (#255) — Windows-only and enabled by default like the others. The
+/// (#254), System Commands holds the session and power commands
+/// (#255), and Switch Windows lists the open windows and brings one of
+/// them to the front (#263) — Windows-only and enabled by default like
+/// the others. The
 /// samples are no default extension (#162): a contributor installs one by
 /// hand with `pane --install <folder>`. An install that acquired the
 /// helper sample as a default before keeps it as an ordinary installed
@@ -142,8 +144,9 @@ pub fn default_extensions() -> Vec<pane_core::DefaultExtension> {
     ];
     // Only the Windows default set lists the Windows power features'
     // default extensions (ADR 0040): Run runs what the Run dialog runs
-    // and shares its history (#254), and System Commands holds the
-    // session and power commands (#255). macOS and Linux installs then
+    // and shares its history (#254), System Commands holds the session
+    // and power commands (#255), and Switch Windows lists the open
+    // windows (#263). macOS and Linux installs then
     // acquire no packages that could only explain they are unavailable
     // there.
     #[cfg(target_os = "windows")]
@@ -156,6 +159,10 @@ pub fn default_extensions() -> Vec<pane_core::DefaultExtension> {
         grown.push(pane_core::DefaultExtension {
             id: "system-commands".into(),
             title: "System Commands".into(),
+        });
+        grown.push(pane_core::DefaultExtension {
+            id: "switch-windows".into(),
+            title: "Switch Windows".into(),
         });
         grown
     };
@@ -416,6 +423,7 @@ mod tests {
             pane_core::clipboard_view::CLIPBOARD_HISTORY,
             "run",
             "system-commands",
+            "switch-windows",
         ];
         #[cfg(not(target_os = "windows"))]
         let expected = [

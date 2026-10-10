@@ -9,7 +9,10 @@
 //! paste target is recorded, with its process, that process's program
 //! path and package family — what the front application and the paste
 //! read of it. Its title and its AppUserModelID are read when they are
-//! asked for, since the window may be gone by then if it closed.
+//! asked for, since the window may be gone by then if it closed. The
+//! reading of a window's class, ownership, styles, program path and
+//! package family is shared with the Switch Windows host functions
+//! (#263), which list the windows the same way.
 
 use std::cell::RefCell;
 use std::sync::{Arc, Mutex};
@@ -178,8 +181,9 @@ fn recorded(window: HWND) -> Option<Recorded> {
     })
 }
 
-/// `window`'s class name, if it has one.
-fn class_name(window: HWND) -> String {
+/// `window`'s class name, if it has one: read for the front
+/// application's rules, and for the windows' (#263).
+pub(crate) fn class_name(window: HWND) -> String {
     let mut name = vec![0u16; 256];
     // SAFETY: `window` is a window handle; `name` is writable for its
     // length.
@@ -189,20 +193,21 @@ fn class_name(window: HWND) -> String {
 }
 
 /// Whether another top-level window owns `window`.
-fn owned(window: HWND) -> bool {
+pub(crate) fn owned(window: HWND) -> bool {
     // SAFETY: plain values; a window with no owner answers none.
     matches!(unsafe { GetWindow(window, GW_OWNER) }, Ok(owner) if !owner.is_invalid())
 }
 
 /// Whether `window` has the tool-window style.
-fn tool(window: HWND) -> bool {
+pub(crate) fn tool(window: HWND) -> bool {
     // SAFETY: plain values.
     let style = unsafe { GetWindowLongPtrW(window, GWL_EXSTYLE) };
     style & WS_EX_TOOLWINDOW.0 as isize != 0
 }
 
-/// The full path of the program of `process`, if it can be read.
-fn program_path(process: u32) -> Option<String> {
+/// The full path of the program of `process`, if it can be read: read
+/// for the front application's resolution, and for the windows' (#263).
+pub(crate) fn program_path(process: u32) -> Option<String> {
     // SAFETY: plain values; the handle is closed below.
     let handle: HANDLE =
         unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, process) }.ok()?;
@@ -225,8 +230,9 @@ fn program_path(process: u32) -> Option<String> {
 }
 
 /// The package family name of `process`, if it has one (a packaged
-/// application's).
-fn family(process: u32) -> Option<String> {
+/// application's): read for the front application's resolution, and for
+/// the windows' (#263).
+pub(crate) fn family(process: u32) -> Option<String> {
     // SAFETY: plain values; the handle is closed below.
     let handle: HANDLE =
         unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, process) }.ok()?;

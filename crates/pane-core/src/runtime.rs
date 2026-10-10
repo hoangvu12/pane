@@ -60,6 +60,7 @@ mod supervisor;
 mod system_command_functions;
 mod system_functions;
 mod tree;
+mod windows_functions;
 
 use deadlines::Doing;
 #[doc(hidden)]
@@ -92,7 +93,7 @@ pub use tree::{
 pub(crate) mod bindings {
     wasmtime::component::bindgen!({
         path: "../../wit",
-        world: "extension-with-system-commands",
+        world: "extension-with-windows",
         imports: {
             "pane:extension/operations": store,
             "pane:extension/helpers": store,
@@ -116,6 +117,9 @@ pub(crate) mod bindings {
             // (the displays' power message, the session ending), off the
             // runtime thread, which awaits them.
             "pane:extension/system-commands": async,
+            // The open windows wait for their processes and the
+            // foreground, off the runtime thread, which awaits them.
+            "pane:extension/windows": async,
         },
         exports: { default: async | store },
     });
@@ -176,7 +180,7 @@ use bindings::pane::extension::{
 };
 use bindings::pane::extension::{
     feedback as feedback_host, run as run_host, system as system_host,
-    system_commands as system_commands_host, window as window_host,
+    system_commands as system_commands_host, window as window_host, windows as windows_host,
 };
 use indexed_bindings::exports::pane::extension::indexed_results;
 use root_bindings::exports::pane::extension::root_results;
@@ -2552,7 +2556,7 @@ impl WasiHttpView for GuestState {
 /// A running guest instance of one component.
 struct Instance {
     store: Store<GuestState>,
-    bindings: bindings::ExtensionWithSystemCommands,
+    bindings: bindings::ExtensionWithWindows,
     /// Its root results export, if it has one.
     root_results: Option<root_bindings::RootResultsProvider>,
     /// Its indexed results export, if it has one.
@@ -2801,6 +2805,10 @@ impl Code {
             |state| state,
         )
         .expect("registering the system commands in a fresh linker cannot conflict");
+        windows_host::add_to_linker::<_, wasmtime::component::HasSelf<_>>(&mut linker, |state| {
+            state
+        })
+        .expect("registering the open windows in a fresh linker cannot conflict");
         preference_values::add_to_linker::<_, wasmtime::component::HasSelf<_>>(
             &mut linker,
             |state| state,
@@ -2942,7 +2950,7 @@ impl Code {
                 ))
             })?;
         }
-        bindings::ExtensionWithSystemCommandsPre::new(pre).map_err(interface)?;
+        bindings::ExtensionWithWindowsPre::new(pre).map_err(interface)?;
         Ok(Checked { network, programs })
     }
 }
@@ -4494,8 +4502,7 @@ impl Host {
             }
             started => started?,
         };
-        let bindings =
-            bindings::ExtensionWithSystemCommands::new(&mut store, &instance).map_err(load)?;
+        let bindings = bindings::ExtensionWithWindows::new(&mut store, &instance).map_err(load)?;
         // Only a command that computes root results exports them.
         let root_results = root_bindings::RootResultsProvider::new(&mut store, &instance).ok();
         // Only a command that supplies results ahead of the query exports

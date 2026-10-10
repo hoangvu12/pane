@@ -507,3 +507,7 @@ _Avoid_: Theme (the user's light or dark choice, part of Appearance), style, CSS
 **Run history**:
 The command lines the Windows Run dialog (Win+R) keeps in the registry (Explorer's RunMRU format) and Pane's Run default extension shares with it in both directions: what ran in either appears in both, recorded as typed, newest first, at most 26 entries, and deleting an entry removes it from both (ADR 0040).
 _Avoid_: Run's history (as if Pane kept its own), MRU list (the format's value, not the feature), command history
+
+**Switch Windows**:
+Pane's default extension that lists the open windows as Windows' Alt+Tab does — visible, unowned top-level windows that are not helpers, shell surfaces or a Store app's inner core window, with ones on another virtual desktop kept only where Alt+Tab shows all desktops — each with its title and the application it belongs to, in z-order with the front application's window first, and brings one of them to the front through the `windows` host capability (ADR 0040).
+_Avoid_: window switcher (the Alt+Tab replacement Pane is not), task view, window manager

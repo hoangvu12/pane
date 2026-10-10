@@ -398,10 +398,12 @@ pub(crate) type Asking =
 /// host call on the runtime's thread; a refusal is an answer. The one that
 /// waits for the user, `confirm`, answers at once with what it waits on.
 /// Later host functions (pasting) are added here the same way; the `system`
-/// ones (copying, opening, revealing, recycling) and the `system-commands`
-/// ones (locking, logging out, sleeping) only take the launcher's
-/// [`crate::system::System`] and [`crate::system_commands::SystemCommands`]
-/// here and run off the runtime's thread.
+/// ones (copying, opening, revealing, recycling), the `system-commands`
+/// ones (locking, logging out, sleeping) and the `windows` ones (listing
+/// and activating) only take the launcher's
+/// [`crate::system::System`], [`crate::system_commands::SystemCommands`]
+/// and [`crate::switch_windows::SwitchWindows`] here and run off the
+/// runtime's thread.
 pub(crate) trait HostFunctions: Send + Sync {
     /// `window.close`: whether a window was shown for the call.
     fn close(&self, caller: &Caller, clear_root_search: bool, pop: PopToRoot) -> bool;
@@ -429,6 +431,10 @@ pub(crate) trait HostFunctions: Send + Sync {
     /// functions act on (`wit/system-commands.wit`): the launcher's
     /// ([`crate::Launcher::with_system_commands`]).
     fn system_commands(&self) -> Arc<dyn crate::system_commands::SystemCommands>;
+    /// The open windows the `windows` host functions act on
+    /// (`wit/windows.wit`): the launcher's
+    /// ([`crate::Launcher::with_switch_windows`]).
+    fn switch_windows(&self) -> Arc<dyn crate::switch_windows::SwitchWindows>;
     /// `feedback.confirm`: shows `confirmation` (or answers from a
     /// remembered answer, or refuses) at once, and answers what to await.
     fn confirm(&self, caller: &Caller, confirmation: GivenConfirmation) -> Asking;

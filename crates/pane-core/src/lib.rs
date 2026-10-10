@@ -47,6 +47,7 @@ mod protection;
 pub mod run;
 mod runtime;
 mod search;
+pub mod switch_windows;
 pub mod system;
 pub mod system_commands;
 pub mod system_icons;

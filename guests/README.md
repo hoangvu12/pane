@@ -2280,6 +2280,46 @@ uses it. The samples are a [Rust](sample-system-commands/src/lib.rs), a
 [TypeScript](sample-system-commands-ts/src/index.ts) command, one item per
 function, each saying what it answered.
 
+## Listing the open windows
+
+A command may also list the open windows — the ones Alt+Tab would show,
+with their titles, their applications' names and icons, and whether each
+is minimized, maximized, on another virtual desktop or elevated, in
+z-order with the front application's window first — and bring one of them
+to the front, restoring it first if it is minimized (#263, ADR 0040,
+`pane:extension/windows` in [wit/windows.wit](../wit/windows.wit)). A
+window's `id` is opaque and valid for the session alone: give it back to
+`activate` to switch to that window; one that closed is gone, and another
+may have taken its place. Windows only; elsewhere every call answers
+`not-available`, which is not a failure.
+
+```rust
+use pane_extension::windows;
+
+for window in windows::list_windows()? {
+    if window.title.contains("todo") {
+        windows::activate(&window.id)?;
+    }
+}
+```
+
+```ts
+import { activate, listWindows } from "pane:extension/windows@0.1.0";
+
+for (const window of listWindows()) {
+  if (window.title.includes("todo")) activate(window.id);
+}
+```
+
+A JavaScript or TypeScript command's package.json sets
+`"pane": { "windows": true }` to import the interface. The [Switch
+Windows](switch-windows) default extension is the one that lists them
+(ADR 0040); the windows samples are a
+[Rust](sample-switch-windows/src/lib.rs), a
+[JavaScript](sample-switch-windows-js/src/index.js) and a
+[TypeScript](sample-switch-windows-ts/src/index.ts) command answering the
+same, one item per window, each switching to it.
+
 ## Packaging and installing a local extension
 
 A package is a folder with a `pane.json` manifest at its root and the built

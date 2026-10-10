@@ -380,6 +380,50 @@ pub mod system_commands {
     }
 }
 
+/// The open windows (`pane:extension/windows`): the ones Windows' own
+/// Alt+Tab would show, which Pane lists for the command — each with its
+/// title, its application's name and icon, whether it is minimized,
+/// maximized, on another virtual desktop or elevated, in z-order with
+/// the front application's window first — and brings one of them to the
+/// front, restoring it first if it is minimized. A window's `id` is
+/// opaque and valid for the session alone: give it back to
+/// [`windows::activate`] to switch to that window. Windows only;
+/// elsewhere every call answers [`WindowsError::NotAvailable`], which is
+/// not a failure.
+///
+/// ```ignore
+/// use pane_extension::windows;
+///
+/// for window in windows::list_windows()? {
+///     if window.title.contains("todo") {
+///         windows::activate(&window.id)?;
+///     }
+/// }
+/// ```
+///
+/// The Switch Windows default extension (guests/switch-windows) is the
+/// one that lists them (ADR 0040); the windows samples are a Rust, a
+/// JavaScript and a TypeScript command answering the same.
+pub mod windows {
+    wit_bindgen::generate!({
+        path: "wit",
+        world: "windows-user",
+        default_bindings_module: "pane_extension::windows",
+    });
+
+    pub use pane::extension::windows::{Window, WindowsError, activate, list_windows};
+
+    impl WindowsError {
+        /// What it says, for the user: why the open windows are not
+        /// available here, or why the listing or activation went wrong.
+        pub fn message(&self) -> &str {
+            match self {
+                WindowsError::NotAvailable(why) | WindowsError::Failed(why) => why,
+            }
+        }
+    }
+}
+
 /// Native helpers (`pane:extension/helpers`): prebuilt programs the
 /// command's own package ships, one per system, which Pane runs for it with
 /// [`helpers::run`]. Declare them under `helpers` in `pane.json`. Dropping

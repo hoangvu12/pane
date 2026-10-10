@@ -468,6 +468,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "sample_switch_windows"
+version = "0.1.0"
+dependencies = [
+ "pane-extension",
+]
+
+[[package]]
 name = "semver"
 version = "1.0.28"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -514,6 +521,13 @@ dependencies = [
  "serde",
  "serde_core",
  "zmij",
+]
+
+[[package]]
+name = "switch_windows"
+version = "0.1.0"
+dependencies = [
+ "pane-extension",
 ]
 
 [[package]]

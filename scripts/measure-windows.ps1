@@ -73,8 +73,8 @@ $Artifacts = (Resolve-Path -LiteralPath $Artifacts).Path
 New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
 $OutDir = (Resolve-Path -LiteralPath $OutDir).Path
 # Pane's default extensions (#60), the set the workload waits for; the
-# Windows default set also lists Run (ADR 0040).
-$defaults = @("calculator", "applications", "quicklinks", "files", "clipboard-history", "run")
+# Windows default set also lists Run and Switch Windows (ADR 0040).
+$defaults = @("calculator", "applications", "quicklinks", "files", "clipboard-history", "run", "switch-windows")
 $utf8 = New-Object System.Text.UTF8Encoding $false   # proc_tree.py reads JSON without a BOM
 
 # The scratch profile: a new folder of the temporary folder, never one that
