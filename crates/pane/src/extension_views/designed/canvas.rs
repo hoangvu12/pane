@@ -36,8 +36,8 @@ use std::rc::Rc;
 
 use core::fmt::Write as _;
 
-use gpui::prelude::*;
 use gpui::canvas as gpui_canvas;
+use gpui::prelude::*;
 use gpui::{
     AnyElement, Bounds, ContentMask, DispatchPhase, FillOptions, FontWeight, MouseButton,
     MouseDownEvent, MouseMoveEvent, MouseUpEvent, PathBuilder, PathStyle, Pixels, Point, Role,
@@ -732,7 +732,9 @@ fn resolve(ops: &[CanvasOp], draw: &Draw) -> Vec<Layer> {
 
 /// A rectangle's path, `radius` rounding its corners.
 fn rectangle(x: f32, y: f32, width: f32, height: f32, radius: Option<f32>) -> Vec<Painted> {
-    let radius = radius.unwrap_or(0.).clamp(0., (width / 2.).min(height / 2.));
+    let radius = radius
+        .unwrap_or(0.)
+        .clamp(0., (width / 2.).min(height / 2.));
     if radius <= 0. {
         return vec![
             Painted::Move { x, y },

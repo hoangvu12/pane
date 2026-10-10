@@ -30,8 +30,8 @@ use pane_core::{
     Screen, SelectedAction, SettingsTarget, Status, WindowPresence,
 };
 
-use crate::extension_views::{designed, form};
 use crate::extension_views::designed::measures_of;
+use crate::extension_views::{designed, form};
 use crate::features::actions_panel;
 use crate::features::announcer;
 use crate::features::clipboard_history;

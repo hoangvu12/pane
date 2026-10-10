@@ -568,7 +568,6 @@ impl LauncherView {
             _ => None,
         }
     }
-
 }
 
 impl Screen {
