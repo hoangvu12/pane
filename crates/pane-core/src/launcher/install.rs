@@ -23,6 +23,7 @@
 use std::future::Future;
 use std::path::{Path, PathBuf};
 
+use super::choice;
 use super::{
     Changing, Entry, FormField, FormPurpose, FormView, GIT_REPOSITORY_FIELD, Launcher,
     LauncherView, Mode, NPM_PACKAGE_FIELD, OpenForm, Row, Screen, State, Status, off_thread,
@@ -31,7 +32,9 @@ use crate::defaults::DefaultExtension;
 use crate::dependencies::{self, Assumptions, Plan, RequiredState};
 use crate::git::{self as git_source, GitSpec};
 use crate::npm::{self, NpmSpec, Registry};
-use crate::packages::{InstalledPackage, PackageError, PackageIdentity, SourcePackage, SourceSpec};
+use crate::packages::{
+    InstalledPackage, MANIFEST_FILE, PackageError, PackageIdentity, SourcePackage, SourceSpec,
+};
 use crate::platform::{self, Platform};
 use crate::runtime::FieldKind;
 use crate::{helpers, operations};
@@ -50,6 +53,17 @@ pub(in crate::launcher) enum Request {
     /// default branch — or, with `#<id>`, one extension of a collection
     /// the repository holds.
     Git(GitSpec),
+    /// One extension of a collection in a Git revision Pane has already
+    /// fetched and still holds (#308, ADR 0044): the choice reads and
+    /// installs each ticked extension from the revision it fetched, so
+    /// however many are chosen, the revision is fetched once. `origin`
+    /// records where it was fetched from, as a Git package's does, and
+    /// `id` names the extension in the collection's index.
+    FetchedExtension {
+        download: std::sync::Arc<crate::downloads::Download>,
+        origin: crate::git::GitOrigin,
+        id: String,
+    },
     /// A default extension's revision, from its repository at the commit
     /// its release tag points to — first setup's acquisition of a pin
     /// ([`crate::defaults`]) and the updater's of a newer release tag
@@ -76,12 +90,26 @@ impl Request {
                 format!("Git repository: {spec}"),
                 spec.repository.name().to_owned(),
             ),
+            Request::FetchedExtension { origin, id, .. } => (
+                format!("Git repository: {}#{id}", origin.repository.name()),
+                origin.repository.name().to_owned(),
+            ),
             Request::Default(pin) => (
                 format!("Default extension: default:{}", pin.id),
                 pin.title.clone(),
             ),
         }
     }
+}
+
+/// What reading a request for the choice (#308) found: one package, read
+/// as the ordinary preview reads it, or a collection's extensions listed.
+pub(in crate::launcher) enum ChoiceRead {
+    /// One package, read and checked.
+    Package(SourcePackage),
+    /// A collection, its extensions listed for the choice: where it is,
+    /// how each of them is read and installed, and what each row shows.
+    Choice(choice::Listed),
 }
 
 /// Reads packages from their sources: local folders, npm packages, which it
@@ -104,7 +132,105 @@ impl Sources {
             Request::Collection(folder, id) => SourcePackage::read_collection(folder, id),
             Request::Npm(spec) => self.fetch(spec),
             Request::Git(spec) => self.fetch_git(spec),
+            Request::FetchedExtension {
+                download,
+                origin,
+                id,
+            } => SourcePackage::read_git_revision(
+                download.clone(),
+                origin.clone(),
+                Some(id.as_str()),
+            ),
             Request::Default(pin) => self.fetch_default(pin),
+        }
+    }
+
+    /// Reads what `request` names, as [`Sources::read`] reads it, except
+    /// that a local folder or Git repository naming a collection (ADR
+    /// 0044) lists its extensions for the choice (#308): `Folder` and
+    /// `Git` without an extension's id are the requests that can name
+    /// one. A repository that names none is read from the revision
+    /// fetched here, so it is not fetched again.
+    pub(in crate::launcher) fn read_choice(
+        &self,
+        request: &Request,
+    ) -> Result<ChoiceRead, PackageError> {
+        match request {
+            Request::Folder(folder) => {
+                // The folder as Pane resolves it, so the collection is
+                // named as its extensions' identities name it.
+                let root = PackageIdentity::local(folder)?
+                    .local_folder()
+                    .expect("a local identity has a folder")
+                    .to_path_buf();
+                let file = crate::collections::COLLECTION_FILE;
+                let invalid = |why: String| {
+                    PackageError::Collection(format!(
+                        "The folder {} is a collection whose {file} is invalid: {why}",
+                        root.display()
+                    ))
+                };
+                match crate::collections::read(&root).map_err(invalid)? {
+                    Some(collection) => {
+                        if root.join(MANIFEST_FILE).is_file() {
+                            return Err(PackageError::Collection(format!(
+                                "The folder {} holds both {MANIFEST_FILE} and {file}: a folder \
+                                 is one extension or a collection, never both",
+                                root.display()
+                            )));
+                        }
+                        Ok(ChoiceRead::Choice(choice::Listed::folder(
+                            &root,
+                            &collection,
+                        )))
+                    }
+                    None => SourcePackage::read(folder).map(ChoiceRead::Package),
+                }
+            }
+            Request::Git(spec) if spec.extension.is_none() => {
+                let Some(downloads) = &self.downloads else {
+                    return Err(PackageError::Storage(
+                        "this launcher does not install packages".into(),
+                    ));
+                };
+                let fetched = git_source::fetch(spec, downloads).map_err(PackageError::Git)?;
+                let git_source::Fetched { download, origin } = fetched;
+                let download = std::sync::Arc::new(download);
+                let revision = format!(
+                    "{} (commit {}) of the Git repository {}",
+                    origin.revision.describe(),
+                    origin.revision.short_commit(),
+                    origin.repository.name()
+                );
+                let revision = crate::packages::capitalized(&revision);
+                let file = crate::collections::COLLECTION_FILE;
+                let invalid = |why: String| {
+                    PackageError::Git(format!(
+                        "{revision} is a collection whose {file} is invalid: {why}"
+                    ))
+                };
+                let folder = download.folder().to_path_buf();
+                match crate::collections::read(&folder).map_err(invalid)? {
+                    Some(collection) => {
+                        if folder.join(MANIFEST_FILE).is_file() {
+                            return Err(PackageError::Git(format!(
+                                "{revision} holds both {MANIFEST_FILE} and {file}: a \
+                                 repository is one extension or a collection, never both"
+                            )));
+                        }
+                        Ok(ChoiceRead::Choice(choice::Listed::git(
+                            download,
+                            &origin,
+                            &collection,
+                        )))
+                    }
+                    // A repository that is no collection is one extension
+                    // as today, read from the revision fetched above.
+                    None => SourcePackage::read_git_revision(download, origin, None)
+                        .map(ChoiceRead::Package),
+                }
+            }
+            _ => self.read(request).map(ChoiceRead::Package),
         }
     }
 
@@ -347,7 +473,9 @@ impl Launcher {
     /// Reads the package in `folder` and shows its identity, version,
     /// commands and compatibility, offering Install, or Update when a
     /// package with the same identity is installed. No guest code runs. An
-    /// invalid or incompatible package is explained instead.
+    /// invalid or incompatible package is explained instead. A folder
+    /// whose root holds `pane-collection.json` is a collection (ADR 0044)
+    /// and opens the choice of its extensions instead (#308).
     pub fn preview_package(&self, folder: &Path) -> impl Future<Output = ()> + Send + 'static {
         self.preview(Ok(Request::Folder(folder.to_path_buf())))
     }
@@ -386,7 +514,9 @@ impl Launcher {
     /// pinned. For an installed repository named without one, the installed
     /// reference is kept. Nothing in the repository runs. A `#<id>` after
     /// the repository path names one extension of a collection the
-    /// repository holds (ADR 0044), a reference following the id.
+    /// repository holds (ADR 0044), a reference following the id; without
+    /// one, a repository holding a collection opens the choice of its
+    /// extensions instead (#308).
     pub fn preview_git(&self, spec: &str) -> impl Future<Output = ()> + Send + 'static {
         let asked = spec.trim().to_owned();
         let request = crate::git::GitSpec::parse(spec)
@@ -396,7 +526,9 @@ impl Launcher {
     }
 
     /// Previews the package `request` names, or explains why the text asked
-    /// for (its detail line, the text and the reason) names none.
+    /// for (its detail line, the text and the reason) names none. A folder
+    /// or repository naming a collection opens the choice of its
+    /// extensions instead (#308).
     fn preview(
         &self,
         request: Result<Request, (String, String, String)>,
@@ -424,17 +556,56 @@ impl Launcher {
                     return;
                 }
             };
-            let request = launcher.keeping_pin(request);
-            let checked = match launcher.read_and_check(request.clone()).await {
-                Ok(package) => Ok(launcher.plan_dependencies(package).await),
-                Err(error) => Err(error),
-            };
-            let mut state = launcher.lock();
-            if state.screen_epoch != epoch {
+            // A preview asked for anew leaves any open choice (#308): its
+            // Back returns to the choice, and this one replaces it.
+            if matches!(request, Request::Folder(_) | Request::Git(_)) {
+                launcher.lock().choice = None;
+            }
+            launcher.preview_after(epoch, request).await;
+        }
+    }
+
+    /// Previews the package `request` names as [`Launcher::preview`] does,
+    /// or — where `request` names a local folder or Git repository holding
+    /// a collection — shows the choice of its extensions (#308): the
+    /// extensions listed, none ticked. The choice's own preview of one of
+    /// them comes back here, keeping the choice open for Back to return
+    /// to. The status line says Running until it lands.
+    pub(in crate::launcher) async fn preview_after(&self, epoch: u64, request: Request) {
+        let request = self.keeping_pin(request);
+        let read = self.read_and_check_choice(request.clone()).await;
+        let checked = match read {
+            // A folder or repository naming a collection: the choice of
+            // the extensions it offers (#308).
+            Ok(ChoiceRead::Choice(listed)) => {
+                let mut state = self.lock();
+                if state.screen_epoch == epoch {
+                    self.show_choice(&mut state, listed);
+                }
                 return;
             }
-            launcher.show_preview(&mut state, &request, checked);
+            Ok(ChoiceRead::Package(package)) => Ok(self.plan_dependencies(package).await),
+            Err(error) => Err(error),
+        };
+        let mut state = self.lock();
+        if state.screen_epoch != epoch {
+            return;
         }
+        self.show_preview(&mut state, &request, checked);
+    }
+
+    /// Reads what `request` names as [`Launcher::read_and_check`] does,
+    /// except that a folder or repository naming a collection (ADR 0044)
+    /// is listed as the choice of its extensions (#308) instead. Blocks
+    /// on the file system, and for Git on the network.
+    async fn read_and_check_choice(&self, request: Request) -> Result<ChoiceRead, PackageError> {
+        let sources = self.sources.clone();
+        let mut read = off_thread(move || sources.read_choice(&request)).await?;
+        if let ChoiceRead::Package(package) = &mut read {
+            let checked = self.check_components(package).await?;
+            package.note_imports(checked);
+        }
+        Ok(read)
     }
 
     /// `request`, or for an npm package without a version that is installed
@@ -878,29 +1049,18 @@ impl Launcher {
     }
 }
 
-/// The package screen for `request`: what the package is and whether it
-/// can be installed, or why it cannot.
-fn preview_view(
-    request: &Request,
-    checked: Result<(SourcePackage, dependencies::Plan), PackageError>,
-    installed: Option<InstalledPackage>,
-) -> (LauncherView, Vec<Entry>) {
-    let (package, plan) = match checked {
-        Ok(checked) => checked,
-        Err(error) => {
-            let (asked, name) = request.describe();
-            let view = LauncherView {
-                status: Status::Error(error.to_string()),
-                ..LauncherView::new(
-                    Screen::Package {
-                        details: vec![asked],
-                    },
-                    format!("Cannot install {name}"),
-                )
-            };
-            return (view, Vec::new());
-        }
-    };
+/// The lines of the package preview for `package` and its `plan`: what it
+/// is, where it came from, what it uses and what installing it needs —
+/// everything the preview shows above its Install row but the lines about
+/// an installed copy, which the row the preview offers decides with
+/// (`installed`, the installed copy of the same identity, if any). The
+/// choice's run shows these lines for each extension it installs (#308),
+/// as any extension's preview does.
+pub(in crate::launcher) fn preview_lines(
+    package: &SourcePackage,
+    plan: &Plan,
+    installed: Option<&InstalledPackage>,
+) -> Vec<String> {
     let manifest = &package.manifest;
     let mut details = vec![format!("Source: {}", package.identity)];
     // One extension of a collection, named by its id (ADR 0044): said so,
@@ -915,16 +1075,13 @@ fn preview_view(
     }
     if let Some(npm) = &package.npm {
         let pinned_to = installed
-            .as_ref()
             .and_then(|installed| installed.npm.as_ref())
             .filter(|installed| installed.pinned)
             .map(|installed| installed.version.as_str());
         details.extend(npm_lines(npm, pinned_to));
     }
     if let Some(git) = &package.git {
-        let installed = installed
-            .as_ref()
-            .and_then(|installed| installed.git.as_ref());
+        let installed = installed.and_then(|installed| installed.git.as_ref());
         details.extend(git_lines(git, installed));
     }
     // A published package has its own 512×512 icon (#139); one from npm or
@@ -966,6 +1123,34 @@ fn preview_view(
         details.push(format!("Supported systems: {}", platform::join(&names)));
     }
     details.extend(plan.lines());
+    details
+}
+
+/// The package screen for `request`: what the package is and whether it
+/// can be installed, or why it cannot.
+fn preview_view(
+    request: &Request,
+    checked: Result<(SourcePackage, dependencies::Plan), PackageError>,
+    installed: Option<InstalledPackage>,
+) -> (LauncherView, Vec<Entry>) {
+    let (package, plan) = match checked {
+        Ok(checked) => checked,
+        Err(error) => {
+            let (asked, name) = request.describe();
+            let view = LauncherView {
+                status: Status::Error(error.to_string()),
+                ..LauncherView::new(
+                    Screen::Package {
+                        details: vec![asked],
+                    },
+                    format!("Cannot install {name}"),
+                )
+            };
+            return (view, Vec::new());
+        }
+    };
+    let manifest = &package.manifest;
+    let mut details = preview_lines(&package, &plan, installed.as_ref());
     if !plan.problems.is_empty() {
         // Nothing is offered: a required dependency cannot be installed.
         let view = LauncherView {
@@ -1099,7 +1284,7 @@ fn npm_lines(npm: &crate::npm::NpmOrigin, pinned_to: Option<&str>) -> Vec<String
 /// The preview's lines about the Git revision a package was fetched from,
 /// whether it is tracked or pinned, and what Pane does not do with it;
 /// `installed` is the installed copy's, if the repository is installed.
-fn git_lines(
+pub(in crate::launcher) fn git_lines(
     git: &crate::git::GitOrigin,
     installed: Option<&crate::git::InstalledGit>,
 ) -> Vec<String> {

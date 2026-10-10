@@ -234,6 +234,71 @@ pub fn collection_files(guests: &Path, index: &str, built: bool) -> Vec<(&'stati
     files
 }
 
+/// The files of a collection offering the Git sample as the extensions
+/// `extensions` names, each by its id and by whether that one ships its
+/// built component (one that does not holds the source only, which an
+/// install of it explains), each manifest saying its own title,
+/// description and version — what the choice's rows read of it (#308) —
+/// and the first one shipping an icon its manifest names. The index is
+/// the caller's, naming the extensions by id and folder.
+pub fn extension_collection_files(
+    guests: &Path,
+    extensions: &[(&'static str, bool)],
+) -> Vec<(&'static str, Vec<u8>)> {
+    let sample = guests.join("git/greeter");
+    let read = |file: &str| {
+        std::fs::read(sample.join(file)).unwrap_or_else(|error| {
+            panic!("{}: {error}; run `cargo xtask guests`", sample.display())
+        })
+    };
+    let mut files: Vec<(&'static str, Vec<u8>)> = Vec::new();
+    for (at, (id, built)) in extensions.iter().enumerate() {
+        let title: String = id
+            .chars()
+            .enumerate()
+            .map(|(at, character)| {
+                if at == 0 {
+                    character.to_ascii_uppercase()
+                } else {
+                    character
+                }
+            })
+            .collect();
+        let icon = (at == 0).then(|| r#", "icon": "icon.svg""#).unwrap_or("");
+        let manifest = format!(
+            r#"{{ "manifestVersion": 1, "title": "{title} from Git",
+                 "description": "The {id} extension of the tools collection",
+                 "version": "0.1.0"{icon}, "apiVersion": "0.1",
+                 "commands": [{{ "id": "sample", "title": "{title} from Git",
+                                 "component": "dist/git_greeter.wasm" }}],
+                 "operations": [{{ "id": "greet", "version": 1,
+                                   "component": "dist/git_greeter.wasm" }}] }}"#
+        );
+        let folder: &'static str = Box::leak(format!("extensions/{id}").into_boxed_str());
+        files.push((
+            Box::leak(format!("{folder}/pane.json").into_boxed_str()),
+            manifest.into_bytes(),
+        ));
+        files.push((
+            Box::leak(format!("{folder}/src/lib.rs").into_boxed_str()),
+            read("src/lib.rs"),
+        ));
+        if *built {
+            files.push((
+                Box::leak(format!("{folder}/dist/git_greeter.wasm").into_boxed_str()),
+                read("dist/git_greeter.wasm"),
+            ));
+        }
+        if at == 0 {
+            files.push((
+                Box::leak(format!("{folder}/icon.svg").into_boxed_str()),
+                br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"/>"#.to_vec(),
+            ));
+        }
+    }
+    files
+}
+
 /// How the server answers.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Mode {

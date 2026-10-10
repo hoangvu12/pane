@@ -1679,6 +1679,19 @@ impl SourcePackage {
         extension: Option<&str>,
     ) -> Result<SourcePackage, PackageError> {
         let crate::git::Fetched { download, origin } = fetched;
+        Self::read_git_revision(std::sync::Arc::new(download), origin, extension)
+    }
+
+    /// Reads a revision Pane fetched from Git and still holds, exactly as
+    /// [`SourcePackage::read_git`] reads the one it just fetched: the
+    /// choice holds the revision while it lists a collection's extensions
+    /// and reads each of them from it (#308), so the revision is fetched
+    /// once however many of them are installed.
+    pub(crate) fn read_git_revision(
+        download: std::sync::Arc<crate::downloads::Download>,
+        origin: crate::git::GitOrigin,
+        extension: Option<&str>,
+    ) -> Result<SourcePackage, PackageError> {
         let folder = download.folder().to_path_buf();
         let revision = format!(
             "{} (commit {}) of the Git repository {}",
@@ -1763,7 +1776,7 @@ impl SourcePackage {
                 git: Some(origin),
                 default: None,
                 extension: Some(id.to_owned()),
-                _download: Some(std::sync::Arc::new(download)),
+                _download: Some(download),
                 network: false,
                 programs: false,
             });
@@ -1817,7 +1830,7 @@ impl SourcePackage {
             git: Some(origin),
             default: None,
             extension: None,
-            _download: Some(std::sync::Arc::new(download)),
+            _download: Some(download),
             network: false,
             programs: false,
         })
@@ -2059,6 +2072,52 @@ impl SourcePackage {
     /// The `pane.json` text the manifest was read from.
     pub(crate) fn manifest_text(&self) -> &str {
         &self.manifest_text
+    }
+}
+
+/// One extension of a collection as the choice lists it (ADR 0044, #308):
+/// what its own manifest says of it — the index holds none of that — read
+/// leniently, without checking what the manifest names. An extension whose
+/// manifest cannot be taken at all (it has none, or names an extension API
+/// this Pane cannot run, ADR 0046) is listed anyway, its id standing for
+/// its title, and what is wrong with it is explained when it is previewed
+/// or installed: the strict read there refuses it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ListedExtension {
+    pub(crate) title: Option<String>,
+    pub(crate) description: Option<String>,
+    pub(crate) version: Option<String>,
+    /// Its manifest's own icon, resolved against its folder in the
+    /// collection; `None` for none, which the choice shows as a
+    /// first-letter tile.
+    pub(crate) icon: Option<Icon>,
+}
+
+impl ListedExtension {
+    /// The extension `entry` of the collection at `root`: its own
+    /// manifest's title, description, version and icon, read leniently.
+    pub(crate) fn of(root: &Path, entry: &crate::collections::Extension) -> ListedExtension {
+        let subfolder = root.join(&entry.path);
+        let manifest: Option<serde_json::Value> = fs::read_to_string(subfolder.join(MANIFEST_FILE))
+            .ok()
+            .and_then(|text| serde_json::from_str(&text).ok());
+        let field = |name: &str| {
+            manifest
+                .as_ref()
+                .and_then(|manifest| manifest.get(name))
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned)
+        };
+        ListedExtension {
+            title: field("title"),
+            description: field("description"),
+            version: field("version"),
+            icon: manifest
+                .as_ref()
+                .and_then(|manifest| manifest.get("icon"))
+                .and_then(crate::icons::read)
+                .and_then(|icon| icon.resolved(&subfolder)),
+        }
     }
 }
 

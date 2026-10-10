@@ -27,9 +27,10 @@ enum ToPreview {
 /// "Install extension from npm…", or the Git repository, as if named in
 /// "Install extension from Git…". A `#<id>` names one extension of a
 /// collection (ADR 0044): a local folder's, after the last `#` of its path,
-/// or a repository's, before any `@<reference>`. `pane --version` prints
-/// Pane's version and exits without opening a window, so an installation
-/// can check what it installed.
+/// or a repository's, before any `@<reference>`; without one, a folder or
+/// repository holding a collection opens the choice of its extensions
+/// (#308). `pane --version` prints Pane's version and exits without opening
+/// a window, so an installation can check what it installed.
 fn package_to_preview() -> Option<ToPreview> {
     let mut args = std::env::args_os().skip(1);
     while let Some(arg) = args.next() {
