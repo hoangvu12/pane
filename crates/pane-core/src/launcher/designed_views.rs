@@ -384,7 +384,7 @@ impl Launcher {
         drop(state);
         let payload = form_payload(&values);
         let sending =
-            self.send_designed_seen(DesignedHandler::Submit, callback, Some(key), None, payload);
+            self.send_designed_seen(DesignedHandler::Submit, callback, Some(&key), None, payload);
         async move {
             if let Some(data) = data {
                 for (key, value) in remembered {
@@ -518,6 +518,7 @@ impl Launcher {
             DesignedHandler::Press => "a press",
             DesignedHandler::Change => "a change",
             DesignedHandler::Input => "an input",
+            DesignedHandler::Submit => "a submission",
             DesignedHandler::Focus => "a focus",
             DesignedHandler::Blur => "a blur",
             DesignedHandler::Key => "a key",
@@ -669,13 +670,16 @@ impl Launcher {
         match result {
             Ok(DesignedNext::Tree(rendered)) => {
                 let component = state.open.clone().unwrap_or_default();
-                let (screen, title) = {
-                    let stack = state.designed_view.as_mut().expect("a view is open");
-                    let top = stack.top_mut();
+                let previous = {
+                    let stack = state.designed_view.as_ref().expect("a view is open");
                     // The keys the view's last tree held as `remember`
                     // fields: a field's remembered value prefills it only
                     // when its key is new to the view (#241).
-                    let previous = remember_keys(&top.tree);
+                    remember_keys(&stack.top().tree)
+                };
+                let (screen, title, mut tree, owner, loading) = {
+                    let stack = state.designed_view.as_mut().expect("a view is open");
+                    let top = stack.top_mut();
                     top.shown = number;
                     top.rendered = rendered.render;
                     top.refresh_after_ms = rendered.refresh_after_ms;
@@ -684,16 +688,24 @@ impl Launcher {
                     // A tree that lands on screen has its icons resolved in
                     // the open command's package folder and starts the
                     // loads its icons need, as a list's do.
-                    top.loading = landed(
+                    let loading = landed(
                         &state.packages,
                         &state.icon_loads,
                         &component,
                         owner.as_ref(),
                         &mut top.tree,
                     );
-                    self.prefill_remembered(state, &component, previous, &mut top.tree);
-                    stack.shown()
+                    let shown = stack.shown();
+                    (shown.0, shown.1, top.tree.clone(), owner, loading)
                 };
+                // The remembered values, placed onto the tree on screen.
+                self.prefill_remembered(state, &component, previous, &mut tree);
+                if let Some(stack) = state.designed_view.as_mut() {
+                    let top = stack.top_mut();
+                    top.tree = tree;
+                    top.owner = owner;
+                    top.loading = loading;
+                }
                 state.view.screen = super::Screen::DesignedView(screen);
                 state.view.title = title;
                 state.view.status = Status::Idle;
@@ -1333,10 +1345,10 @@ fn prefill_node(node: &mut Node, form: &str, data: &PackageData, seen: &mut Vec<
         _ => form.to_owned(),
     };
     let key = node.key.clone();
-    if let (Some(key), true) = (key.clone(), field_remember(node)) {
+    if let (Some(key), true) = (key, field_remember(node)) {
         let setting = format!("pane-form/{form}/{key}");
         if !seen.contains(&setting) {
-            seen.push(setting);
+            seen.push(setting.clone());
             if let Ok(Some(value)) = data.get(DataKind::Settings, &setting) {
                 apply_remembered(node, &value);
             }

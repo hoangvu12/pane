@@ -406,7 +406,6 @@ pub(in crate::launcher) fn selected_action(state: &State) -> SelectedAction {
         // extension gave it (#137).
         (_, Some(Entry::Actions(listed))) => acting(&listed.primary()),
         (_, Some(Entry::NoActions)) => unusable("No actions"),
-        (_, Some(Entry::Form(..))) => acting("Open form"),
         (_, Some(Entry::CustomView(..))) => acting("Open view"),
         (_, Some(Entry::ChooseFolder(_))) => acting("Choose folder"),
         (_, Some(Entry::StopSharingFolder(_))) => acting("Stop sharing"),

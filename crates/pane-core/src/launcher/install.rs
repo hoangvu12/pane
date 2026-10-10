@@ -25,8 +25,8 @@ use std::path::{Path, PathBuf};
 
 use super::pane_form::{self, PaneFieldKind, PaneFormField, PaneForm};
 use super::{
-    Changing, Entry, FormPurpose, GIT_REPOSITORY_FIELD, Launcher, Mode, NPM_PACKAGE_FIELD, Row,
-    Screen, State, Status, next_form_id, off_thread,
+    Changing, Entry, FormPurpose, GIT_REPOSITORY_FIELD, Launcher, LauncherView, Mode,
+    NPM_PACKAGE_FIELD, Row, Screen, State, Status, next_form_id, off_thread,
 };
 use crate::dependencies::{self, Assumptions, Plan, RequiredState};
 use crate::git::{self as git_source, GitSpec};

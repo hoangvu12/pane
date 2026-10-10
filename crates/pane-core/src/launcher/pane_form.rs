@@ -273,7 +273,7 @@ impl Launcher {    /// Notes what the discrete control of the open Pane form key
     /// error goes with its change. Unknown fields and choices are ignored.
     pub fn pane_form_changed(&self, key: &str, value: &str) {
         let mut state = self.lock();
-        let Some(super::Screen::PaneForm(form)) = &mut state.view.screen else {
+        let super::Screen::PaneForm(form) = &mut state.view.screen else {
             return;
         };
         if !set_field(&mut form.tree, key, value) {

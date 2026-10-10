@@ -1218,9 +1218,9 @@ fn node(wire: WireNode, depth: usize, nodes: &mut usize) -> Result<Node, ReadErr
             "date-time-picker" => NodeKind::DateTimePicker(date_field(&wire)?),
             "tag-picker" => NodeKind::TagPicker(TagPicker {
                 tags: texts(&wire, "tags")?
-                    .or_else(|| texts(&wire, "default")?)
+                    .or_else(|| texts(&wire, "default").ok().flatten())
                     .unwrap_or_default(),
-                options: options(wire, "options")?,
+                options: options(&wire, "options")?,
                 on_change: callback(&wire, "onChange")?,
                 field: field_props(&wire)?,
             }),
@@ -1774,7 +1774,7 @@ fn file_picker(wire: &WireNode) -> Result<FilePicker, ReadError> {
     };
     Ok(FilePicker {
         paths: paths("value")
-            .or_else(|| paths("default"))
+            .or_else(|_| paths("default"))
             .unwrap_or_default(),
         multiple: boolean(wire, "multiple")?.unwrap_or(false),
         field: field_props(wire)?,

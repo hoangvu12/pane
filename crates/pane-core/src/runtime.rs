@@ -71,13 +71,14 @@ pub use deadlines::{COMPUTE_LIMIT, UNRESPONSIVE_LIMIT, WARN_AFTER};
 pub(crate) use deadlines::{HostCall, Hosted, Watch};
 
 pub use designed::{
-    Align, Badge, Border, Button, COMPONENT_SET, Checkbox, DesignedHandler, DesignedTree,
-    EmptyState, Finite, Fit, IconExtent, IconNode, Image, Justify, KeySequence, Keycap, Layout,
-    Length, Link, Loading, MAX_DEPTH, MAX_INLINE_IMAGE, MAX_MARKDOWN_CHARS, MAX_NODES, MAX_PX,
-    MAX_TREE_BYTES, Markdown, MetadataItem, MetadataList, Node, NodeKind, Offset, Orientation,
-    Padding, Paint, Place, Progress, RadiusLength, RichRow, RowAccessory, SectionHeader, Segment,
-    Segmented, Select, Sizing, Slider, Span, Style, Surface, Tag, Text, TextContent, TextInput,
-    Toggle, Tone as ButtonTone, key_problems,
+    Align, Badge, Border, Button, COMPONENT_SET, Checkbox, DateField, DesignedHandler,
+    DesignedTree, EmptyState, FieldProps, FilePicker, Finite, Fit, FormNode, FormValue, IconExtent,
+    IconNode, Image, Justify, KeySequence, Keycap, Layout, Length, Link, Loading, MAX_DEPTH,
+    MAX_INLINE_IMAGE, MAX_MARKDOWN_CHARS, MAX_NODES, MAX_PX, MAX_TREE_BYTES, Markdown,
+    MetadataItem, MetadataList, Node, NodeKind, Offset, Orientation, Padding, Paint, Place,
+    Progress, RadiusLength, RichRow, RowAccessory, SectionHeader, Segment, Segmented, Select,
+    Sizing, Slider, Span, Style, Surface, Tag, TagPicker, Text, TextContent, TextInput, Toggle,
+    Tone as ButtonTone, key_problems,
 };
 #[cfg(any(test, debug_assertions))]
 #[doc(hidden)]

@@ -699,7 +699,7 @@ fn setup_form(
         kind: NodeKind::Column(Layout::default()),
         key: Some("heading".into()),
         children: vec![
-            paragraph(title, TextLevel::Heading),
+            paragraph(title, TextLevel::Primary),
             paragraph(sentence, TextLevel::Secondary),
         ],
         ..Node::plain()
@@ -733,7 +733,7 @@ fn setup_form(
             .iter()
             .enumerate()
             .map(|(index, text)| {
-                let mut paragraph = paragraph(text, TextLevel::Body);
+                let mut paragraph = paragraph(text, TextLevel::Tertiary);
                 paragraph.key = Some(format!("help-{index}"));
                 paragraph
             })
@@ -769,6 +769,8 @@ fn setup_form(
         id: next_form_id(),
         tree,
         submit: "Save and continue".into(),
+        owner: None,
+        loading: false,
     };
     form.land(state, identity);
     form

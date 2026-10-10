@@ -39,8 +39,8 @@ use serde_json::{Map, Value};
 use super::choices::{Choices, Record, provider_title, split};
 use super::pane_form::{self, PaneFieldKind, PaneFormField, PaneForm};
 use super::{
-    CommandRegistration, Entry, FormPurpose, Launcher, Row, Screen, State, Status, Unavailable,
-    next_form_id, off_thread,
+    CommandRegistration, Entry, FormPurpose, Launcher, Opening, Row, Screen, State, Status,
+    Unavailable, next_form_id, off_thread,
 };
 use crate::launch::{LaunchRecord, LaunchSource};
 use crate::packages::{CommandMode, PackageIdentity, paused_reason};

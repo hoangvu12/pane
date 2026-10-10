@@ -86,8 +86,7 @@ use crate::runtime::{
     CallError, CustomViewInfo, CustomViewRole, DesignedTree, Frame, Item, Point, ResultListing,
     RootAction, RootResult as ComputedResult, Runtime, View, ViewEvent, ViewId, WeakRuntime,
 };
-use pane_form::{PaneForm, PaneFormField};
-pub use pane_form::{PaneFieldKind, PathPick};
+pub use pane_form::{PaneFieldKind, PaneFormField, PaneForm, PathPick};
 use crate::search::{self, Keys, Query};
 
 mod dependents;
