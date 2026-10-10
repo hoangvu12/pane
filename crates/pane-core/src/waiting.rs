@@ -769,7 +769,6 @@ fn what_of(
         Missing::Capability(unmet) => {
             capability_what(packages, able, provisions, paused, title_of, path, unmet)
         }
-        }
     }
 }
 

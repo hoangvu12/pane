@@ -388,13 +388,19 @@ fn a_successful_build_hands_the_state_over_and_reopens_the_screen() {
     // were, with what they had.
     save(&folder, "sample_handoff");
     dev.finished(&identity, 1);
-    assert_eq!(dev.launcher.view().status, Status::Result("Reloaded Dev".into()));
+    assert_eq!(
+        dev.launcher.view().status,
+        Status::Result("Reloaded Dev".into())
+    );
     assert!(
         matches!(dev.launcher.view().screen, Screen::Command),
         "the screen that was open reopens: {:?}",
         dev.launcher.view()
     );
-    assert_eq!(dev.launcher.view().title, "Handoff: 2 counted, draft nothing");
+    assert_eq!(
+        dev.launcher.view().title,
+        "Handoff: 2 counted, draft nothing"
+    );
 
     // The new code carries on from the handed-over state.
     assert_eq!(

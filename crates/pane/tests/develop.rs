@@ -188,9 +188,7 @@ fn the_screen_reopens_after_a_development_mode_reload(cx: &mut TestAppContext) {
     cx.simulate_keystrokes("escape");
     settle(&window, cx);
     cx.simulate_keystrokes("enter");
-    until(&window, cx, |view| {
-        matches!(view.screen, Screen::Command)
-    });
+    until(&window, cx, |view| matches!(view.screen, Screen::Command));
     assert_eq!(settle(&window, cx).title, "Rust sample");
 
     // Each save builds and reloads (ADR 0004): the build that succeeded

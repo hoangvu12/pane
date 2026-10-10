@@ -509,9 +509,11 @@ fn reloading_reopens_the_commands_root_view_not_the_one_it_pushed() {
     assert_eq!(view.title, "JavaScript sample");
     assert_eq!(block_on(runtime.view_count()), 0);
     // The reopened command is the new code's: its items are listed.
-    assert!(titles(&launcher)
-        .iter()
-        .any(|title| title.starts_with("Say hello")));
+    assert!(
+        titles(&launcher)
+            .iter()
+            .any(|title| title.starts_with("Say hello"))
+    );
     // The pushed view can be opened again: the command answers.
     open_color(&launcher, "Open Dev");
     let chosen = color(&launcher);
