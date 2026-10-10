@@ -37,12 +37,13 @@ use std::rc::Rc;
 use core::fmt::Write as _;
 
 use gpui::prelude::*;
+use gpui::canvas as gpui_canvas;
 use gpui::{
-    AnyElement, Bounds, ContentMask, DispatchPhase, FillOptions, FontWeight, LineCap, LineJoin,
-    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PathBuilder, PathStyle, Pixels,
-    Point, Role, ScrollWheelEvent, SharedString, StrokeOptions, WeakEntity, Window, canvas, div,
-    px,
+    AnyElement, Bounds, ContentMask, DispatchPhase, FillOptions, FontWeight, MouseButton,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, PathBuilder, PathStyle, Pixels, Point, Role,
+    ScrollWheelEvent, SharedString, StrokeOptions, WeakEntity, Window, div, px,
 };
+use lyon::tessellation::{LineCap, LineJoin};
 
 use pane_core::{Canvas as CanvasNode, CanvasHandlers, CanvasOp, DesignedHandler, Finite, Node};
 
@@ -459,7 +460,7 @@ fn layer_element(
             let bounds = bounds.clone();
             let entity = entity.clone();
             let path = path.to_owned();
-            canvas(
+            gpui_canvas(
                 move |area, _, _| area,
                 move |area, _, window, cx| {
                     paint(&ops, area, window);
@@ -835,9 +836,12 @@ fn stroked(stroke: &pane_core::CanvasStroke, theme: &crate::ui::theme::Theme) ->
 }
 
 /// A text operation's size: its own, or its token style's.
-fn sized(size: Option<Finite>, style: Option<pane_core::TextStyle>, theme: &crate::ui::theme::Theme) -> f32 {
-    size.map(|Finite(pixels)| pixels)
-        .unwrap_or(tokens::text_style(style, theme).0 .0)
+fn sized(
+    size: Option<Finite>,
+    style: Option<pane_core::TextStyle>,
+    theme: &crate::ui::theme::Theme,
+) -> f32 {
+    size.map(|Finite(pixels)| pixels).unwrap_or(tokens::text_style(style, theme).0 .0)
 }
 
 /// A text operation's weight: its own, or its token style's.

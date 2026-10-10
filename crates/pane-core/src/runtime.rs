@@ -2482,7 +2482,12 @@ impl Why {
 /// render's number, the component set Pane supports, and the sizes the
 /// view's canvases were laid out at, by their keys (#242) — a canvas that
 /// fills the space the layout gives it draws what its size asks.
-fn render_context(view: ViewId, render: u64, why: Why, canvases: &HashMap<String, (f32, f32)>) -> String {
+fn render_context(
+    view: ViewId,
+    render: u64,
+    why: Why,
+    canvases: &HashMap<String, (f32, f32)>,
+) -> String {
     let canvases = if canvases.is_empty() {
         String::new()
     } else {
@@ -3379,6 +3384,7 @@ impl Host {
                 if let Some(open) = self.designed_views.borrow_mut().get_mut(&view) {
                     open.canvases.borrow_mut().insert(key, (width, height));
                 }
+                Box::pin(async {})
             }
             Request::OpenDesignedView {
                 component,

@@ -161,6 +161,13 @@ impl Node {
                     TextContent::Spans(spans) => spans.iter().any(|span| held(span.on_press)),
                 },
                 NodeKind::MetadataList(list) => list.items.iter().any(|item| held(item.on_press)),
+                // The canvas's semantic handlers (the up and down arrows,
+                // Space) are presses, as a button's is.
+                NodeKind::Canvas(canvas) => {
+                    held(canvas.handlers.on_increment)
+                        || held(canvas.handlers.on_decrement)
+                        || held(canvas.handlers.on_activate)
+                }
                 _ => false,
             },
             DesignedHandler::Change => match &self.kind {

@@ -513,7 +513,16 @@ fn opening_the_color_view_draws_the_picker(sample: &Sample) {
         fill: None,
         stroke: None,
     };
-    assert_eq!(canvas.ops[0], rect(180., 36., 36.));
+    assert_eq!(
+        canvas.ops[0],
+        CanvasOp::Rect {
+            fill: Some(Paint {
+                tint: pane_core::Tint::Same(pane_core::Color::Rgba(0xf1f3f5ff)),
+                exact: false,
+            }),
+            ..rect(180., 36., 36.)
+        }
+    );
     assert_eq!(
         canvas.ops[1],
         CanvasOp::Rect {

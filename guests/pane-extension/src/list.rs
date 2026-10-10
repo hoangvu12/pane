@@ -540,7 +540,10 @@ impl Item {
 /// impl pane_extension::Command for Sample {
 ///     type DesignedView = Counter;
 ///
-///     async fn open_designed_view(command: String, launch: LaunchRecord) -> Result<Counter, String> {
+///     async fn open_designed_view(
+///         command: String,
+///         launch: LaunchRecord,
+///     ) -> Result<Counter, String> {
 ///         Ok(Counter { count: 0 })
 ///     }
 /// }

@@ -1147,7 +1147,12 @@ fn the_pointer_chooses_and_drags_across_swatches(cx: &mut TestAppContext, sample
 /// outlive the window.
 fn open_counter<'a>(
     cx: &'a mut TestAppContext,
-) -> (Entity<LauncherWindow>, tempfile::TempDir, gpui::Point<gpui::Pixels>, &'a mut VisualTestContext) {
+) -> (
+    Entity<LauncherWindow>,
+    tempfile::TempDir,
+    gpui::Point<gpui::Pixels>,
+    &'a mut VisualTestContext,
+) {
     let data = tempfile::tempdir().unwrap();
     let component = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../target/guests/faulty.wasm");
