@@ -583,9 +583,10 @@ On macOS, the same as on Linux (`python3`, the server backgrounded with
   the package is built and installed on a clean machine — a fresh home
   folder on Linux and macOS, a fresh user profile on Windows — and the
   installed Pane, started with a PATH that holds nothing at all, fetches
-  the five default extensions' pinned commits from their repositories
-  (cloned at those commits by the smoke's own setup and served on
-  127.0.0.1; the Pane under test reaches no network address) and
+  the default extensions' pinned commits from their repositories (the
+  five that run everywhere on Linux and macOS, all eight on Windows;
+  cloned at those commits by the smoke's own setup and served on
+  127.0.0.1, the Pane under test reaching no network address) and
   answers "6*7" with 42. (A helper running from an acquired revision is
   `installer.rs`'s, above; the smokes run the helper sample installed
   with `--install`.) (The install script itself runs
