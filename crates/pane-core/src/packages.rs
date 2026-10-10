@@ -3199,8 +3199,11 @@ fn copy_package(package: &SourcePackage, location: &Path) -> io::Result<()> {
             // A development build of JavaScript or TypeScript keeps a source
             // map beside its component; it comes with the component, so the
             // extension log's stack traces keep mapping to the sources after
-            // the install or reload that copied it (#214).
-            if let Some(map) = map_beside(&source) {
+            // the install or reload that copied it (#214). Most components
+            // keep no map, as `pane-build`'s copying of one also knows.
+            if let Some(map) = map_beside(&source)
+                && map.is_file()
+            {
                 fs::copy(&map, map_beside(&target).expect("the target is named"))?;
             }
         }
@@ -3219,7 +3222,7 @@ fn copy_package(package: &SourcePackage, location: &Path) -> io::Result<()> {
 
 /// The source map kept beside the component at `component`, when there is
 /// one: its file name plus `.map` (#214).
-fn map_beside(component: &Path) -> Option<PathBuf> {
+pub(crate) fn map_beside(component: &Path) -> Option<PathBuf> {
     let name = component.file_name()?.to_str()?;
     Some(component.with_file_name(format!("{name}.map")))
 }

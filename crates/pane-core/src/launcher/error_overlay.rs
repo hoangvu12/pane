@@ -229,8 +229,20 @@ impl Launcher {
         let Some(shown) = state.error_overlay.take() else {
             return Pending::Nothing;
         };
-        match shown.retry {
+        let Shown {
+            return_to,
+            entries,
+            retry,
+            ..
+        } = shown;
+        match retry {
             Retry::Command(opening) => {
+                // The overlay leaves as Back leaves it, before the retry
+                // runs: a crash the retry meets covers what the overlay
+                // covered, not the overlay itself.
+                state.next_screen();
+                state.view = return_to;
+                state.entries = entries;
                 if opening.no_view {
                     Launcher::begin_run(state);
                 } else {
@@ -262,7 +274,7 @@ impl Launcher {
         let no_view = package.mode_of(&command) == CommandMode::NoView;
         Some(Opening {
             launch: state.launch.clone(),
-            ..Opening::of(&registration, no_view, state.launch.source.clone())
+            ..Opening::of(&registration, no_view, state.launch.source)
         })
     }
 }
@@ -334,6 +346,6 @@ fn thrown_trace(logs: &ExtensionLogs, identity: &PackageIdentity, message: &str)
     if !first.contains(message) {
         return None;
     }
-    let stack: Vec<&str> = block[1..].iter().copied().collect();
+    let stack: Vec<&str> = block[1..].to_vec();
     (!stack.is_empty()).then(|| stack.join("\n"))
 }
