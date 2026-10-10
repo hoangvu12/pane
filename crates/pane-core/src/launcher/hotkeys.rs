@@ -322,6 +322,11 @@ impl Launcher {
                 !wanted
                     .iter()
                     .any(|(id, wanted)| id == *command && *wanted == registered.shortcut)
+                    // A dynamic root item's hotkey stays registered while
+                    // its item is not (#158): pressing it then says the
+                    // item is gone, as a slot's does, instead of the
+                    // shortcut going missing with it.
+                    && !split(command).1.contains(':')
             })
             .map(|(command, _)| command.clone())
             .collect();
