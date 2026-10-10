@@ -775,7 +775,7 @@ fn compare(a: &Ranked, b: &Ranked) -> std::cmp::Ordering {
     matched
         .then(a.kind.cmp(&b.kind))
         .then(a.provider.cmp(&b.provider))
-        .then_with(|| collate(&a.folded_title, &b.folded_title))
+        .then_with(|| collate(a.folded_title, b.folded_title))
         .then_with(|| no_query(a, b))
 }
 
@@ -791,7 +791,7 @@ fn no_query(a: &Ranked, b: &Ranked) -> std::cmp::Ordering {
         .then(b.aliased.cmp(&a.aliased))
         .then(a.kind.cmp(&b.kind))
         .then(a.provider.cmp(&b.provider))
-        .then_with(|| collate(&a.folded_title, &b.folded_title))
+        .then_with(|| collate(a.folded_title, b.folded_title))
 }
 
 /// How `a` and `b` stand as titles, compared with digits by their value

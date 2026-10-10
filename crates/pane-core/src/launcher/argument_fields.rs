@@ -68,7 +68,7 @@ pub(super) struct Typed {
 impl Typed {
     /// The values typed for `command`, if these are them.
     pub(super) fn of(&self, command: &str) -> Option<&Vec<(String, String)>> {
-        (!self.command.is_empty() && self.command == command).then(|| &self.values)
+        (!self.command.is_empty() && self.command == command).then_some(&self.values)
     }
 
     /// The value typed for the argument `name` of `command`, if any.
@@ -120,7 +120,7 @@ impl Typed {
     /// — an empty `command` holds none. What the search history records
     /// with a query.
     pub(super) fn recorded(&self) -> Option<(&str, &[(String, String)])> {
-        (!self.command.is_empty()).then(|| (self.command.as_str(), self.values.as_slice()))
+        (!self.command.is_empty()).then_some((self.command.as_str(), self.values.as_slice()))
     }
 
     /// The values a recent query's entry carries, as the search's own
@@ -195,7 +195,7 @@ impl Launcher {
             && state
                 .arguments
                 .value(&command, name)
-                .is_none_or(|value| arguments::blank(value))
+                .is_none_or(arguments::blank)
         {
             state.arguments.mark(&command, name);
         }
@@ -249,9 +249,7 @@ fn selected_declared(state: &State) -> Option<(Vec<ManifestArgument>, String, St
 /// The fields of root search's selected row, as the window draws them
 /// (see [`Launcher::argument_fields`]).
 pub(super) fn fields_of(state: &State) -> Option<ArgumentFields> {
-    let Some((declared, command, title)) = selected_declared(state) else {
-        return None;
-    };
+    let (declared, command, title) = selected_declared(state)?;
     let typed = &state.arguments;
     let remembered = &state.remembered_arguments.chosen;
     let fields = declared

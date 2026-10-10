@@ -2658,6 +2658,7 @@ impl Launcher {
     /// `None`: ask nothing more). Answers what resolves once the granted
     /// folder its package's answer was still waiting for is listed, if it
     /// was.
+    #[allow(clippy::too_many_arguments)]
     async fn show_one_root_result(
         &self,
         epoch: u64,
@@ -5474,10 +5475,11 @@ fn rank_statics(state: &State, query: &str) -> Ranked {
     // queries, by its row id — a command's or an indexed result's own.
     // While "Learn from what I choose" is off (#200), ranking acts as if
     // nothing was learned: what was learned is kept until it is reset.
-    let learned = state
-        .learning
-        .then(|| state.learned.chosen.ranked(state.clock.now()))
-        .unwrap_or_default();
+    let learned = if state.learning {
+        state.learned.chosen.ranked(state.clock.now())
+    } else {
+        Default::default()
+    };
     let keys = |&(result, kind, provider)| candidate(result, kind, provider, &learned);
     let parsed = Query::new(query);
     let named = |index: &usize| parsed.is_alias_of(&candidates[*index].0.keys);

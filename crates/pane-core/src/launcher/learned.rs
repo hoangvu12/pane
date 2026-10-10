@@ -199,9 +199,11 @@ impl LearnedChoices {
             .iter()
             .map(|(id, use_)| {
                 let frecency = frecency(use_, now);
-                let queries = counting(use_, now)
-                    .then(|| use_.queries.clone())
-                    .unwrap_or_default();
+                let queries = if counting(use_, now) {
+                    use_.queries.clone()
+                } else {
+                    Default::default()
+                };
                 (id.clone(), Learned { frecency, queries })
             })
             .collect()
