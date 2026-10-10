@@ -53,6 +53,12 @@ impl Collection {
     pub(crate) fn find(&self, id: &str) -> Option<&Extension> {
         self.extensions.iter().find(|extension| extension.id == id)
     }
+
+    /// The extensions the collection offers, in the order its index
+    /// lists them: the choice reads them all (#308), one row each.
+    pub(crate) fn extensions(&self) -> &[Extension] {
+        &self.extensions
+    }
 }
 
 /// `true` for the id of one extension of a collection: lowercase letters,

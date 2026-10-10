@@ -19,15 +19,15 @@ use std::path::Path;
 use gpui::{
     App, ClipboardItem, Context, Div, Entity, EntityInputHandler, FocusHandle, Focusable, Hsla,
     KeyDownEvent, MouseMoveEvent, ObjectFit, PathPromptOptions, Pixels, Point, Role, SharedString,
-    Size, Stateful, Window, div, img, prelude::*, px, relative,
+    Size, Stateful, Toggled, Window, div, img, prelude::*, px, relative,
 };
 use pane_core::changes::Changes;
 use pane_core::feedback::WindowRequest;
 use pane_core::hotkeys::Shortcut;
 use pane_core::tray::TrayAction;
 use pane_core::{
-    ComputedAnswer, Launcher, LauncherView, ListPresentation, NextShowing, Row, RowPresentation,
-    Screen, SelectedAction, SettingsTarget, Status, WindowPresence,
+    ChoiceOutcome, ComputedAnswer, Launcher, LauncherView, ListPresentation, NextShowing, Row,
+    RowPresentation, Screen, SelectedAction, SettingsTarget, Status, WindowPresence,
 };
 
 use crate::extension_views::{custom_view, form};
@@ -55,13 +55,18 @@ use crate::ui::theme::{Theme, pressed};
 use crate::ui::virtual_list;
 use crate::{
     Back, Confirm, DismissLauncher, FocusNext, FocusPrevious, OpenSettings, ReturnToRoot,
-    SelectNext, SelectNextPage, SelectPrevious, SelectPreviousPage,
+    SelectNext, SelectNextPage, SelectPrevious, SelectPreviousPage, TickChoice,
 };
 
 pub(crate) use frame_motion::FrameMotion;
 use presence::{Fit, Presence, Press, WindowSize};
 
 pub(crate) const KEY_CONTEXT: &str = "Launcher";
+
+/// The key context of the choice of a collection's extensions (#308):
+/// the list it draws, where Space ticks and unticks the extension
+/// selected.
+pub(crate) const CHOICE_CONTEXT: &str = "Choice";
 
 /// The launcher window's root view.
 pub struct LauncherWindow {
@@ -500,6 +505,17 @@ impl LauncherWindow {
         self.launcher.move_selection(-1);
         self.announcer.user_moved();
         cx.notify();
+    }
+
+    /// Space on the choice of a collection's extensions (#308): the
+    /// extension selected is ticked or unticked.
+    pub(crate) fn tick_choice(&mut self, _: &TickChoice, _: &mut Window, cx: &mut Context<Self>) {
+        if let Some(id) = self.launcher.selected_choice_extension()
+            && self.launcher.toggle_choice_tick(&id)
+        {
+            self.announcer.user_moved();
+            cx.notify();
+        }
     }
 
     /// Page Down: the selection moves down by the rows that fit in the
@@ -1527,6 +1543,12 @@ impl LauncherWindow {
         number: Option<(usize, f32)>,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
+        // The choice's extension rows (#308): the extension's own icon, its
+        // version and its check mark; the Install row after them draws as
+        // any row does.
+        if let Some(drawn) = self.render_choice_row(index, row.clone(), selected, cx) {
+            return drawn;
+        }
         let visuals = crate::settings::launcher_visuals(cx);
         let theme = &visuals.theme;
         let reason = row.unavailable.as_ref().map(|u| u.reason().to_owned());
@@ -1649,6 +1671,167 @@ impl LauncherWindow {
                 }
             }),
         )
+    }
+
+    /// One row of the choice of a collection's extensions (#308): the
+    /// extension's own icon drawn bare, its title and description, its
+    /// version as a tag, what the run of the ticked ones came to for it
+    /// once it reaches it, and — at the row's right end — its check mark.
+    /// The row previews the extension, as Enter does; the check mark alone
+    /// ticks it, as Space does. `None` for the rows that are no
+    /// extension's (the Install row after them, which draws as any row
+    /// does).
+    fn render_choice_row(
+        &self,
+        index: usize,
+        row: Row,
+        selected: bool,
+        cx: &mut Context<Self>,
+    ) -> Option<Stateful<Div>> {
+        let Screen::Choice(choice) = self.launcher.screen() else {
+            return None;
+        };
+        let extension = choice.extensions.get(index)?;
+        let ticked = choice.ticked.get(index).copied().unwrap_or(false);
+        let outcome = choice.outcomes.get(index).cloned().flatten();
+        let id = extension.id.clone();
+        let tick = self.choice_tick(index, &id, &extension.title, ticked, cx);
+        let visuals = crate::settings::launcher_visuals(cx);
+        let theme = &visuals.theme;
+        let icon = crate::features::icons::drawn(&extension.icon, theme);
+        let tag = |text: String, color| crate::ui::result_row::AccessoryLook {
+            text: text.into(),
+            tag: true,
+            color,
+            icon: None,
+            tooltip: None,
+        };
+        // The version, and — once the run reaches this extension — what
+        // it came to for it.
+        let mut accessories = Vec::new();
+        if let Some(version) = &extension.version {
+            accessories.push(tag(version.clone(), theme.text_muted));
+        }
+        match &outcome {
+            Some(ChoiceOutcome::Installed) => {
+                accessories.push(tag("Installed".into(), theme.success));
+            }
+            Some(ChoiceOutcome::Installing) => {
+                accessories.push(tag("Installing…".into(), theme.warning));
+            }
+            Some(ChoiceOutcome::Refused(_)) => {
+                accessories.push(tag("Not installed".into(), theme.danger));
+            }
+            None => {}
+        }
+        // What a refusal came to, said under the title, never truncated.
+        let refused = match &outcome {
+            Some(ChoiceOutcome::Refused(why)) => Some(SharedString::from(why.clone())),
+            _ => None,
+        };
+        let description = row.subtitle.clone();
+        let debug_title = row.title.clone();
+        result_row_with(
+            RowContent {
+                title: row.title.clone().into(),
+                subtitle: row.subtitle.clone().map(SharedString::from),
+                unavailable_reason: refused,
+                selected,
+                unavailable_id: ("choice-reason", index).into(),
+                icon: Some(crate::ui::extension_icon::RowIcon::Drawn(icon)),
+            },
+            RowMeta {
+                accessories,
+                ..RowMeta::default()
+            },
+            theme,
+        )
+        .id(("row", index))
+        .active({
+            let press = crate::ui::result_row::pressed_wash(selected, theme);
+            move |row| row.bg(press)
+        })
+        // The check mark, inside the row at its right end: its own click
+        // target, taking the click from the row's.
+        .child(tick)
+        .debug_selector(move || format!("row-{debug_title}"))
+        .role(Role::ListBoxOption)
+        .aria_label(row.title.clone())
+        .aria_selected(selected)
+        .when_some(description, |row, description| {
+            row.aria_description(description)
+        })
+        .on_click(cx.listener(move |this, event: &gpui::ClickEvent, window, cx| {
+            if event.click_count() <= 1 {
+                this.launcher.select(index);
+                this.announcer.user_moved();
+                this.activate_selected(window, cx);
+                this.motion.pointer_open();
+            }
+        }))
+    }
+
+    /// The check mark of the extension `id`, titled `title`, at the
+    /// choice's row `index` (#308): ticked or not, its own click target —
+    /// the row around it previews the extension — and the key Space ticks
+    /// what is selected.
+    fn choice_tick(
+        &self,
+        index: usize,
+        id: &str,
+        title: &str,
+        ticked: bool,
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
+        let theme = &crate::settings::launcher_visuals(cx).theme;
+        let mark = div()
+            .flex_none()
+            .size(px(16.))
+            .flex()
+            .items_center()
+            .justify_center()
+            .rounded(px(4.))
+            .border_1()
+            .border_color(if ticked {
+                theme.accent
+            } else {
+                theme.text_muted
+            })
+            .when(ticked, |mark| {
+                mark.bg(theme.accent)
+                    .child(div().size(px(6.)).rounded(px(2.)).bg(theme.text_title))
+            });
+        let label = if ticked {
+            format!("Untick {title}")
+        } else {
+            format!("Tick {title}")
+        };
+        let id = id.to_owned();
+        div()
+            .id(("choice-tick", index))
+            .debug_selector(move || format!("choice-tick-{title}"))
+            .flex_none()
+            .flex()
+            .items_center()
+            .cursor_pointer()
+            .role(Role::CheckBox)
+            .aria_label(label)
+            .aria_toggled(if ticked {
+                Toggled::True
+            } else {
+                Toggled::False
+            })
+            .aria_keyshortcuts("Space")
+            .on_click(cx.listener(move |this, _: &gpui::ClickEvent, _, cx| {
+                // The mark takes the click, so the row around it does not
+                // open the extension's preview.
+                cx.stop_propagation();
+                if this.launcher.toggle_choice_tick(&id) {
+                    this.announcer.user_moved();
+                    cx.notify();
+                }
+            }))
+            .child(mark)
     }
 
     /// Root search's row `index`, a computed answer, drawn as the answer
@@ -1921,6 +2104,7 @@ impl Render for LauncherWindow {
             Screen::Root { .. } => "No commands are installed.",
             Screen::Command | Screen::CommandSearch { .. } => "This command has no items.",
             Screen::Package { .. } => "Nothing to install.",
+            Screen::Choice { .. } => "The collection lists no extensions.",
             Screen::Form(_) => "",
             Screen::Extensions { .. } => "No extensions are installed.",
             Screen::UpdateResults { .. } => "No update results yet.",
@@ -1937,10 +2121,13 @@ impl Render for LauncherWindow {
         // The footer's left at rest on a screen with no heading line: the
         // open command (#162). Read before the rows move out of the view.
         let footer_command = self.footer_command(&view, &theme);
-        // A confirmation, and a package preview offering Install or Update
-        // (an npm or Git package's has several more lines), keep their choices in
-        // view.
-        let preview = matches!(view.screen, Screen::Package { .. }) && !view.rows.is_empty();
+        // A confirmation, a package preview offering Install or Update
+        // (an npm or Git package's has several more lines), and the choice
+        // of a collection's extensions with its rows and its lines (#308)
+        // keep their choices in view.
+        let preview = (matches!(view.screen, Screen::Package { .. })
+            || matches!(view.screen, Screen::Choice(_)))
+            && !view.rows.is_empty();
         let confirm = matches!(view.screen, Screen::Confirm { .. }) || preview;
         // A preview has one or two rows (Install or Update) and more lines
         // to read, which may take more of the window than a confirmation's.
@@ -2173,11 +2360,21 @@ impl Render for LauncherWindow {
             // selected row (#132). Key actions bubble to the root. A
             // command's list is dimmed under its open Actions panel, as root
             // search is.
-            _ => actions_panel::dimmed(
-                motion::arriving(list.track_focus(&self.focus_handle), arriving).into_any_element(),
-                self.actions.is_some(),
-                &theme,
-            ),
+            _ => {
+                let list = list.track_focus(&self.focus_handle);
+                // The choice of a collection's extensions takes Space to
+                // tick the extension selected (#308), on its list alone.
+                let list = if matches!(view.screen, Screen::Choice(_)) {
+                    list.key_context(CHOICE_CONTEXT)
+                } else {
+                    list
+                };
+                actions_panel::dimmed(
+                    motion::arriving(list, arriving).into_any_element(),
+                    self.actions.is_some(),
+                    &theme,
+                )
+            }
         };
 
         // The confirmation a command waits on, over everything (#146),
@@ -2193,6 +2390,7 @@ impl Render for LauncherWindow {
             .on_action(cx.listener(Self::select_previous))
             .on_action(cx.listener(Self::select_next_page))
             .on_action(cx.listener(Self::select_previous_page))
+            .on_action(cx.listener(Self::tick_choice))
             .on_action(cx.listener(Self::confirm))
             .on_action(cx.listener(Self::back))
             .on_action(cx.listener(Self::return_to_root))
