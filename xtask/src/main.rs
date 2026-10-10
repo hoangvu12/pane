@@ -72,6 +72,8 @@ const PREBUILT: &[&str] = &[
     "sample_greet_ts",
     "sample_handoff_js",
     "sample_handoff_ts",
+    "sample_registrations_js",
+    "sample_registrations_ts",
     "sample_capabilities_js",
     "sample_capabilities_ts",
     "sample_applications_js",
