@@ -23,8 +23,8 @@ use std::rc::Rc;
 
 use gpui::prelude::*;
 use gpui::{
-    AnimationExt as _, AnyElement, ClickEvent, Div, FontWeight, ObjectFit, Role, SharedString,
-    Stateful, Toggled, div, img, px, relative, svg,
+    AnimationExt as _, AnyElement, ClickEvent, ColorExt as _, Div, FontWeight, ObjectFit, Role,
+    SharedString, Stateful, Toggled, div, img, px, relative, svg,
 };
 
 use pane_core::{
@@ -517,7 +517,7 @@ pub(super) fn icon(icon: &IconNode, path: &str, draw: &Draw) -> AnyElement {
 pub(super) fn icon_tile(icon: &IconNode, path: &str, draw: &Draw) -> AnyElement {
     let theme = draw.theme;
     let tile = theme.geometry.tile;
-    let scale = extent_of(icon.size, tile.size.0, theme) / tile.size.0;
+    let scale = extent_of(icon.size, tile.size.as_f32(), theme) / tile.size.as_f32();
     let size = IconSize {
         size: tile.size * scale,
         glyph: tile.glyph * scale,
@@ -552,7 +552,7 @@ pub(super) fn icon_tile(icon: &IconNode, path: &str, draw: &Draw) -> AnyElement 
 fn extent_of(size: Option<IconExtent>, default: f32, theme: &Theme) -> f32 {
     match size {
         Some(IconExtent::Px(Finite(pixels))) => pixels,
-        Some(IconExtent::Token(token)) => tokens::icon_size(token).0,
+        Some(IconExtent::Token(token)) => tokens::icon_size(token).as_f32(),
         None => default,
     }
     .clamp(0., pane_core::MAX_PX)
@@ -568,7 +568,7 @@ pub(super) fn image(
     cx: &mut gpui::Context<LauncherWindow>,
 ) -> AnyElement {
     let theme = draw.theme;
-    let pixels = extent_of(image.size, theme.geometry.tile.size.0, theme);
+    let pixels = extent_of(image.size, theme.geometry.tile.size.as_f32(), theme);
     let Some(held) = &image.image else {
         // No image Pane can read: its placeholder.
         return placeholder(node, path, draw, cx);
@@ -702,7 +702,7 @@ pub(super) fn rich_row(
     let icon = row
         .icon
         .as_ref()
-        .map(|icon| icon_at(icon, geometry.tile.size.0, path, draw).into_any_element());
+        .map(|icon| icon_at(icon, geometry.tile.size.as_f32(), path, draw).into_any_element());
     let accessories: Vec<AnyElement> = row
         .accessories
         .iter()
@@ -1230,8 +1230,8 @@ pub(super) fn slider(
     let (for_click, key_for_click) = (callback, key);
     let clicked = cx.listener(move |this, event: &ClickEvent, window, cx| {
         let bounds = bounds.get();
-        let width = bounds.size.width.0.max(f32::EPSILON);
-        let at = ((event.up.position.x.0 - bounds.origin.x.0) / width).clamp(0., 1.);
+        let width = bounds.size.width.as_f32().max(f32::EPSILON);
+        let at = ((event.up.position.x.as_f32() - bounds.origin.x.as_f32()) / width).clamp(0., 1.);
         let next = min + at * span;
         this.send_designed_event(
             for_click,
@@ -1359,7 +1359,7 @@ pub(super) fn loading(loading: &LoadingNode, path: &str, theme: &Theme) -> AnyEl
                 .repeat()
                 .with_max_fps(60.),
             move |highlight, phase| {
-                let at = phase * (width.0 + width.0 / 3.) - width.0 / 3.;
+                let at = phase * (width.as_f32() + width.as_f32() / 3.) - width.as_f32() / 3.;
                 highlight.ml(px(at))
             },
         );
@@ -1542,7 +1542,7 @@ pub(super) fn empty_state(
     let glyph = empty
         .icon
         .as_ref()
-        .map(|icon| icon_at(icon, notice.notice_glyph.0, path, draw).into_any_element());
+        .map(|icon| icon_at(icon, notice.notice_glyph.as_f32(), path, draw).into_any_element());
     let actions: Vec<AnyElement> = node
         .children
         .iter()
