@@ -74,7 +74,7 @@ pub use designed::{
     IconExtent, IconNode, Image, Justify, Keycap, KeySequence, Layout, Length, Link, Loading,
     MAX_DEPTH, MAX_INLINE_IMAGE, MAX_MARKDOWN_CHARS, MAX_NODES, MAX_PX, MAX_TREE_BYTES, Markdown,
     MetadataItem, MetadataList, Node, NodeKind, Offset, Orientation, Paint, Padding, Place,
-    Progress, RadiusLength, RichRow, RowAccessory, Segment, SectionHeader, Segment, Segmented, Select, Sizing, Slider,
+    Progress, RadiusLength, RichRow, RowAccessory, Segment, SectionHeader, Segmented, Select, Sizing,
     Span, Style, Surface, Tag, Text, TextInput, TextContent, Toggle, Tone as ButtonTone,
 };
 #[cfg(any(test, debug_assertions))]
