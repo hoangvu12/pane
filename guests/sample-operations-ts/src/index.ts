@@ -20,6 +20,7 @@
 // it; the "wait" item calls it.
 import type {
   Command,
+  DesignedView,
   FieldValue,
   Form,
   FormError,

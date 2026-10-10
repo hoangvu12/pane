@@ -19,7 +19,7 @@
 // log" writes a line longer than Pane keeps, then more lines in a second
 // than Pane keeps; "Fail" throws, which the extension answers with as an
 // error and logs with its stack.
-import type { Command, Item, List } from "@pane-app/extension";
+import type { Command, DesignedView, Item, List } from "@pane-app/extension";
 import { showToast } from "@pane-app/extension/feedback";
 import { get, set } from "pane:extension/settings@0.1.0";
 import * as cache from "pane:extension/cache@0.1.0";
