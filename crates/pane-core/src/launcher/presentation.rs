@@ -306,7 +306,8 @@ fn sections(state: &State) -> Vec<Section> {
         .unwrap_or(shown);
     // Only the computed answers name a command: a row is one only when
     // activating it copies what a command computed. The files found for
-    // the query (with the row searching them all) are labelled "Files".
+    // the query (with the row searching them all) are labelled "Files";
+    // the rows declared for the address or path the query is, "Addresses".
     let answers: Vec<Option<&str>> = state.view.rows[..shown]
         .iter()
         .zip(&state.entries)
@@ -318,6 +319,11 @@ fn sections(state: &State) -> Vec<Section> {
                 .map(|computed| computed.command_title.as_str()),
             Entry::File(_) => Some("Files"),
             Entry::Open(opening) if opening.initial_search.is_some() => Some("Files"),
+            // The rows declared for the address or path the query is
+            // (#195), below the results and above the files.
+            Entry::Send(Sending {
+                via: Via::Typed, ..
+            }) => Some("Addresses"),
             _ => None,
         })
         .collect();
@@ -358,6 +364,11 @@ fn icon(state: &State, row: &Row, entry: &Entry) -> Option<Icon> {
     }
     let id = match entry {
         Entry::Open(_) | Entry::Unavailable(_) => row.id.as_str(),
+        // A typed query's row is the command's own row, sent what was
+        // typed (#195).
+        Entry::Send(Sending {
+            via: Via::Typed, ..
+        }) => row.id.as_str(),
         Entry::Send(_) => row
             .id
             .strip_prefix("alias:")
@@ -387,7 +398,8 @@ pub(super) fn kind(entry: &Entry) -> Option<RowKind> {
             via: Via::Fallback, ..
         }) => Some(RowKind::Fallback),
         Entry::Send(Sending {
-            via: Via::Alias, ..
+            via: Via::Alias | Via::Typed,
+            ..
         }) => Some(RowKind::Command),
         Entry::OpenApplication { .. } => Some(RowKind::Application),
         Entry::OpenTarget { .. } => Some(RowKind::Link),
