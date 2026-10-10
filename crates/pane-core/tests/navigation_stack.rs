@@ -329,10 +329,10 @@ fn a_push_beyond_the_depth_bound_is_the_extensions_error() {
         assert_eq!(pane.launcher.designed_stack_depth(), MAX_NAVIGATION_DEPTH);
         pane.press("Push another");
         assert!(
-            matches!(pane.status(), Status::Error(message) if message.contains("32 views"),
-                "{language}: {:?}",
-                pane.status()
-            );
+            matches!(pane.status(), Status::Error(message) if message.contains("32 views")),
+            "{language}: {:?}",
+            pane.status()
+        );
         assert_eq!(
             pane.text(),
             "Deeper: One",
