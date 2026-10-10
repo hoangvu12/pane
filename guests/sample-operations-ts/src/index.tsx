@@ -26,8 +26,11 @@ import type {
   List,
   PublishedOperations,
 } from "@pane-app/extension";
+import { launch } from "pane:extension/commands@0.1.0";
 import { call, type CallError } from "pane:extension/operations@0.1.0";
 import { set } from "pane:extension/settings@0.1.0";
+import { Column, Form, Text, createView, useState } from "@pane-app/extension/view";
+import type { Element, FormSubmittedValues } from "@pane-app/extension/view";
 import { waitFor } from "wasi:clocks/monotonic-clock@0.3.0";
 
 /** `greet`'s input and result, version 1. */
@@ -89,7 +92,7 @@ async function openView(
 }
 
 /** Opens the form command `which`, as the user would. */
-function openForm(which: string): void {
+async function openForm(which: string): Promise<void> {
   launch({ command: which }, "user-initiated", [], null);
 }
 
