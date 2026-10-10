@@ -64,7 +64,7 @@ fn walk(node: &Node, path: &mut String, controls: &mut usize) {
             Some(key) => path.push_str(key),
             None => path.push_str(&index.to_string()),
         }
-        walk(child, path, focusable);
+        walk(child, path, controls);
         path.truncate(start);
     }
 }

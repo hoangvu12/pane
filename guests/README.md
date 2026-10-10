@@ -92,13 +92,18 @@ Rust's standard library on `wasm32-wasip2`) is rejected with an explanation.
   sample too ([Dependencies](#dependencies-on-other-extensions)); held by
   `crates/pane-core/tests/dependencies.rs`.
 - `sample-view`, `sample-view-js`, `sample-view-ts`: the designed view
-  sample in Rust, JavaScript and TypeScript (#235): a counter whose screen
-  the extension describes as a tree Pane renders — a column of a text and a
-  row of buttons — written with the Rust builder, the JSX runtime's
-  elements and JSX itself (`"mode": "designed"` in their `pane.json`,
-  [designed-tree.md](../docs/designed-tree.md)); held by
-  `crates/pane-core/tests/designed_views.rs` and the window tests of
-  `crates/pane/tests/designed_views.rs`.
+  sample in Rust, JavaScript and TypeScript (#235, #237): a counter whose
+  screen the extension describes as a tree Pane renders — a column of a
+  text and a row of buttons — and a second command, `components`, a
+  gallery of every component of the UI component set, from the layout
+  primitives and the shared controls to Markdown, the tokens and the raw
+  values, written with the Rust builder, the JSX runtime's elements and
+  JSX itself (`"mode": "designed"` in their `pane.json`,
+  [designed-tree.md](../docs/designed-tree.md)); held to the same
+  three-language parity by `crates/pane-core/tests/designed_views.rs`,
+  and drawn by the window tests of
+  `crates/pane/tests/designed_views.rs` and
+  `crates/pane/tests/designed_components.rs`.
 - `sample-icons`, `sample-icons-js`, `sample-icons-ts`: the icons sample in
   Rust, JavaScript and TypeScript (#139): rows with a built-in icon, a
   packaged image with `@light` and `@dark` variants, a light and dark pair,

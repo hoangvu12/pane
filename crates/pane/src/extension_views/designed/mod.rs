@@ -201,7 +201,7 @@ impl LauncherWindow {
         let tree = {
             let mut path = String::new();
             tree::push(&mut path, view.tree.root.key.as_deref(), 0);
-            tree::node(&view.tree.root, &mut path, draw, cx)
+            tree::draw_node(&view.tree.root, &mut path, draw, cx)
         };
         // Fills the body as the list and the form do, so the status line
         // stays at the bottom; the tree's own `scroll` regions scroll

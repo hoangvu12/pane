@@ -8,8 +8,8 @@ use std::collections::HashMap;
 
 use gpui::prelude::*;
 use gpui::{
-    AnyElement, Context, Div, FocusHandle, Hsla, Length as GpuiLength, Pixels, Role, Stateful, px,
-    relative,
+    AnyElement, Context, Div, FocusHandle, Hsla, Length as GpuiLength, Pixels, Role, Stateful,
+    div, px, relative,
 };
 
 use pane_core::{
@@ -47,7 +47,7 @@ pub(super) fn push(path: &mut String, key: Option<&str>, index: usize) {
 /// One node of the tree, drawn: `path` is the node's place in the tree
 /// (its key, else its index among its siblings), already ending with its
 /// own segment, which keeps the focus of the controls Pane drew before.
-pub(super) fn node(
+pub(super) fn draw_node(
     node: &Node,
     path: &mut String,
     draw: Draw,
@@ -63,7 +63,7 @@ pub(super) fn node(
         // in its place, else its children, drawn as they are.
         NodeKind::Unknown(_) => match &node.fallback {
             Some(fallback) => {
-                let element = node(fallback, path, inner, cx);
+                let element = draw_node(fallback, path, inner, cx);
                 styled(node, path, draw, element)
             }
             None => {
@@ -151,7 +151,7 @@ pub(super) fn node(
             node,
             path,
             draw,
-            components::image(node, image, path, &draw).into_any_element(),
+            components::image(node, image, path, &draw, cx).into_any_element(),
         ),
         NodeKind::RichRow(row) => styled(
             node,
@@ -241,7 +241,7 @@ pub(super) fn node(
             node,
             path,
             draw,
-            components::empty_state(node, empty, path, &draw).into_any_element(),
+            components::empty_state(node, empty, path, &draw, cx).into_any_element(),
         ),
         NodeKind::TextInput(input) => styled(
             node,
@@ -283,7 +283,7 @@ pub(super) fn with_surface<'a>(
         Some(paint) => {
             let background = tokens::paint_color(paint, theme);
             use gpui::ColorExt as _;
-            background.blend(draw.surface)
+            background.blend(&draw.surface)
         }
         None => draw.surface,
     };
@@ -311,7 +311,7 @@ fn children(
         .map(|(index, child)| {
             let start = path.len();
             push(path, child.key.as_deref(), index);
-            let drawn = node(child, path, draw, cx);
+            let drawn = draw_node(child, path, draw, cx);
             path.truncate(start);
             drawn
         })
@@ -334,7 +334,7 @@ fn stack_children(
         .map(|(index, child)| {
             let start = path.len();
             push(path, child.key.as_deref(), index);
-            let drawn = node(child, path, draw, cx);
+            let drawn = draw_node(child, path, draw, cx);
             path.truncate(start);
             layer(child, drawn, default, draw.theme)
         })

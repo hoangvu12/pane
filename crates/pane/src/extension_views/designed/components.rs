@@ -666,7 +666,7 @@ fn placeholder(
         .map(|(index, child)| {
             let mut child_path = format!("{path}/placeholder");
             push(&mut child_path, child.key.as_deref(), index);
-            super::tree::node(child, &mut child_path, *draw, cx)
+            super::tree::draw_node(child, &mut child_path, *draw, cx)
         })
         .collect();
     div()
@@ -1075,7 +1075,7 @@ pub(super) fn segmented(
     cx: &mut gpui::Context<LauncherWindow>,
 ) -> AnyElement {
     let theme = draw.theme;
-    let chosen = position_of(segmented);
+    let chosen = position_of(&segmented.options, segmented.value.as_deref());
     let ring = focus_ring(theme);
     let mut track = controls::segment_track(theme)
         .id(path.to_owned())
@@ -1160,14 +1160,9 @@ pub(super) fn segmented(
         .into_any_element()
 }
 
-/// Where the chosen option of a segmented control or select sits.
-fn position_of(chosen: &SegmentedNode) -> Option<usize> {
-    chosen.value.as_deref().and_then(|value| {
-        chosen
-            .options
-            .iter()
-            .position(|option| option.value == value)
-    })
+/// Where the chosen option sits among `options`.
+fn position_of(options: &[pane_core::Segment], value: Option<&str>) -> Option<usize> {
+    value.and_then(|value| options.iter().position(|option| option.value == value))
 }
 
 /// The option `step` places from `current` in `options`, wrapping.
@@ -1549,7 +1544,7 @@ pub(super) fn empty_state(
         .map(|(index, child)| {
             let mut child_path = format!("{path}/action");
             push(&mut child_path, child.key.as_deref(), index);
-            super::tree::node(child, &mut child_path, *draw, cx)
+            super::tree::draw_node(child, &mut child_path, *draw, cx)
         })
         .collect();
     div()
@@ -1751,7 +1746,7 @@ pub(super) fn select(
 ) -> AnyElement {
     let theme = draw.theme;
     let ring = controls::well_shadows(true, theme);
-    let chosen = position_of(select);
+    let chosen = position_of(&select.options, select.value.as_deref());
     let label: SharedString = select
         .value
         .as_deref()
