@@ -35,10 +35,18 @@ const FOLDER = "folder";
 /** How often the timer fires, in seconds. */
 const EVERY = 1;
 
-/** The dynamic root item the activation registered: this module's own
- * state, dropped with it when the generation ends.
+/** The dynamic root item the activation registered, and the handles of
+ * the timer that updates it and the folder watcher: this module's own
+ * state, dropped with it when the generation ends. A handle that is not
+ * kept undoes its registration, so all three live as long as the code.
  * @type {import("@pane-app/extension/registrations").RootItem | undefined} */
 let item;
+
+/** @type {import("@pane-app/extension/registrations").Handle | undefined} */
+let timer;
+
+/** @type {import("@pane-app/extension/registrations").Handle | undefined} */
+let watcher;
 
 /** The provision of the capability, held while signed in.
  * @type {import("@pane-app/extension/registrations").Handle | undefined} */
@@ -53,14 +61,14 @@ export const events = { handleEvent: registrations.handleEvent };
 export const lifecycle = {
   async activate() {
     item = registrations.rootItem(COMMAND, countedItem());
-    registrations.every(EVERY, async () => {
+    timer = registrations.every(EVERY, async () => {
       const ticks = counted(TICKS) + 1;
       content.set(TICKS, String(ticks));
       item?.update(countedItem());
     });
     const folder = get(FOLDER)?.trim();
     if (folder) {
-      registrations.watchFolder(folder, false, async (changes) => {
+      watcher = registrations.watchFolder(folder, false, async (changes) => {
         const paths = changes.tag === "paths" ? changes.val.length : 1;
         const changed = counted(CHANGES) + paths;
         content.set(CHANGES, String(changed));

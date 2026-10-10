@@ -3725,7 +3725,13 @@ impl Launcher {
                         );
                     }
                     launcher.lock().activating.remove(&in_flight);
-                    launcher.changed();
+                    // A trap dropped the instance the activation ran in,
+                    // which cleared its record while this thread still held
+                    // the in-flight mark: seeing to the activations again
+                    // runs it afresh, so a trapping one counts towards
+                    // pausing as any call's crash does. A successful
+                    // activation keeps its record, so this runs nothing.
+                    launcher.registered();
                 });
             if let Err(error) = started {
                 eprintln!("Pane could not activate an extension: {error}");

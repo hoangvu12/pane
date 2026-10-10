@@ -40,6 +40,12 @@ const EVERY = 1;
  * state, dropped with it when the generation ends. */
 let item: RootItem | undefined;
 
+/** The handles of the timer that updates the item and the folder watcher,
+ * kept with it: a handle that is not kept undoes its registration.
+ */
+let timer: Handle | undefined;
+let watcher: Handle | undefined;
+
 /** The provision of the capability, held while signed in. */
 let provision: Handle | undefined;
 
@@ -52,14 +58,14 @@ export const events = { handleEvent: registrations.handleEvent };
 export const lifecycle = {
   async activate() {
     item = registrations.rootItem(COMMAND, countedItem());
-    registrations.every(EVERY, async () => {
+    timer = registrations.every(EVERY, async () => {
       const ticks = counted(TICKS) + 1;
       content.set(TICKS, String(ticks));
       item?.update(countedItem());
     });
     const folder = get(FOLDER)?.trim();
     if (folder) {
-      registrations.watchFolder(folder, false, async (changes) => {
+      watcher = registrations.watchFolder(folder, false, async (changes) => {
         const paths = changes.tag === "paths" ? changes.val.length : 1;
         const changed = counted(CHANGES) + paths;
         content.set(CHANGES, String(changed));
