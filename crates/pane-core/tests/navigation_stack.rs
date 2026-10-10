@@ -24,7 +24,9 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use futures::executor::block_on;
-use pane_core::{Launcher, MAX_NAVIGATION_DEPTH, Node, NodeKind, Runtime, Screen, Status};
+use pane_core::{
+    Launcher, MAX_NAVIGATION_DEPTH, Node, NodeKind, Runtime, Screen, Status, TextContent,
+};
 
 use tempfile::TempDir;
 
@@ -169,8 +171,17 @@ impl Pane {
 
 /// The first text node of `node`'s tree, in order.
 fn text_of(node: &Node) -> Option<String> {
+    let plain = |text: &pane_core::Text| match &text.content {
+        TextContent::Plain(content) => Some(content.clone()),
+        TextContent::Spans(spans) => (!spans.is_empty()).then(|| {
+            spans
+                .iter()
+                .map(|span| span.text.clone())
+                .collect::<String>()
+        }),
+    };
     match &node.kind {
-        NodeKind::Text(text) => Some(text.content.clone()),
+        NodeKind::Text(text) => plain(text),
         // An unknown node draws its fallback, else its children.
         NodeKind::Unknown(_) => node
             .fallback
@@ -183,8 +194,23 @@ fn text_of(node: &Node) -> Option<String> {
 
 /// The first text node of `node`'s tree that starts with `prefix`.
 fn starting_with(node: &Node, prefix: &str) -> Option<String> {
+    let plain = |text: &pane_core::Text| match &text.content {
+        TextContent::Plain(content) => Some(content.clone()),
+        TextContent::Spans(spans) => (!spans.is_empty()).then(|| {
+            spans
+                .iter()
+                .map(|span| span.text.clone())
+                .collect::<String>()
+        }),
+    };
     match &node.kind {
-        NodeKind::Text(text) if text.content.starts_with(prefix) => Some(text.content.clone()),
+        NodeKind::Text(text)
+            if plain(text)
+                .as_deref()
+                .is_some_and(|content| content.starts_with(prefix)) =>
+        {
+            plain(text)
+        }
         NodeKind::Unknown(_) => node
             .fallback
             .as_deref()

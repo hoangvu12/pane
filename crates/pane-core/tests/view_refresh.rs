@@ -23,7 +23,9 @@ use std::time::Duration;
 
 use futures::executor::block_on;
 use pane_core::clipboard::{Clock, ManualClock, SystemClock};
-use pane_core::{Launcher, Node, NodeKind, Runtime, Screen, Status, WindowPresence};
+use pane_core::{
+    Launcher, Node, NodeKind, Runtime, Screen, Status, TextContent, WindowPresence,
+};
 
 use tempfile::TempDir;
 
@@ -164,8 +166,21 @@ impl Pane {
 
 /// Every text `node`'s tree draws, appended to `into`, in order.
 fn collect_texts(node: &Node, into: &mut Vec<String>) {
+    let plain = |text: &pane_core::Text| match &text.content {
+        TextContent::Plain(content) => Some(content.clone()),
+        TextContent::Spans(spans) => (!spans.is_empty()).then(|| {
+            spans
+                .iter()
+                .map(|span| span.text.clone())
+                .collect::<String>()
+        }),
+    };
     match &node.kind {
-        NodeKind::Text(text) => into.push(text.content.clone()),
+        NodeKind::Text(text) => {
+            if let Some(content) = plain(text) {
+                into.push(content);
+            }
+        }
         // An unknown node draws its fallback, else its children.
         NodeKind::Unknown(_) => {
             if let Some(fallback) = node.fallback.as_deref() {

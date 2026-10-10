@@ -97,9 +97,18 @@ fn wait_for(window: &Entity<LauncherWindow>, cx: &mut VisualTestContext, text: &
 
 /// The first text of the tree `node` holds.
 fn text_of(node: &pane_core::Node) -> Option<String> {
-    use pane_core::NodeKind;
+    use pane_core::{NodeKind, TextContent};
+    let plain = |text: &pane_core::Text| match &text.content {
+        TextContent::Plain(content) => Some(content.clone()),
+        TextContent::Spans(spans) => (!spans.is_empty()).then(|| {
+            spans
+                .iter()
+                .map(|span| span.text.clone())
+                .collect::<String>()
+        }),
+    };
     match &node.kind {
-        NodeKind::Text(text) => Some(text.content.clone()),
+        NodeKind::Text(text) => plain(text),
         NodeKind::Unknown(_) => node
             .fallback
             .as_deref()
