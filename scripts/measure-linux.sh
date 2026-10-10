@@ -67,7 +67,9 @@ unused_packages=(sample-applications-js sample-rust sample-js sample-ts)
 default_extensions=(calculator applications quicklinks files clipboard-history)
 # A development build takes its default extensions' pins from PANE_DEFAULTS;
 # the hidden phase names its own pins, and every other phase names none:
-# first setup adds nothing to their measurements.
+# first setup adds nothing to their measurements. The pins file is the
+# first thing written into the output folder, which is made for it.
+mkdir -p "$out"
 no_default_pins=$out/no-default-pins.json
 printf '[]\n' >"$no_default_pins"
 export PANE_DEFAULTS=$no_default_pins
@@ -90,7 +92,6 @@ done
 # The sampler's logic is checked without a display before it is trusted.
 python3 "$sampler" selfcheck
 
-mkdir -p "$out"
 rm -rf "$out/data" "$out/hidden-data" "$out/hidden-home" "$out/lifecycle-data" "$out/lifecycle-package"
 export PANE_DATA_DIR=$out/data
 { grep PRETTY_NAME /etc/os-release; uname -srm; } >"$out/system.txt"   # the measured OS and architecture
