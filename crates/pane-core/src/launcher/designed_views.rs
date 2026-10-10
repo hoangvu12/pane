@@ -72,7 +72,7 @@ const POP_CALLBACK: u32 = 0;
 /// The designed views the open command shows: the navigation stack, the
 /// root view the command opened first and each view a push added above
 /// it, the top of the stack on screen.
-pub(super) struct DesignedStack {
+pub(crate) struct DesignedStack {
     /// The stack's views, the root first and the top last; it always holds
     /// the root.
     views: Vec<OpenDesignedView>,
@@ -147,7 +147,7 @@ impl DesignedStack {
 }
 
 /// One view of the stack, as the launcher holds it.
-struct OpenDesignedView {
+pub(crate) struct OpenDesignedView {
     /// The view in the runtime; closed when the view leaves the screen.
     pub(super) id: ViewId,
     /// The package the view's command belongs to: whose identity its

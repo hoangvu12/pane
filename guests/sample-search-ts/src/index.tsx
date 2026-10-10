@@ -19,8 +19,8 @@ import {
   Column,
   EmptyState,
   List,
-  Push,
   TextInput,
+  push,
   createView,
   pop,
   useRef,
@@ -167,7 +167,7 @@ function Packages() {
         title={failed ?? "Type to search the package registry"}
         description="Results come from the service as you type; Enter shows a package's details"
       >
-        <Push target={<AddressView />}>Service address</Push>
+        <Button onClick={push(<AddressView />)}>Service address</Button>
       </EmptyState>
     </List>
   );
@@ -188,7 +188,7 @@ function AddressView() {
       >
         {address}
       </TextInput>
-      <Button onClick={pop(`Searching ${address.trim().replace(/\/+$/, "")} from now on`)}>
+      <Button onClick={() => pop(`Searching ${address.trim().replace(/\/+$/, "")} from now on`)}>
         Save
       </Button>
     </Column>

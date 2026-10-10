@@ -410,9 +410,10 @@ export interface ListProps extends NodeProps {
   isShowingDetail?: boolean;
   hasMore?: boolean;
   pageSize?: number;
-  onSearchText?: () => unknown;
+  /** Hears the search text change, told the text. */
+  onSearchText?: (text: string) => unknown;
   /** Hears the selection move, told the selected item's key. */
-  onSelectionChange?: () => unknown;
+  onSelectionChange?: (key: string) => unknown;
   /** Raised as the selection nears the end while `hasMore` says more is
    * there. */
   onLoadMore?: () => unknown;
