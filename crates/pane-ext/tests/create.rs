@@ -59,8 +59,7 @@ fn files(tarball: &Path) -> Vec<String> {
                 tar::EntryType::Regular,
                 "the package holds only files"
             );
-            let path = String::from_utf8_lossy(&entry.path_bytes()).into_owned();
-            path
+            String::from_utf8_lossy(&entry.path_bytes()).into_owned()
         })
         .collect()
 }
