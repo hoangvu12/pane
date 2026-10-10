@@ -3566,6 +3566,7 @@ impl Host {
         self.handle_event_in_turn(path, call, callback.to_owned(), "{}".into(), data, &chain)
             .await
     }
+
     /// The serial of the idle instance of `path`, if it has one.
     fn serial(&self, path: &Path) -> Option<u64> {
         self.instances
@@ -3623,9 +3624,10 @@ impl Host {
             canvases: RefCell::default(),
         };
         self.designed_views.borrow_mut().insert(view, open);
-        match self.render_designed(view, 1, &chain, Why::Open)            selected: RefCell::default(),
-            canvases: RefCell::default(),
-ow_mut().remove(&view);
+        match self.render_designed(view, 1, &chain, Why::Open).await {
+            Ok(rendered) => Ok((view, rendered)),
+            Err(error) => {
+                let closed = self.designed_views.borrow_mut().remove(&view);
                 if let Some(open) = closed {
                     self.drop_designed_view(&open).await;
                 }

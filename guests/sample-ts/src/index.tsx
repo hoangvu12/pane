@@ -20,15 +20,16 @@ import { jsxs } from "@pane-app/extension/jsx-runtime";
 import {
   Canvas,
   Column,
+  Form,
+  Text,
   createView,
   measureText,
   useRef,
   useState,
 } from "@pane-app/extension/view";
 import { showToast } from "@pane-app/extension/feedback";
-import { Column, Form, Text, createView, useState } from "@pane-app/extension/view";
 import type { Element, FormSubmittedValues } from "@pane-app/extension/view";
-import { waitFor }from "wasi:clocks/monotonic-clock@0.3.0";
+import { waitFor } from "wasi:clocks/monotonic-clock@0.3.0";
 import * as z from "zod/mini";
 
 // Module top-level code runs once, when the component is built, and its state
@@ -281,13 +282,9 @@ async function openView(
   commandId: string,
   _launch: LaunchRecord,
 ): Promise<DesignedView> {
-  if (commandId !== "form") {
-    throw new Error("this command opens no designed view");
+  if (commandId === "form") {
+    return createView(GreetingForm);
   }
-  return createView(GreetingForm);
-}
-
-async function openView(commandId: string): Promise<DesignedView> {
   if (commandId !== "color") {
     throw new Error(`unknown designed view: ${commandId}`);
   }

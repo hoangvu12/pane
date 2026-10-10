@@ -302,8 +302,6 @@ mod tests {
         };
         let launcher = Launcher::new(Ok(runtime.clone()), vec![command]);
         block_on(launcher.activate_selected());
-        let items = launcher.view().rows;
-        let color = items
         let data = tempfile::tempdir().unwrap();
         let source = data.path().join("sample");
         std::fs::create_dir_all(&source).unwrap();

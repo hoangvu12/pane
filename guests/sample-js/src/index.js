@@ -14,14 +14,14 @@ import { jsxs } from "@pane-app/extension/jsx-runtime";
 import {
   Canvas,
   Column,
+  Form,
+  Text,
   createView,
   measureText,
   useRef,
   useState,
 } from "@pane-app/extension/view";
 import { showToast } from "@pane-app/extension/feedback";
-import { jsxs } from "@pane-app/extension/jsx-runtime";
-import { Column, Form, Text, createView, useState } from "@pane-app/extension/view";
 import { waitFor } from "wasi:clocks/monotonic-clock@0.3.0";
 import * as z from "zod/mini";
 
@@ -285,14 +285,10 @@ export const command = {
     };
   },
 
-  async openView(commandId) {
-    if (commandId !== "form") {
-      throw new Error("this command opens no designed view");
-    }
-    return createView(GreetingForm);
-  },
-
   async openView(/** @type {string} */ commandId) {
+    if (commandId === "form") {
+      return createView(GreetingForm);
+    }
     if (commandId !== "color") {
       throw new Error(`unknown designed view: ${commandId}`);
     }
