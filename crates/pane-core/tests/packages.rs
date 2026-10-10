@@ -1088,9 +1088,11 @@ fn a_command_platform_list_pane_does_not_know_is_an_invalid_manifest() {
 }
 
 /// Installs the Rust sample as package "Hello" on `runtime`, opens its
-/// command and its color picker, and returns the launcher and package folder.
+/// color command (a designed view), and returns the launcher and package
+/// folder. The manifest declares both commands: the list command the
+/// package's other tests use, and the color one this one opens.
 fn installed_color_view(dirs: &Dirs, runtime: &Runtime) -> (Launcher, PathBuf) {
-    let folder = package(&dirs.source("hello"), "Hello", "1.0.0", "sample_rust");
+    let folder = color_package(&dirs.source("hello"), "1.0.0");
     let launcher = Launcher::with_packages(
         Ok(runtime.clone()),
         vec![],
@@ -1101,20 +1103,39 @@ fn installed_color_view(dirs: &Dirs, runtime: &Runtime) -> (Launcher, PathBuf) {
     (launcher, folder)
 }
 
-/// From root search, opens the installed command and its color picker.
+/// Writes the package folder at `folder` with both commands of the Rust
+/// sample, `version`'s, and returns it.
+fn color_package(folder: &Path, version: &str) -> PathBuf {
+    fs::create_dir_all(folder).unwrap();
+    fs::write(
+        folder.join("pane.json"),
+        format!(
+            r#"{{"manifestVersion": 1, "title": "Hello", "version": "{version}", "apiVersion": "0.1",
+                "commands": [
+                  {{"id": "hello", "title": "Say hello", "subtitle": "Greets you", "component": "hello.wasm"}},
+                  {{"id": "color", "title": "Choose a color", "subtitle": "Pick a color",
+                    "component": "hello.wasm", "mode": "designed"}}
+                ]}}"#
+        ),
+    )
+    .unwrap();
+    fs::copy(guest("sample_rust"), folder.join("hello.wasm")).unwrap();
+    folder.to_path_buf()
+}
+
+/// From root search, opens the installed package's color command.
 fn open_installed_color_view(launcher: &Launcher) {
-    launcher.select(0);
-    block_on(launcher.activate_selected());
+    block_on(launcher.set_query("color"));
     let color = launcher
         .view()
         .rows
         .iter()
-        .position(|row| row.title == "Choose a color")
-        .expect("the color item is listed");
+        .position(|row| row.id == "color")
+        .expect("the color command is listed");
     launcher.select(color);
     block_on(launcher.activate_selected());
     assert!(
-        matches!(launcher.view().screen, Screen::CustomView(_)),
+        matches!(launcher.view().screen, Screen::DesignedView(_)),
         "{:?}",
         launcher.view().screen
     );
@@ -1127,7 +1148,7 @@ fn an_update_finishing_while_its_view_is_open_closes_the_view_at_once() {
     let (launcher, folder) = installed_color_view(&dirs, &runtime);
     launcher.back();
     launcher.back();
-    package(&folder, "Hello", "2.0.0", "sample_rust");
+    color_package(&folder, "2.0.0");
     block_on(launcher.preview_package(&folder));
     let updating = launcher.activate_selected();
     // The user leaves the preview and opens the old copy's view meanwhile.
@@ -1141,7 +1162,7 @@ fn an_update_finishing_while_its_view_is_open_closes_the_view_at_once() {
         (view.query(), &view.status),
         (Some(""), &Status::Result("Updated Hello to 2.0.0".into()))
     );
-    assert_eq!(block_on(runtime.view_count()), 0);
+    assert_eq!(block_on(runtime.designed_view_count()), 0);
 }
 
 #[test]
@@ -1158,5 +1179,5 @@ fn disabling_a_package_closes_its_open_view_at_once() {
         (view.query(), &view.status),
         (Some(""), &Status::Result("Disabled Hello".into()))
     );
-    assert_eq!(block_on(runtime.view_count()), 0);
+    assert_eq!(block_on(runtime.designed_view_count()), 0);
 }

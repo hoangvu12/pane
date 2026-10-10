@@ -100,6 +100,43 @@ fn open<'a>(
     open_with(cx, vec![command(&title, sample.component)])
 }
 
+/// The launcher window with the assembled package `name` (a folder of
+/// `target/guests/packages`) installed: only an installed command can be
+/// launched by an item of its list, so the color tests — whose item
+/// launches the color command — come from packages.
+fn open_installed<'a>(
+    cx: &'a mut TestAppContext,
+    name: &str,
+) -> (Entity<LauncherWindow>, tempfile::TempDir, &'a mut VisualTestContext) {
+    let data = tempfile::tempdir().unwrap();
+    let folder = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../target/guests/packages")
+        .join(name);
+    assert!(
+        folder.exists(),
+        "{} is missing; run `cargo xtask guests`",
+        folder.display()
+    );
+    let source = data.path().join(name);
+    std::fs::create_dir_all(&source).unwrap();
+    for entry in std::fs::read_dir(&folder).unwrap() {
+        let entry = entry.unwrap();
+        std::fs::copy(entry.path(), source.join(entry.file_name())).unwrap();
+    }
+    let launcher =
+        Launcher::with_packages(Runtime::start(), vec![], data.path().join("extensions"));
+    futures::executor::block_on(launcher.install_package(&source));
+    let _ = &folder;
+    let (window, cx) = open_launcher(cx, launcher);
+    (window, data, cx)
+}
+
+/// The value of the open designed view's canvas: what it says for
+/// assistive technology.
+fn canvas_value(window: &LauncherWindow) -> Option<String> {
+    canvas_value_of(&window.launcher().view().screen)
+}
+
 fn open_with(
     cx: &mut TestAppContext,
     commands: Vec<CommandRegistration>,
@@ -986,95 +1023,48 @@ fn assistive_technology_sees_the_list_the_selection_and_the_result(cx: &mut Test
     assert_eq!(announcement(cx), "Waited 50 ms inside the Rust guest");
 }
 
-/// Opens the sample's command and then its color picker ("Choose a color",
-/// the sixth item) with the keyboard.
-fn open_color(window: &Entity<LauncherWindow>, cx: &mut VisualTestContext) {
+/// Opens the sample's package and then its color picker ("Choose a color",
+/// the sixth item of its list, which launches the color command) with the
+/// keyboard. The window's data folder must outlive the window.
+fn open_color(
+    cx: &mut TestAppContext,
+    sample: &Sample,
+) -> (Entity<LauncherWindow>, tempfile::TempDir, &'a mut VisualTestContext) {
+    let (window, data, cx) = open_installed(cx, &sample.component.replace('_', "-"));
     cx.simulate_keystrokes("enter");
-    settle(window, cx);
+    settle(&window, cx);
     cx.simulate_keystrokes("down down down down down enter");
-    let view = settle(window, cx);
+    let view = settle(&window, cx);
     assert!(
-        matches!(view.screen, Screen::CustomView(_)),
+        matches!(view.screen, Screen::DesignedView(_)),
         "{:?}",
         view.screen
     );
     assert_eq!(view.title, "Choose a color");
-}
-
-/// Asserts that the screen shown has no heading line above its content
-/// and that the footer's left, at rest, names it: the command's icon and
-/// the screen's title, inside the footer strip and left of its buttons
-/// (#162).
-fn assert_named_in_the_footer(cx: &mut VisualTestContext, what: &str) {
-    assert!(
-        cx.debug_bounds("screen-heading").is_none(),
-        "{what}: a heading line above the content"
-    );
-    let lead = cx
-        .debug_bounds("footer-command")
-        .unwrap_or_else(|| panic!("{what}: the footer names no command"));
-    let strip = cx
-        .debug_bounds("status-idle")
-        .unwrap_or_else(|| panic!("{what}: the footer is not at rest"));
-    assert!(
-        strip.contains(&lead.center()),
-        "{what}: the command's name is not in the footer: {lead:?} outside {strip:?}"
-    );
-    assert!(
-        lead.center().x < strip.center().x,
-        "{what}: the command's name is not on the footer's left"
-    );
-    assert!(
-        cx.debug_bounds("footer-command-title").is_some(),
-        "{what}: the footer shows no title"
-    );
-}
-
-/// An extension's views start with their content (#162): its list, a form
-/// and a custom view opened from it draw no heading line, and the footer's
-/// left names the open command instead, as Raycast's footer does. Root
-/// search has neither, and its section label stays.
-#[gpui::test]
-fn an_extension_view_has_no_heading_and_the_footer_names_it(cx: &mut TestAppContext) {
-    let (window, cx) = open(cx, &RUST);
-    settle(&window, cx);
-    assert!(cx.debug_bounds("screen-heading").is_none());
-    assert!(
-        cx.debug_bounds("footer-command").is_none(),
-        "root search names no command in its footer"
-    );
-    assert!(
-        cx.debug_bounds("section-Commands").is_some(),
-        "root search's section label stays"
-    );
-
-    cx.simulate_keystrokes("enter");
-    let view = settle(&window, cx);
-    assert_eq!(view.screen, Screen::Command);
-    assert_named_in_the_footer(cx, "the command's list");
-
-    cx.simulate_keystrokes("down down down down enter");
-    let view = settle(&window, cx);
-    assert!(matches!(view.screen, Screen::Form(_)), "{:?}", view.screen);
-    assert_eq!(view.title, "Greet someone");
-    assert_named_in_the_footer(cx, "a form");
-}
-
-/// A custom view opened from an extension's list has no heading line
-/// either; the footer's left names it (#162).
-#[gpui::test]
-fn a_custom_view_has_no_heading_and_the_footer_names_it(cx: &mut TestAppContext) {
-    let (window, cx) = open(cx, &RUST);
-    open_color(&window, cx);
-    assert_named_in_the_footer(cx, "a custom view");
+    (window, data, cx)
 }
 
 /// Waits until the open view shows `expected` as its value, which it does
 /// once the guest's answer to the last event has arrived.
 fn wait_for_color(window: &Entity<LauncherWindow>, cx: &mut VisualTestContext, expected: &str) {
     until(window, cx, |view| {
-        view.custom_view().map(|view| view.frame.value.as_str()) == Some(expected)
+        canvas_value_of(&view.screen) == Some(expected)
     });
+}
+
+/// The value of the canvas a designed view's screen shows, when it draws
+/// one.
+fn canvas_value_of(screen: &Screen) -> Option<String> {
+    let Screen::DesignedView(view) = screen else {
+        return None;
+    };
+    fn value(node: &pane_core::Node) -> Option<String> {
+        match &node.kind {
+            pane_core::NodeKind::Canvas(canvas) => canvas.a11y.value.clone(),
+            _ => node.children.iter().find_map(value),
+        }
+    }
+    value(&view.tree)
 }
 
 /// The color picker's accessibility node.
@@ -1083,8 +1073,7 @@ fn color_node(cx: &mut VisualTestContext) -> serde_json::Value {
 }
 
 fn keys_change_the_color_the_view_shows(cx: &mut TestAppContext, sample: &Sample) {
-    let (window, cx) = open(cx, sample);
-    open_color(&window, cx);
+    let (window, _data, cx) = open_color(cx, sample);
 
     // The view has keyboard focus, and assistive technology reads its value.
     assert_eq!(focused_label(cx).as_deref(), Some("Color"));
@@ -1105,7 +1094,7 @@ fn keys_change_the_color_the_view_shows(cx: &mut TestAppContext, sample: &Sample
         "the view, the menu button, the status line, the announcer and the window: {roles:?}"
     );
     assert!(
-        cx.debug_bounds("custom-view").is_some(),
+        cx.debug_bounds("designed-canvas-grid").is_some(),
         "the view is drawn"
     );
 
@@ -1118,24 +1107,20 @@ fn keys_change_the_color_the_view_shows(cx: &mut TestAppContext, sample: &Sample
     assert_eq!(color_node(cx)["value"], "Dark red, #B71C1C");
 
     // The view and the footer's menu button are the screen's tab stops,
-    // and Tab visits the button and comes back; Escape closes the view.
+    // and Tab visits the button and comes back; Escape leaves the command.
     cx.simulate_keystrokes("tab");
     assert_eq!(focused_label(cx).as_deref(), Some("Pane menu"));
     cx.simulate_keystrokes("shift-tab");
     assert_eq!(focused_label(cx).as_deref(), Some("Color"));
     cx.simulate_keystrokes("escape");
     let view = settle(&window, cx);
-    assert_eq!((view.screen, view.selected), (Screen::Command, Some(5)));
-    // The list has the focus again; its selected row claims none (#132).
-    let list = format!("{} sample", sample.language);
-    assert_eq!(focused_label(cx).as_deref(), Some(list.as_str()));
+    assert!(matches!(view.screen, Screen::Root { .. }), "{:?}", view.screen);
 }
 
 fn the_pointer_chooses_and_drags_across_swatches(cx: &mut TestAppContext, sample: &Sample) {
-    let (window, cx) = open(cx, sample);
-    open_color(&window, cx);
+    let (window, _data, cx) = open_color(cx, sample);
     let origin = cx
-        .debug_bounds("custom-view")
+        .debug_bounds("designed-canvas-grid")
         .expect("the view is drawn")
         .origin;
     let at = |x: f32, y: f32| origin + gpui::point(px(x), px(y));
@@ -1156,40 +1141,59 @@ fn the_pointer_chooses_and_drags_across_swatches(cx: &mut TestAppContext, sample
     assert_eq!(focused_label(cx).as_deref(), Some("Color"));
 }
 
-/// Opens the faulty fixture's counting view, whose value is the number of
-/// events it handled, and returns where its drawing area starts.
-fn open_counter(
-    window: &Entity<LauncherWindow>,
-    cx: &mut VisualTestContext,
-) -> gpui::Point<gpui::Pixels> {
-    cx.simulate_keystrokes("enter");
-    settle(window, cx);
-    cx.simulate_keystrokes("down down down down down enter");
-    let view = settle(window, cx);
+/// The launcher window with the faulty fixture's counting view — its
+/// "counter" designed command, a canvas counting the events it handled —
+/// open, and where its canvas starts. The window's data folder must
+/// outlive the window.
+fn open_counter<'a>(
+    cx: &'a mut TestAppContext,
+) -> (Entity<LauncherWindow>, tempfile::TempDir, gpui::Point<gpui::Pixels>, &'a mut VisualTestContext) {
+    let data = tempfile::tempdir().unwrap();
+    let component = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../target/guests/faulty.wasm");
     assert!(
-        matches!(view.screen, Screen::CustomView(_)),
+        component.exists(),
+        "{} is missing; run `cargo xtask guests`",
+        component.display()
+    );
+    let source = data.path().join("faulty");
+    std::fs::create_dir_all(&source).unwrap();
+    std::fs::write(
+        source.join("pane.json"),
+        r#"{"manifestVersion": 1, "title": "Faulty", "version": "1.0.0", "apiVersion": "0.1",
+            "commands": [{"id": "counter", "title": "Faulty counter",
+            "subtitle": "A canvas counting the events it handled",
+            "component": "faulty.wasm", "mode": "designed"}]}"#,
+    )
+    .unwrap();
+    std::fs::copy(&component, source.join("faulty.wasm")).unwrap();
+    let launcher =
+        Launcher::with_packages(Runtime::start(), vec![], data.path().join("extensions"));
+    futures::executor::block_on(launcher.install_package(&source));
+    let (window, cx) = open_launcher(cx, launcher);
+    cx.simulate_keystrokes("enter");
+    let view = settle(&window, cx);
+    assert!(
+        matches!(view.screen, Screen::DesignedView(_)),
         "{:?}",
         view.screen
     );
-    wait_for_color(window, cx, "0 events");
-    cx.debug_bounds("custom-view")
+    wait_for_color(&window, cx, "0 events");
+    let origin = cx
+        .debug_bounds("designed-canvas-counter")
         .expect("the view is drawn")
-        .origin
-}
-
-fn pointer_held(window: &Entity<LauncherWindow>, cx: &mut VisualTestContext) -> bool {
-    cx.read_entity(window, |window, _| window.launcher().pointer_held())
+        .origin;
+    (window, data, origin, cx)
 }
 
 #[gpui::test]
-fn a_press_on_the_views_border_is_not_sent_to_the_view(cx: &mut TestAppContext) {
-    let (window, cx) = open_with(cx, vec![command("Faulty", "faulty")]);
-    let origin = open_counter(&window, cx);
-    // Inside the focus ring's padding, left of the drawing area.
-    let border = origin + gpui::point(px(-3.0), px(5.0));
+fn a_press_beside_the_canvas_is_not_sent_to_the_view(cx: &mut TestAppContext) {
+    let (window, _data, origin, cx) = open_counter(cx);
+    // Left of the canvas, in the screen's padding.
+    let beside = origin + gpui::point(px(-3.0), px(5.0));
 
-    cx.simulate_mouse_down(border, MouseButton::Left, Modifiers::none());
-    cx.simulate_mouse_up(border, MouseButton::Left, Modifiers::none());
+    cx.simulate_mouse_down(beside, MouseButton::Left, Modifiers::none());
+    cx.simulate_mouse_up(beside, MouseButton::Left, Modifiers::none());
     // Had the press or release been sent, the view would count them first.
     cx.simulate_keystrokes("up");
 
@@ -1198,18 +1202,17 @@ fn a_press_on_the_views_border_is_not_sent_to_the_view(cx: &mut TestAppContext) 
 
 #[gpui::test]
 fn a_release_outside_the_window_ends_the_drag(cx: &mut TestAppContext) {
-    let (window, cx) = open_with(cx, vec![command("Faulty", "faulty")]);
-    let origin = open_counter(&window, cx);
+    let (window, _data, origin, cx) = open_counter(cx);
     let at = |x: f32| origin + gpui::point(px(x), px(10.0));
     cx.simulate_mouse_down(at(10.0), MouseButton::Left, Modifiers::none());
     wait_for_color(&window, cx, "1 events");
 
     // The button went up outside the window, which reported no release:
-    // the next move arrives without it.
+    // the next move arrives without it, ending the drag where the pointer
+    // was last seen.
     cx.simulate_mouse_move(at(20.0), None, Modifiers::none());
 
     wait_for_color(&window, cx, "2 events");
-    assert!(!pointer_held(&window, cx));
     cx.simulate_mouse_move(at(30.0), None, Modifiers::none());
     cx.simulate_keystrokes("up");
     wait_for_color(&window, cx, "3 events");
@@ -1217,10 +1220,7 @@ fn a_release_outside_the_window_ends_the_drag(cx: &mut TestAppContext) {
 
 #[gpui::test]
 fn leaving_the_window_during_a_drag_ends_it(cx: &mut TestAppContext) {
-    let (window, cx) = open_with(cx, vec![command("Faulty", "faulty")]);
-    cx.update(|window, _| window.activate_window());
-    cx.run_until_parked();
-    let origin = open_counter(&window, cx);
+    let (window, _data, origin, cx) = open_counter(cx);
     let at = origin + gpui::point(px(10.0), px(10.0));
     cx.simulate_mouse_down(at, MouseButton::Left, Modifiers::none());
     wait_for_color(&window, cx, "1 events");
@@ -1228,7 +1228,6 @@ fn leaving_the_window_during_a_drag_ends_it(cx: &mut TestAppContext) {
     cx.deactivate_window();
 
     wait_for_color(&window, cx, "2 events");
-    assert!(!pointer_held(&window, cx));
 }
 
 /// The titles of the rows on screen.

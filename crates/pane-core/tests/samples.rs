@@ -2,9 +2,9 @@
 //! in Rust, JavaScript or TypeScript: the same items, answers and errors
 //! through the launcher's public interface, a native WASI 0.3 async wait,
 //! fresh state per instance, a form the guest validates, a color picker the
-//! guest draws and changes on keys and pointer input, a root result
-//! computed from the query, WASI 0.3-only imports, and memory within the
-//! cap Pane puts on each guest.
+//! guest draws as the canvas of its designed view and changes on keys and
+//! pointer input, a root result computed from the query, WASI 0.3-only
+//! imports, and memory within the cap Pane puts on each guest.
 //!
 //! Components come from `cargo xtask guests`; the JavaScript and TypeScript
 //! ones are the prebuilt components in `guests/prebuilt/`.
@@ -13,9 +13,9 @@ use std::path::PathBuf;
 
 use futures::executor::block_on;
 use pane_core::{
-    CallError, Choice, CommandRegistration, CustomViewRole, FieldKind, FieldValue, FormError,
-    FormField, GUEST_MEMORY, Key, Launcher, Point, Rgb, Runtime, Screen, Shape, Status,
-    Unavailable, ViewEvent,
+    CallError, Canvas, CanvasOp, CanvasRole, Choice, CommandRegistration, DesignedEvent,
+    DesignedHandler, FieldKind, FieldValue, FormError, FormField, GUEST_MEMORY, Launcher, Node,
+    NodeKind, Paint, Runtime, Screen, Status, Unavailable,
 };
 use wasmtime::component::Component;
 use wasmtime::{Config, Engine};
@@ -118,12 +118,34 @@ impl Sample {
         launcher.view().status
     }
 
-    /// A launcher with this sample's color picker opened.
+    /// A launcher with this sample's package installed (the color
+    /// command's view is a designed one, and only an installed command can
+    /// be launched by an item of the package's list), its color command
+    /// opened. Text is measured by a stub, so the tree's measured text is
+    /// the same in every language and every run.
     fn open_color(&self) -> Launcher {
-        let launcher = self.open();
-        assert_eq!(self.run(&launcher, "color"), Status::Idle);
+        let data = tempfile::tempdir().unwrap();
+        let launcher =
+            Launcher::with_packages(Runtime::start(), vec![], data.path().join("extensions"));
+        launcher.set_text_measures(std::sync::Arc::new(|_, _| (42., 17.)));
+        let folder = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../target/guests/packages")
+            .join(self.component.replace('_', "-"));
+        block_on(launcher.install_package(&folder));
+        while !matches!(launcher.view().screen, Screen::Root { .. }) {
+            launcher.back();
+        }
+        block_on(launcher.set_query("color picker"));
+        let index = launcher
+            .view()
+            .rows
+            .iter()
+            .position(|row| row.id == "color")
+            .expect("the color command is listed");
+        launcher.select(index);
+        block_on(launcher.activate_selected());
         assert!(
-            matches!(launcher.view().screen, Screen::CustomView(_)),
+            matches!(launcher.view().screen, Screen::DesignedView(_)),
             "{:?}",
             launcher.view().screen
         );
@@ -386,130 +408,289 @@ fn a_platform_limited_action_runs_only_on_its_declared_systems(sample: &Sample) 
     );
 }
 
-/// The open color picker's value: the chosen color's name and hex code.
-fn color(launcher: &Launcher) -> String {
-    let view = launcher.view();
-    view.custom_view()
-        .expect("a view is open")
-        .frame
-        .value
-        .clone()
+/// The open color view's canvas: what its node says (its key and its key
+/// handler) and what it holds, with the render it was drawn from.
+struct DrawnCanvas {
+    node_key: String,
+    on_key: Option<u32>,
+    canvas: Canvas,
 }
 
-/// Sends `event` to the open view and returns the color it then shows.
-fn send(launcher: &Launcher, event: ViewEvent) -> String {
-    block_on(launcher.send_view_event(event));
+/// The canvas `tree` draws, when it draws one.
+fn canvas_of_tree(tree: &pane_core::DesignedTree) -> DrawnCanvas {
+    fn of(node: &Node) -> Option<DrawnCanvas> {
+        match &node.kind {
+            NodeKind::Canvas(canvas) => Some(DrawnCanvas {
+                node_key: node.key.clone().unwrap_or_default(),
+                on_key: node.on_key,
+                canvas: canvas.clone(),
+            }),
+            _ => node.children.iter().find_map(of),
+        }
+    }
+    of(&tree.root).expect("the view draws a canvas")
+}
+
+/// The open color view's canvas.
+fn canvas(launcher: &Launcher) -> Canvas {
+    let view = launcher.view();
+    let Screen::DesignedView(view) = &view.screen else {
+        panic!("a designed view is open, not {:?}", view.screen)
+    };
+    canvas_of_tree(&view.tree).canvas
+}
+
+/// The open color view's value: the chosen color's name and hex code, what
+/// its canvas says for assistive technology.
+fn color(launcher: &Launcher) -> String {
+    canvas(launcher)
+        .a11y
+        .value
+        .clone()
+        .expect("the canvas names its value")
+}
+
+/// Sends one event to the open color view's canvas — the handler of
+/// `kind`, by the callback id its tree named — and returns the color it
+/// then shows.
+fn send(
+    launcher: &Launcher,
+    kind: DesignedHandler,
+    read: impl FnOnce(&DrawnCanvas) -> Option<u32>,
+    payload: &str,
+) -> String {
+    let view = launcher.view();
+    let Screen::DesignedView(view) = &view.screen else {
+        panic!("a designed view is open, not {:?}", view.screen)
+    };
+    let drawn = canvas_of_tree(&view.tree);
+    let callback = read(&drawn).expect("the canvas names the handler");
+    block_on(launcher.send_designed_seen(
+        kind,
+        callback,
+        (!drawn.node_key.is_empty()).then_some(drawn.node_key.as_str()),
+        Some(view.render),
+        payload.to_owned(),
+    ));
     assert_eq!(launcher.view().status, Status::Idle);
     color(launcher)
 }
 
-fn press(launcher: &Launcher, key: Key) -> String {
-    send(launcher, ViewEvent::Key(key))
+/// A key event for the open color view's canvas, pressed as `key` spells
+/// it.
+fn key(key: &str) -> String {
+    format!("{{\"key\":\"{key}\"}}")
 }
 
-fn at(x: i32, y: i32) -> Point {
-    Point { x, y }
+/// A pointer event for the open color view's canvas, at `x`, `y`.
+fn pointer(event: &str, x: i32, y: i32) -> String {
+    format!("{{\"event\":\"{event}\",\"x\":{x},\"y\":{y}}"")
+}
+
+/// The canvas's key handler, which rides its node.
+fn on_key(drawn: &DrawnCanvas) -> Option<u32> {
+    drawn.on_key
 }
 
 fn opening_the_color_view_draws_the_picker(sample: &Sample) {
-    let view = sample.open_color().view();
+    let launcher = sample.open_color();
 
-    assert_eq!(view.title, "Choose a color");
-    let custom = view.custom_view().expect("a view is open");
+    assert_eq!(launcher.view().title, "Choose a color");
+    let canvas = canvas(&launcher);
     assert_eq!(
-        (custom.label.as_str(), custom.role),
-        ("Color", CustomViewRole::ColorWell)
+        (canvas.a11y.role, canvas.a11y.label.as_deref()),
+        (Some(CanvasRole::ColorWell), Some("Color"))
     );
-    let frame = &custom.frame;
-    assert_eq!(
-        (frame.width, frame.height, frame.value.as_str()),
-        (376, 108, "Blue, #1E88E5")
-    );
-    let rect = |x, y, size, fill| Shape::Rect {
+    // The frame around the chosen swatch, 8 x 3 swatches, the preview and
+    // its hex code: 27 drawing operations, the hex one measured.
+    assert_eq!(canvas.ops.len(), 1 + 24 + 2);
+    let rect = |x: f32, y: f32, size: f32| CanvasOp::Rect {
         x,
         y,
         width: size,
         height: size,
-        fill: Rgb(fill),
+        radius: None,
+        fill: None,
+        stroke: None,
     };
-    // The frame around the chosen swatch, 8 x 3 swatches, the preview and
-    // its hex code.
-    assert_eq!(frame.shapes.len(), 1 + 24 + 2);
-    assert_eq!(frame.shapes[0], rect(180, 36, 36, 0xf1f3f5));
-    assert_eq!(frame.shapes[1], rect(2, 2, 32, 0xef9a9a));
-    assert_eq!(frame.shapes[24], rect(254, 74, 32, 0x880e4f));
-    assert_eq!(frame.shapes[25], rect(300, 2, 64, 0x1e88e5));
+    assert_eq!(canvas.ops[0], rect(180., 36., 36.));
     assert_eq!(
-        frame.shapes[26],
-        Shape::Text {
-            x: 300,
-            y: 74,
-            content: "#1E88E5".into(),
-            color: Rgb(0xf1f3f5),
+        canvas.ops[1],
+        CanvasOp::Rect {
+            fill: Some(Paint {
+                tint: pane_core::Tint::Same(pane_core::Color::Rgba(0xef9a9aff)),
+                exact: true,
+            }),
+            ..rect(2., 2., 32.)
         }
+    );
+    assert_eq!(
+        canvas.ops[25],
+        CanvasOp::Rect {
+            fill: Some(Paint {
+                tint: pane_core::Tint::Same(pane_core::Color::Rgba(0x1e88e5ff)),
+                exact: true,
+            }),
+            ..rect(300., 2., 64.)
+        }
+    );
+    // The hex code, measured: its text sits under the preview, as far
+    // down as the stub measures it.
+    assert_eq!(
+        canvas.ops[26],
+        CanvasOp::Text(pane_core::CanvasText {
+            x: 300.,
+            y: 85.,
+            content: "#1E88E5".into(),
+            style: Some(pane_core::TextStyle::Caption),
+            level: None,
+            color: Some(Paint {
+                tint: pane_core::Tint::Same(pane_core::Color::Rgba(0xf1f3f5ff)),
+                exact: false,
+            }),
+            size: None,
+            weight: None,
+        })
     );
 }
 
 fn keys_move_the_chosen_color(sample: &Sample) {
     let launcher = sample.open_color();
+    let pressed = key;
 
-    assert_eq!(press(&launcher, Key::Right), "Purple, #8E24AA");
-    assert_eq!(press(&launcher, Key::Down), "Dark purple, #4A148C");
-    assert_eq!(press(&launcher, Key::Home), "Dark red, #B71C1C");
-    assert_eq!(press(&launcher, Key::Left), "Dark red, #B71C1C");
-    assert_eq!(press(&launcher, Key::End), "Dark pink, #880E4F");
-    assert_eq!(press(&launcher, Key::Up), "Pink, #D81B60");
-    assert_eq!(press(&launcher, Key::Up), "Light pink, #F48FB1");
-    assert_eq!(press(&launcher, Key::Up), "Light pink, #F48FB1");
+    assert_eq!(
+        send(&launcher, DesignedHandler::Key, on_key, &pressed("right")),
+        "Purple, #8E24AA"
+    );
+    assert_eq!(
+        send(&launcher, DesignedHandler::Key, on_key, &pressed("down")),
+        "Dark purple, #4A148C"
+    );
+    assert_eq!(
+        send(&launcher, DesignedHandler::Key, on_key, &pressed("home")),
+        "Dark red, #B71C1C"
+    );
+    assert_eq!(
+        send(&launcher, DesignedHandler::Key, on_key, &pressed("left")),
+        "Dark red, #B71C1C"
+    );
+    assert_eq!(
+        send(&launcher, DesignedHandler::Key, on_key, &pressed("end")),
+        "Dark pink, #880E4F"
+    );
+    assert_eq!(
+        send(&launcher, DesignedHandler::Key, on_key, &pressed("up")),
+        "Pink, #D81B60"
+    );
+    assert_eq!(
+        send(&launcher, DesignedHandler::Key, on_key, &pressed("up")),
+        "Light pink, #F48FB1"
+    );
+    assert_eq!(
+        send(&launcher, DesignedHandler::Key, on_key, &pressed("up")),
+        "Light pink, #F48FB1"
+    );
     // The preview shows the chosen color too.
-    let frame = launcher.view().custom_view().unwrap().frame.clone();
-    assert!(matches!(
-        frame.shapes[25],
-        Shape::Rect {
-            fill: Rgb(0xf48fb1),
-            ..
+    assert_eq!(
+        canvas(&launcher).ops[25],
+        CanvasOp::Rect {
+            fill: Some(Paint {
+                tint: pane_core::Tint::Same(pane_core::Color::Rgba(0xf48fb1ff)),
+                exact: true,
+            }),
+            ..CanvasOp::Rect {
+                x: 300.,
+                y: 2.,
+                width: 64.,
+                height: 64.,
+                radius: None,
+                fill: None,
+                stroke: None,
+            }
         }
-    ));
+    );
 }
 
 fn pressing_and_dragging_the_pointer_chooses_swatches(sample: &Sample) {
     let launcher = sample.open_color();
+    let down = |drawn: &DrawnCanvas| drawn.canvas.handlers.on_pointer_down;
+    let movement = |drawn: &DrawnCanvas| drawn.canvas.handlers.on_pointer_move;
+    let up = |drawn: &DrawnCanvas| drawn.canvas.handlers.on_pointer_up;
 
     assert_eq!(
-        send(&launcher, ViewEvent::PointerDown(at(10, 10))),
+        send(
+            &launcher,
+            DesignedHandler::Pointer,
+            down,
+            &pointer("pointer-down", 10, 10)
+        ),
         "Light red, #EF9A9A"
     );
     assert_eq!(
-        send(&launcher, ViewEvent::PointerMove(at(80, 80))),
+        send(
+            &launcher,
+            DesignedHandler::Pointer,
+            movement,
+            &pointer("pointer-move", 80, 80)
+        ),
         "Dark yellow, #F57F17"
     );
     // A drag past the grid chooses the nearest swatch.
     assert_eq!(
-        send(&launcher, ViewEvent::PointerMove(at(-50, 500))),
+        send(
+            &launcher,
+            DesignedHandler::Pointer,
+            movement,
+            &pointer("pointer-move", -50, 500)
+        ),
         "Dark red, #B71C1C"
     );
-    send(&launcher, ViewEvent::PointerUp(at(-50, 500)));
+    send(
+        &launcher,
+        DesignedHandler::Pointer,
+        up,
+        &pointer("pointer-up", -50, 500),
+    );
+    // A move without the drag chooses nothing.
     assert_eq!(
-        send(&launcher, ViewEvent::PointerMove(at(200, 40))),
+        send(
+            &launcher,
+            DesignedHandler::Pointer,
+            movement,
+            &pointer("pointer-move", 200, 40)
+        ),
         "Dark red, #B71C1C"
     );
     // A press on the preview, outside the grid, chooses nothing.
     assert_eq!(
-        send(&launcher, ViewEvent::PointerDown(at(330, 10))),
+        send(
+            &launcher,
+            DesignedHandler::Pointer,
+            down,
+            &pointer("pointer-down", 330, 10)
+        ),
         "Dark red, #B71C1C"
     );
     assert_eq!(
-        send(&launcher, ViewEvent::PointerMove(at(10, 10))),
+        send(
+            &launcher,
+            DesignedHandler::Pointer,
+            movement,
+            &pointer("pointer-move", 10, 10)
+        ),
         "Dark red, #B71C1C"
     );
 }
 
 fn each_opened_color_view_starts_afresh(sample: &Sample) {
     let launcher = sample.open_color();
-    assert_eq!(press(&launcher, Key::Right), "Purple, #8E24AA");
+    assert_eq!(
+        send(&launcher, DesignedHandler::Key, on_key, &key("right")),
+        "Purple, #8E24AA"
+    );
 
     launcher.back();
-    assert_eq!(launcher.view().screen, Screen::Command);
+    assert!(matches!(launcher.view().screen, Screen::Root { .. }));
     block_on(launcher.activate_selected());
 
     assert_eq!(color(&launcher), "Blue, #1E88E5");
@@ -517,34 +698,72 @@ fn each_opened_color_view_starts_afresh(sample: &Sample) {
 
 fn views_open_at_once_keep_their_own_state(sample: &Sample) {
     let runtime = Runtime::start().unwrap();
-    let open = || block_on(runtime.open_view(&sample.path(), "color")).unwrap();
-    let ((first, _), (second, _)) = (open(), open());
+    let open = || {
+        block_on(runtime.open_designed_view(&sample.path(), "color", &default_launch())).unwrap()
+    };
+    let (first, rendered), (second, _) = (open(), open());
 
-    let event = ViewEvent::Key(Key::Right);
-    let first_frame = block_on(runtime.view_event(first, event)).unwrap();
-    let second_frame = block_on(runtime.view_event(second, ViewEvent::Key(Key::Left))).unwrap();
+    // The event each view is sent: a key pressed on its canvas, by the
+    // callback id its own tree named.
+    let pressed = |rendered: &pane_core::DesignedRendered, key: &str| {
+        let drawn = canvas_of_tree(&rendered.tree);
+        DesignedEvent {
+            render: rendered.render,
+            key: drawn.node_key,
+            callback: drawn.on_key.expect("the canvas takes keys"),
+            payload: key(key),
+        }
+    };
+    // One moves right, the other left: each view's own state.
+    let first_next =
+        block_on(runtime.designed_view_event(first, pressed(&rendered, "right"))).unwrap();
+    let second_next = block_on(
+        runtime.designed_view_event(second, pressed(&rendered, "left")),
+    )
+    .unwrap();
 
-    assert_eq!(first_frame.value, "Purple, #8E24AA");
-    assert_eq!(second_frame.value, "Teal, #00897B");
-    assert_eq!(block_on(runtime.view_count()), 2);
-    runtime.close_view(first);
-    assert_eq!(block_on(runtime.view_count()), 1);
+    assert_eq!(value_of(&first_next), "Purple, #8E24AA");
+    assert_eq!(value_of(&second_next), "Teal, #00897B");
+    assert_eq!(block_on(runtime.designed_view_count()), 2);
+    runtime.close_designed_view(first);
+    assert_eq!(block_on(runtime.designed_view_count()), 1);
     assert_eq!(
-        block_on(runtime.view_event(first, event)),
+        block_on(runtime.designed_view_event(first, pressed(&rendered, "right"))),
         Err(CallError::ViewClosed)
     );
+}
+
+/// The launch record every view of these tests opens with: none of them
+/// reads it.
+fn default_launch() -> pane_core::LaunchRecord {
+    pane_core::LaunchRecord::default()
+}
+
+/// The value of the canvas the answer `next` drew.
+fn value_of(next: &Result<pane_core::DesignedNext, CallError>) -> String {
+    let pane_core::DesignedNext::Tree(rendered) = next.as_ref().unwrap() else {
+        panic!("the view re-rendered: {next:?}")
+    };
+    fn of(node: &Node) -> Option<String> {
+        match &node.kind {
+            NodeKind::Canvas(canvas) => canvas.a11y.value.clone(),
+            _ => node.children.iter().find_map(of),
+        }
+    }
+    of(&rendered.tree.root).expect("the view draws a canvas")
 }
 
 fn an_unknown_view_is_a_guest_error(sample: &Sample) {
     let runtime = Runtime::start().unwrap();
 
-    let opened = block_on(runtime.open_view(&sample.path(), "missing"));
+    let opened =
+        block_on(runtime.open_designed_view(&sample.path(), "missing", &default_launch()));
 
     assert_eq!(
-        opened.map(|(_, frame)| frame),
-        Err(CallError::Guest("unknown view: missing".into()))
+        opened.map(|(_, rendered)| rendered),
+        Err(CallError::Guest("unknown designed view: missing".into()))
     );
-    assert_eq!(block_on(runtime.view_count()), 0);
+    assert_eq!(block_on(runtime.designed_view_count()), 0);
 }
 
 fn reverse_typed_into_root_search_lists_the_reversed_text_to_copy(sample: &Sample) {
