@@ -326,6 +326,7 @@ name = "run"
 version = "0.1.0"
 dependencies = [
  "pane-extension",
+ "serde",
 ]
 
 [[package]]
@@ -417,6 +418,7 @@ name = "sample-run"
 version = "0.1.0"
 dependencies = [
  "pane-extension",
+ "serde",
 ]
 
 [[package]]
