@@ -187,13 +187,16 @@ const STEPS: Step[] = [
 
 /**
  * Says what `ask` answered in a toast: a success when it happened, a
- * failure when nothing changed.
+ * failure when nothing changed. The toast is not returned: an action
+ * resolves with nothing, since what it resolves with is what
+ * `handle-event` answers, and that is text.
  */
-const answer = (title: string, outcome: Outcome) =>
+const answer = (title: string, outcome: Outcome): void => {
   showToast({
     style: outcome.state === "done" ? "success" : "failure",
     title: `${title}: ${outcome.text}`,
   });
+};
 
 export const command = {
   async render() {

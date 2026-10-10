@@ -189,15 +189,18 @@ const STEPS = [
 
 /**
  * Says what `ask` answered in a toast: a success when it happened, a
- * failure when nothing changed.
+ * failure when nothing changed. The toast is not returned: an action
+ * resolves with nothing, since what it resolves with is what
+ * `handle-event` answers, and that is text.
  * @param {string} title
  * @param {import("@pane-app/extension/system-commands").Outcome} outcome
  */
-const answer = (title, outcome) =>
+const answer = (title, outcome) => {
   showToast({
     style: outcome.state === "done" ? "success" : "failure",
     title: `${title}: ${outcome.text}`,
   });
+};
 
 export const command = {
   async render() {

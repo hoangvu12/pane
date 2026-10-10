@@ -25,7 +25,8 @@
 use pane_extension::alloc::{
     format,
     string::{String, ToString},
-    vec, vec::Vec,
+    vec,
+    vec::Vec,
 };
 use pane_extension::feedback::{Toast, show_toast};
 use pane_extension::programs::{self, Options};
@@ -253,9 +254,8 @@ impl Command for RunSample {
         let entries = run::history().map_err(explain)?;
         if entries.is_empty() {
             return Ok(List::new("Run History").item(
-                Item::new("empty", "Nothing has been run yet").subtitle(
-                    "What you run in Pane or the Run dialog appears here",
-                ),
+                Item::new("empty", "Nothing has been run yet")
+                    .subtitle("What you run in Pane or the Run dialog appears here"),
             ));
         }
         let items = entries.iter().map(|line| {
@@ -263,9 +263,7 @@ impl Command for RunSample {
             Item::new(format!("{ENTRY}{line}"), line.clone())
                 .subtitle("Enter runs it again")
                 .on_action(move || run_line(Some(again), false, LaunchType::UserInitiated))
-                .action(
-                    Action::new("Delete", move || delete_line(gone)).destructive(),
-                )
+                .action(Action::new("Delete", move || delete_line(gone)).destructive())
         });
         Ok(List::new("Run History").items(items))
     }

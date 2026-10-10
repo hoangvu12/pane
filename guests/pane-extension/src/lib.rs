@@ -360,7 +360,7 @@ pub mod system_commands {
     });
 
     pub use pane::extension::system_commands::{
-        Outcome, empty_recycle_bin, eject_removable_drives, hibernate, lock_screen, log_out,
+        Outcome, eject_removable_drives, empty_recycle_bin, hibernate, lock_screen, log_out,
         open_recycle_bin, restart, set_volume, show_desktop, shut_down, sleep, start_screen_saver,
         toggle_appearance, toggle_bluetooth, toggle_hdr, toggle_hidden_files,
         toggle_microphone_mute, toggle_mute, turn_off_displays, volume_down, volume_up,

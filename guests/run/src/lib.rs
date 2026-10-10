@@ -31,7 +31,8 @@
 use pane_extension::alloc::{
     format,
     string::{String, ToString},
-    vec, vec::Vec,
+    vec,
+    vec::Vec,
 };
 use pane_extension::feedback::{Toast, ToastStyle, show_hud, show_toast};
 use pane_extension::programs::{self, Options};
@@ -285,14 +286,11 @@ impl Command for Run {
         let entries = run::history().map_err(explain)?;
         if entries.is_empty() {
             return Ok(List::new("Run History").item(
-                Item::new("empty", "Nothing has been run yet").subtitle(
-                    "What you run in Pane or the Run dialog appears here",
-                ),
+                Item::new("empty", "Nothing has been run yet")
+                    .subtitle("What you run in Pane or the Run dialog appears here"),
             ));
         }
-        Ok(List::new("Run History").items(
-            entries.iter().map(|line| entry_item(line)),
-        ))
+        Ok(List::new("Run History").items(entries.iter().map(|line| entry_item(line))))
     }
 
     /// Runs the row whose item was drawn before, which is gone now: a

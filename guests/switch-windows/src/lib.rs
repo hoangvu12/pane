@@ -79,9 +79,8 @@ impl Command for Switch {
         let listed = windows::list_windows().map_err(explain)?;
         if listed.is_empty() {
             return Ok(List::new("Switch Windows").item(
-                Item::new("none", "No other windows are open").subtitle(
-                    "The window you were in is the only one",
-                ),
+                Item::new("none", "No other windows are open")
+                    .subtitle("The window you were in is the only one"),
             ));
         }
         Ok(List::new("Switch Windows").items(listed.iter().map(item)))
