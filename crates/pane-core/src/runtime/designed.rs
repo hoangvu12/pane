@@ -2194,7 +2194,7 @@ mod tests {
 
     #[test]
     fn markdown_reads_and_is_bounded() {
-        let tree = tree(
+        let read = tree(
             r##"{"type":"markdown","markdown":"# Hi
 
 Some *prose*.
@@ -2202,8 +2202,8 @@ Some *prose*.
 - [x] done"}"##,
         )
         .unwrap();
-        let NodeKind::Markdown(markdown) = &tree.root.kind else {
-            panic!("markdown: {:?}", tree.root.kind);
+        let NodeKind::Markdown(markdown) = &read.root.kind else {
+            panic!("markdown: {:?}", read.root.kind);
         };
         assert!(matches!(markdown.blocks[0], markdown::Block::Heading { level: 1, .. }));
         assert!(matches!(markdown.blocks[2], markdown::Block::List { .. }));

@@ -116,7 +116,7 @@ pub(super) fn node(
             apply(divider(*orientation, draw.theme).id(own), node, &draw).into_any_element()
         }
         NodeKind::Text(text) => {
-            let element = components::text(text, path, &draw);
+            let element = components::text(text, path, &draw, cx);
             let element = match name.as_deref() {
                 Some(name) => element.aria_label(name),
                 None => element,
@@ -274,7 +274,11 @@ pub(super) fn node(
 
 /// `draw`, carrying the surface `background` draws over the one it draws
 /// on.
-pub(super) fn with_surface(draw: Draw, background: Option<&Paint>, theme: &Theme) -> Draw {
+pub(super) fn with_surface<'a>(
+    draw: Draw<'a>,
+    background: Option<&Paint>,
+    theme: &Theme,
+) -> Draw<'a> {
     let surface = match background {
         Some(paint) => {
             let background = tokens::paint_color(paint, theme);

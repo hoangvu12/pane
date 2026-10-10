@@ -6,15 +6,48 @@
 // 0036). The behaviour matches the Rust and TypeScript samples
 // (sample-view, sample-view-ts): the same text, the same buttons.
 //
+// The `components` command of the same package answers a gallery of
+// every component of the UI component set (#237): the layout primitives,
+// the shared components, the tokens and the raw values, with a toggle to
+// show the tree changes.
+//
 // The view is written as elements (the JSX runtime's `jsxs`), which is
 // what JSX compiles to (the TypeScript sample); the components and hooks
 // come from `@pane-app/extension/view`.
 import { jsxs } from "@pane-app/extension/jsx-runtime";
 import {
+  Badge,
   Button,
+  Card,
+  Checkbox,
   Column,
+  Divider,
+  EmptyState,
+  Icon,
+  IconTile,
+  Image,
+  KeySequence,
+  Keycap,
+  Link,
+  Loading,
+  Markdown,
+  MetadataList,
+  PasswordInput,
+  Progress,
+  RichRow,
   Row,
+  Scroll,
+  SectionHeader,
+  Select,
+  Slider,
+  Spacer,
+  Span,
+  Stack,
+  Tag,
   Text,
+  TextArea,
+  TextInput,
+  Toggle,
   createView,
   useState,
 } from "@pane-app/extension/view";
@@ -48,9 +81,171 @@ function Counter() {
   });
 }
 
-/** The command's one view: the counter, starting at zero. */
+/** The gallery of components the `components` command shows. */
+function Components() {
+  const [on, setOn] = useState(false);
+  return jsxs(Scroll, {
+    children: [
+      jsxs(Column, {
+        gap: "l",
+        children: [
+          jsxs(Text, { style: "heading", children: ["The UI component set"] }),
+          // A stack: a badge over an icon tile, placed.
+          jsxs(Stack, {
+            place: "top-end",
+            children: [
+              jsxs(IconTile, { icon: { builtin: "layers" } }),
+              jsxs(Badge, {
+                place: "bottom-end",
+                offset: { x: 4, y: 4 },
+                children: ["4"],
+              }),
+            ],
+          }),
+          // A text with spans, one a link.
+          jsxs(Text, {
+            level: "body",
+            children: [
+              "Accept the ",
+              jsxs(Span, { onClick: () => {}, children: ["terms"] }),
+              jsxs(Span, { code: true, children: [" before continuing."] }),
+            ],
+          }),
+          jsxs(Row, {
+            name: "Marks",
+            gap: "s",
+            children: [
+              jsxs(Icon, { icon: "star", size: "l" }),
+              jsxs(Keycap, { children: ["ctrl"] }),
+              jsxs(KeySequence, { keys: ["ctrl", "shift", "p"] }),
+              jsxs(Tag, { color: "blue", children: ["beta"] }),
+              jsxs(Badge, { children: ["3"] }),
+            ],
+          }),
+          jsxs(Card, {
+            gap: "s",
+            children: [
+              jsxs(RichRow, {
+                subtitle: "A tree Pane renders",
+                icon: { builtin: "layers" },
+                accessories: [{ text: "new", tag: true }],
+                onClick: () => {},
+                children: ["Pane"],
+              }),
+            ],
+          }),
+          // Controls, one of them live.
+          jsxs(Column, {
+            gap: "s",
+            children: [
+              jsxs(SectionHeader, {
+                note: "Every one focusable",
+                children: ["Controls"],
+              }),
+              jsxs(Toggle, {
+                on,
+                label: "Dark mode",
+                onChange: () => setOn(!on),
+              }),
+              jsxs(Checkbox, {
+                on,
+                label: "Remember",
+                onChange: () => setOn(!on),
+              }),
+              jsxs(Select, {
+                options: [
+                  { value: "daily", label: "Daily" },
+                  { value: "weekly", label: "Weekly" },
+                ],
+                value: "daily",
+                label: "Digest",
+                onChange: () => {},
+              }),
+              jsxs(Slider, { value: 0.4, label: "Volume", onChange: () => {} }),
+              jsxs(Progress, { value: 0.7, label: "Installed" }),
+              jsxs(Loading, { label: "Checking" }),
+            ],
+          }),
+          jsxs(Column, {
+            gap: "s",
+            children: [
+              jsxs(SectionHeader, { children: ["Fields"] }),
+              jsxs(TextInput, {
+                placeholder: "Type here",
+                label: "Name",
+                onChange: () => {},
+                children: ["typed"],
+              }),
+              jsxs(PasswordInput, { label: "Secret" }),
+              jsxs(TextArea, { label: "Notes", children: ["two lines"] }),
+            ],
+          }),
+          // Markdown.
+          jsxs(Markdown, {
+            children: [
+              "# Markdown\n\nSome *prose*, `code` and [a link](https://pane.dev).\n\n- [x] drawn\n- [ ] still to do\n",
+            ],
+          }),
+          jsxs(MetadataList, {
+            items: [
+              { label: "Author", value: "Vu", onClick: () => {} },
+              { label: "Tags", tags: ["one", "two"] },
+              { separator: true },
+              { label: "Kind", value: "sample" },
+            ],
+          }),
+          jsxs(EmptyState, {
+            title: "Nothing here",
+            description: "The gallery is over",
+            icon: { builtin: "search-minus" },
+            children: [jsxs(Button, { onClick: () => {}, children: ["Start over"] })],
+          }),
+          // An image, with a placeholder while it stands in.
+          jsxs(Image, {
+            image: { builtin: "image" },
+            size: "xl",
+            fit: "cover",
+            children: [jsxs(Text, { level: "tertiary", children: ["Loading…"] })],
+          }),
+          // Raw values: a surface with a variant, a tone, a corrected
+          // colour and an exact one.
+          jsxs(Row, {
+            gap: "s",
+            children: [
+              jsxs(Text, {
+                level: "secondary",
+                background: "danger",
+                radius: "m",
+                hover: { background: "accent" },
+                children: ["Surface"],
+              }),
+              jsxs(Link, { onClick: () => {}, children: ["A link"] }),
+            ],
+          }),
+          jsxs(Row, {
+            gap: "s",
+            children: [
+              jsxs(Text, { level: "body", color: "#88ccff", children: ["Corrected"] }),
+              jsxs(Text, { color: { raw: "#ff6363" }, children: ["Exact"] }),
+            ],
+          }),
+          jsxs(Divider, {}),
+          jsxs(Spacer, {}),
+        ],
+      }),
+    ],
+  });
+}
+
+/** The command's views: the counter, or the gallery. */
 export const command = {
-  async openView() {
-    return createView(Counter);
+  async openView(commandId) {
+    if (commandId === "sample") {
+      return createView(Counter);
+    }
+    if (commandId === "components") {
+      return createView(Components);
+    }
+    throw new Error("this command opens no designed view");
   },
 };

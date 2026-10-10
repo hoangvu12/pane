@@ -110,13 +110,17 @@ pub use runtime::Timers;
 #[doc(hidden)]
 pub use runtime::memory_peak;
 pub use runtime::{
-    Action, ActionKind, ActionStyle, ActionSubmenu, Align, Answer, Button, ButtonTone,
-    COMPONENT_SET, COMPUTE_LIMIT, CallError, Choice, CustomViewInfo, CustomViewRole, DesignedEvent,
-    DesignedRendered, DesignedTree, Field, FieldKind, FieldValue, Form, FormError, Frame,
-    GUEST_MEMORY, Item, Justify, Key, Layout, MAX_DEPTH, MAX_FRAME_SHAPES, MAX_FRAME_SIZE,
-    MAX_NODES, MAX_TREE_BYTES, Node, NodeKind, Padding, PathKind, Point, Rgb, Runtime,
-    RuntimeFailure, RuntimeStatus, Shape, Space, SubmenuEntries, TREE_VERSION, Text, TextLevel,
-    TextStyle, UNRESPONSIVE_LIMIT, View, ViewEvent, ViewId, WARN_AFTER,
+    Action, ActionKind, ActionStyle, ActionSubmenu, Align, Answer, Badge, Border, Button,
+    ButtonTone, COMPONENT_SET, COMPUTE_LIMIT, CallError, Checkbox, Choice, CustomViewInfo,
+    CustomViewRole, DesignedEvent, DesignedRendered, DesignedTree, EmptyState, Field, FieldKind,
+    FieldValue, Finite, Fit, Form, FormError, Frame, GUEST_MEMORY, IconExtent, IconNode, Image,
+    Item, Justify, Key, KeySequence, Keycap, Layout, Length, Link, Loading, MAX_DEPTH,
+    MAX_FRAME_SHAPES, MAX_FRAME_SIZE, MAX_INLINE_IMAGE, MAX_MARKDOWN_CHARS, MAX_NODES, MAX_PX,
+    MAX_TREE_BYTES, Markdown, MetadataItem, MetadataList, Node, NodeKind, Offset, Orientation,
+    Paint, Padding, Place, Progress, RadiusLength, RichRow, RowAccessory, Runtime, RuntimeFailure,
+    RuntimeStatus, Shape, Sizing, Slider, Span, Style, SubmenuEntries, Surface, TREE_VERSION, Tag,
+    Text, TextInput, TextContent, TextLevel, TextStyle, Toggle, UNRESPONSIVE_LIMIT, View,
+    ViewEvent, ViewId, WARN_AFTER,
 };
 pub use search::{SettingsEntry, settings_matches, title_matches};
 // Icons, accessories and tooltips (#139).

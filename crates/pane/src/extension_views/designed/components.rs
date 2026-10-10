@@ -79,7 +79,12 @@ fn path_key(path: &str) -> String {
 // ---------------------------------------------------------------- text
 
 /// One text node: what it says, plain or in spans, with links.
-pub(super) fn text(text: &TextNode, path: &str, draw: &Draw) -> Stateful<Div> {
+pub(super) fn text(
+    text: &TextNode,
+    path: &str,
+    draw: &Draw,
+    cx: &mut gpui::Context<LauncherWindow>,
+) -> Stateful<Div> {
     match &text.content {
         TextContent::Plain(content) => {
             let debug = format!("designed-text-{}", short(content));
@@ -103,7 +108,7 @@ pub(super) fn text(text: &TextNode, path: &str, draw: &Draw) -> Stateful<Div> {
             let runs = spans
                 .iter()
                 .enumerate()
-                .map(|(index, span)| span_run(span, index, path, draw, text.truncate))
+                .map(|(index, span)| span_run(span, index, path, draw, text.truncate, cx))
                 .collect::<Vec<AnyElement>>();
             let name: SharedString = spans
                 .iter()
@@ -141,7 +146,7 @@ fn run(
     debug: &str,
 ) -> Stateful<Div> {
     let theme = draw.theme;
-    let (mut size, mut weight, family) = if code {
+    let (style_size, style_weight, family) = if code {
         (
             theme.typography.row_subtitle_size,
             theme.typography.regular,
@@ -150,12 +155,10 @@ fn run(
     } else {
         tokens::text_style(style, theme)
     };
-    if let Some(Finite(pixels)) = size {
-        size = px(pixels);
-    }
-    if let Some(Finite(units)) = weight {
-        weight = FontWeight::from(units);
-    }
+    let size = size.map_or(style_size, |Finite(pixels)| px(pixels));
+    let weight = weight.map_or(style_weight, |Finite(units)| {
+        FontWeight::from(units)
+    });
     let label: SharedString = content.into();
     let ink = color
         .map(|paint| tokens::foreground(paint, draw.surface, theme))
@@ -179,7 +182,14 @@ fn run(
 
 /// One span of a text: a run of its content, a link when it carries
 /// `onPress`.
-fn span_run(span: &Span, index: usize, path: &str, draw: &Draw, truncate: bool) -> AnyElement {
+fn span_run(
+    span: &Span,
+    index: usize,
+    path: &str,
+    draw: &Draw,
+    truncate: bool,
+    cx: &mut gpui::Context<LauncherWindow>,
+) -> AnyElement {
     let path = format!("{path}/{index}");
     let debug = format!("designed-text-{}", short(&span.text));
     if span.on_press.is_none() {
@@ -205,6 +215,7 @@ fn span_run(span: &Span, index: usize, path: &str, draw: &Draw, truncate: bool) 
         span.color.as_ref(),
         &debug,
         draw,
+        cx,
     )
     .into_any_element()
 }
@@ -614,7 +625,7 @@ pub(super) fn image(
     // the node's children stand in for it.
     let loading = matches!(
         &held.source,
-        pane_core::IconSource::Url(url) if pane_core::is_web_url(url)
+        pane_core::IconSource::Url(url) if pane_core::icons::is_web_url(url)
     ) || matches!(
         &held.source,
         pane_core::IconSource::File(_) | pane_core::IconSource::Application(_)
