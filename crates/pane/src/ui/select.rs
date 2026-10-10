@@ -310,27 +310,28 @@ impl Select {
         // continues traversal), and while it is closed the field is not
         // in the tree at all.
         query.focus_handle(cx).tab_stop(false);
-        let _query_changes = cx.subscribe_in(&query, window, |this, _, _: &TextChanged, window, cx| {
-            // The draft's reset when the popup opens is not a navigation:
-            // the open's own start (the committed choice, else the first
-            // that can be used) stands, and only the user's next keystroke
-            // moves the highlight.
-            if this.opened {
-                this.opened = false;
-                return;
-            }
-            // A new query is a new navigation, as every search of
-            // Pane's treats it: the first enabled match is highlighted.
-            let model = (this.model.clone())(cx);
-            let query = this.query.read(cx).as_str().to_owned();
-            this.active = first_enabled(&model, &query);
-            // A select whose search the extension handles tells it the
-            // query as the user types it (#241).
-            if let Some(on_query) = this.on_query.clone() {
-                on_query(&query, window, cx);
-            }
-            cx.notify();
-        });
+        let _query_changes =
+            cx.subscribe_in(&query, window, |this, _, _: &TextChanged, window, cx| {
+                // The draft's reset when the popup opens is not a navigation:
+                // the open's own start (the committed choice, else the first
+                // that can be used) stands, and only the user's next keystroke
+                // moves the highlight.
+                if this.opened {
+                    this.opened = false;
+                    return;
+                }
+                // A new query is a new navigation, as every search of
+                // Pane's treats it: the first enabled match is highlighted.
+                let model = (this.model.clone())(cx);
+                let query = this.query.read(cx).as_str().to_owned();
+                this.active = first_enabled(&model, &query);
+                // A select whose search the extension handles tells it the
+                // query as the user types it (#241).
+                if let Some(on_query) = this.on_query.clone() {
+                    on_query(&query, window, cx);
+                }
+                cx.notify();
+            });
         let _deactivation = cx.observe_window_activation(window, |this, window, cx| {
             if !window.is_window_active() && this.open {
                 this.close(window, cx);

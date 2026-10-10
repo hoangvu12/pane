@@ -222,7 +222,12 @@ impl Launcher {
             &preferences::help(&location),
             fields,
         );
-        show_setup_form(&mut state, SetupGate { identity, opening }, form, title.clone());
+        show_setup_form(
+            &mut state,
+            SetupGate { identity, opening },
+            form,
+            title.clone(),
+        );
         None
     }
 
@@ -595,9 +600,9 @@ fn setup_field(unset: &UnsetPreference) -> PaneFormField {
     let kind = match preference.kind {
         // A checkbox preference is what it always drew through a choice
         // of Off and On, now drawn as the checkbox it is.
-        PreferenceKind::Checkbox => PaneFieldKind::Check(
-            preference.label.clone().unwrap_or_else(|| "On".into()),
-        ),
+        PreferenceKind::Checkbox => {
+            PaneFieldKind::Check(preference.label.clone().unwrap_or_else(|| "On".into()))
+        }
         PreferenceKind::Dropdown => PaneFieldKind::Choice(
             preference
                 .options
@@ -628,15 +633,16 @@ fn setup_field(unset: &UnsetPreference) -> PaneFormField {
         kind,
         title: preference.title.clone(),
         placeholder: match preference.kind {
-            PreferenceKind::Text | PreferenceKind::Password | PreferenceKind::File
-            | PreferenceKind::Folder | PreferenceKind::Application => placeholder(
-                match preference.kind {
-                    PreferenceKind::File => "The path of a file",
-                    PreferenceKind::Folder => "The path of a folder",
-                    PreferenceKind::Application => "The path of an application",
-                    _ => "",
-                },
-            ),
+            PreferenceKind::Text
+            | PreferenceKind::Password
+            | PreferenceKind::File
+            | PreferenceKind::Folder
+            | PreferenceKind::Application => placeholder(match preference.kind {
+                PreferenceKind::File => "The path of a file",
+                PreferenceKind::Folder => "The path of a folder",
+                PreferenceKind::Application => "The path of an application",
+                _ => "",
+            }),
             // A list: its applications' file names, typed.
             PreferenceKind::Applications => {
                 placeholder("File names of applications, separated by commas")
@@ -703,10 +709,7 @@ fn setup_form(
         ..Node::plain()
     });
     let mut children: Vec<Node> = fields.iter().map(PaneFormField::node).collect();
-    if let Some(first) = children
-        .iter_mut()
-        .find(|node| empty_value(node))
-    {
+    if let Some(first) = children.iter_mut().find(|node| empty_value(node)) {
         first.focus = true;
     }
     let form = Node {
@@ -797,9 +800,7 @@ fn empty_value(node: &Node) -> bool {
     match &node.kind {
         NodeKind::TextInput(input) | NodeKind::PasswordInput(input) => input.value.is_empty(),
         NodeKind::DatePicker(date) | NodeKind::DateTimePicker(date) => date.value.is_empty(),
-        NodeKind::FilePicker(picker) | NodeKind::FolderPicker(picker) => {
-            picker.paths.is_empty()
-        }
+        NodeKind::FilePicker(picker) | NodeKind::FolderPicker(picker) => picker.paths.is_empty(),
         _ => false,
     }
 }

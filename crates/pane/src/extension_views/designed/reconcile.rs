@@ -234,10 +234,9 @@ impl DesignedControls {
                         NodeKind::DatePicker(date) | NodeKind::DateTimePicker(date) => {
                             (date.value.clone(), None)
                         }
-                        NodeKind::FilePicker(picker) | NodeKind::FolderPicker(picker) => (
-                            picker.paths.first().cloned().unwrap_or_default(),
-                            None,
-                        ),
+                        NodeKind::FilePicker(picker) | NodeKind::FolderPicker(picker) => {
+                            (picker.paths.first().cloned().unwrap_or_default(), None)
+                        }
                         _ => (String::new(), None),
                     };
                     if let Some((on_input, on_change, throttle)) = wired {
@@ -547,14 +546,13 @@ impl Held {
                 let place = path.to_owned();
                 // The query of a dropdown whose search the extension
                 // handles, told to it as the user types it (#241).
-                let query = std::rc::Rc::new(
-                    move |text: &str, window: &mut Window, cx: &mut App| {
+                let query =
+                    std::rc::Rc::new(move |text: &str, window: &mut Window, cx: &mut App| {
                         let place = place.clone();
                         let _ = entity.update(cx, |this, cx| {
                             this.designed_select_queried(&place, text, window, cx);
                         });
-                    },
-                );
+                    });
                 let name = select_label(node).unwrap_or_else(|| "select".into());
                 let debug = format!("designed-select-{}", super::components::short(&name));
                 let searching = !matches!(&node.kind, NodeKind::Select(select) if !select.search);
@@ -584,16 +582,20 @@ impl Held {
                 // The query's changes move the highlight and redraw; the
                 // picker's value is its chosen tags, committed as one.
                 let path = path.to_owned();
-                cx.subscribe_in(&query, window, move |this, _, _: &TextChanged, window, cx| {
-                    let _ = window;
-                    if let Some(controls) = this.designed.as_mut()
-                        && let Some(entry) = controls.state.get_mut(&path)
-                        && let Held::Tags { highlighted, .. } = &mut entry.held
-                    {
-                        *highlighted = None;
-                    }
-                    cx.notify();
-                })
+                cx.subscribe_in(
+                    &query,
+                    window,
+                    move |this, _, _: &TextChanged, window, cx| {
+                        let _ = window;
+                        if let Some(controls) = this.designed.as_mut()
+                            && let Some(entry) = controls.state.get_mut(&path)
+                            && let Held::Tags { highlighted, .. } = &mut entry.held
+                        {
+                            *highlighted = None;
+                        }
+                        cx.notify();
+                    },
+                )
                 .detach();
                 Held::Tags {
                     query,
@@ -734,9 +736,7 @@ fn discrete_value(node: &Node) -> Option<(String, String)> {
         NodeKind::Toggle(toggle) => toggle.on.to_string(),
         NodeKind::Checkbox(checkbox) => checkbox.checked.to_string(),
         NodeKind::TagPicker(picker) => picker.tags.join("\u{1}"),
-        NodeKind::FilePicker(picker) | NodeKind::FolderPicker(picker) => {
-            picker.paths.join("\u{1}")
-        }
+        NodeKind::FilePicker(picker) | NodeKind::FolderPicker(picker) => picker.paths.join("\u{1}"),
         _ => return None,
     };
     Some((key, value))
@@ -754,13 +754,11 @@ fn held(node: &Node) -> Option<HeldKind> {
         | NodeKind::DateTimePicker(_) => Some(HeldKind::Field),
         // A picker of one path is a field its text edits; one of many
         // holds the paths it chose.
-        NodeKind::FilePicker(picker) | NodeKind::FolderPicker(picker) => {
-            Some(if picker.multiple {
-                HeldKind::Paths
-            } else {
-                HeldKind::Field
-            })
-        }
+        NodeKind::FilePicker(picker) | NodeKind::FolderPicker(picker) => Some(if picker.multiple {
+            HeldKind::Paths
+        } else {
+            HeldKind::Field
+        }),
         NodeKind::Select(select) => (!select.options.is_empty()).then_some(HeldKind::Select),
         NodeKind::TagPicker(_) => Some(HeldKind::Tags),
         NodeKind::Scroll { .. } => Some(HeldKind::Scroll),

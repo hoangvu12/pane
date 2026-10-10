@@ -1172,10 +1172,7 @@ fn form_of(tree: &DesignedTree, key: Option<&str>) -> Option<(u32, String)> {
     fn at(node: &Node, key: Option<&str>, in_form: Option<String>) -> Option<(u32, String)> {
         let own = match &node.kind {
             NodeKind::Form(form) => {
-                let form_key = node
-                    .key
-                    .clone()
-                    .unwrap_or_else(|| "form".to_owned());
+                let form_key = node.key.clone().unwrap_or_else(|| "form".to_owned());
                 let matches = key.is_none_or(|wanted| wanted == form_key);
                 if matches && form.on_submit.is_some() {
                     return Some((form.on_submit.expect("checked above"), form_key));
@@ -1371,7 +1368,9 @@ fn apply_remembered(node: &mut Node, value: &str) {
     let value = value.trim();
     if let Ok(text) = serde_json::from_str::<String>(value) {
         match &mut node.kind {
-            NodeKind::TextInput(input) | NodeKind::PasswordInput(input) | NodeKind::TextArea(input) => {
+            NodeKind::TextInput(input)
+            | NodeKind::PasswordInput(input)
+            | NodeKind::TextArea(input) => {
                 input.value = text;
             }
             NodeKind::Select(select) => select.value = Some(text),

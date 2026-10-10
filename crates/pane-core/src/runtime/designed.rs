@@ -1776,9 +1776,7 @@ fn file_picker(wire: &WireNode) -> Result<FilePicker, ReadError> {
         }
     };
     Ok(FilePicker {
-        paths: paths("value")?
-            .or(paths("default")?)
-            .unwrap_or_default(),
+        paths: paths("value")?.or(paths("default")?).unwrap_or_default(),
         multiple: boolean(wire, "multiple")?.unwrap_or(false),
         field: field_props(wire)?,
     })

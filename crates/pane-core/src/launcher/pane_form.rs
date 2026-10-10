@@ -476,7 +476,9 @@ pub(super) fn mark_error(tree: &mut DesignedTree, key: &str, message: &str) -> b
         {
             return true;
         }
-        node.children.iter_mut().any(|child| at(child, key, message))
+        node.children
+            .iter_mut()
+            .any(|child| at(child, key, message))
     }
     at(&mut tree.root, key, message)
 }
@@ -488,11 +490,7 @@ pub(super) fn mark_error(tree: &mut DesignedTree, key: &str, message: &str) -> b
 pub(super) fn form_submit_of(tree: &DesignedTree) -> Option<String> {
     fn at(node: &Node) -> Option<String> {
         if let NodeKind::Form(form) = &node.kind {
-            return Some(
-                form.submit_label
-                    .clone()
-                    .unwrap_or_else(|| "Submit".into()),
-            );
+            return Some(form.submit_label.clone().unwrap_or_else(|| "Submit".into()));
         }
         if let Some(fallback) = &node.fallback
             && let Some(label) = at(fallback)

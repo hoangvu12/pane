@@ -391,7 +391,10 @@ impl LauncherWindow {
     /// field edits, the state a checkbox or toggle last told the
     /// extension, the tags or paths a picker chose. `None` when no form
     /// is on screen.
-    fn collect_form(&self, cx: &gpui::App) -> Option<(String, Vec<(String, pane_core::FormValue)>)> {
+    fn collect_form(
+        &self,
+        cx: &gpui::App,
+    ) -> Option<(String, Vec<(String, pane_core::FormValue)>)> {
         let tree = match self.launcher.screen() {
             pane_core::Screen::DesignedView(view) => Some(view.tree),
             pane_core::Screen::PaneForm(form) => Some(form.tree),
@@ -439,10 +442,13 @@ impl LauncherWindow {
         cx: &mut Context<Self>,
     ) {
         let date_time = self.designed.as_ref().and_then(|controls| {
-            controls.state.get(path).and_then(|entry| match &entry.held {
-                Held::Field { editing, .. } => Some(editing.clone()),
-                _ => None,
-            })
+            controls
+                .state
+                .get(path)
+                .and_then(|entry| match &entry.held {
+                    Held::Field { editing, .. } => Some(editing.clone()),
+                    _ => None,
+                })
         });
         let Some(editing) = date_time else {
             return;
@@ -546,15 +552,17 @@ impl LauncherWindow {
             let chosen = options.get(at).map(|option| option.value.clone())?;
             let (callback, key, seen) = (picker.on_change, entry.key.clone(), entry.render);
             Some((chosen, callback, key, seen))
-        })
-        else {
+        }) else {
             return;
         };
         let query = self.designed.as_ref().and_then(|controls| {
-            controls.state.get(path).and_then(|entry| match &entry.held {
-                Held::Tags { query, .. } => Some(query.clone()),
-                _ => None,
-            })
+            controls
+                .state
+                .get(path)
+                .and_then(|entry| match &entry.held {
+                    Held::Tags { query, .. } => Some(query.clone()),
+                    _ => None,
+                })
         });
         if let Some(query) = query {
             query.update(cx, |query, cx| query.emplace("", cx));
@@ -668,23 +676,20 @@ impl LauncherWindow {
             cx.notify();
             return;
         }
-        let _ = self
-            .designed
-            .as_mut()
-            .and_then(|controls| {
-                let entry = controls.state.get_mut(path)?;
-                let Held::Paths { paths, .. } = &mut entry.held else {
-                    return None;
-                };
-                let before = paths.len();
-                let arrived = paths.clone();
-                for text in arrived {
-                    if !paths.contains(&text) {
-                        paths.push(text);
-                    }
+        let _ = self.designed.as_mut().and_then(|controls| {
+            let entry = controls.state.get_mut(path)?;
+            let Held::Paths { paths, .. } = &mut entry.held else {
+                return None;
+            };
+            let before = paths.len();
+            let arrived = paths.clone();
+            for text in arrived {
+                if !paths.contains(&text) {
+                    paths.push(text);
                 }
-                (paths.len() != before).then(|| paths.clone())
-            });
+            }
+            (paths.len() != before).then(|| paths.clone())
+        });
         // The picker's chosen paths are its submission's value; the tree
         // the extension answers names what it draws of them.
         let _ = window;
@@ -715,7 +720,8 @@ impl LauncherWindow {
         {
             if let Some(key) = (!key.is_empty()).then_some(key) {
                 self.note_sent(&key, payload_value(&payload));
-                self.launcher.pane_form_changed(&key, &payload_value(&payload));
+                self.launcher
+                    .pane_form_changed(&key, &payload_value(&payload));
                 cx.notify();
             }
             return;
@@ -1226,11 +1232,12 @@ fn field_value(
                 .unwrap_or_default(),
         ),
         pane_core::NodeKind::Toggle(toggle) => FormValue::On(
-            sent.get(key).map(|value| value == "true").unwrap_or(toggle.on),
+            sent.get(key)
+                .map(|value| value == "true")
+                .unwrap_or(toggle.on),
         ),
         pane_core::NodeKind::Checkbox(checkbox) => FormValue::On(
-            sent
-                .get(key)
+            sent.get(key)
                 .map(|value| value == "true")
                 .unwrap_or(checkbox.checked),
         ),

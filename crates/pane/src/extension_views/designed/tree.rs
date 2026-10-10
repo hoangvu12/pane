@@ -405,7 +405,12 @@ pub(super) fn draw_node(
         ),
         NodeKind::Form(form) => {
             let children = children(node, path, inner, cx);
-            styled(node, path, draw, fields::form(node, form, path, &draw, children, cx))
+            styled(
+                node,
+                path,
+                draw,
+                fields::form(node, form, path, &draw, children, cx),
+            )
         }
         NodeKind::DatePicker(date) => styled(
             node,

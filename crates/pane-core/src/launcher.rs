@@ -86,8 +86,8 @@ use crate::runtime::{
     CallError, CustomViewInfo, CustomViewRole, DesignedTree, Frame, Item, Point, ResultListing,
     RootAction, RootResult as ComputedResult, Runtime, View, ViewEvent, ViewId, WeakRuntime,
 };
-pub use pane_form::{PaneFieldKind, PaneFormField, PaneForm, PathPick};
 use crate::search::{self, Keys, Query};
+pub use pane_form::{PaneFieldKind, PaneForm, PaneFormField, PathPick};
 
 mod dependents;
 mod developing;
@@ -135,9 +135,7 @@ pub use presentation::{
 pub use quick_slots::{PinTarget, QuickSlot, SlotChange};
 use schedules::Schedules;
 use services::Services;
-pub use setup::{
-    CommandPreferences, PackagePreferences, PreferenceField, PreferencesTarget,
-};
+pub use setup::{CommandPreferences, PackagePreferences, PreferenceField, PreferencesTarget};
 pub use shortcuts::{ShortcutCatalog, ShortcutCommand, ShortcutGroup};
 pub use submenus::{OpenSubmenu, SubmenuState};
 pub use updates::UpdateHold;

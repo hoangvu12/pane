@@ -34,7 +34,7 @@ use crate::ui::tokens;
 use super::components::{self, FieldKind};
 use super::reconcile::Held;
 use super::tree::Draw;
-use super::{AREA_CONTEXT, DATE_CONTEXT, PATHS_CONTEXT, TAGS_CONTEXT, SubmitForm};
+use super::{AREA_CONTEXT, DATE_CONTEXT, PATHS_CONTEXT, SubmitForm, TAGS_CONTEXT};
 
 /// One field's chrome: its title over `control`, and the note and error
 /// under it — the Settings board's field family, as the typed form's
@@ -53,12 +53,15 @@ pub(super) fn field_group(
     let group = controls::field(theme)
         .id(SharedString::from(format!("field-{key}")))
         .debug_selector(move || format!("field-{key}"))
-        .when_some(props.title.clone().or_else(|| label.map(str::to_owned)), |group, title| {
-            group.child(
-                controls::field_label(title, theme)
-                    .debug_selector(move || label_selector.clone()),
-            )
-        })
+        .when_some(
+            props.title.clone().or_else(|| label.map(str::to_owned)),
+            |group, title| {
+                group.child(
+                    controls::field_label(title, theme)
+                        .debug_selector(move || label_selector.clone()),
+                )
+            },
+        )
         .child(control)
         .when_some(props.error.clone(), |group, error| {
             group.child(
@@ -180,9 +183,7 @@ pub(super) fn tag_field(
     let label = field_label(&picker.field, None);
     let text = query.read(cx).as_str().to_owned();
     let matches = matching(&picker.options, &text);
-    let highlighted = highlighted
-        .filter(|at| *at < matches.len())
-        .unwrap_or(0);
+    let highlighted = highlighted.filter(|at| *at < matches.len()).unwrap_or(0);
     // The well holds the query's editable text and the chosen chips; the
     // field's group carries the tag picker's context, where Enter commits
     // the highlighted option.
@@ -198,9 +199,7 @@ pub(super) fn tag_field(
                     well.aria_placeholder(title)
                 })
         })
-        .focus(move |well| {
-            well.shadow(controls::well_shadows(true, theme))
-        })
+        .focus(move |well| well.shadow(controls::well_shadows(true, theme)))
         .flex()
         .flex_wrap()
         .items_center()
@@ -213,8 +212,8 @@ pub(super) fn tag_field(
                 node.key.clone().unwrap_or_default(),
                 draw.render,
             );
-            components::chosen_chip(tag.as_str(), theme)
-                .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+            components::chosen_chip(tag.as_str(), theme).on_click(cx.listener(
+                move |this, _: &ClickEvent, window, cx| {
                     this.designed_tag_removed(
                         &path,
                         &tag,
@@ -224,7 +223,8 @@ pub(super) fn tag_field(
                         window,
                         cx,
                     );
-                }))
+                },
+            ))
         }))
         .child(
             div()
@@ -346,7 +346,10 @@ pub(super) fn path_field(
             multiple: picker.multiple,
         },
     );
-    let (well, choose): (AnyElement, Rc<dyn Fn(&mut LauncherWindow, &mut gpui::Window, &mut gpui::Context<LauncherWindow>)>) = if picker.multiple {
+    let (well, choose): (
+        AnyElement,
+        Rc<dyn Fn(&mut LauncherWindow, &mut gpui::Window, &mut gpui::Context<LauncherWindow>)>,
+    ) = if picker.multiple {
         let Some(entry) = draw.state.get(path) else {
             return div().into_any_element();
         };
@@ -440,16 +443,12 @@ pub(super) fn path_field(
         )
     };
     let selector = format!("field-choose-{field_id}");
-    let button = controls::ghost_button(
-        SharedString::from(selector.clone()),
-        "Choose…",
-        true,
-        theme,
-    )
-    .debug_selector(move || selector.clone())
-    .role(Role::Button)
-    .map(|button| button.aria_label(format!("Choose {}", label)))
-    .on_click(cx.listener(move |this, _, window, cx| choose(this, window, cx)));
+    let button =
+        controls::ghost_button(SharedString::from(selector.clone()), "Choose…", true, theme)
+            .debug_selector(move || selector.clone())
+            .role(Role::Button)
+            .map(|button| button.aria_label(format!("Choose {}", label)))
+            .on_click(cx.listener(move |this, _, window, cx| choose(this, window, cx)));
     field_group(
         node.key.as_deref().unwrap_or_default(),
         &picker.field,
@@ -481,10 +480,7 @@ pub(super) fn form(
     let theme = draw.theme;
     // The submit button: the form's own focus, the form's primary action.
     let focus = draw.focus_of(path);
-    let submit = form
-        .submit_label
-        .clone()
-        .unwrap_or_else(|| "Submit".into());
+    let submit = form.submit_label.clone().unwrap_or_else(|| "Submit".into());
     let button = controls::button("submit", submit.clone(), true, theme)
         .debug_selector(move || "submit".into())
         .role(Role::Button)
@@ -505,9 +501,7 @@ pub(super) fn form(
         .min_w(px(0.))
         .gap(tokens::space(pane_core::Space::M))
         .role(Role::Form)
-        .map(|group| {
-            group.when_some(node.name.clone(), |group, name| group.aria_label(name))
-        })
+        .map(|group| group.when_some(node.name.clone(), |group, name| group.aria_label(name)))
         .children(children)
         .child(div().flex().child(button))
         .into_any_element()
@@ -523,7 +517,9 @@ pub(super) fn step_date(text: &str, step: i64) -> Option<String> {
         let (hour, minute) = time_parts(time)?;
         let minutes = to_minutes(year, month, day, hour, minute)? + step;
         let (year, month, day, hour, minute) = from_minutes(minutes);
-        return Some(format!("{year:04}-{month:02}-{day:02} {hour:02}:{minute:02}"));
+        return Some(format!(
+            "{year:04}-{month:02}-{day:02} {hour:02}:{minute:02}"
+        ));
     }
     let (year, month, day) = date_parts(text)?;
     let days = to_days(year, month, day)? + step;
@@ -552,7 +548,20 @@ fn time_parts(time: &str) -> Option<(u32, u32)> {
 /// Days since 1970-01-01 of the date, if it is a real one.
 fn to_days(year: i64, month: u32, day: u32) -> Option<i64> {
     let leap = (year % 4 == 0 && year % 100 != 0) || year % 400 == 0;
-    let lengths = [31, 28 + u32::from(leap), 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    let lengths = [
+        31,
+        28 + u32::from(leap),
+        31,
+        30,
+        31,
+        30,
+        31,
+        31,
+        30,
+        31,
+        30,
+        31,
+    ];
     let month = usize::try_from(month).ok()?;
     let in_month = lengths.get(month.checked_sub(1)?)?;
     (1..=*in_month).contains(&day).then(|| {
@@ -575,7 +584,20 @@ fn from_days(days: i64) -> (i64, u32, u32) {
         year += 1;
     }
     let leap = (year % 4 == 0 && year % 100 != 0) || year % 400 == 0;
-    let lengths = [31, 28 + u32::from(leap), 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    let lengths = [
+        31,
+        28 + u32::from(leap),
+        31,
+        30,
+        31,
+        30,
+        31,
+        31,
+        30,
+        31,
+        30,
+        31,
+    ];
     let mut month = 1;
     for length in lengths {
         if rest < i64::from(length) {
