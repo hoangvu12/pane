@@ -62,6 +62,8 @@ const OPEN_WITH: &str = "application";
 struct QuicklinkForm {
     /// The quicklink being edited, by its id; `None` for a new one.
     editing: Option<String>,
+    /// The view's title: the form it draws, naming the quicklink.
+    title: String,
     /// The fields' values, as the view last drew them.
     name: RefCell<String>,
     link: RefCell<String>,
@@ -90,13 +92,22 @@ impl QuicklinkForm {
                 application.name.as_str()
             }
         });
-        let (editing, name) = if purpose == "edit" {
-            (Some(link.id.clone()), link.name.clone())
+        let (editing, name, title) = if purpose == "edit" {
+            (
+                Some(link.id.clone()),
+                link.name.clone(),
+                format!("Edit \u{201c}{}\u{201d}", link.name),
+            )
         } else {
-            (None, links::copy_name(&saved, &link.name))
+            (
+                None,
+                links::copy_name(&saved, &link.name),
+                "Duplicate Quicklink".to_owned(),
+            )
         };
         Ok(QuicklinkForm {
             editing,
+            title,
             name: RefCell::new(name),
             link: RefCell::new(link.target),
             open_with: RefCell::new(application.into()),
@@ -107,6 +118,7 @@ impl QuicklinkForm {
     fn empty(editing: Option<String>) -> QuicklinkForm {
         QuicklinkForm {
             editing,
+            title: "Create Quicklink".to_owned(),
             name: RefCell::new(String::new()),
             link: RefCell::new(String::new()),
             open_with: RefCell::new(String::new()),
@@ -210,11 +222,7 @@ impl View for QuicklinkForm {
                     .default_value(self.open_with.borrow().clone())
                     .error(error(OPEN_WITH)),
             );
-        view.name(if editing {
-            "Edit Quicklink".into()
-        } else {
-            "Create Quicklink".into()
-        });
+        view.navigation_title(self.title.clone());
         view.into_answer()
     }
 }

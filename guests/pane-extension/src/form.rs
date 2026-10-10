@@ -227,6 +227,15 @@ impl Form {
     }
 }
 
+impl Form {
+    /// The navigation title of the view this form is the root of: what
+    /// names the view where a screen's title is shown.
+    pub fn navigation_title(mut self, title: impl Into<String>) -> Form {
+        self.0.navigation_title = Some(title.into());
+        self
+    }
+}
+
 impl Default for Form {
     fn default() -> Form {
         Form::new()
