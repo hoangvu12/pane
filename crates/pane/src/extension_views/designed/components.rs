@@ -1125,9 +1125,10 @@ pub(super) fn segmented(
     let key = path_key(path);
     let (for_move, key_for_move) = (callback, key.clone());
     let (for_click, key_for_click) = (callback, key);
+    let (moved_values, moved_current) = (values.clone(), current.clone());
     let (moved, click) = (
         cx.listener(move |this, _: &Move, window, cx| {
-            if let Some(value) = step(&values, *current, 1) {
+            if let Some(value) = step(&moved_values, *moved_current, 1) {
                 this.send_designed_event(
                     for_move,
                     key_for_move.clone(),
@@ -1496,7 +1497,7 @@ fn metadata_row(
         )
     };
     div()
-        .id(path)
+        .id(path.clone())
         .flex()
         .items_baseline()
         .gap(tokens::space(Space::S))
@@ -1778,9 +1779,10 @@ pub(super) fn select(
     let key = path_key(path);
     let (for_commit, key_for_commit) = (callback, key.clone());
     let (for_click, key_for_click) = (callback, key);
+    let (commit_values, commit_current) = (values.clone(), current.clone());
     let (commit, click) = (
         cx.listener(move |this, _: &Commit, window, cx| {
-            if let Some(value) = step(&values, *current, 1) {
+            if let Some(value) = step(&commit_values, *commit_current, 1) {
                 this.send_designed_event(
                     for_commit,
                     key_for_commit.clone(),

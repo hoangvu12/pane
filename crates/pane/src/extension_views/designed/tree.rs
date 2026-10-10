@@ -525,17 +525,42 @@ fn apply(div: Stateful<Div>, node: &Node, draw: &Draw) -> Stateful<Div> {
             let variant = node.style.hover.clone();
             let theme = draw.theme;
             div.when_some(variant, move |div, variant| {
-                div.hover(move |div| surface(div, &variant, theme))
+                div.hover(move |style| restyle(style, &variant, theme))
             })
         })
         .map(|div| {
             let variant = node.style.pressed.clone();
             let theme = draw.theme;
             div.when_some(variant, move |div, variant| {
-                div.active(move |div| surface(div, &variant, theme))
+                div.active(move |style| restyle(style, &variant, theme))
             })
         });
     div
+}
+
+/// The surface a variant restates, applied to the style refinement a
+/// hover or press callback is given.
+fn restyle(style: gpui::StyleRefinement, surface: &Surface, theme: &Theme) -> gpui::StyleRefinement {
+    let mut style = style;
+    if let Some(background) = &surface.background {
+        style = style.bg(tokens::paint_color(background, theme));
+    }
+    if let Some(border) = &surface.border {
+        let width = border
+            .width
+            .map_or(px(1.), |width| length_pixels(width, Some(theme)));
+        let color = border
+            .color
+            .map_or(theme.hairline, |color| tokens::paint_color(&color, theme));
+        style = style.border(width).border_color(color);
+    }
+    if let Some(radius) = surface.radius {
+        style = style.rounded(radius_pixels(radius, theme));
+    }
+    if let Some(Finite(opacity)) = surface.opacity {
+        style = style.opacity(opacity);
+    }
+    style
 }
 
 /// The sizing a node asks for: how it takes space in its parent, and how
