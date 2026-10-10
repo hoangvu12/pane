@@ -286,6 +286,10 @@ impl Launcher {
         if !recorded {
             return;
         }
+        // The rows kept for a query were ranked from what was learned
+        // then: rank them again for the next search, not for the list on
+        // screen (#199 with #202's `statics` generation).
+        state.statics += 1;
         let id = id.to_owned();
         let saves = state.learned_saves.clone();
         let ended = saves.clone();
