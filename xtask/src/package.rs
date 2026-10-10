@@ -480,8 +480,9 @@ WHAT THIS IS
 
   Pane, a desktop launcher. This package holds the pane program and
   installs it for one user; it holds none of Pane's default extensions:
-  Pane downloads them itself the first time it runs, from Pane's own
-  downloads (https://downloads.pane.sh/).
+  Pane fetches them itself the first time it runs, from the commits of
+  their own repositories' release tags that this release pins, with its
+  own Git client.
 
 PREREQUISITES
 
@@ -510,11 +511,12 @@ UNINSTALL
 
 FIRST RUN
 
-  The first run downloads Pane's default extensions (the calculator) from
-  https://downloads.pane.sh/ and shows their progress; Pane stays usable
-  if the download fails, and offers to try again. That location is not
-  deployed yet, so today a first run on the real internet explains that
-  it cannot reach it and keeps everything else working.
+  The first run fetches Pane's default extensions (the calculator,
+  applications, quicklinks, files and clipboard history) from the
+  commits of their repositories' release tags that this release pins,
+  and says what it is setting up; Pane stays usable if a fetch fails,
+  and offers to try again. All five are installed, the first-setup
+  choice screen being not built yet; each can be disabled in Settings.
 
   NOTHING IS SIGNED
 
@@ -534,8 +536,9 @@ WHAT THIS IS
 
   Pane, a desktop launcher. This package holds the pane.exe program and
   installs it for one user; it holds none of Pane's default extensions:
-  Pane downloads them itself the first time it runs, from Pane's own
-  downloads (https://downloads.pane.sh/).
+  Pane fetches them itself the first time it runs, from the commits of
+  their own repositories' release tags that this release pins, with its
+  own Git client.
 
 PREREQUISITES
 
@@ -572,11 +575,12 @@ UNINSTALL
 
 FIRST RUN
 
-  The first run downloads Pane's default extensions (the calculator) from
-  https://downloads.pane.sh/ and shows their progress; Pane stays usable
-  if the download fails, and offers to try again. That location is not
-  deployed yet, so today a first run on the real internet explains that
-  it cannot reach it and keeps everything else working.
+  The first run fetches Pane's default extensions (the calculator,
+  applications, quicklinks, files and clipboard history) from the
+  commits of their repositories' release tags that this release pins,
+  and says what it is setting up; Pane stays usable if a fetch fails,
+  and offers to try again. All five are installed, the first-setup
+  choice screen being not built yet; each can be disabled in Settings.
 
   NOTHING IS SIGNED
 
@@ -597,8 +601,9 @@ WHAT THIS IS
 
   Pane, a desktop launcher. This package holds the pane program and
   installs it, as a Pane.app bundle, for one user; it holds none of
-  Pane's default extensions: Pane downloads them itself the first time
-  it runs, from Pane's own downloads (https://downloads.pane.sh/).
+  Pane's default extensions: Pane fetches them itself the first time
+  it runs, from the commits of their own repositories' release tags
+  that this release pins, with its own Git client.
 
 PREREQUISITES
 
@@ -641,11 +646,12 @@ UNINSTALL
 
 FIRST RUN
 
-  The first run downloads Pane's default extensions (the calculator)
-  from https://downloads.pane.sh/ and shows their progress; Pane stays
-  usable if the download fails, and offers to try again. That location
-  is not deployed yet, so today a first run on the real internet
-  explains that it cannot reach it and keeps everything else working.
+  The first run fetches Pane's default extensions (the calculator,
+  applications, quicklinks, files and clipboard history) from the
+  commits of their repositories' release tags that this release pins,
+  and says what it is setting up; Pane stays usable if a fetch fails,
+  and offers to try again. All five are installed, the first-setup
+  choice screen being not built yet; each can be disabled in Settings.
 
   NOTHING IS SIGNED
 

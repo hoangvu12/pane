@@ -492,7 +492,7 @@ for _ in $(seq 600); do [ -s "$out/hidden-repository-server.port" ] && break; ki
 # make them from the guests' packages did.
 python3 "$here/repository_server.py" clone-defaults crates/pane/defaults.json \
   "$hidden_repositories" "$out/hidden-pins.json" \
-  "http://127.0.0.1:$(cat "$out/hidden-repository-server.port")"
+  "http://127.0.0.1:$(cat "$out/hidden-repository-server.port")/"
 export PANE_DEFAULTS=$out/hidden-pins.json
 start_pane
 hide_launcher

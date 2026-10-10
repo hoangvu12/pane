@@ -558,7 +558,10 @@ capture stays local by default all the same.
   still work and a copy or a deletion makes them once more.
 - Pane's own Clipboard History through the launcher
   ([`crates/pane-core/tests/clipboard_view.rs`](../crates/pane-core/tests/clipboard_view.rs),
-  #166), acquired as the default extension over a fake system clipboard:
+  #166), acquired as the default extension from its pinned commit in a
+  repository served on this computer (the JavaScript clipboard sample's
+  component standing in for the extension's own, which lives in its
+  repository), over a fake system clipboard:
   a fresh data folder records the first copy with no turn-on, disabling
   stops it, and paused it stays paused across a restart; concealed copies
   and copies from a disabled application (by its file name or its path)

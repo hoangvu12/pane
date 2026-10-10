@@ -907,8 +907,8 @@ serving window are unverified natively.
 The smoke's clipboard phase (screenshots 280 to 287, [clipboard
 history](../clipboard-history.md#checks)), with a data folder of its own,
 runs after the #53 phase: since #166 only Pane's registered Clipboard
-History records from the first start, so the phase acquires the default
-set from the artifacts that phase built, served on 127.0.0.1, with the
+History records from the first start, so the phase sets the default set
+up from the pinned repositories the installer phase serves, with the
 smoke's own build (Files' index on an empty folder,
 `PANE_TEST_FILE_INDEX_HOME`). It checks `clipboard-history.json` at each
 step: the smoke's own copies are kept with nothing turned on, newest
@@ -977,25 +977,31 @@ next green Linux run is its evidence.
 A final phase, after the clipboard-expiry one, proves the whole outcome of
 [#53](https://github.com/pane-app/pane/issues/53)
 ([installer](../installer.md)). `cargo xtask package-linux --dev` builds the
-Linux package (the development profile, so its program accepts the
-controlled artifact source) and the default extensions' payloads; the
-smoke serves `target/dist/artifacts` from 127.0.0.1 with
-`scripts/artifact_server.py` (nothing reaches the network or Pane's
-published downloads). The package is unpacked into a folder of its own and
+Linux package (the development profile, so its program takes its pins from
+`PANE_DEFAULTS`) and the application-update artifacts; no
+default-extension payload is written — first setup fetches the five
+defaults from the commits this release pins. The smoke clones their
+repositories at those commits from their real addresses on GitHub (its own
+setup, on the runner) and serves the clones on 127.0.0.1 over Git's smart
+HTTP protocol (`scripts/repository_server.py`; nothing the Pane under
+test does reaches the network or Pane's published downloads), named by
+the pins file the development build reads through `PANE_DEFAULTS`. The package is unpacked into a folder of its own and
 its install script runs with a **clean machine's** environment: a fresh
 home folder and `PATH=/usr/bin:/bin`, so the home holds no data and no
 development tool is configured. The installed Pane
 (`~/.local/bin/pane` of that home) then starts with a PATH that holds
 nothing at all (an empty folder, checked by `command -v` of cargo, rustc,
 node, npm, git, cc, clang and make, and by reading the running process's
-`PATH`), pointed at the controlled source with `PANE_ARTIFACTS`. It
-acquires the five default extensions by itself (`installed.json` must
-record each under `"default"`, and no sample: the helper sample left the
-default set with #162, and a helper running from an acquired payload is
+`PATH`), taking its pins from the override and its artifact source from
+the local server the smoke serves the update index on. It
+fetches the five default extensions by itself, with Pane's own Git client
+(`installed.json` must record each under `"default"`, with the repository,
+release tag, commit and pinned state of its pin — checked by
+`scripts/check_git_record.py` — and no sample: the helper sample left the
+default set with #162, and a helper running from an acquired revision is
 `crates/pane-core/tests/installer.rs`'s), root search lists their
 commands, "6*7" answers 42 and Enter copies it, with no developer tool
-reachable. The acquired payloads must be cached and the downloads folder
-empty. The program files are removed again at the phase's end, so the
+reachable. The downloads folder the fetches used must end empty. The program files are removed again at the phase's end, so the
 uploaded evidence is the screenshots and records (frames 500 to 502),
 not the program.
 
@@ -1005,7 +1011,7 @@ packaging task in both profiles, the install script into a temporary home
 with a scrubbed PATH (`pane --version` answered), and the acquisition and
 its recovery through the launcher's public interface
 (`crates/pane-core/tests/installer.rs`, ten checks, all passing, including
-the helper running from the managed copy — this machine's payload names
+the helper running from the managed copy — this machine's helper file names
 `linux-aarch64`, which CI's x86_64 runner builds as `linux-x86_64`). The
 smoke phase itself, and the release-profile package on x86_64, are
 **pending CI**: they need the Xvfb smoke and the x86_64 build only CI's
@@ -1034,11 +1040,12 @@ on another clean home (its install script, its empty PATH, its own data
 under `~/.local/share/pane`), and the smoke serves the 99.0.0 artifacts
 from 127.0.0.1 with `scripts/artifact_server.py` (nothing reaches the
 network or Pane's published downloads). The installed 0.1.0 Pane,
-started with `PANE_ARTIFACTS`, acquires its default extensions and, in
-the same background, checks the index for a newer version of itself: the
-offer appears as **Update Pane to 99.0.0** in root search (frame 601;
-the status line tells what was found, frame 600). The artifact server's
-log must hold **no request for the package** until the row is chosen —
+started with `PANE_ARTIFACTS` and the same pinned repositories, fetches
+its default extensions and, in the same
+background, checks the index for a newer version of itself: the offer
+appears as **Update Pane to 99.0.0** in root search (frame 601;
+the status line tells what was found, frame 600). The artifact server's log
+must hold **no request for the package** until the row is chosen —
 nothing is downloaded, installed or restarted automatically. Clipboard
 History is disabled first (the Helper sample was, until #162 took it out
 of the default set), so an extension the user disabled before the update
@@ -1053,7 +1060,8 @@ and swaps the running program — the old `~/.local/bin/pane` renamed
 (frame 603, and byte comparisons of both programs against the two
 packages' own files). The next start runs the new version: it reports
 `Pane 99.0.0`, removes `pane.old` at start, the calculator still
-answers "6*7" with 42 from the old version's acquired payload (frames
+answers "6*7" with 42 from the old version's install (the calculator
+set up at first setup, from the pinned repositories; frames
 604 and 605), and the disabled Clipboard History stays disabled — Pane's
 data was never touched. The desktop entry the install script put in
 `~/.local/share/applications` keeps naming the same program file, which

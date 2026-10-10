@@ -1264,8 +1264,10 @@ milestone is merged).
   a program.
 - **Search Files like Raycast's** (#177;
   [`crates/pane-core/tests/search_files.rs`](../crates/pane-core/tests/search_files.rs)),
-  with Files acquired as Pane's default extension from a local artifact
-  source, over the real index of a fixture home: it opens with no folder
+  with Files acquired as Pane's default extension from its pinned commit
+  in a repository served on this computer (the Rust files sample's
+  component standing in for the extension's own, which lives in its
+  repository), over the real index of a fixture home: it opens with no folder
   to choose on Recently Used, newest first, each row with an icon; typing
   ranks by the index; each type of the dropdown keeps only its files (and
   Folder only folders), with a query too; the detail's Name, Where, Type,

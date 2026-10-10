@@ -464,8 +464,8 @@ reused as is (the fake-clipboard tests cover it).
 The smoke's clipboard phase (screenshots 280 to 287, on the pattern of the
 Windows and Linux ones), with a data folder of its own, runs after the #52
 phase: since #166 only Pane's registered Clipboard History records from
-the first start, so the phase acquires the default set from the artifacts
-that phase built, served on 127.0.0.1, with the smoke's own build (Files'
+the first start, so the phase sets the default set up from the pinned
+repositories that phase serves, with the smoke's own build (Files'
 index on an empty folder, `PANE_TEST_FILE_INDEX_HOME`). It keeps the
 smoke's own copies with nothing turned on (put on the pasteboard with
 AppleScript's `set the clipboard to`), pauses and resumes recording in the
@@ -516,10 +516,15 @@ on Windows. `cargo xtask package-macos --dev` builds the macOS package —
 a zip, like the Windows one, opened with one double-click in Finder and
 written by the same fixed-bytes writer — holding the `pane` program, the
 bash `install.sh`, a README and the bundle's `Info.plist` (the development
-profile, so its program accepts the controlled artifact source) and the
-default extensions' payloads; the smoke serves `target/dist/artifacts`
-from 127.0.0.1 with `scripts/artifact_server.py` (nothing reaches the
-network or Pane's published downloads). The package is unzipped into a
+profile, so its program takes its pins from `PANE_DEFAULTS`) and the
+application-update artifacts; no default-extension payload is written —
+first setup fetches the five defaults from the commits this release pins.
+The smoke clones their repositories at those commits from their real
+addresses on GitHub (its own setup, on the runner) and serves the clones
+on 127.0.0.1 over Git's smart HTTP protocol
+(`scripts/repository_server.py`; nothing the Pane under test does reaches
+the network or Pane's published downloads), named by the pins file the
+development build reads through `PANE_DEFAULTS`. The package is unzipped into a
 folder of its own and its install script runs with a **clean machine's**
 environment: a fresh home folder and `PATH=/usr/bin:/bin`, so the home
 holds no data and no development tool is configured. It builds the
@@ -528,15 +533,17 @@ so no administrator rights) from the program and the `Info.plist`, and
 runs `pane --version` to check what it installed. The installed Pane then
 starts — the bundle's `Contents/MacOS/pane` — with a PATH that holds
 nothing at all (an empty folder, checked with `command -v` of cargo,
-rustc, node, npm, git, cc, clang and make), pointed at the controlled
-source with `PANE_ARTIFACTS`. It acquires the five default extensions
-by itself (`installed.json` must record each under `"default"`, and no
+rustc, node, npm, git, cc, clang and make), taking its pins from the
+override and its artifact source from the local server the smoke serves
+the update index on. It fetches the five default extensions
+by itself, with Pane's own Git client (`installed.json` must record each
+under `"default"`, with the repository, release tag, commit and pinned
+state of its pin — checked by `scripts/check_git_record.py` — and no
 sample: the helper sample left the default set with #162, and a helper
-running from an acquired payload is
+running from an acquired revision is
 `crates/pane-core/tests/installer.rs`'s), root search lists their
 commands, "6*7" answers 42 and Enter copies it, with no developer tool
-reachable. The acquired payloads must be cached and the downloads folder
-empty. The program files are removed again at the phase's end, so the
+reachable. The downloads folder the fetches used must end empty. The program files are removed again at the phase's end, so the
 uploaded evidence is the screenshots and records (frames 500 to 502, and
 the `clean-home-records` folder), not the program. CI builds the release-profile package after the smoke and
 uploads it with the artifacts of the job (`macos-package`). Nothing is
@@ -553,7 +560,8 @@ be built here):** what ran locally is everything that machine can run:
 xtask package-macos` far enough to assemble the whole artifact tree
 (the helper sample's payload manifest rewritten to this machine's
 target, `linux-aarch64`, by the same shared code a macOS run rewrites
-to `macos-aarch64`), before it refuses with the message that only a
+to `macos-aarch64` — the default-extension payloads the task then wrote,
+gone since #278), before it refuses with the message that only a
 macOS checkout builds the program — the same refusal `package-windows`
 makes here; and `cargo xtask package-linux` end-to-end as the shared
 packaging's regression. The install script is bash, so it was linted
@@ -595,7 +603,8 @@ own data under `~/Library/Application Support/Pane`), and the smoke
 serves the 99.0.0 artifacts from 127.0.0.1 with
 `scripts/artifact_server.py` (nothing reaches the network or Pane's
 published downloads). The installed 0.1.0 Pane, started with
-`PANE_ARTIFACTS`, acquires its default extensions and, in the same
+`PANE_ARTIFACTS` and the same pinned repositories, fetches
+its default extensions and, in the same
 background, checks the index for a newer version of itself: the offer
 appears as **Update Pane to 99.0.0** in root search (frame 601; the
 status line tells what was found, frame 600). The artifact server's log
@@ -613,7 +622,8 @@ the new one in its place, the staging folder gone (frame 603, and byte
 comparisons of both binaries against the two packages' own files). The
 next start runs the new version: it reports `Pane 99.0.0`, removes
 `pane.old` at start, the calculator still answers "6*7" with 42 from
-the old version's acquired payload (frames 604 and 605, and the
+the old version's install (the calculator set up at first setup, from
+the pinned repositories; frames 604 and 605, and the
 pasteboard holds 42), and the disabled Clipboard History stays disabled —
 Pane's data was never touched. The bundle itself is never replaced: the
 same `Pane.app` keeps its identity, and what the swap does not update
