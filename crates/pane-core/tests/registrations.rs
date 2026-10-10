@@ -226,7 +226,7 @@ impl Pane {
             fs::create_dir_all(file.parent().unwrap()).unwrap();
             let mut saved: serde_json::Value = match fs::read_to_string(&file) {
                 Ok(text) => serde_json::from_str(&text).unwrap(),
-                Err(_) => serde_json::json!({ "packages": {} }),
+                Err(_) => serde_json::json!({ "version": 1, "packages": {} }),
             };
             let identity = PackageIdentity::local(&folder).unwrap();
             let entry = saved["packages"]
@@ -412,6 +412,7 @@ fn a_folder_watcher_delivers_coalesced_changes() {
     let file = pane.data.path().join("extensions/settings.json");
     fs::create_dir_all(file.parent().unwrap()).unwrap();
     let settings = serde_json::json!({
+        "version": 1,
         "packages": { identity.key(): { "folder": watched.path().display().to_string() } }
     });
     fs::write(&file, serde_json::to_string(&settings).unwrap()).unwrap();
@@ -655,7 +656,7 @@ impl Pane {
         let file = self.data.path().join("extensions/settings.json");
         let mut saved: serde_json::Value = match fs::read_to_string(&file) {
             Ok(text) => serde_json::from_str(&text).unwrap(),
-            Err(_) => serde_json::json!({ "packages": {} }),
+            Err(_) => serde_json::json!({ "version": 1, "packages": {} }),
         };
         let entry = saved["packages"]
             .as_object_mut()

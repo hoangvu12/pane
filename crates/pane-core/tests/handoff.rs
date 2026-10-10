@@ -136,7 +136,7 @@ impl Pane {
             fs::create_dir_all(file.parent().unwrap()).unwrap();
             let mut saved: serde_json::Value = match fs::read_to_string(&file) {
                 Ok(text) => serde_json::from_str(&text).unwrap(),
-                Err(_) => serde_json::json!({ "packages": {} }),
+                Err(_) => serde_json::json!({ "version": 1, "packages": {} }),
             };
             let identity = PackageIdentity::local(&folder).unwrap();
             let entry = saved["packages"]

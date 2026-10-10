@@ -3355,6 +3355,10 @@ impl Launcher {
             self.sync_file_index(state);
             // What it requires may have changed who waits (see `waiting`).
             state.recheck_waiting();
+            // Installing is one of the moments the activation entry point
+            // runs at (ADR 0041): the screen is not refreshed yet, so it
+            // is seen to here.
+            self.ensure_activated(state);
             return false;
         };
         // The replaced copy's code no longer runs: its generation ended
@@ -3381,6 +3385,10 @@ impl Launcher {
         self.sync_file_index(state);
         // The new copy's requirements may change who waits (see `waiting`).
         state.recheck_waiting();
+        // An update is one of the moments the activation entry point runs
+        // at (ADR 0041); the code that starts a reload or an update calls
+        // it as its own start, and this covers the rest.
+        self.ensure_activated(state);
         // The replaced copy's results are asked for afresh.
         state
             .indexes
@@ -3695,20 +3703,13 @@ impl Launcher {
                 .spawn(move || {
                     if let Ok(runtime) = launcher.runtime() {
                         let runtime = runtime.clone();
-                        eprintln!("pane-activate: begins {}", component.display());
                         // The runtime records the activation as the call
                         // begins, in the instance it runs in; a trap in it
                         // is a crash of the package like any call's,
                         // counted towards pausing it.
-                        if let Err(error) = futures::executor::block_on(
+                        let _ = futures::executor::block_on(
                             runtime.activate_with(&component, Some(data)),
-                        ) {
-                            eprintln!(
-                                "Pane could not activate {}: {error:?}",
-                                component.display()
-                            );
-                        }
-                        eprintln!("pane-activate: done {}", component.display());
+                        );
                     }
                     launcher.lock().activating.remove(&in_flight);
                     launcher.changed();

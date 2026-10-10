@@ -582,8 +582,9 @@ mod tests {
         drop(generation.end(End::Replaced));
         assert_eq!(
             registrations.update_root_item(id, item("again")),
-            Err(replaced(End::Replaced)),
-            "a handle of an ended generation is refused with the message"
+            Err("its registration was undone".into()),
+            "a handle of an ended generation is refused: the undo removed the entry, so it \
+             says the registration is gone rather than why"
         );
         // The undo list is empty after the end, whatever the handle does.
         assert!(registrations.lock().entries.is_empty());
