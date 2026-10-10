@@ -288,7 +288,7 @@ impl Launcher {
 /// is the overlay's.
 fn covered(state: &State) -> (LauncherView, Vec<Entry>) {
     let mut view = state.view.clone();
-    if view.status == Status::Running {
+    if matches!(view.status, Status::Running { .. }) {
         view.status = Status::Idle;
     }
     (view, state.entries.clone())
