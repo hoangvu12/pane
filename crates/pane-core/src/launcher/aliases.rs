@@ -458,13 +458,10 @@ impl Launcher {
                             .find(|offered| offered.manifest_id() == manifest)
                             .map(|offered| offered.title)
                             .unwrap_or_else(|| owner.title());
-                        if !owner.enabled {
-                            format!("{} is disabled", owner.title())
-                        } else if state.paused.is_paused(&owner.identity) {
-                            paused_reason(&owner.title())
-                        } else {
-                            format!("{command} no longer lists it")
-                        }
+                        // A disabled or paused package does not list the
+                        // item either: the alias says the item is gone, as
+                        // the slot and the hotkey do.
+                        format!("{command} no longer lists it")
                     })
                     .unwrap_or_else(|| "its extension is not installed".to_owned());
                 rows.push((

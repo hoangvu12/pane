@@ -258,6 +258,23 @@ fn command_of(state: &State, shortcut: &Shortcut) -> Option<String> {
         .map(|(command, _)| command.as_str().to_owned())
 }
 
+/// The action a `shortcut` runs, if it is recorded for a dynamic root
+/// item that runs an action rather than launching a command: the hotkey
+/// runs the action, as activating its row does.
+fn dynamic_action_of(state: &State, shortcut: &Shortcut) -> Option<super::dynamic::DynamicAction> {
+    let command = state
+        .bindings
+        .registered
+        .iter()
+        .find(|(_, registered)| registered.shortcut == *shortcut)
+        .map(|(command, _)| command.as_str())?;
+    let row = super::dynamic::pinned_by_id(state, command)?;
+    match row.entry {
+        Entry::DynamicAction(action) => Some(action),
+        _ => None,
+    }
+}
+
 fn gone_dynamic(state: &State, shortcut: &Shortcut) -> Option<String> {
     let command = state
         .bindings
@@ -446,8 +463,20 @@ impl Launcher {
             return Some(opening);
         }
         // A dynamic command's row, held by its command and item id: its
-        // launch record names the item.
-        super::dynamic::opening_of(state, command, LaunchSource::Hotkey)
+        // launch record names the item. An item that runs an action has
+        // no command to open; its hotkey runs the action, as activating
+        // its row does.
+        match super::dynamic::pinned_by_id(state, command) {
+            Some(found) => match found.entry {
+                Entry::Open(opening) => Some(opening),
+                _ => None,
+            },
+            None => None,
+        }
+        .map(|mut opening| {
+            opening.launch.source = LaunchSource::Hotkey;
+            opening
+        })
     }
 
     /// Launches the command whose hotkey `shortcut` is, as the system

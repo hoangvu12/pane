@@ -222,6 +222,11 @@ impl Timers {
                     // An `after` timer fires once; its registration lives
                     // on until it is dropped.
                     entry.spent = true;
+                } else if entry.owed {
+                    // The firing it owed while it could not run: one
+                    // firing, and the interval begins again from now, so
+                    // the intervals it missed are not replayed.
+                    entry.next = now.saturating_add(every_ms);
                 } else {
                     // From the firing before, not from now: a clock that
                     // jumped ahead fires every interval it covered, one

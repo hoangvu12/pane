@@ -320,7 +320,7 @@ fn resolve(launcher: &Launcher, state: &State, target: &PinTarget) -> Resolved {
 /// registered the slot does what its row does; while it is not, the slot
 /// keeps its place and says so, as a missing indexed result's does.
 fn resolve_dynamic(state: &State, _target: &PinTarget, command: &str, item: &str) -> Resolved {
-    let Some((package, registration)) = registered(state, command) else {
+    let Some((_, registration)) = registered(state, command) else {
         return Resolved {
             title: missing_title(command),
             detail: None,
