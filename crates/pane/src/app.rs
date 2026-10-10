@@ -196,8 +196,7 @@ impl LauncherWindow {
         // #242): laid out exactly, at the size and weight the tree's text
         // styles resolve to. `launcher` is moved below, so it is installed
         // first.
-        let text_system = window.text_system().clone();
-        launcher.set_text_measures(measures_of(text_system));
+        launcher.set_text_measures(measures_of(window.text_system().clone()));
         let results = result_list::ResultList::new(&crate::settings::launcher_visuals(cx).theme);
         // Quitting ends development: its watchers go and a running build
         // is stopped with the processes it started.

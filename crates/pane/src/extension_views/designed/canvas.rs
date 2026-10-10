@@ -239,18 +239,12 @@ pub(super) fn canvas(
     // the drawing area was last laid out, which the canvas that paints it
     // compares against. The drag a press holds is read by the events that
     // move it, by the canvas's place in the tree.
-    let (focus, bounds) = match draw
-        .state
-        .get(path)
-        .map(|state| match &state.held {
-            Held::Canvas { focus, bounds, .. } => (Some(focus.clone()), bounds.clone()),
-            _ => None,
-        })
-        .flatten()
-    {
-        Some(state) => state,
-        None => (None, Rc::new(Cell::new(Bounds::default()))),
-    };
+    let held = draw.state.get(path).and_then(|state| match &state.held {
+        Held::Canvas { focus, bounds, .. } => Some((Some(focus.clone()), bounds.clone())),
+        _ => None,
+    });
+    let (focus, bounds) =
+        held.unwrap_or_else(|| (None, Rc::new(Cell::new(Bounds::default()))));
 
     // What the events the canvas raises carry: the node's key, the render
     // whose tree is drawn (the tree the user saw), and the handlers the
@@ -841,7 +835,8 @@ fn sized(
     style: Option<pane_core::TextStyle>,
     theme: &crate::ui::theme::Theme,
 ) -> f32 {
-    size.map(|Finite(pixels)| pixels).unwrap_or(tokens::text_style(style, theme).0 .0)
+    let (style_size, _, _) = tokens::text_style(style, theme);
+    size.map(|Finite(pixels)| pixels).unwrap_or(style_size.as_f32())
 }
 
 /// A text operation's weight: its own, or its token style's.
@@ -850,9 +845,10 @@ fn weighted(
     style: Option<pane_core::TextStyle>,
     theme: &crate::ui::theme::Theme,
 ) -> f32 {
+    let (_, style_weight, _) = tokens::text_style(style, theme);
     weight
         .map(|Finite(units)| units)
-        .unwrap_or(tokens::text_style(style, theme).1 .0)
+        .unwrap_or(style_weight.0)
 }
 
 /// A text operation's family: its token style's.
@@ -866,7 +862,7 @@ fn family(
 /// A text operation's line height: its size times the theme's rhythm.
 fn line_height(style: Option<pane_core::TextStyle>, theme: &crate::ui::theme::Theme) -> f32 {
     let (size, _, _) = tokens::text_style(style, theme);
-    size.0 * theme.typography.line_height
+    size.as_f32() * theme.typography.line_height
 }
 
 /// Paints `ops` in `area`, the canvas's drawing area: the path operations
@@ -1055,7 +1051,7 @@ impl LauncherWindow {
         window: &mut Window,
         cx: &mut gpui::Context<Self>,
     ) {
-        let (width, height) = (area.size.width.0, area.size.height.0);
+        let (width, height) = (area.size.width.as_f32(), area.size.height.as_f32());
         let Some(entry) = self.canvas_entry(path) else {
             return;
         };
@@ -1100,7 +1096,7 @@ impl LauncherWindow {
             return None;
         };
         let local = position - bounds.get().origin;
-        Some((local.x.0.floor(), local.y.0.floor()))
+        Some((local.x.as_f32().floor(), local.y.as_f32().floor()))
     }
 
     /// The view and the canvas's keyed state at `path`, when one is open.
@@ -1382,7 +1378,9 @@ impl LauncherWindow {
             if let Some(at) = at {
                 drag.last = at;
             }
-            std::mem::replace(&mut drag.pressed, false)
+            let held = drag.pressed;
+            drag.pressed = false;
+            held
         });
         if !released.unwrap_or(false) {
             return;
@@ -1487,7 +1485,9 @@ impl LauncherWindow {
             return;
         };
         let (unit, (dx, dy)) = match delta {
-            gpui::ScrollDelta::Pixels(delta) => ("pixel", (delta.x.0, delta.y.0)),
+            gpui::ScrollDelta::Pixels(delta) => {
+                ("pixel", (delta.x.as_f32(), delta.y.as_f32()))
+            }
             gpui::ScrollDelta::Lines(delta) => ("line", (delta.x, delta.y)),
         };
         let payload = event(
@@ -1616,14 +1616,14 @@ fn event(event: &str, fields: &[Field]) -> String {
 /// A pointer event's payload: where it happened, which button, how many
 /// clicks, and the modifiers held.
 fn pointer(
-    event: &str,
+    kind: &str,
     at: (f32, f32),
     button: &str,
     clicks: usize,
     modifiers: &gpui::Modifiers,
 ) -> String {
     event(
-        event,
+        kind,
         &[
             Field::Number("x", at.0),
             Field::Number("y", at.1),
@@ -1686,7 +1686,189 @@ fn escaped(text: &str) -> String {
 /// with the theme's typography (its sizes are the same in either
 /// appearance).
 pub(crate) fn measures_of(
-    system: gpui::WindowTextSystem,
+    system: std::sync::Arc<gpui::WindowTextSystem>,
+) -> std::sync::Arc<dyn Fn(&str, &str) -> (f32, f32) + Send + Sync> {
+    std::sync::Arc::new(move |text: &str, style: &str| {
+        let theme = crate::ui::theme::Theme::dark();
+        // The style names what a canvas text operation does — a token
+        // style, a size in pixels, a weight — read without a parser, as
+        // the payloads are.
+        let named = field_str(style, "style").and_then(|token| match token.as_str() {
+            "heading" => Some(pane_core::TextStyle::Heading),
+            "title" => Some(pane_core::TextStyle::Title),
+            "body" => Some(pane_core::TextStyle::Body),
+            "caption" => Some(pane_core::TextStyle::Caption),
+            "mono" => Some(pane_core::TextStyle::Mono),
+            "small-mono" => Some(pane_core::TextStyle::SmallMono),
+            _ => None,
+        });
+        let (style_size, style_weight, family) = tokens::text_style(named, &theme);
+        let size = field_str(style, "size")
+            .and_then(|size| size.parse().ok())
+            .map(|size: f32| px(size.clamp(1., 128.)))
+            .unwrap_or(style_size);
+        let weight = field_str(style, "weight")
+            .and_then(|weight| weight.parse().ok())
+            .map(|weight: f32| FontWeight::from(weight.clamp(100., 900.)))
+            .unwrap_or(style_weight);
+        let run = gpui::TextRun {
+            len: text.len(),
+            font: gpui::Font {
+                family: family.clone(),
+                weight,
+                ..Default::default()
+            },
+            color: gpui::Hsla::default(),
+            background_color: None,
+            underline: None,
+            strikethrough: None,
+            letter_spacing: None,
+        };
+        let line_height = size * theme.typography.line_height;
+        match system.shape_text(text, size, &[run], None, None) {
+            Ok(lines) => {
+                let mut extent = gpui::Size::<Pixels>::default();
+                for line in &lines {
+                    let line = line.size(line_height);
+                    extent.width = extent.width.max(line.width);
+                    extent.height = extent.height + line.height;
+                }
+                (extent.width.as_f32(), extent.height.as_f32())
+            }
+            Err(_) => (0., 0.),
+        }
+    })
+}
+
+/// The string a JSON object's `"name"` field holds, when it names one.
+fn field_str(json: &str, name: &str) -> Option<String> {
+    let at = json.find(&format!("\"{name}\""))?;
+    let rest = json[at + name.len() + 2..].trim_start();
+    let rest = rest.strip_prefix(':')?.trim_start();
+    let rest = rest.strip_prefix('"')?;
+    let end = rest.find('"')?;
+    Some(rest[..end].to_owned())
+}
+
+/// The canvas node keyed `key` in the tree on screen, when it is drawn:
+/// its handlers, as the waiting move is raised on the tree now on screen.
+fn canvas_at(tree: Option<&pane_core::DesignedTree>, key: &str) -> Option<CanvasHandlers> {
+    fn held(node: &pane_core::Node, key: &str) -> Option<CanvasHandlers> {
+        match &node.kind {
+            pane_core::NodeKind::Canvas(canvas) if node.key.as_deref() == Some(key) => {
+                Some(canvas.handlers.clone())
+            }
+            _ => node
+                .fallback
+                .as_deref()
+                .and_then(|fallback| held(fallback, key))
+                .or_else(|| node.children.iter().find_map(|child| held(child, key))),
+        }
+    }
+    held(&tree?.root, key)
+}
+
+/// One field of a canvas event's payload.
+enum Field<'a> {
+    Number(&'static str, f32),
+    Text(&'static str, &'a str),
+    Boolean(&'static str, bool),
+}
+
+/// A canvas event's payload: `{"event": <event>, <fields>}`.
+fn event(event: &str, fields: &[Field]) -> String {
+    let mut payload = format!("{{\"event\":\"{}\"", escaped(event));
+    for field in fields {
+        match field {
+            Field::Number(name, value) => {
+                let _ = write!(payload, ",\"{name}\":{}", rounded(*value));
+            }
+            Field::Text(name, value) => {
+                let _ = write!(payload, ",\"{name}\":\"{}\"", escaped(value));
+            }
+            Field::Boolean(name, value) => {
+                let _ = write!(payload, ",\"{name}\":{value}");
+            }
+        }
+    }
+    payload.push('}');
+    payload
+}
+
+/// A pointer event's payload: where it happened, which button, how many
+/// clicks, and the modifiers held.
+fn pointer(
+    kind: &str,
+    at: (f32, f32),
+    button: &str,
+    clicks: usize,
+    modifiers: &gpui::Modifiers,
+) -> String {
+    event(
+        kind,
+        &[
+            Field::Number("x", at.0),
+            Field::Number("y", at.1),
+            Field::Text("button", button),
+            Field::Number("clicks", clicks as f32),
+            Field::Boolean("ctrl", modifiers.control),
+            Field::Boolean("alt", modifiers.alt),
+            Field::Boolean("shift", modifiers.shift),
+        ],
+    )
+}
+
+fn number(name: &'static str, value: f32) -> Field<'static> {
+    Field::Number(name, value)
+}
+
+fn text<'a>(name: &'static str, value: &'a str) -> Field<'a> {
+    Field::Text(name, value)
+}
+
+fn boolean(name: &'static str, value: bool) -> Field<'static> {
+    Field::Boolean(name, value)
+}
+
+/// A number as a payload names it: no trailing `.0`.
+fn rounded(value: f32) -> String {
+    if value.fract() == 0. && value.abs() < 1e15 {
+        format!("{}", value as i64)
+    } else {
+        format!("{value}")
+    }
+}
+
+/// `text` as a JSON string's content, escaped.
+fn escaped(text: &str) -> String {
+    let mut escaped = String::with_capacity(text.len());
+    for character in text.chars() {
+        match character {
+            '"' => escaped.push_str("\\\""),
+            '\\' => escaped.push_str("\\\\"),
+            '\n' => escaped.push_str("\\n"),
+            '\r' => escaped.push_str("\\r"),
+            '\t' => escaped.push_str("\\t"),
+            other if (other as u32) < 0x20 => {
+                escaped.push_str(&format!("\\u{:04x}", other as u32));
+            }
+            other => escaped.push(other),
+        }
+    }
+    escaped
+}
+
+/// What measures text for a designed view's canvases
+/// (`pane:extension/view.measure-text`, #242): the fonts the window drew
+/// the view with. One `style` JSON is read as a canvas text operation's
+/// styling is — a token style, a size in pixels, a weight from 100 to 900,
+/// properties it does not know ignored, as a tree's are — and the text is
+/// shaped in the type they resolve to, its width the longest line's and
+/// its height the style's line height times its lines. Text is measured
+/// with the theme's typography (its sizes are the same in either
+/// appearance).
+pub(crate) fn measures_of(
+    system: std::sync::Arc<gpui::WindowTextSystem>,
 ) -> std::sync::Arc<dyn Fn(&str, &str) -> (f32, f32) + Send + Sync> {
     std::sync::Arc::new(move |text: &str, style: &str| {
         let theme = crate::ui::theme::Theme::dark();
