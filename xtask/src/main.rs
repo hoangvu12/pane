@@ -6,24 +6,31 @@
 //!   helper sample's native helper built for this system, the npm sample
 //!   into `target/guests/npm/`, packed as npm packs it, and the Git sample
 //!   into `target/guests/git/greeter/`, its source with its built component
-//!   under `dist/`, as a release revision holds it.
-//! - `js-guests`: rebuild the prebuilt JS/TS sample components with the pinned
-//!   toolchain in `tools/componentize-js` (prerequisites: guests/README.md),
-//!   then run `guests`.
-//! - `ci`: the lints of `ci-lints`, then the tests of `ci-tests`.
-//! - `ci-lints`: check formatting, the prebuilt JS/TS samples, the SDKs'
-//!   packages (`sdks`) and clippy: the half of `ci` that runs no tests and
-//!   builds no guest but the Rust SDK.
-//! - `sdks`: check that the SDKs package as they would be published,
-//!   publishing nothing: the Rust SDK's copy of the WIT is `wit/`, `cargo
-//!   publish --dry-run` packages `pane-extension` and builds it from the
-//!   package alone, and `npm pack` packs `@pane-app/extension` into
-//!   `target/sdks/`. Publishing them is a person's step, never CI's (#128).
+//!   under `dist/`, as a release revision holds it. It also builds the
+//!   componentizer (`componentize-qjs`'s `p3_build` example, with the
+//!   committed wasm parts) into `target/guests/componentizer/`, the binary
+//!   a development build of an installed Pane spawns when the package has
+//!   no `@pane-app/cli` platform package of its own.
+//! - `js-guests`: rebuild the prebuilt JS/TS sample components through
+//!   `pane-build`'s JavaScript build (prerequisites: Node.js 22+ with npm;
+//!   the samples' `package.json`s pin esbuild and TypeScript), then run
+//!   `guests`.
 //! - `schema`: generate `pane.json`'s JSON Schema from pane-core's own
 //!   manifest types and check the committed copy against it (`--write` to
 //!   rewrite the file), so the schema cannot drift from what Pane reads
 //!   (#224). `ci-lints` runs it, and ci-fast.yml regenerates a stale copy
 //!   on a push and uploads it as an artifact, as it does the JS/TS samples.
+//! - `ci`: the lints of `ci-lints`, then the tests of `ci-tests`.
+//! - `ci-lints`: check formatting, the committed `pane.json` schema, the
+//!   prebuilt JS/TS samples, the SDKs' packages (`sdks`) and clippy: the
+//!   half of `ci` that runs no tests and builds no guest but the Rust SDK.
+//!   The prebuilt-samples check needs no toolchain at all (#218): it
+//!   verifies digests and staleness in `js_guests`.
+//! - `sdks`: check that the SDKs package as they would be published,
+//!   publishing nothing: the Rust SDK's copy of the WIT is `wit/`, `cargo
+//!   publish --dry-run` packages `pane-extension` and builds it from the
+//!   package alone, and `npm pack` packs `@pane-app/extension` into
+//!   `target/sdks/`. Publishing them is a person's step, never CI's (#128).
 //! - `ci-tests`: build the guests, then run the workspace's tests with
 //!   cargo-nextest, which retries a failing test twice before the run
 //!   fails for it, so one flaky failure costs time, not the run. Options
@@ -54,6 +61,7 @@
 //!   fails when a measure is over its generous ceiling. `ci-branch.yml`'s
 //!   Linux tests run it in one shard, after the tests.
 
+mod js_guests;
 mod package;
 mod zip;
 
@@ -68,46 +76,6 @@ const GUEST_TARGET: &str = "wasm32-wasip2";
 /// extensions' payloads, the Linux package) are the same on every system,
 /// so a source serves one integrity everywhere.
 pub(crate) const PACKED_MTIME: u64 = 499_162_500;
-
-/// Components built by `js-guests` and committed, so that normal builds and
-/// tests need no JavaScript toolchain.
-const PREBUILT: &[&str] = &[
-    "sample_js",
-    "sample_ts",
-    "sample_settings_js",
-    "sample_settings_ts",
-    "sample_operations_js",
-    "sample_operations_ts",
-    "sample_applications_js",
-    "sample_applications_ts",
-    "sample_query_js",
-    "sample_query_ts",
-    "sample_no_view_js",
-    "sample_no_view_ts",
-    "sample_search_js",
-    "sample_search_ts",
-    "sample_helper_js",
-    "sample_helper_ts",
-    "sample_files_js",
-    "sample_files_ts",
-    "sample_clipboard_js",
-    "sample_clipboard_ts",
-    "sample_npm_js",
-    "sample_schedule_js",
-    "sample_schedule_ts",
-    "sample_service_js",
-    "sample_service_ts",
-    "sample_actions_js",
-    "sample_actions_ts",
-    "sample_preferences_js",
-    "sample_preferences_ts",
-    "sample_arguments_js",
-    "sample_arguments_ts",
-    "sample_icons_js",
-    "sample_icons_ts",
-    "sample_programs_js",
-    "sample_programs_ts",
-];
 
 fn main() -> ExitCode {
     let task = std::env::args().nth(1);
@@ -130,8 +98,6 @@ fn main() -> ExitCode {
         };
     }
     let dev = std::env::args().any(|arg| arg == "--dev");
-    // `schema --write` rewrites the committed schema it differs from.
-    let write = std::env::args().any(|arg| arg == "--write");
     // The version a package names its program by, when it is not this
     // workspace's own: dotted numbers, as Pane reads versions.
     let version = std::env::args()
@@ -151,12 +117,14 @@ fn main() -> ExitCode {
                 })
         })
         .transpose();
+    // `schema --write` rewrites the committed schema it differs from.
+    let write = std::env::args().any(|arg| arg == "--write");
     let result = match (task.as_deref(), version) {
         (Some("guests"), _) => guests(),
-        (Some("js-guests"), _) => js_guests(),
+        (Some("js-guests"), _) => js_guests(std::env::args().any(|arg| arg == "--check")),
+        (Some("schema"), _) => schema(write),
         (Some("ci-lints"), _) => ci_lints(),
         (Some("sdks"), _) => sdks(),
-        (Some("schema"), _) => schema(write),
         (Some("file-index-guard"), _) => file_index_guard(),
         (Some("package-linux"), Ok(version)) => package::linux(dev, version),
         (Some("package-windows"), Ok(version)) => package::windows(dev, version),
@@ -165,7 +133,8 @@ fn main() -> ExitCode {
         _ => Err("usage: cargo xtask \
              <guests|js-guests|ci-lints|sdks|schema|file-index-guard|package-linux|\
              package-windows|package-macos> [--dev] [--package-version <version>], cargo xtask \
-             schema [--write], cargo xtask <ci|ci-tests> [nextest options], or cargo xtask \
+             schema [--write], cargo xtask js-guests --check (the staleness check alone), \
+             cargo xtask <ci|ci-tests> [nextest options], or cargo xtask \
              file-index-bench [options]"
             .into()),
     };
@@ -260,7 +229,7 @@ fn guests() -> Result<(), String> {
                 .map_err(|error| format!("copy {} failed: {error}", built.display()))?;
         }
     }
-    for name in PREBUILT {
+    for (name, _) in js_guests::SAMPLES {
         let prebuilt = root.join(format!("guests/prebuilt/{name}.wasm"));
         std::fs::copy(&prebuilt, out.join(format!("{name}.wasm")))
             .map_err(|error| format!("copy {} failed: {error}", prebuilt.display()))?;
@@ -305,9 +274,57 @@ fn guests() -> Result<(), String> {
         copy_package_files(&root.join("guests/packages").join(package), &dest)?;
     }
     echo_helper(&root, &out)?;
+    componentizer(&root, &out)?;
     npm_sample(&root, &out)?;
     git_sample(&root, &out)?;
     println!("guests built into {}", out.display());
+    Ok(())
+}
+
+/// Builds the componentizer for this system — `componentize-qjs`'s
+/// `p3_build` example, the vendored crate of the workspace — and puts it,
+/// with the committed wasm parts, in `target/guests/componentizer/`: the
+/// binary a development build spawns when it does not link the componentizer
+/// in-process (a Pane checkout's default, see `pane/src/main.rs`), and the
+/// tests' stand-in for the `@pane-app/cli` platform package a package
+/// installs with `npm install` (#218's development-mode contract; #219's
+/// packages).
+fn componentizer(root: &Path, out: &Path) -> Result<(), String> {
+    run(cargo().current_dir(root).args([
+        "build",
+        "--locked",
+        "-p",
+        "componentize-qjs",
+        "--example",
+        "p3_build",
+    ]))?;
+    // Where cargo built it: `CARGO_TARGET_DIR`, else `CARGO_BUILD_TARGET_DIR`
+    // (`build.target-dir` from the environment), else `target`, in the
+    // development profile's `debug`, as the tests built the workspace.
+    let target = ["CARGO_TARGET_DIR", "CARGO_BUILD_TARGET_DIR"]
+        .into_iter()
+        .find_map(std::env::var_os)
+        .map(|dir| root.join(dir))
+        .unwrap_or_else(|| root.join("target"));
+    let binary = target
+        .join("debug/examples")
+        .join(format!("p3_build{}", std::env::consts::EXE_SUFFIX));
+    let dest = out.join("componentizer");
+    std::fs::create_dir_all(&dest).map_err(|error| error.to_string())?;
+    let componentizer = if cfg!(windows) {
+        "componentize-qjs-p3.exe"
+    } else {
+        "componentize-qjs-p3"
+    };
+    std::fs::copy(&binary, dest.join(componentizer))
+        .map_err(|error| format!("copy {} failed: {error}", binary.display()))?;
+    for part in ["runtime.wasm", "libc.so"] {
+        std::fs::copy(
+            root.join("tools/componentize-js/wasm-parts").join(part),
+            dest.join(part),
+        )
+        .map_err(|error| format!("copy {part} failed: {error}"))?;
+    }
     Ok(())
 }
 
@@ -506,80 +523,23 @@ const SAMPLE_PACKAGES: [(&str, &str); 59] = [
     ("sample-programs-ts", "sample_programs_ts"),
 ];
 
-/// Rebuilds `guests/prebuilt/` from the JS/TS sample sources, then refreshes
-/// `target/guests/`. `PYTHON` names the interpreter if the default is absent.
-fn js_guests() -> Result<(), String> {
-    run(&mut pane_js("samples"))?;
+/// Rebuilds `guests/prebuilt/` from the JS/TS sample sources with
+/// `pane-build`'s JavaScript build, then refreshes `target/guests/`. With
+/// `--check`, only verifies the committed components against their manifest
+/// and the current sources (the staleness half of `ci-lints`), without
+/// building anything.
+fn js_guests(check_only: bool) -> Result<(), String> {
+    if check_only {
+        return js_guests::check();
+    }
+    js_guests::rebuild()?;
     guests()
 }
 
-/// Runs a `tools/componentize-js/pane_js.py` subcommand with `PYTHON`, or the
-/// platform's usual interpreter name.
-fn pane_js(subcommand: &str) -> Command {
-    let python = std::env::var_os("PYTHON")
-        .unwrap_or_else(|| if cfg!(windows) { "python" } else { "python3" }.into());
-    let mut command = Command::new(python);
-    command
-        .current_dir(root())
-        .args(["tools/componentize-js/pane_js.py", subcommand]);
-    command
-}
-
-/// The lints half of `ci`: the formatting checks, the committed pane.json
-/// schema, the prebuilt-samples check, the SDKs' packages and clippy —
-/// everything that runs no tests and builds no guest but the Rust SDK,
-/// which `sdks` builds from its package. `ci-branch.yml` runs this as a job
-/// beside `ci-tests`, so the lints and the tests of a push finish in the
-/// time of the slower one.
-fn ci_lints() -> Result<(), String> {
-    // Formatting first: it is free, so a formatting error is seen at once
-    // instead of after the guests and the checks have been built.
-    let root = root();
-    run(cargo().current_dir(&root).args(["fmt", "--all", "--check"]))?;
-    for dir in [
-        "guests",
-        "guests/fixtures/mixed-p2",
-        "guests/helpers/echo",
-        "guests/hello-rust",
-    ] {
-        run(cargo()
-            .current_dir(root.join(dir))
-            .args(["fmt", "--all", "--check"]))?;
-    }
-    // The committed pane.json schema is the one Pane's manifest types
-    // generate, before anything slower runs.
-    schema(false)?;
-    // The prebuilt JS/TS samples must match their sources and pins.
-    run(&mut pane_js("check"))?;
-    sdks()?;
-    let clippy = [
-        "clippy",
-        "--locked",
-        "--workspace",
-        "--all-targets",
-        "--",
-        "-D",
-        "warnings",
-    ];
-    run(cargo().current_dir(&root).args(clippy))?;
-    // The helper sample's native helper, an ordinary program of its own.
-    run(cargo()
-        .current_dir(root.join("guests/helpers/echo"))
-        .args(clippy))
-}
-
-/// Where the generated schema is committed: beside the SDK that ships it,
-/// inside the `@pane-app/extension` package (`npm pack` carries the folder).
-const SCHEMA: &str = "guests/js/schema/pane.schema.json";
-
-/// Generates `pane.json`'s JSON Schema from pane-core's manifest types and
-/// checks the committed copy against it, or rewrites it with `--write`.
-/// Because the schema is generated where the types are, the two cannot
-/// drift: a change to what `pane.json` may hold changes the schema, and
-/// this task makes the committed copy follow (CI runs it in `ci-lints` and
-/// regenerates a stale copy on a push, uploading it as the `manifest-schema`
-/// artifact for the implementing agent to commit, as it does the JS/TS
-/// samples).
+/// Checks the committed `pane.json` schema against what Pane's manifest
+/// types generate, or rewrites it (`--write`). `ci-lints` runs the check,
+/// and ci-fast.yml regenerates a stale copy on a push and uploads it as an
+/// artifact, as it does the JS/TS samples (#224).
 fn schema(write: bool) -> Result<(), String> {
     let path = root().join(SCHEMA);
     let generated = pane_core::schema::manifest_schema();
@@ -609,6 +569,52 @@ fn schema(write: bool) -> Result<(), String> {
         .map_err(|error| format!("write {} failed: {error}", path.display()))?;
     println!("wrote {}", path.display());
     Ok(())
+}
+
+/// Where the generated schema is committed: beside the SDK that ships it,
+/// inside the `@pane-app/extension` package (`npm pack` carries the folder).
+const SCHEMA: &str = "guests/js/schema/pane.schema.json";
+
+/// The lints half of `ci`: the formatting checks, the prebuilt-samples
+/// check, the SDKs' packages and clippy — everything that runs no tests
+/// and builds no guest but the Rust SDK, which `sdks` builds from its
+/// package. `ci-branch.yml` runs this as a job beside `ci-tests`, so the
+/// lints and the tests of a push finish in the time of the slower one.
+fn ci_lints() -> Result<(), String> {
+    // Formatting first: it is free, so a formatting error is seen at once
+    // instead of after the guests and the checks have been built.
+    let root = root();
+    run(cargo().current_dir(&root).args(["fmt", "--all", "--check"]))?;
+    for dir in [
+        "guests",
+        "guests/fixtures/mixed-p2",
+        "guests/helpers/echo",
+        "guests/hello-rust",
+    ] {
+        run(cargo()
+            .current_dir(root.join(dir))
+            .args(["fmt", "--all", "--check"]))?;
+    }
+    // The committed pane.json schema is the one Pane's manifest types
+    // generate, before anything slower runs.
+    schema(false)?;
+    // The prebuilt JS/TS samples must match their sources and pins.
+    js_guests::check()?;
+    sdks()?;
+    let clippy = [
+        "clippy",
+        "--locked",
+        "--workspace",
+        "--all-targets",
+        "--",
+        "-D",
+        "warnings",
+    ];
+    run(cargo().current_dir(&root).args(clippy))?;
+    // The helper sample's native helper, an ordinary program of its own.
+    run(cargo()
+        .current_dir(root.join("guests/helpers/echo"))
+        .args(clippy))
 }
 
 /// Checks that the SDKs package as they would be published, publishing
