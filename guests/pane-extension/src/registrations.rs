@@ -34,14 +34,14 @@ use core::pin::Pin;
 
 use alloc::boxed::Box;
 use alloc::collections::BTreeMap;
-use alloc::sync::Arc;
 use alloc::format;
-use alloc::string::{String, ToString};
+use alloc::string::String;
+use alloc::sync::Arc;
 use alloc::vec::Vec;
 
 use crate::icon::{Accessory, Icon, Look};
-use crate::registrations::exports::pane::extension::events::{Event, WatcherChanges};
 use crate::registrations::exports::pane::extension::events as events_exported;
+use crate::registrations::exports::pane::extension::events::{Event, WatcherChanges};
 
 wit_bindgen::generate!({
     path: "wit",
@@ -236,7 +236,7 @@ where
     A: Future<Output = Result<(), String>> + 'static,
 {
     let tag = tag("timer");
-    TIMERS.insert(tag.clone(), Box::new(move || Box::pin(run()) as Answer));
+    TIMERS.insert(tag.clone(), Arc::new(move || Box::pin(run()) as Answer));
     if every {
         registering::timer_every(seconds, &tag)
     } else {
@@ -402,7 +402,7 @@ impl Item {
             section: None,
             destructive: false,
             icon: None,
-            run: Box::new(move || Box::pin(action()) as Answer),
+            run: Arc::new(move || Box::pin(action()) as Answer),
         });
         self
     }
@@ -484,7 +484,7 @@ impl Action {
             section: None,
             destructive: false,
             icon: None,
-            run: Box::new(move || Box::pin(run()) as Answer),
+            run: Arc::new(move || Box::pin(run()) as Answer),
         }
     }
 

@@ -118,7 +118,9 @@ fn outcome(item_id: &str) -> Result<String, String> {
         "update" => {
             let item = held_item("replaced");
             match HELD.0.borrow().as_ref() {
-                Some(handle) => handle.replace(item).map(|()| "Updated the held item".into()),
+                Some(handle) => handle
+                    .replace(item)
+                    .map(|()| "Updated the held item".into()),
                 None => Err("no item is held".into()),
             }
         }
@@ -130,10 +132,7 @@ fn outcome(item_id: &str) -> Result<String, String> {
             let many = count(MANY);
             let mut registered = 0;
             for index in 0..=many {
-                match registrations::root_item(
-                    COMMAND,
-                    held_item(&format!("many{index}")),
-                ) {
+                match registrations::root_item(COMMAND, held_item(&format!("many{index}"))) {
                     Ok(_) => registered += 1,
                     Err(refusal) => return Ok(format!("{registered} then refused: {refusal}")),
                 }
@@ -182,8 +181,10 @@ fn outcome(item_id: &str) -> Result<String, String> {
             }
         }
         "provide" => {
-            let capability =
-                settings::get(CAPABILITY).ok().flatten().unwrap_or_else(|| "fixture:held@1".into());
+            let capability = settings::get(CAPABILITY)
+                .ok()
+                .flatten()
+                .unwrap_or_else(|| "fixture:held@1".into());
             match registrations::provide(&capability) {
                 Ok(_) => Ok(format!("Provided {capability}")),
                 Err(refusal) => Ok(format!("refused: {refusal}")),
@@ -228,59 +229,58 @@ impl Command for Fixture {
                 .subtitle(subtitle)
                 .on_action(move || act(id))
         };
-        Ok(List::new(format!(
-            "Registrations fixture: {} firings",
-            counted(FIRED)
-        ))
-        .item(item(
-            "held",
-            "Register the held item",
-            "A dynamic root item whose handle this instance keeps",
-        ))
-        .item(item(
-            "update",
-            "Update the held item",
-            "Replaces it through the handle; the refusal names what replaced this code",
-        ))
-        .item(item(
-            "drop",
-            "Drop the held item",
-            "Drops the handle, which removes the row",
-        ))
-        .item(item(
-            "items",
-            "Register many items",
-            "The settings key `many` plus one, so the last is refused with the limit",
-        ))
-        .item(item(
-            "timers",
-            "Register many timers",
-            "The settings key `many` plus one, so the last is refused with the limit",
-        ))
-        .item(item(
-            "fast",
-            "Register a 0-second timer",
-            "Refused: below Pane's 1-second minimum",
-        ))
-        .item(item(
-            "slow",
-            "Register a 31-day timer",
-            "Refused: beyond Pane's 30-day maximum",
-        ))
-        .item(item(
-            "watch",
-            "Watch the folder",
-            "The settings key `folder`'s path; its changes count in the content",
-        ))
-        .item(item(
-            "provide",
-            "Provide the capability",
-            "The settings key `capability`'s name, declared and marked in pane.json",
-        ))
-        .item(item(
-            "undeclared",
-            "Provide the undeclared capability",
-            "fixture:nobody@1, which no pane.json declares",
-        )))
+        Ok(
+            List::new(format!("Registrations fixture: {} firings", counted(FIRED)))
+                .item(item(
+                    "held",
+                    "Register the held item",
+                    "A dynamic root item whose handle this instance keeps",
+                ))
+                .item(item(
+                    "update",
+                    "Update the held item",
+                    "Replaces it through the handle; the refusal names what replaced this code",
+                ))
+                .item(item(
+                    "drop",
+                    "Drop the held item",
+                    "Drops the handle, which removes the row",
+                ))
+                .item(item(
+                    "items",
+                    "Register many items",
+                    "The settings key `many` plus one, so the last is refused with the limit",
+                ))
+                .item(item(
+                    "timers",
+                    "Register many timers",
+                    "The settings key `many` plus one, so the last is refused with the limit",
+                ))
+                .item(item(
+                    "fast",
+                    "Register a 0-second timer",
+                    "Refused: below Pane's 1-second minimum",
+                ))
+                .item(item(
+                    "slow",
+                    "Register a 31-day timer",
+                    "Refused: beyond Pane's 30-day maximum",
+                ))
+                .item(item(
+                    "watch",
+                    "Watch the folder",
+                    "The settings key `folder`'s path; its changes count in the content",
+                ))
+                .item(item(
+                    "provide",
+                    "Provide the capability",
+                    "The settings key `capability`'s name, declared and marked in pane.json",
+                ))
+                .item(item(
+                    "undeclared",
+                    "Provide the undeclared capability",
+                    "fixture:nobody@1, which no pane.json declares",
+                )),
+        )
     }
 }

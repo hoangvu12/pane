@@ -174,8 +174,8 @@ impl publish::Guest for Registrations {
 
 /// The `name` of an operation's JSON input.
 fn name_of(input: &str) -> Result<String, String> {
-    let value: serde_json::Value = serde_json::from_str(input)
-        .map_err(|error| format!("the input is not JSON: {error}"))?;
+    let value: serde_json::Value =
+        serde_json::from_str(input).map_err(|error| format!("the input is not JSON: {error}"))?;
     Ok(value
         .get("name")
         .and_then(|name| name.as_str())
@@ -221,12 +221,11 @@ impl Command for Registrations {
             }),
         )
         .item(
-            pane_extension::Item::new("watched", "The watched folder")
-                .subtitle(if watching {
-                    "The folder this settings key names; changes update the row in root search"
-                } else {
-                    "None: the settings key `folder` is empty or unset"
-                }),
+            pane_extension::Item::new("watched", "The watched folder").subtitle(if watching {
+                "The folder this settings key names; changes update the row in root search"
+            } else {
+                "None: the settings key `folder` is empty or unset"
+            }),
         ))
     }
 }

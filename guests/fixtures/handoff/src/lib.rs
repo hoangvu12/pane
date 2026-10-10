@@ -87,11 +87,13 @@ impl Command for Fixture {
     async fn render() -> Result<List, String> {
         Ok(List::new(title())
             .item(
-                Item::new("add", format!("Add one ({} so far)", *COUNTER.borrow())).on_action(|| async {
-                    *COUNTER.borrow_mut() += 1;
-                    show_toast(Toast::success("Counted one more"));
-                    Ok(())
-                }),
+                Item::new("add", format!("Add one ({} so far)", *COUNTER.borrow())).on_action(
+                    || async {
+                        *COUNTER.borrow_mut() += 1;
+                        show_toast(Toast::success("Counted one more"));
+                        Ok(())
+                    },
+                ),
             )
             .item(
                 Item::new("hold", "Hold for ten seconds").on_action(|| async {
@@ -104,13 +106,11 @@ impl Command for Fixture {
                     Ok(())
                 }),
             )
-            .item(
-                Item::new("crash", "Crash the command").on_action(|| async {
-                    // Traps, so Pane drops this instance: a test can then
-                    // replace the code with no instance left to snapshot.
-                    panic!("crashed on purpose")
-                }),
-            ))
+            .item(Item::new("crash", "Crash the command").on_action(|| async {
+                // Traps, so Pane drops this instance: a test can then
+                // replace the code with no instance left to snapshot.
+                panic!("crashed on purpose")
+            })))
     }
 }
 
