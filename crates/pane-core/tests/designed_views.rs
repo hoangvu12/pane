@@ -162,8 +162,12 @@ impl Pane {
 fn text_of(node: &Node) -> Option<String> {
     let plain = |text: &pane_core::Text| match &text.content {
         TextContent::Plain(content) => Some(content.clone()),
-        TextContent::Spans(spans) => (!spans.is_empty())
-            .then(|| spans.iter().map(|span| span.text.clone()).collect::<String>()),
+        TextContent::Spans(spans) => (!spans.is_empty()).then(|| {
+            spans
+                .iter()
+                .map(|span| span.text.clone())
+                .collect::<String>()
+        }),
     };
     match &node.kind {
         NodeKind::Text(text) => plain(text),
@@ -417,39 +421,39 @@ fn a_view_the_guest_refuses_to_open_is_an_error() {
 fn kinds_of(node: &Node) -> Vec<String> {
     let kind = |node: &Node| -> String {
         match &node.kind {
-        NodeKind::Column(_) => "column".to_owned(),
-        NodeKind::Row(_) => "row".to_owned(),
-        NodeKind::Stack(_) => "stack".to_owned(),
-        NodeKind::Scroll { .. } => "scroll".to_owned(),
-        NodeKind::Spacer => "spacer".to_owned(),
-        NodeKind::Divider { .. } => "divider".to_owned(),
-        NodeKind::Text(_) => "text".to_owned(),
-        NodeKind::Button(_) => "button".to_owned(),
-        NodeKind::Link(_) => "link".to_owned(),
-        NodeKind::Icon(_) => "icon".to_owned(),
-        NodeKind::IconTile(_) => "icon-tile".to_owned(),
-        NodeKind::Image(_) => "image".to_owned(),
-        NodeKind::RichRow(_) => "rich-row".to_owned(),
-        NodeKind::Keycap(_) => "keycap".to_owned(),
-        NodeKind::KeySequence(_) => "key-sequence".to_owned(),
-        NodeKind::Tag(_) => "tag".to_owned(),
-        NodeKind::Badge(_) => "badge".to_owned(),
-        NodeKind::Toggle(_) => "toggle".to_owned(),
-        NodeKind::Checkbox(_) => "checkbox".to_owned(),
-        NodeKind::Segmented(_) => "segmented".to_owned(),
-        NodeKind::Slider(_) => "slider".to_owned(),
-        NodeKind::Progress(_) => "progress".to_owned(),
-        NodeKind::Loading(_) => "loading".to_owned(),
-        NodeKind::Markdown(_) => "markdown".to_owned(),
-        NodeKind::Card(_) => "card".to_owned(),
-        NodeKind::SectionHeader(_) => "section-header".to_owned(),
-        NodeKind::MetadataList(_) => "metadata-list".to_owned(),
-        NodeKind::EmptyState(_) => "empty-state".to_owned(),
-        NodeKind::TextInput(_) => "text-input".to_owned(),
-        NodeKind::PasswordInput(_) => "password-input".to_owned(),
-        NodeKind::TextArea(_) => "text-area".to_owned(),
-        NodeKind::Select(_) => "select".to_owned(),
-        NodeKind::Unknown(kind) => kind.to_owned(),
+            NodeKind::Column(_) => "column".to_owned(),
+            NodeKind::Row(_) => "row".to_owned(),
+            NodeKind::Stack(_) => "stack".to_owned(),
+            NodeKind::Scroll { .. } => "scroll".to_owned(),
+            NodeKind::Spacer => "spacer".to_owned(),
+            NodeKind::Divider { .. } => "divider".to_owned(),
+            NodeKind::Text(_) => "text".to_owned(),
+            NodeKind::Button(_) => "button".to_owned(),
+            NodeKind::Link(_) => "link".to_owned(),
+            NodeKind::Icon(_) => "icon".to_owned(),
+            NodeKind::IconTile(_) => "icon-tile".to_owned(),
+            NodeKind::Image(_) => "image".to_owned(),
+            NodeKind::RichRow(_) => "rich-row".to_owned(),
+            NodeKind::Keycap(_) => "keycap".to_owned(),
+            NodeKind::KeySequence(_) => "key-sequence".to_owned(),
+            NodeKind::Tag(_) => "tag".to_owned(),
+            NodeKind::Badge(_) => "badge".to_owned(),
+            NodeKind::Toggle(_) => "toggle".to_owned(),
+            NodeKind::Checkbox(_) => "checkbox".to_owned(),
+            NodeKind::Segmented(_) => "segmented".to_owned(),
+            NodeKind::Slider(_) => "slider".to_owned(),
+            NodeKind::Progress(_) => "progress".to_owned(),
+            NodeKind::Loading(_) => "loading".to_owned(),
+            NodeKind::Markdown(_) => "markdown".to_owned(),
+            NodeKind::Card(_) => "card".to_owned(),
+            NodeKind::SectionHeader(_) => "section-header".to_owned(),
+            NodeKind::MetadataList(_) => "metadata-list".to_owned(),
+            NodeKind::EmptyState(_) => "empty-state".to_owned(),
+            NodeKind::TextInput(_) => "text-input".to_owned(),
+            NodeKind::PasswordInput(_) => "password-input".to_owned(),
+            NodeKind::TextArea(_) => "text-area".to_owned(),
+            NodeKind::Select(_) => "select".to_owned(),
+            NodeKind::Unknown(kind) => kind.to_owned(),
         }
     };
     let mut kinds = vec![kind(node)];
@@ -512,18 +516,20 @@ fn the_component_set_draws_and_a_change_flips_its_toggle() {
 
     // A change of the toggle: the payload names the value, and the next
     // tree shows it flipped — Pane sent what the user chose.
-    block_on(
-        pane.launcher
-            .send_designed_change(callback, Some("toggle"), r#"{"value":true}"#.to_owned()),
-    );
+    block_on(pane.launcher.send_designed_change(
+        callback,
+        Some("toggle"),
+        r#"{"value":true}"#.to_owned(),
+    ));
     let (on, _) = toggle_of(&pane.tree().root).expect("the toggle still drawn");
     assert!(on, "the change flipped the toggle");
 
     // And back.
-    block_on(
-        pane.launcher
-            .send_designed_change(callback, Some("toggle"), r#"{"value":false}"#.to_owned()),
-    );
+    block_on(pane.launcher.send_designed_change(
+        callback,
+        Some("toggle"),
+        r#"{"value":false}"#.to_owned(),
+    ));
     let (on, _) = toggle_of(&pane.tree().root).expect("the toggle still drawn");
     assert!(!on);
     assert_eq!(pane.status(), Status::Idle);

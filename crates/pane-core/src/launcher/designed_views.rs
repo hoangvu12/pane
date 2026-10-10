@@ -274,7 +274,11 @@ impl Launcher {
                     owner.as_ref(),
                     &mut snapshot.tree,
                 );
-                state.designed_view.as_mut().expect("a view is open").loading = loading;
+                state
+                    .designed_view
+                    .as_mut()
+                    .expect("a view is open")
+                    .loading = loading;
                 state.view.status = Status::Idle;
             }
             // The view refused the event, or answered a tree Pane cannot
@@ -437,11 +441,7 @@ fn shown(
 
 /// The icons `node` holds, shown as their loads allow, and its
 /// descendants'.
-fn shown_node(
-    node: &mut Node,
-    owner: Option<&str>,
-    loads: &super::icon_loads::IconLoads,
-) -> bool {
+fn shown_node(node: &mut Node, owner: Option<&str>, loads: &super::icon_loads::IconLoads) -> bool {
     let mut changed = false;
     let show = |icon: &mut Option<Icon>, changed: &mut bool| {
         if let Some(held) = icon.as_ref() {

@@ -70,8 +70,8 @@ fn open<'a>(cx: &'a mut TestAppContext, theme: &str) -> (Opened, &'a mut VisualT
         Launcher::with_packages(Runtime::start(), Vec::new(), data.path().join("extensions"));
     cx.executor().allow_parking();
     cx.update(pane::bind_keys);
-    let assembled = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../target/guests/packages/sample-view");
+    let assembled =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/guests/packages/sample-view");
     assert!(
         assembled.exists(),
         "{} is missing; run `cargo xtask guests`",
@@ -358,11 +358,7 @@ fn the_tokens_and_raw_values_resolve_to_the_theme_in_both_appearances(cx: &mut T
             "{theme}: the hover variant fills with the accent"
         );
         // The pressed variant, while the mouse is held on it.
-        cx.simulate_mouse_down(
-            over,
-            gpui::MouseButton::Left,
-            gpui::Modifiers::none(),
-        );
+        cx.simulate_mouse_down(over, gpui::MouseButton::Left, gpui::Modifiers::none());
         let pressed = bounds(cx, "designed-text-Surface");
         let variant = pressed_variant(accent);
         assert!(
@@ -412,18 +408,20 @@ fn the_controls_are_focusable_and_a_change_flips_the_toggle(cx: &mut TestAppCont
     );
     cx.simulate_keystrokes("enter");
     until(&window, cx, |view| match &view.screen {
-        Screen::DesignedView(view) => first_of(&view.tree.root, |kind| {
-            matches!(kind, NodeKind::Toggle(toggle) if toggle.on)
-        })
+        Screen::DesignedView(view) => first_of(
+            &view.tree.root,
+            |kind| matches!(kind, NodeKind::Toggle(toggle) if toggle.on),
+        )
         .is_some(),
         _ => false,
     });
     // And Space flips it back.
     cx.simulate_keystrokes("space");
     until(&window, cx, |view| match &view.screen {
-        Screen::DesignedView(view) => first_of(&view.tree.root, |kind| {
-            matches!(kind, NodeKind::Toggle(toggle) if !toggle.on)
-        })
+        Screen::DesignedView(view) => first_of(
+            &view.tree.root,
+            |kind| matches!(kind, NodeKind::Toggle(toggle) if !toggle.on),
+        )
         .is_some(),
         _ => false,
     });

@@ -755,15 +755,17 @@ fn function_color(text: &str) -> Option<u32> {
     match (name, parts.as_slice()) {
         // rgb() and rgba(): each channel a percentage or a number on
         // 0..255, the alpha a fraction.
-        ("rgb" | "rgba", [(red, red_percent), (green, green_percent), (blue, blue_percent), ..])
-            if channels =>
-        {
+        (
+            "rgb" | "rgba",
+            [
+                (red, red_percent),
+                (green, green_percent),
+                (blue, blue_percent),
+                ..,
+            ],
+        ) if channels => {
             let scale = |value: f32, percent: bool| {
-                if percent {
-                    value / 100.
-                } else {
-                    value / 255.
-                }
+                if percent { value / 100. } else { value / 255. }
             };
             Some(
                 byte(scale(*red, *red_percent)) << 24
@@ -774,9 +776,15 @@ fn function_color(text: &str) -> Option<u32> {
         }
         // hsl() and hsla(): the hue in degrees, the saturation and the
         // lightness percentages of 100 or fractions of 1.
-        ("hsl" | "hsla", [(hue, _), (saturation, s_percent), (lightness, l_percent), ..])
-            if channels =>
-        {
+        (
+            "hsl" | "hsla",
+            [
+                (hue, _),
+                (saturation, s_percent),
+                (lightness, l_percent),
+                ..,
+            ],
+        ) if channels => {
             let fraction = |value: f32, percent: bool| if percent { value / 100. } else { value };
             let (red, green, blue) = hsl(
                 *hue,
@@ -1585,9 +1593,15 @@ mod tests {
         assert_eq!(raw("#FF663380"), Some(Color::Rgba(0xFF663380)));
         assert_eq!(raw("rgb(255, 102, 51)"), Some(Color::Rgba(0xFF6633FF)));
         assert_eq!(raw("rgb(100% 40% 20%)"), Some(Color::Rgba(0xFF6633FF)));
-        assert_eq!(raw("rgba(255, 102, 51, 0.5)"), Some(Color::Rgba(0xFF663380)));
+        assert_eq!(
+            raw("rgba(255, 102, 51, 0.5)"),
+            Some(Color::Rgba(0xFF663380))
+        );
         assert_eq!(raw("hsl(18, 100%, 60%)"), Some(Color::Rgba(0xFF7033FF)));
-        assert_eq!(raw("hsl(18, 100%, 60% / 0.5)"), Some(Color::Rgba(0xFF703380)));
+        assert_eq!(
+            raw("hsl(18, 100%, 60% / 0.5)"),
+            Some(Color::Rgba(0xFF703380))
+        );
         assert_eq!(raw("hsla(0, 100%, 50%)"), Some(Color::Rgba(0xFF0000FF)));
         // The semantic tones the UI component set names (#237), beside the
         // text levels and the palette.

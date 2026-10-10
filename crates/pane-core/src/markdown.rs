@@ -19,10 +19,7 @@
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Block {
     /// An ATX heading, `#` to `######`.
-    Heading {
-        level: usize,
-        inlines: Vec<Inline>,
-    },
+    Heading { level: usize, inlines: Vec<Inline> },
     /// A run of lines of prose.
     Paragraph(Vec<Inline>),
     /// A fenced or indented code block, its `language` when the fence
@@ -35,10 +32,7 @@ pub enum Block {
     Quote(Vec<Block>),
     /// An ordered or unordered list. An item's first block may carry a
     /// task's checkbox.
-    List {
-        ordered: bool,
-        items: Vec<Item>,
-    },
+    List { ordered: bool, items: Vec<Item> },
     /// A thematic break: `---`, `***` or `___`.
     Rule,
     /// A GitHub table: its columns' alignments, its head row and its body
@@ -297,7 +291,7 @@ fn list_marker(line: &str) -> Option<(bool, usize)> {
     }
     let digits = line.chars().take_while(char::is_ascii_digit).count();
     if digits > 0
-        && line.get(digits..digits + 1).is_some_and(|mark| mark == "." || mark == ")")
+
         && line
             .get(digits + 1..digits + 2)
             .is_some_and(|after| after == " " || after == "\t")
@@ -392,14 +386,20 @@ fn delimiter_row(line: &str) -> Option<Vec<Alignment>> {
     for cell in cells {
         let cell = cell.as_str();
         let align = if let Some(rest) = cell.strip_prefix(':') {
-            if rest.strip_suffix(':').is_some_and(|dashes| dashes.chars().all(|c| c == '-')) {
+            if rest
+                .strip_suffix(':')
+                .is_some_and(|dashes| dashes.chars().all(|c| c == '-'))
+            {
                 Alignment::Center
             } else if rest.chars().all(|c| c == '-') && !rest.is_empty() {
                 Alignment::Right
             } else {
                 return None;
             }
-        } else if cell.strip_suffix(':').is_some_and(|dashes| dashes.chars().all(|c| c == '-')) {
+        } else if cell
+            .strip_suffix(':')
+            .is_some_and(|dashes| dashes.chars().all(|c| c == '-'))
+        {
             Alignment::Left
         } else if !cell.is_empty() && cell.chars().all(|c| c == '-') {
             Alignment::None
@@ -440,11 +440,7 @@ fn table(lines: &mut Lines) -> Option<Block> {
         })
         .collect::<Vec<_>>();
     lines.at += 2 + rows.len();
-    Some(Block::Table {
-        aligns,
-        head,
-        rows,
-    })
+    Some(Block::Table { aligns, head, rows })
 }
 
 /// The cells of one table `line`, split on unescaped pipes, its own edge
@@ -470,7 +466,10 @@ fn cells_of(line: &str) -> Vec<String> {
         }
     }
     cells.push(cell);
-    cells.into_iter().map(|cell| cell.trim().to_owned()).collect()
+    cells
+        .into_iter()
+        .map(|cell| cell.trim().to_owned())
+        .collect()
 }
 
 /// `text` as inline runs: emphasis, strong emphasis, code and links.
@@ -736,12 +735,7 @@ mod tests {
     #[test]
     fn tables_read() {
         let blocks = parse("| A | B |\n| --- | :---: |\n| 1 | 2 |");
-        let Block::Table {
-            aligns,
-            head,
-            rows,
-        } = &blocks[0]
-        else {
+        let Block::Table { aligns, head, rows } = &blocks[0] else {
             panic!("a table: {blocks:?}");
         };
         assert_eq!(*aligns, vec![Alignment::None, Alignment::Center]);

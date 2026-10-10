@@ -875,7 +875,7 @@ fn text(wire: &WireNode) -> Result<Text, ReadError> {
         ),
         (None, None) => return Err(unreadable("a text node has no text")),
         (Some(Value::String(_)), Some(_)) => {
-            return Err(unreadable("a text node names both text and spans"))
+            return Err(unreadable("a text node names both text and spans"));
         }
         (Some(_), _) => return Err(unreadable("its text is not a string")),
         (None, Some(_)) => return Err(unreadable("its spans are not a list")),
@@ -1002,7 +1002,7 @@ fn image(wire: &WireNode) -> Result<Image, ReadError> {
             other => {
                 return Err(unreadable(&format!(
                     "its fit is {other}; a fit is \"contain\", \"cover\" or \"fill\""
-                )))
+                )));
             }
         },
         Some(_) => return Err(unreadable("its fit is not a fit")),
@@ -1039,9 +1039,7 @@ fn rich_row(wire: &WireNode) -> Result<RichRow, ReadError> {
                     tag: match fields.get("tag") {
                         None | Some(Value::Null) => false,
                         Some(Value::Bool(tag)) => *tag,
-                        Some(_) => {
-                            return Err(unreadable("an accessory's tag is not a boolean"))
-                        }
+                        Some(_) => return Err(unreadable("an accessory's tag is not a boolean")),
                     },
                     color: paint(fields.get("color"), "color")?,
                 })
@@ -1148,9 +1146,7 @@ fn options(wire: &WireNode, property: &str) -> Result<Vec<Segment>, ReadError> {
                     label: match fields.get("label") {
                         Some(Value::String(label)) => Some(label.clone()),
                         None | Some(Value::Null) => None,
-                        Some(_) => {
-                            return Err(unreadable("an option's label is not a string"))
-                        }
+                        Some(_) => return Err(unreadable("an option's label is not a string")),
                     },
                 })
             })
@@ -1329,8 +1325,7 @@ fn surface_of(wire: &WireNode) -> Result<Surface, ReadError> {
         background: paint(rest.get("background"), "background")?,
         border,
         radius: radius(rest.get("radius"), "radius")?,
-        opacity: number(wire, "opacity")?
-            .map(|Finite(opacity)| Finite(opacity.clamp(0., 1.))),
+        opacity: number(wire, "opacity")?.map(|Finite(opacity)| Finite(opacity.clamp(0., 1.))),
     })
 }
 
@@ -1341,7 +1336,9 @@ fn variant(value: Option<&Value>) -> Result<Option<Surface>, ReadError> {
         return Ok(None);
     };
     let Value::Object(fields) = value else {
-        return Err(unreadable("its variant is not an object of surface properties"));
+        return Err(unreadable(
+            "its variant is not an object of surface properties",
+        ));
     };
     let wire = WireNode {
         kind: "node".into(),
@@ -1416,9 +1413,8 @@ fn callback(wire: &WireNode, name: &str) -> Result<Option<u32>, ReadError> {
         Some(Value::Number(id)) => Ok(Some(
             id.as_u64()
                 .filter(|id| *id <= u32::MAX as u64)
-                .ok_or_else(|| {
-                    unreadable(&format!("its {name} is not a callback id"))
-                })? as u32,
+                .ok_or_else(|| unreadable(&format!("its {name} is not a callback id")))?
+                as u32,
         )),
         Some(_) => Err(unreadable(&format!("its {name} is not a callback id"))),
     }
@@ -1442,17 +1438,17 @@ fn length_of(value: &Value, name: &str) -> Result<Length, ReadError> {
         Value::Number(number) => Ok(Length::Px(px_of(
             number
                 .as_f64()
-                .ok_or_else(|| over("is not a length".into()))?
-                as f32,
+                .ok_or_else(|| over("is not a length".into()))? as f32,
         ))),
         Value::String(text) => {
             let text = text.trim();
             if let Some(space) = Space::named(text) {
                 return Ok(Length::Space(space));
             }
-            if let Some(fraction) = text.strip_suffix('%').and_then(|digits| {
-                digits.trim().parse::<f32>().ok().map(|value| value / 100.)
-            }) {
+            if let Some(fraction) = text
+                .strip_suffix('%')
+                .and_then(|digits| digits.trim().parse::<f32>().ok().map(|value| value / 100.))
+            {
                 return Ok(Length::Fraction(Finite(fraction.clamp(0., 1.))));
             }
             if let Some((top, bottom)) = text.split_once('/') {
@@ -1460,9 +1456,7 @@ fn length_of(value: &Value, name: &str) -> Result<Length, ReadError> {
                     (top.trim().parse::<f32>(), bottom.trim().parse::<f32>())
                 {
                     if top >= 0. && bottom > 0. {
-                        return Ok(Length::Fraction(Finite(
-                            (top / bottom).clamp(0., 1.),
-                        )));
+                        return Ok(Length::Fraction(Finite((top / bottom).clamp(0., 1.))));
                     }
                 }
                 return Err(over("is not a fraction of the parent".into()));
@@ -1548,8 +1542,7 @@ fn sized(value: Option<&Value>, name: &str) -> Result<Option<Finite>, ReadError>
         None | Some(Value::Null) => Ok(None),
         Some(Value::Number(number)) => Ok(number
             .as_f64()
-            .map(|value| Finite((value as f32).clamp(1., 128.))),
-        ),
+            .map(|value| Finite((value as f32).clamp(1., 128.)))),
         Some(_) => Err(unreadable(&format!("its {name} is not a number"))),
     }
 }
@@ -1560,8 +1553,7 @@ fn weighted(value: Option<&Value>, name: &str) -> Result<Option<Finite>, ReadErr
         None | Some(Value::Null) => Ok(None),
         Some(Value::Number(number)) => Ok(number
             .as_f64()
-            .map(|value| Finite((value as f32).clamp(100., 900.))),
-        ),
+            .map(|value| Finite((value as f32).clamp(100., 900.)))),
         Some(_) => Err(unreadable(&format!("its {name} is not a number"))),
     }
 }
@@ -1603,9 +1595,8 @@ fn paint_of(value: &Value, name: &str, exact: bool) -> Result<Paint, ReadError> 
             match (fields.get("light"), fields.get("dark")) {
                 (Some(Value::String(light)), Some(Value::String(dark))) => {
                     let read = |text: &str| {
-                        icons::color_of(text).ok_or_else(|| {
-                            over("names a colour this Pane does not draw".into())
-                        })
+                        icons::color_of(text)
+                            .ok_or_else(|| over("names a colour this Pane does not draw".into()))
                     };
                     Ok(Paint {
                         tint: Tint::Pair {
@@ -1991,7 +1982,10 @@ mod tests {
                 }),
             })
         );
-        assert_eq!(style.surface.radius, Some(RadiusLength::Token(Radius::Full)));
+        assert_eq!(
+            style.surface.radius,
+            Some(RadiusLength::Token(Radius::Full))
+        );
         assert_eq!(style.surface.opacity, Some(Finite(0.8)));
         assert_eq!(
             style.hover.as_ref().unwrap().background,
@@ -2043,7 +2037,7 @@ mod tests {
         );
         assert_eq!(
             read(r##"{"type":"text","text":"a","color":{"light":"#111","dark":"secondary"}}"##)
-            .unwrap(),
+                    .unwrap(),
             Some(Paint {
                 tint: Tint::Pair {
                     light: Color::Rgba(0x111111FF),
@@ -2069,12 +2063,16 @@ mod tests {
             read(r#"{"type":"text","text":"a","color":"sparkle"}"#).unwrap(),
             None
         );
-        assert!(read(r##"{"type":"text","text":"a","color":{"light":"#111"}}"##)
-            .unwrap_err()
-            .contains("only one of a light and a dark"));
-        assert!(read(r#"{"type":"text","text":"a","color":5}"#)
-            .unwrap_err()
-            .contains("is not a colour"));
+        assert!(
+            read(r##"{"type":"text","text":"a","color":{"light":"#111"}}"##)
+                .unwrap_err()
+                .contains("only one of a light and a dark")
+        );
+        assert!(
+            read(r#"{"type":"text","text":"a","color":5}"#)
+                .unwrap_err()
+                .contains("is not a colour")
+        );
     }
 
     #[test]
@@ -2137,7 +2135,10 @@ mod tests {
             panic!("a button");
         };
         assert!(save.icon.is_some());
-        assert_eq!(save.keys.as_deref(), Some(&["ctrl".to_owned(), "s".to_owned()][..]));
+        assert_eq!(
+            save.keys.as_deref(),
+            Some(&["ctrl".to_owned(), "s".to_owned()][..])
+        );
         assert!(!save.enabled);
         let NodeKind::Link(link) = &nodes[2].kind else {
             panic!("a link");
@@ -2205,7 +2206,10 @@ Some *prose*.
         let NodeKind::Markdown(markdown) = &read.root.kind else {
             panic!("markdown: {:?}", read.root.kind);
         };
-        assert!(matches!(markdown.blocks[0], markdown::Block::Heading { level: 1, .. }));
+        assert!(matches!(
+            markdown.blocks[0],
+            markdown::Block::Heading { level: 1, .. }
+        ));
         assert!(matches!(markdown.blocks[2], markdown::Block::List { .. }));
         let long = format!(
             r#"{{"type":"markdown","markdown":"{}"}}"#,
@@ -2265,10 +2269,7 @@ Some *prose*.
             .unwrap_err()
             .message()
             .to_owned();
-        assert!(
-            error.contains("UI component set 2.0"),
-            "{error}"
-        );
+        assert!(error.contains("UI component set 2.0"), "{error}");
 
         // A version Pane cannot read.
         let error = DesignedTree::read(r#"{"version":"one","root":{"type":"column"}}"#)

@@ -8,8 +8,8 @@ use std::collections::HashMap;
 
 use gpui::prelude::*;
 use gpui::{
-    AnyElement, Context, Div, FocusHandle, Hsla, Length as GpuiLength, Pixels, Role, Stateful,
-    div, px, relative,
+    AnyElement, Context, Div, FocusHandle, Hsla, Length as GpuiLength, Pixels, Role, Stateful, div,
+    px, relative,
 };
 
 use pane_core::{
@@ -540,7 +540,11 @@ fn apply(div: Stateful<Div>, node: &Node, draw: &Draw) -> Stateful<Div> {
 
 /// The surface a variant restates, applied to the style refinement a
 /// hover or press callback is given.
-fn restyle(style: gpui::StyleRefinement, surface: &Surface, theme: &Theme) -> gpui::StyleRefinement {
+fn restyle(
+    style: gpui::StyleRefinement,
+    surface: &Surface,
+    theme: &Theme,
+) -> gpui::StyleRefinement {
     let mut style = style;
     if let Some(background) = &surface.background {
         style = style.bg(tokens::paint_color(background, theme));

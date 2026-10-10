@@ -32,14 +32,13 @@ fn the_cost_of_reading_and_reconciling_trees() {
 /// button, the buttons named by keys.
 fn document_of(nodes: usize) -> String {
     let rows = nodes / 3;
-    let mut document = String::from(r#"{"version":"1.1","root":{"type":"column","gap":"m","children":["#);
+    let mut document =
+        String::from(r#"{"version":"1.1","root":{"type":"column","gap":"m","children":["#);
     for row in 0..rows {
         if row > 0 {
             document.push(',');
         }
-        let text = format!(
-            r#"{{"type":"text","text":"Row {row}","level":"secondary"}},"#
-        );
+        let text = format!(r#"{{"type":"text","text":"Row {row}","level":"secondary"}},"#);
         let button = format!(
             r#"{{"type":"button","key":"row{row}","label":"Press {row}","onPress":{}}}"#,
             row % 32 + 1

@@ -28,9 +28,9 @@ use gpui::{
 };
 
 use pane_core::{
-    Badge as BadgeNode, Binding, Button as ButtonNode, Checkbox as CheckboxNode, Keycap as KeycapNode,
+    Badge as BadgeNode, Binding, Button as ButtonNode, Checkbox as CheckboxNode,
     EmptyState as EmptyStateNode, Finite, Fit, Icon, IconExtent, IconNode, Image as ImageNode,
-    KeySequence as KeySequenceNode, Link as LinkNode, Loading as LoadingNode,
+    KeySequence as KeySequenceNode, Keycap as KeycapNode, Link as LinkNode, Loading as LoadingNode,
     Markdown as MarkdownNode, MetadataItem as MetadataItemNode, MetadataList as MetadataListNode,
     Node, Paint, Progress as ProgressNode, RichRow as RichRowNode, SectionHeader,
     Segmented as SegmentedNode, Select as SelectNode, Slider as SliderNode, Span, Tag as TagNode,
@@ -156,9 +156,7 @@ fn run(
         tokens::text_style(style, theme)
     };
     let size = size.map_or(style_size, |Finite(pixels)| px(pixels));
-    let weight = weight.map_or(style_weight, |Finite(units)| {
-        FontWeight::from(units)
-    });
+    let weight = weight.map_or(style_weight, |Finite(units)| FontWeight::from(units));
     let label: SharedString = content.into();
     let ink = color
         .map(|paint| tokens::foreground(paint, draw.surface, theme))
