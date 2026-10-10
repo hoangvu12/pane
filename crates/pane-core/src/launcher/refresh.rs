@@ -108,9 +108,7 @@ impl Refresh {
             .name("pane-view-refresh".into())
             .spawn(move || refresh_until_stopped(launcher, refresh));
         if let Err(error) = started {
-            crate::diagnostic!(
-                "Pane cannot re-render extension views in the background: {error}"
-            );
+            crate::diagnostic!("Pane cannot re-render extension views in the background: {error}");
         }
     }
 
@@ -131,8 +129,7 @@ impl Refresh {
         {
             let mut refreshing = self.lock();
             let now = refreshing.clock.now();
-            let after = u64::from(after_ms)
-                .clamp(REFRESH_FLOOR_MS, REFRESH_CEILING_MS);
+            let after = u64::from(after_ms).clamp(REFRESH_FLOOR_MS, REFRESH_CEILING_MS);
             refreshing.next = Some(now.saturating_add(after));
         }
         self.wake.poke();

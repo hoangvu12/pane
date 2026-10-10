@@ -86,12 +86,9 @@ impl Pane {
     fn new(packages: &[&str]) -> Pane {
         let data = tempfile::tempdir().unwrap();
         let clock = ManualClock::at(SystemClock.now() + 365 * DAY_MS);
-        let launcher = Launcher::with_packages(
-            Runtime::start(),
-            Vec::new(),
-            data.path().join("extensions"),
-        )
-        .with_clock(clock.clone());
+        let launcher =
+            Launcher::with_packages(Runtime::start(), Vec::new(), data.path().join("extensions"))
+                .with_clock(clock.clone());
         let pane = Pane {
             data,
             launcher,
@@ -374,7 +371,11 @@ fn a_view_hides_without_refreshing_and_the_one_that_fell_due_catches_up() {
         pane.launcher.set_window_presence(WindowPresence::Shown);
         pane.settled();
         caught_up += 1;
-        assert_eq!(renders(&pane), caught_up, "one catch-up refresh after {presence:?}");
+        assert_eq!(
+            renders(&pane),
+            caught_up,
+            "one catch-up refresh after {presence:?}"
+        );
     }
 
     // And the interval continues from the catch-up.
