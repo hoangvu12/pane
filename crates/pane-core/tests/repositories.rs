@@ -2316,7 +2316,10 @@ fn a_filter_capable_server_serves_the_choice_and_the_chosen_files_only() {
     // trees were fetched once only.
     let readme = wants("README.md");
     assert!(
-        fetches.iter().flatten().all(|line| !line.contains(readme.as_str())),
+        fetches
+            .iter()
+            .flatten()
+            .all(|line| !line.contains(readme.as_str())),
         "{fetches:?}"
     );
     assert_eq!(
@@ -2404,12 +2407,18 @@ fn one_extension_installed_by_its_id_from_a_filter_capable_server() {
     // asked for.
     let readme = wants("README.md");
     assert!(
-        fetches.iter().flatten().all(|line| !line.contains(readme.as_str())),
+        fetches
+            .iter()
+            .flatten()
+            .all(|line| !line.contains(readme.as_str())),
         "{fetches:?}"
     );
     let timers = wants("extensions/timers/dist/git_greeter.wasm");
     assert!(
-        fetches.iter().flatten().all(|line| !line.contains(timers.as_str())),
+        fetches
+            .iter()
+            .flatten()
+            .all(|line| !line.contains(timers.as_str())),
         "{fetches:?}"
     );
     block_on(launcher.activate_selected());

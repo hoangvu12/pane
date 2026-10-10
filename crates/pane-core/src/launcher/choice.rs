@@ -492,7 +492,9 @@ impl Launcher {
         if let Some(partial) = source.partial() {
             let wanted = ids.clone();
             let partial = partial.clone();
-            refused = off_thread(move || partial.fetch_extensions(&wanted)).await.err();
+            refused = off_thread(move || partial.fetch_extensions(&wanted))
+                .await
+                .err();
         }
         match refused {
             Some(why) => {
@@ -507,9 +509,7 @@ impl Launcher {
                         .install_choice_extension(epoch, &store, id, &request)
                         .await
                     {
-                        Step::Installed => {
-                            self.note_choice(epoch, id, ChoiceOutcome::Installed)
-                        }
+                        Step::Installed => self.note_choice(epoch, id, ChoiceOutcome::Installed),
                         Step::Refused(why) => {
                             self.note_choice(epoch, id, ChoiceOutcome::Refused(why))
                         }

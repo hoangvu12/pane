@@ -155,12 +155,8 @@ impl Sources {
                     Some(partial) => partial.ensure_extension(id).map_err(PackageError::Git)?,
                     None => origin.clone(),
                 };
-                SourcePackage::read_git_revision(
-                    download.clone(),
-                    origin,
-                    Some(id.as_str()),
-                )
-            },
+                SourcePackage::read_git_revision(download.clone(), origin, Some(id.as_str()))
+            }
             Request::Default(pin) => self.fetch_default(pin),
         }
     }

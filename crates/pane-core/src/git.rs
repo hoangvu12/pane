@@ -929,14 +929,8 @@ pub(crate) fn fetch_within(
     // is. The trees that probe fetched are let go: an ordinary package is
     // never partial-fetched, at the cost of one small extra fetch.
     if remote.filter
-        && let Some(fetched) = fetch_partial(
-            &remote,
-            spec,
-            &revision,
-            advertised,
-            downloads,
-            limits,
-        )?
+        && let Some(fetched) =
+            fetch_partial(&remote, spec, &revision, advertised, downloads, limits)?
     {
         return Ok(fetched);
     }
@@ -2006,14 +2000,7 @@ fn write_tree(
                 )?;
             }
             "100644" | "100755" | "100664" => {
-                write_file(
-                    objects,
-                    &entry.id,
-                    &entry.shown,
-                    &path,
-                    limits,
-                    tally,
-                )?;
+                write_file(objects, &entry.id, &entry.shown, &path, limits, tally)?;
             }
             "120000" => return entry.refuse("a symbolic link"),
             "160000" => return entry.refuse("a submodule, which Pane does not fetch"),
@@ -2225,7 +2212,8 @@ fn write_file(
         .create_new(true)
         .open(path)
         .map_err(|error| format!("`{shown}`: {error}"))?;
-    file.write_all(contents).map_err(|error| format!("`{shown}`: {error}"))
+    file.write_all(contents)
+        .map_err(|error| format!("`{shown}`: {error}"))
 }
 
 // ------------------------------------------------- fetching in parts (#311)
@@ -2593,7 +2581,10 @@ fn fetch_round(
 
 /// The id of the blob fetched for `path`, among `blobs`.
 fn id_of(blobs: &[(String, Id)], path: &str) -> Option<Id> {
-    blobs.iter().find(|(named, _)| named == path).map(|(_, id)| *id)
+    blobs
+        .iter()
+        .find(|(named, _)| named == path)
+        .map(|(_, id)| *id)
 }
 
 /// The blob `id` as text — a collection's index, or a manifest — from the
@@ -2704,10 +2695,7 @@ fn gather_subtree(
             "120000" => return Err(entry.refuse("a symbolic link")),
             "160000" => return Err(entry.refuse("a submodule, which Pane does not fetch")),
             other => {
-                return Err(entry.refuse(&format!(
-                    "an entry of mode {}",
-                    self::shown(other)
-                )));
+                return Err(entry.refuse(&format!("an entry of mode {}", self::shown(other))));
             }
         }
     }
