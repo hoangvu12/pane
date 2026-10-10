@@ -1249,6 +1249,21 @@ impl Hotkeys for Unavailable {
         Some(self.0.clone())
     }
 
+    fn kind_unavailable(&self, shortcut: &Shortcut) -> Option<String> {
+        // No hotkeys at all, so no keyboard hook either: the kinds only
+        // the hook recognizes are explained, as the platforms without
+        // one explain them — macOS standing in where the binary runs on
+        // Windows, so a fresh data folder there keeps today's Open Pane
+        // default rather than taking the Windows key this adapter could
+        // never register. An adapter that starts and has the hook says
+        // so itself, by overriding this.
+        let modeled = match Platform::current() {
+            Some(Platform::Windows) => Some(Platform::Macos),
+            platform => platform,
+        };
+        kinds_unavailable(shortcut, modeled)
+    }
+
     fn register(&self, _shortcut: &Shortcut) -> Result<(), HotkeyError> {
         Err(HotkeyError::Refused(self.0.clone()))
     }

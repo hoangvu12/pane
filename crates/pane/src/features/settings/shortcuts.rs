@@ -1564,7 +1564,7 @@ fn hotkey_cell(
     let route = command
         .hotkey_inactive
         .is_none()
-        .then(|| command.hotkey.as_ref())
+        .then_some(command.hotkey.as_ref())
         .flatten()
         .and_then(|shortcut| command.hotkey_route.note_on(shortcut, Platform::current()))
         .map(|note| format!("Dispatched {note}"));

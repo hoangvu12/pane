@@ -144,7 +144,24 @@ mod windows {
         system.can_paste().expect("a target to paste into");
         let pasted = Clip::Text(PASTED.into());
         system.copy(&pasted, true).expect("the copy to paste");
-        system.paste_clipboard().expect("the paste");
+        // A CI runner's session runs elevated, so every process the test
+        // can start — the target's included — is an administrator's, and
+        // the paste honestly refuses an elevated target (the spec's own
+        // rule: Windows would silently drop the keys). Where it does, the
+        // refusal is what the test asserts; the arrival below needs a
+        // session that is not elevated, which a runner never is and a
+        // user's desktop is.
+        if let Err(SystemError::Failed(why)) = system.paste_clipboard() {
+            assert!(
+                why.contains("running as administrator"),
+                "the paste's refusal: {why}"
+            );
+            eprintln!(
+                "skipped the arrival: the session is elevated, so the paste \n\
+                 refused its administrator target — {why}"
+            );
+            return;
+        }
 
         // The text arrived in the target's field, and the clipboard holds
         // what it held.

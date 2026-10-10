@@ -64,6 +64,7 @@ fn window(id: &str, title: &str, application: &str) -> Window {
 }
 
 /// A window of the fake's list, with every field the tests say.
+#[allow(clippy::too_many_arguments)]
 fn listed(
     id: &str,
     title: &str,
@@ -119,7 +120,7 @@ impl SystemIcons for FakeIcons {
 
 /// A small PNG, as the system's icon extraction answers.
 fn small_png() -> Vec<u8> {
-    let pixels = vec![48, 164, 108, 255].repeat(64);
+    let pixels = [48, 164, 108, 255].repeat(64);
     pane_core::icons::encode_png(8, 8, &pixels).expect("a PNG")
 }
 
