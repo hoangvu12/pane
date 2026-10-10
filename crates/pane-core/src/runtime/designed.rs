@@ -1758,23 +1758,26 @@ fn date_field(wire: &WireNode) -> Result<DateField, ReadError> {
 /// The paths a file-picker or folder-picker node names, its `value` or
 /// `default` — one path, or a list of them when it allows many.
 fn file_picker(wire: &WireNode) -> Result<FilePicker, ReadError> {
-    let paths = |name: &str| match wire.rest.get(name) {
-        None | Some(Value::Null) => None,
-        Some(Value::String(path)) => Some(vec![path.clone()]),
-        Some(Value::Array(paths)) => Some(
-            paths
-                .iter()
-                .map(|path| match path {
-                    Value::String(path) => Ok(path.clone()),
-                    _ => Err(unreadable("a path of it is not a string")),
-                })
-                .collect::<Result<Vec<String>, ReadError>>()?,
-        ),
-        Some(_) => return Err(unreadable("its paths are not a path or a list of them")),
+    let paths = |name: &str| -> Result<Option<Vec<String>>, ReadError> {
+        match wire.rest.get(name) {
+            None | Some(Value::Null) => Ok(None),
+            Some(Value::String(path)) => Ok(Some(vec![path.clone()])),
+            Some(Value::Array(paths)) => {
+                let mut read = Vec::with_capacity(paths.len());
+                for path in paths {
+                    match path {
+                        Value::String(path) => read.push(path.clone()),
+                        _ => return Err(unreadable("a path of it is not a string")),
+                    }
+                }
+                Ok(Some(read))
+            }
+            Some(_) => Err(unreadable("its paths are not a path or a list of them")),
+        }
     };
     Ok(FilePicker {
-        paths: paths("value")
-            .or_else(|_| paths("default"))
+        paths: paths("value")?
+            .or(paths("default")?)
             .unwrap_or_default(),
         multiple: boolean(wire, "multiple")?.unwrap_or(false),
         field: field_props(wire)?,

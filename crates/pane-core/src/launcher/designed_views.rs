@@ -695,8 +695,10 @@ impl Launcher {
                         owner.as_ref(),
                         &mut top.tree,
                     );
+                    let tree = top.tree.clone();
+                    drop(top);
                     let shown = stack.shown();
-                    (shown.0, shown.1, top.tree.clone(), owner, loading)
+                    (shown.0, shown.1, tree, owner, loading)
                 };
                 let mut tree = tree;
                 // The remembered values, placed onto the tree on screen.
