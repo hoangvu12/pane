@@ -18,6 +18,11 @@
 //! tree Pane cannot read, over a limit, or of another major version of the
 //! component set — is shown on the screen while the view stays open with
 //! its last good tree. A crash closes it, as it closes a custom view.
+//!
+//! A render's answer may also ask Pane to draw the view again after some
+//! milliseconds (`refresh-after-ms`, #236): the refresh thread (see
+//! `refresh`) sends that drawing numbered with these events, at most one
+//! at a time, only while the view is on top and the launcher is shown.
 
 use std::pin::Pin;
 
@@ -36,18 +41,19 @@ pub(super) struct OpenDesignedView {
     /// How many events were sent to the view.
     sent: u64,
     /// The number of the event whose answer is on screen, so an older
-    /// answer arriving late does not replace a newer one.
+    /// answer arriving late does not replace a newer one. A refresh sent
+    /// by the view's own ask (`refresh-after-ms`, see `refresh`) is
+    /// numbered with them, so a late refresh answer never replaces a newer
+    /// tree either.
     shown: u64,
-    /// The `refresh-after-ms` the last render answered: carried and ignored
-    /// until timers land (#236), which reschedules the view through it.
-    refresh_after_ms: Option<u32>,
 }
 
-/// One event sent to the designed view, with its reply.
-struct SentDesignedEvent {
+/// One event sent to the designed view, with its reply: a user's event, or
+/// the view's refresh (see [`OpenDesignedView::send_refresh`]).
+pub(super) struct SentDesignedEvent {
     /// The event's number among those sent to the view.
-    number: u64,
-    reply: Pin<Box<dyn Future<Output = Result<DesignedRendered, CallError>> + Send>>,
+    pub(super) number: u64,
+    pub(super) reply: Pin<Box<dyn Future<Output = Result<DesignedRendered, CallError>> + Send>>,
 }
 
 impl OpenDesignedView {
@@ -57,6 +63,17 @@ impl OpenDesignedView {
         SentDesignedEvent {
             number: self.sent,
             reply: Box::pin(runtime.designed_view_event(self.id, event)),
+        }
+    }
+
+    /// Sends the view's refresh — `render` again, with no event — numbered
+    /// for ordering as an event is: at most one is in flight (see
+    /// `refresh`), and a late answer is dropped with the numbering.
+    fn send_refresh(&mut self, runtime: &Runtime) -> SentDesignedEvent {
+        self.sent += 1;
+        SentDesignedEvent {
+            number: self.sent,
+            reply: Box::pin(runtime.refresh_designed_view(self.id)),
         }
     }
 }
@@ -138,10 +155,12 @@ impl Launcher {
                     rendered: rendered.render,
                     sent: 0,
                     shown: 0,
-                    refresh_after_ms: rendered.refresh_after_ms,
                 });
                 state.next_screen();
                 state.view = view;
+                // The first render's own ask schedules the view's refresh
+                // (see `refresh`).
+                self.view_refresh_asked(rendered.refresh_after_ms);
             }
             Err(error) => state.view.status = Status::Error(error.to_string()),
         }
@@ -192,11 +211,38 @@ impl Launcher {
         }
     }
 
+    /// Sends the open designed view's refresh — the `render` it asked Pane
+    /// for again by `refresh-after-ms` — numbered with its events, and
+    /// returns it for the refresh thread to run to its answer (see
+    /// `refresh`). The launcher's state must be held by the caller while
+    /// it decides. `None` when no view is open or the runtime is gone.
+    pub(super) fn start_view_refresh(&self, state: &mut State) -> Option<(u64, SentDesignedEvent)> {
+        let epoch = state.screen_epoch;
+        let open = state.designed_view.as_mut()?;
+        let runtime = self.runtime().ok()?;
+        Some((epoch, open.send_refresh(runtime)))
+    }
+
+    /// The designed view's answer asked Pane to render it again after
+    /// `after_ms`, or not again (`None`): the view's refresh is scheduled
+    /// — clamped to the floor and the ceiling — or cancelled (see
+    /// `refresh`). The answer that asked rules: one that failed carries no
+    /// ask, so it ends any asked before it.
+    fn view_refresh_asked(&self, after_ms: Option<u32>) {
+        if let Some(refresh) = &self.refresh {
+            match after_ms {
+                Some(after) => refresh.asked(after),
+                None => refresh.cancel(),
+            }
+        }
+    }
+
     /// Shows the open designed view's answer to its event number `number`:
     /// the tree it re-rendered, the error it answered with (the view keeps
     /// its last good tree), or its end (the view is gone, and the command
-    /// with it).
-    fn show_designed_answer(
+    /// with it). A refresh's answer is shown the same way, numbered with
+    /// the events.
+    pub(super) fn show_designed_answer(
         &self,
         epoch: u64,
         number: u64,
@@ -216,21 +262,26 @@ impl Launcher {
             Ok(rendered) => {
                 open.shown = number;
                 open.rendered = rendered.render;
-                open.refresh_after_ms = rendered.refresh_after_ms;
                 let super::Screen::DesignedView(snapshot) = &mut state.view.screen else {
                     unreachable!("a designed view is open");
                 };
                 snapshot.tree = rendered.tree;
                 state.view.status = Status::Idle;
+                // The answer's own ask paces the view's next refresh.
+                self.view_refresh_asked(rendered.refresh_after_ms);
             }
             // The view refused the event, or answered a tree Pane cannot
-            // read: it keeps its last good tree either way.
+            // read: it keeps its last good tree either way, and its next
+            // answer — this one carried no ask — must ask for a refresh
+            // again.
             Err(error @ CallError::Guest(_)) | Err(error @ CallError::Unreadable(_)) => {
                 open.shown = number;
                 state.view.status = Status::Error(error.to_string());
+                self.view_refresh_asked(None);
             }
             // The guest instance, and the view with it, is gone: the
-            // command's screen went with it, back to root search.
+            // command's screen went with it, back to root search. Its
+            // closing cancels the refresh.
             Err(error) => {
                 let status = Status::Error(error.to_string());
                 self.show_root(state, None);
@@ -252,14 +303,18 @@ impl Launcher {
     }
 
     /// Closes the open designed view, if one is open: the view is dropped
-    /// in the runtime, and its screen leaves with it (the caller shows
-    /// what replaces it).
+    /// in the runtime, its screen leaves with it (the caller shows what
+    /// replaces it), and its refresh is cancelled — the ask belongs to the
+    /// view, and a view opened afresh asks anew.
     pub(super) fn close_designed_view(&self, state: &mut State) {
         let open = state.designed_view.take();
         if let Some(open) = open
             && let Ok(runtime) = self.runtime()
         {
             runtime.close_designed_view(open.id);
+        }
+        if let Some(refresh) = &self.refresh {
+            refresh.cancel();
         }
     }
 }

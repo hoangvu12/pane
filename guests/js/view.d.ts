@@ -117,6 +117,27 @@ export declare function useRef<T>(initial: T): { current: T };
 /** A value computed once, recomputed when `deps` changes. */
 export declare function useMemo<T>(make: () => T, deps: unknown[]): T;
 
+/**
+ * Runs `run` once each time `ms` passes while the view is open: Pane asks
+ * for the tree again after `ms`, and the run happens in that render,
+ * before the tree is drawn, so the tree shows what it changed. The view's
+ * clock is Pane's, so the time a render takes, or a hidden view, delays
+ * the next run — which the next drawing then serves, once, rather than
+ * replaying the runs that passed. Each render registers the run afresh;
+ * a view that stops rendering an interval stops asking for it.
+ */
+export declare function useInterval(ms: number, run: () => void | Promise<void>): void;
+
+/**
+ * Data the view is waiting for, as ordinary loading state: `undefined`
+ * while the work `load` started has not answered — render a loading state
+ * for that — and its answer once it has. The first render starts the work
+ * and answers `undefined`, so the loading state is shown at once; Pane is
+ * asked for the tree again promptly, and that render awaits the work. The
+ * work runs once.
+ */
+export declare function usePending<T>(load: () => Promise<T>): T | undefined;
+
 /** The event Pane sends a designed view: the id of the callback its tree
  * named, with the sequence number of the render whose tree the user saw
  * and the key of the node the event was raised on. */
@@ -128,7 +149,8 @@ export interface UiEvent {
 }
 
 /** What a designed view's `render` answers: its tree, and how long Pane
- * waits before asking again (ignored until timers land). */
+ * waits before asking again, which a view that changes by itself asks for
+ * (see `useInterval` and `usePending`). */
 export interface Rendered {
   tree: string;
   refreshAfterMs?: number | null;

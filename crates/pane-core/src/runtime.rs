@@ -520,15 +520,16 @@ pub enum ViewEvent {
 
 /// What one render of a designed view answers: its tree, the render's
 /// sequence number, and how long the view asked Pane to wait before
-/// rendering it again (read and carried, but nothing acts on it until
-/// timers land, #236).
+/// rendering it again (`refresh-after-ms`, #236: the launcher schedules
+/// the refresh through it).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DesignedRendered {
     pub tree: DesignedTree,
     /// The sequence number the render was asked with: the context's
     /// `render`, which the view's events carry back.
     pub render: u64,
-    /// `refresh-after-ms`, inert until #236.
+    /// `refresh-after-ms`: how long Pane waits before drawing the view
+    /// again.
     pub refresh_after_ms: Option<u32>,
 }
 
@@ -903,6 +904,10 @@ enum Request {
         event: DesignedEvent,
         reply: oneshot::Sender<Result<DesignedRendered, CallError>>,
     },
+    RefreshDesignedView {
+        view: ViewId,
+        reply: oneshot::Sender<Result<DesignedRendered, CallError>>,
+    },
     CloseDesignedView {
         view: ViewId,
     },
@@ -928,8 +933,8 @@ impl Request {
     /// opening a custom view or opening a designed view. Not the background
     /// and ambient ones (a scheduled run, a background launch, a service
     /// cycle, a root search's ask), which a replacement of the package's
-    /// code ends and its new code restarts or re-asks, nor a view event,
-    /// whose screen is what the launcher checks.
+    /// code ends and its new code restarts or re-asks, nor a view's event
+    /// or refresh, whose screen is what the launcher checks.
     fn user_component(&self) -> Option<&Path> {
         match self {
             Request::Run {
@@ -1683,6 +1688,23 @@ impl Runtime {
     ) -> impl Future<Output = Result<DesignedRendered, CallError>> + Send + 'static {
         let (reply, response) = oneshot::channel();
         self.call(Request::DesignedViewEvent { view, event, reply }, response)
+    }
+
+    /// Draws the open designed view `view` again, with no event: the
+    /// refresh its last render asked for by `refresh-after-ms`. The view
+    /// stays open; a view that has closed answers
+    /// [`CallError::ViewClosed`].
+    ///
+    /// The refresh is sent when this is called, not when the returned
+    /// future is first polled, and is numbered as an event's render is, so
+    /// a late refresh answer never replaces a newer tree (the launcher
+    /// drops it, as it drops a stale event's).
+    pub fn refresh_designed_view(
+        &self,
+        view: ViewId,
+    ) -> impl Future<Output = Result<DesignedRendered, CallError>> + Send + 'static {
+        let (reply, response) = oneshot::channel();
+        self.call(Request::RefreshDesignedView { view, reply }, response)
     }
 
     /// Closes the designed view `view`: the guest's view is dropped, after
@@ -3363,6 +3385,18 @@ impl Host {
                     let _ = reply.send(self.designed_view_event(open, event).await);
                 })
             }
+            Request::RefreshDesignedView { view, reply } => {
+                // The view as it is now: a refresh asked for before the view
+                // was closed is still drawn, before the view is dropped.
+                let open = self.designed_views.borrow().get(&view).cloned();
+                let Some(open) = open else {
+                    let _ = reply.send(Err(CallError::ViewClosed));
+                    return;
+                };
+                Box::pin(async move {
+                    let _ = reply.send(self.refresh_designed_view(open).await);
+                })
+            }
             Request::CloseDesignedView { view } => {
                 // Closed at once, for the requests sent after this; its
                 // destructor runs in its instance's turn.
@@ -3954,6 +3988,32 @@ impl Host {
         self.render_designed(view, render, &chain).await
     }
 
+    /// Draws the open designed view `open` again, with no event: the
+    /// refresh its last render asked for by `refresh-after-ms`. The next
+    /// render after the last one asked, numbered as an event's render is,
+    /// so a late refresh answer never replaces a newer tree.
+    async fn refresh_designed_view(
+        &self,
+        open: LiveDesignedView,
+    ) -> Result<DesignedRendered, CallError> {
+        let chain = self.chain();
+        let view = open.id;
+        let path = open.component.clone();
+        let _turn = self.turn_for(&path, &chain).await?;
+        self.live_designed(&open)?;
+        let render = {
+            let mut views = self.designed_views.borrow_mut();
+            match views.get_mut(&view) {
+                Some(open) => {
+                    open.rendered += 1;
+                    open.rendered
+                }
+                None => return Err(CallError::ViewClosed),
+            }
+        };
+        self.render_designed(view, render, &chain).await
+    }
+
     /// Asks the guest to draw the open designed view `view`, in its
     /// instance's turn, as render number `render`.
     async fn render_designed(
@@ -3985,8 +4045,8 @@ impl Host {
             designed::ReadError::Guest(message) => CallError::Guest(message),
             designed::ReadError::Unreadable(message) => CallError::Unreadable(message),
         })?;
-        // `refresh-after-ms` is carried and ignored until timers land
-        // (#236), which schedules the next render through it.
+        // `refresh-after-ms` asks for the next drawing: the launcher's
+        // refresh thread (see `launcher/refresh`) schedules it through it.
         Ok(DesignedRendered {
             tree,
             render,

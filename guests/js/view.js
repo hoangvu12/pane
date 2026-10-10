@@ -7,7 +7,11 @@
 // render, with the state of `useState`, `useRef` and `useMemo` kept per
 // instance (by its place in the tree, and its key when it gives one), and
 // Pane asks for the tree again after each event, so the component reads
-// the state the event's listener changed.
+// the state the event's listener changed. A view that changes by itself
+// asks for that: `useInterval(ms, run)` runs `run` each time `ms` passes
+// while the view is open, and `usePending(load)` presents data on its way
+// as loading state (#236) — the tree Pane is asked to draw again is what
+// asks.
 //
 // `createView(component)` makes the view a command's `openView` answers
 // with: it implements `render(context)` and `handleEvent(event)` for
@@ -24,8 +28,9 @@
 /** The version of the UI component set this SDK writes. */
 const COMPONENT_SET = "1.0";
 
-/** What the view answers for `refresh-after-ms` until timers land. */
-const NO_REFRESH = null;
+/** How long a loading state waits for its data before it is asked for
+ * again: the floor of Pane's refreshes. */
+const PROMPT_REFRESH_MS = 100;
 
 /** The empty outcome: what the navigation stack lands with (#239). */
 const NOTHING_NEXT = { push: null, replace: null, pop: null };
@@ -57,6 +62,10 @@ export const Fragment = Symbol.for("pane.extension.fragment");
 
 /** The render in progress, where the hooks write; `null` outside one. */
 let rendering = null;
+
+/** The ticks and pending data this render registers (see `useInterval`
+ * and `usePending`); `null` outside one. */
+let collecting = null;
 
 /**
  * State the component keeps between renders: `[value, set]`. `set` stores
@@ -98,6 +107,48 @@ export function useMemo(make, deps) {
     cell.deps = deps ?? [];
     cell.value = make();
   }
+  return cell.value;
+}
+
+/**
+ * Runs `run` once each time `ms` passes while the view is open
+ * (`useInterval(1000, ...)`, #236): Pane asks for the tree again after
+ * `ms`, and the run happens in that render, before the tree is drawn, so
+ * the tree shows what it changed. The view's clock is Pane's: an interval
+ * is a request to be drawn again, so the time a render takes, or a hidden
+ * view, delays the next run — which the next drawing then serves, once,
+ * rather than replaying the runs that passed.
+ *
+ * Each render registers the run afresh, so the interval always runs the
+ * listener the newest render named, and a view that stops rendering an
+ * interval stops asking for it.
+ */
+export function useInterval(ms, run) {
+  if (rendering === null) throwOutside("useInterval");
+  collecting.ticks.push({ ms, run });
+}
+
+/**
+ * Data the view is waiting for, as ordinary loading state (#236):
+ * `usePending(load)` answers `undefined` while the work `load` started has
+ * not answered — render a loading state for that — and its answer once it
+ * has. The first render starts the work and answers `undefined`, so the
+ * loading state is shown at once; Pane is asked for the tree again
+ * promptly, and that render awaits the work, so its answer is drawn as
+ * soon as it is there. The work is awaited inside the guest call, which
+ * Pane bounds as any call (a work that never answers is the view's
+ * failure, not a hung launcher).
+ *
+ * The work runs once; a view that wants it again renders another one.
+ */
+export function usePending(load) {
+  const host = rendering ?? throwOutside("usePending");
+  const index = host.cursor++;
+  if (index === host.cells.length) {
+    host.cells.push({ value: undefined, work: Promise.resolve().then(load) });
+  }
+  const cell = host.cells[index];
+  collecting.pendings.push(cell);
   return cell.value;
 }
 
@@ -256,6 +307,14 @@ export function createView(component, props = {}) {
   const cells = new Map();
   /** The listeners of the last two renders, by render number and id. */
   const tables = new Map();
+  /** The ticks and pending data the last render registered. */
+  let registered = { ticks: [], pendings: [] };
+  /** What the last render asked Pane for: "none", a "prompt" refresh to
+   * await pending data, or the refresh the view asked for ("asked"). */
+  let ask = "none";
+  /** Whether an event was handled since the last render: its render is
+   * not one that answers a refresh. */
+  let afterEvent = false;
   /** The newest render asked, to number a context that names none. */
   let newest = 0;
   return {
@@ -266,8 +325,31 @@ export function createView(component, props = {}) {
       const callbacks = new Map();
       /** The component places this render visited, to drop the rest. */
       const used = new Set();
+      // This render answers the refresh the last one asked for, unless an
+      // event's answer asked for it: the ticks run and the pending work is
+      // awaited before the tree is drawn, so it shows what they changed.
+      // Ticks run only on the view's own ask, not on the prompt a loading
+      // state asks for, which awaits the data instead.
+      const answering = ask !== "none" && !afterEvent;
+      const ticking = answering && ask === "asked";
+      afterEvent = false;
+      if (answering) {
+        if (ticking) {
+          for (const { run } of registered.ticks) await run();
+        }
+        for (const cell of registered.pendings) {
+          if (cell.value === undefined) cell.value = await cell.work;
+        }
+      }
+      /** What this render registers, replacing the last render's. */
+      const collected = { ticks: [], pendings: [] };
       const root = [];
-      write({ type: component, props, key: undefined }, "", callbacks, cells, used, root);
+      collecting = collected;
+      try {
+        write({ type: component, props, key: undefined }, "", callbacks, cells, used, root);
+      } finally {
+        collecting = null;
+      }
       for (const path of cells.keys()) {
         if (!used.has(path)) cells.delete(path);
       }
@@ -280,12 +362,25 @@ export function createView(component, props = {}) {
       if (root.length !== 1) {
         throw new Error("a view renders one root node");
       }
+      registered = collected;
+      // What Pane is asked to wait before the tree again: the soonest the
+      // view's intervals ask for, and promptly while data is pending.
+      let refreshAfterMs = null;
+      for (const { ms } of collected.ticks) {
+        refreshAfterMs = Math.min(refreshAfterMs ?? Infinity, ms);
+      }
+      const waiting = collected.pendings.some((cell) => cell.value === undefined);
+      if (waiting) {
+        refreshAfterMs = Math.min(refreshAfterMs ?? Infinity, PROMPT_REFRESH_MS);
+      }
+      ask = refreshAfterMs === null ? "none" : waiting ? "prompt" : "asked";
       return {
         tree: JSON.stringify({ version: COMPONENT_SET, root: root[0] }),
-        refreshAfterMs: NO_REFRESH,
+        refreshAfterMs,
       };
     },
     async handleEvent(event) {
+      afterEvent = true;
       // A press of a button the tree named: the table of the render the
       // user saw holds it. An older event is stale, dropped.
       const run = tables.get(event.render)?.get(event.callback);

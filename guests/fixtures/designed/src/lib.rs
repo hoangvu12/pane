@@ -3,9 +3,11 @@
 //! pane-extension, so that Pane's reading of them is checked on its own
 //! (see `crates/pane-core/tests/designed_views.rs`).
 //!
-//! Its screen is a counter — a column of a text ("Count: N") and a row of
-//! the buttons below, each naming its own callback id — whose presses
-//! answer what the next drawing is, once, then the counter again:
+//! Its screen is a counter — a column of a text ("Count: N"), a text
+//! naming how many times the view was drawn ("Renders: N", which a
+//! refresh raises) and a row of the buttons below, each naming its own
+//! callback id — whose presses answer what the next drawing is, once,
+//! then the counter again:
 //!
 //! - "Increment" counts one up, and only when the event's `key` names the
 //!   button, so the test checks that Pane sends the node's key;
@@ -19,6 +21,16 @@
 //! - "Draw another major's tree" a tree naming version 2.0;
 //! - "Answer an unreadable tree" makes it answer text that is not JSON;
 //! - "Answer an unknown callback" answers the event itself with an error.
+//!
+//! Every render also answers `refresh-after-ms` as the state's
+//! `refresh_ms` says, so the tests of #236 drive Pane's refreshing of a
+//! view through it — each button below sets it, its presses' answers
+//! asking from then on, and the hand-written values ride outside any SDK:
+//!
+//! - "Answer refresh 10ms" asks for 10 ms, below the 100 ms floor;
+//! - "Answer refresh 25h" asks for 25 hours, above the 24 h ceiling;
+//! - "Answer refresh 1s" asks for a second;
+//! - "Stop refreshing" asks for none.
 //!
 //! It cannot use `pane-extension`, which writes the tree itself, so it
 //! supplies the allocator, panic handler, byte comparisons and
@@ -68,6 +80,11 @@ enum Next {
 struct State {
     count: Cell<u32>,
     next: Cell<Next>,
+    /// How many times the view was drawn, refreshes included.
+    renders: Cell<u32>,
+    /// What every render answers `refresh-after-ms` as, which the refresh
+    /// buttons below set: None until one is pressed.
+    refresh_ms: Cell<Option<u32>>,
 }
 
 // SAFETY: a component's code runs on one thread.
@@ -78,6 +95,8 @@ struct Designed;
 
 impl GuestView for Designed {
     async fn render(&self, _context: String) -> Result<Rendered, String> {
+        let renders = STATE.renders.get();
+        STATE.renders.set(renders + 1);
         let next = STATE.next.replace(Next::Counter);
         let tree = match next {
             Next::Counter => counter(),
@@ -108,7 +127,7 @@ impl GuestView for Designed {
         };
         Ok(Rendered {
             tree,
-            refresh_after_ms: None,
+            refresh_after_ms: STATE.refresh_ms.get(),
         })
     }
 
@@ -124,6 +143,13 @@ impl GuestView for Designed {
             6 => STATE.next.set(Next::NewerMinor),
             7 => STATE.next.set(Next::OtherMajor),
             8 => STATE.next.set(Next::Unreadable),
+            // The refresh buttons: each makes every render from now on ask
+            // Pane to draw the view again as it names (10 ms is below the
+            // floor, 25 hours above the ceiling), or not again.
+            10 => STATE.refresh_ms.set(Some(10)),
+            11 => STATE.refresh_ms.set(Some(25 * 60 * 60 * 1000)),
+            12 => STATE.refresh_ms.set(Some(1000)),
+            13 => STATE.refresh_ms.set(None),
             _ => return Err(format!("unknown callback: {}", event.callback)),
         }
         Ok(Outcome {
@@ -137,10 +163,12 @@ impl GuestView for Designed {
 static STATE: State = State {
     count: Cell::new(0),
     next: Cell::new(Next::Counter),
+    renders: Cell::new(0),
+    refresh_ms: Cell::new(None),
 };
 
 /// The buttons the counter's tree names: (label, key, callback id).
-const BUTTONS: [(&str, &str, u32); 9] = [
+const BUTTONS: [(&str, &str, u32); 13] = [
     ("Increment", "increment", 1),
     ("Answer an error", "error", 2),
     ("Answer an over-limit tree", "over-limit", 3),
@@ -150,9 +178,14 @@ const BUTTONS: [(&str, &str, u32); 9] = [
     ("Draw another major's tree", "other-major", 7),
     ("Answer an unreadable tree", "unreadable", 8),
     ("Answer an unknown callback", "unknown-callback", 9),
+    ("Answer refresh 10ms", "refresh-10", 10),
+    ("Answer refresh 25h", "refresh-25h", 11),
+    ("Answer refresh 1s", "refresh-1s", 12),
+    ("Stop refreshing", "stop-refresh", 13),
 ];
 
-/// The counter as its tree, with one button per case above.
+/// The counter as its tree, with one button per case above and the count
+/// of the view's drawings, which a refresh raises.
 fn counter() -> String {
     let buttons: Vec<String> = BUTTONS
         .iter()
@@ -166,8 +199,10 @@ fn counter() -> String {
     format!(
         "{{\"version\":\"{COMPONENT_SET}\",\"root\":{{\"type\":\"column\",\"gap\":\"m\",\
          \"children\":[{{\"type\":\"text\",\"text\":\"Count: {}\",\"style\":\"title\"}},\
+         {{\"type\":\"text\",\"text\":\"Renders: {}\"}},\
          {{\"type\":\"row\",\"gap\":\"s\",\"children\":[{}]}}]}}}}",
         STATE.count.get(),
+        STATE.renders.get(),
         buttons.join(","),
     )
 }
@@ -231,6 +266,8 @@ impl Guest for Fixture {
     async fn open_view(_command: String, _launch: LaunchRecord) -> Result<View, String> {
         STATE.count.set(0);
         STATE.next.set(Next::Counter);
+        STATE.renders.set(0);
+        STATE.refresh_ms.set(None);
         Ok(View::new(Designed))
     }
 }

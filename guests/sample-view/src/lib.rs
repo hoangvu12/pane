@@ -9,7 +9,7 @@ use core::cell::Cell;
 
 use pane_extension::alloc::{format, string::String};
 use pane_extension::view::{
-    Cx, IntoNode, Space, TextLevel, TextStyle, Tone, View, button, column, row, text,
+    Cx, IntoAnswer, Space, TextLevel, TextStyle, Tone, View, button, column, row, text,
 };
 use pane_extension::{Command, LaunchRecord};
 
@@ -19,7 +19,7 @@ struct Counter {
 }
 
 impl View for Counter {
-    fn render(&mut self, cx: &mut Cx<Self>) -> impl IntoNode {
+    fn render(&mut self, cx: &mut Cx<Self>) -> impl IntoAnswer {
         column()
             .gap(Space::M)
             .child(

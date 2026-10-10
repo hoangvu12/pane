@@ -61,6 +61,7 @@ mod presentation;
 mod programs;
 mod providers;
 mod quick_slots;
+mod refresh;
 pub mod search_files;
 mod submenus;
 
@@ -639,6 +640,11 @@ pub struct Launcher {
     /// ([`Launcher::with_clock`]). Only a launcher that installs packages
     /// runs any.
     services: Option<Arc<Services>>,
+    /// Re-renders the open designed view on the delay its render answers
+    /// (`refresh-after-ms`), by the launcher's clock
+    /// ([`Launcher::with_clock`]). Only a launcher that installs packages
+    /// refreshes one.
+    refresh: Option<Arc<refresh::Refresh>>,
     /// Checks for newer versions of the installed npm packages and
     /// updates the eligible ones at a safe boundary (see `updates`).
     /// Only a launcher that installs packages checks anything.
@@ -673,6 +679,9 @@ struct WeakLauncher {
     /// Held weakly, so that Pane stops running continuing services as soon
     /// as the launcher is dropped.
     services: Option<std::sync::Weak<Services>>,
+    /// Held weakly, so that Pane stops re-rendering designed views as soon
+    /// as the launcher is dropped.
+    refresh: Option<std::sync::Weak<refresh::Refresh>>,
     /// Held weakly, so that Pane stops checking for updates as soon as the
     /// launcher is dropped.
     updates: Option<std::sync::Weak<updates::Updates>>,
@@ -703,6 +712,7 @@ impl WeakLauncher {
             clipboard,
             schedules: self.schedules.as_ref().and_then(std::sync::Weak::upgrade),
             services: self.services.as_ref().and_then(std::sync::Weak::upgrade),
+            refresh: self.refresh.as_ref().and_then(std::sync::Weak::upgrade),
             updates: self.updates.as_ref().and_then(std::sync::Weak::upgrade),
             sources: self.sources.clone(),
             developing: self.developing.upgrade()?,
@@ -1578,6 +1588,7 @@ impl Launcher {
             clipboard: None,
             schedules: None,
             services: None,
+            refresh: None,
             updates: None,
             sources,
             developing,
@@ -1597,7 +1608,7 @@ impl Launcher {
         }
         // Scheduled work and continuing services follow the system's clock
         // until a test or a development build gives the launcher another
-        // one.
+        // one; a designed view's refreshes do too (see `refresh`).
         if let Some(installation) = &launcher.installation {
             let schedules =
                 Schedules::start(Arc::new(crate::clipboard::SystemClock), &installation.data);
@@ -1607,6 +1618,10 @@ impl Launcher {
                 Services::start(Arc::new(crate::clipboard::SystemClock), &installation.data);
             services.run(launcher.downgrade());
             launcher.services = Some(services);
+            let clock = Arc::new(crate::clipboard::SystemClock);
+            let refresh = refresh::Refresh::start(clock);
+            launcher.refresh = Some(refresh.clone());
+            refresh.run(launcher.downgrade());
             // Pane checks for newer versions of the installed npm packages
             // in the background (see `updates`), starting shortly after
             // this, once a development build's registry is in place.
@@ -1664,10 +1679,12 @@ impl Launcher {
     /// and continuing services by `clock` rather than the system's clock,
     /// for tests and development builds: clipboard items are kept and
     /// expire by it, scheduled commands run by it, their intervals
-    /// restarting from its now, and services cycle by it, their cadence
-    /// restarting from its now. Items that already expired by the system's
-    /// clock were removed when the launcher started. Release builds have
-    /// no way to replace the system's clock.
+    /// restarting from its now, services cycle by it, their cadence
+    /// restarting from its now, and a designed view's refreshes are asked
+    /// for by it, a refresh already scheduled keeping its due time. Items
+    /// that already expired by the system's clock were removed when the
+    /// launcher started. Release builds have no way to replace the
+    /// system's clock.
     #[cfg(any(test, debug_assertions))]
     pub fn with_clock(self, clock: Arc<dyn crate::clipboard::Clock>) -> Self {
         // Rows' dates are shown relative to it too (see `looks`).
@@ -1682,6 +1699,9 @@ impl Launcher {
         }
         if let Some(services) = &self.services {
             services.follow(clock.clone());
+        }
+        if let Some(refresh) = &self.refresh {
+            refresh.follow(clock.clone());
         }
         if let Some(updates) = &self.updates {
             updates.follow(clock);
@@ -1758,6 +1778,19 @@ impl Launcher {
         self.services
             .as_ref()
             .is_some_and(|services| services.settled(limit))
+    }
+
+    /// Waits until the open designed view's refresh thread looked at every
+    /// change of the clock so far, and every refresh it sent has been
+    /// answered and shown; `false` if it did not within `limit`. For tests
+    /// and development builds, which so wait for a view's refresh without
+    /// timing it.
+    #[cfg(any(test, debug_assertions))]
+    #[doc(hidden)]
+    pub fn wait_for_view_refresh(&self, limit: std::time::Duration) -> bool {
+        self.refresh
+            .as_ref()
+            .is_some_and(|refresh| refresh.settled(limit))
     }
 
     /// Waits until the updater completed a check after this was asked —
@@ -1862,6 +1895,7 @@ impl Launcher {
             clipboard: self.clipboard.as_ref().map(Arc::downgrade),
             schedules: self.schedules.as_ref().map(Arc::downgrade),
             services: self.services.as_ref().map(Arc::downgrade),
+            refresh: self.refresh.as_ref().map(Arc::downgrade),
             updates: self.updates.as_ref().map(Arc::downgrade),
             sources: self.sources.clone(),
             developing: Arc::downgrade(&self.developing),

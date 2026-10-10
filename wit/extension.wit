@@ -183,8 +183,9 @@ interface command {
     /// Draws the view as it is now: its tree as JSON, naming the version of
     /// the UI component set it uses, such as `{"version": "1.0", "root":
     /// {"type": "column", "children": [...]}}`, and how long Pane waits
-    /// before asking again (`refresh-after-ms`, which Pane reads and
-    /// carries but does not act on until timers land). `context` is JSON
+    /// before asking again (`refresh-after-ms`, #236: Pane draws the view
+    /// again then, clamped to the floor and ceiling of refreshes, while
+    /// the view is on top and the launcher is shown). `context` is JSON
     /// too: the sequence number of this render, so the extension can name
     /// each render's callbacks, and the version of the UI component set
     /// Pane supports, such as `{"render": 1, "ui": "1.0"}`; it can grow

@@ -99,6 +99,13 @@ Rust's standard library on `wasm32-wasip2`) is rejected with an explanation.
   [designed-tree.md](../docs/designed-tree.md)); held by
   `crates/pane-core/tests/designed_views.rs` and the window tests of
   `crates/pane/tests/designed_views.rs`.
+- `sample-timer`, `sample-timer-js`, `sample-timer-ts`: the timer sample
+  in Rust, JavaScript and TypeScript (#236): a clock whose screen changes
+  by itself — the view's tree asks Pane to render it again after every
+  second (`refresh-after-ms`) — with its caption arriving as pending data
+  shown first as a loading state (`Pending`/`loading` in Rust,
+  `usePending` in JavaScript and TypeScript, `useInterval` for the
+  interval); held by `crates/pane-core/tests/view_refresh.rs`.
 - `sample-icons`, `sample-icons-js`, `sample-icons-ts`: the icons sample in
   Rust, JavaScript and TypeScript (#139): rows with a built-in icon, a
   packaged image with `@light` and `@dark` variants, a light and dark pair,
