@@ -1,7 +1,9 @@
 //! Search Files' split view in the launcher's window (#177), with real key
 //! events and clicks: Pane's registered Files default extension, installed
-//! from its pinned commit in a repository served over Git's smart HTTP
-//! protocol from 127.0.0.1 (pane-core's test support), over the real file
+//! from its pinned commit in a repository made to the default's package
+//! shape over the Rust files sample's component and served over Git's
+//! smart HTTP protocol from 127.0.0.1 (pane-core's test support; the
+//! extension's own sources live in their repository, #285), over the real file
 //! index of a fixture folder standing for the home folder, with a recording
 //! handler of files and a recording system. It opens with no folder to choose
 //! on "Recently Used", each row with the system's icon of its file; the type
@@ -35,7 +37,7 @@ mod recording;
 #[path = "../../pane-core/tests/support/repo_server.rs"]
 mod repo_server;
 
-use defaults::from_package;
+use defaults::pinned;
 use recording::{Done, RecordingSystem};
 use settle::{settle, until};
 
@@ -48,6 +50,42 @@ const OPEN_ACTIONS: &str = if cfg!(target_os = "macos") {
 
 /// The id of Files' Search Files row in root search.
 const COMMAND: &str = "default:files#files";
+
+/// The files of the package the Files pin names: the Rust files sample's
+/// component under the default's own manifest (its command's id `files`,
+/// which the host keys the Search Files view on, and `fileIndex` set), as
+/// the default's repository holds its release revision.
+fn package_files() -> Vec<(String, Vec<u8>)> {
+    let mut files: Vec<(String, Vec<u8>)> = defaults::package_files("sample-files")
+        .into_iter()
+        .filter(|(path, _)| path != "pane.json")
+        .collect();
+    files.push(("pane.json".into(), manifest().into_bytes()));
+    files
+}
+
+/// The manifest of the Files package: the default's own shape, naming the
+/// sample's component.
+fn manifest() -> String {
+    r#"{
+  "manifestVersion": 1,
+  "title": "Files",
+  "version": "0.1.0",
+  "apiVersion": "0.1",
+  "commands": [
+    {
+      "id": "files",
+      "title": "Search Files",
+      "subtitle": "Finds the files of your home folder: recently used, by name and by type, with a preview",
+      "component": "sample_files.wasm",
+      "search": true,
+      "rootResults": true
+    }
+  ],
+  "fileIndex": true
+}"#
+        .to_owned()
+}
 
 /// A 1×1 transparent PNG.
 const PNG: &[u8] = &[
@@ -132,7 +170,9 @@ impl World {
         }
         let server = repo_server::Server::start();
         let repos = tempfile::tempdir().unwrap();
-        let pin = from_package(&server, repos.path(), "files", "Files");
+        let files = package_files();
+        let tag = format!("v{}", defaults::version_of(&files));
+        let pin = pinned(&server, repos.path(), "files", "Files", &tag, &files);
         World {
             data: tempfile::tempdir().unwrap(),
             _temp: temp,

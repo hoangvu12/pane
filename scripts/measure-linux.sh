@@ -2,8 +2,8 @@
 # Resource and latency measurement of Pane's whole process tree on X11 (#4).
 # One fixed workload, documented in docs/research/resource-measurements.md:
 # a cold start (a fresh data folder, nothing installed), warm restarts, an
-# idle core, Pane hidden with its default extensions (#189), seven
-# installed-but-unused extensions, the calculator run repeatedly, the
+# idle core, Pane hidden with its default extensions (#189), four
+# installed-but-unused extensions, a root answer run repeatedly, the
 # Watching continuing service and the Counting scheduled work running, and
 # repeated reload and disable of one package. Pane's whole process tree —
 # Pane and any helper it started, and every thread of it — is sampled from
@@ -18,8 +18,10 @@
 # one screenshot check), a Vulkan driver, and for Settings, where the
 # lifecycle's reloads and disables happen (#168), dbus-launch (dbus-x11),
 # at-spi2-core, python3-gi and gir1.2-atspi-2.0; plus the guests built
-# (`cargo xtask ci` or `cargo xtask guests`), whose assembled packages
-# the hidden phase serves as the default extensions' repositories. The
+# (`cargo xtask ci` or `cargo xtask guests`) for the workload's sample
+# packages, and the default extensions' repositories, which the hidden
+# phase clones at the commits the committed pins name and serves on
+# 127.0.0.1. The
 # hidden phase sets them up from those repositories on 127.0.0.1 and
 # wires no application update source, so the measured Pane is offered no
 # update of its own. The binary measured
@@ -55,11 +57,13 @@ warm_restarts=${PANE_MEASURE_WARM_RESTARTS:-3}
 reloads=${PANE_MEASURE_RELOADS:-6}
 disables=${PANE_MEASURE_DISABLES:-5}
 sample_seconds=${PANE_MEASURE_SAMPLE_SECONDS:-1}
-# The seven packages installed but never invoked: the four default
-# extensions and the three language samples.
-unused_packages=(calculator quicklinks applications files sample-rust sample-js sample-ts)
+# The four packages installed but never invoked: the applications sample
+# (whose host-side scan of desktop entries runs, as it does for a user's
+# Pane) and the three language samples.
+unused_packages=(sample-applications-js sample-rust sample-js sample-ts)
 # Pane's default extensions (#60), set up at the hidden phase's first
-# setup from the repositories the workload serves on 127.0.0.1.
+# setup from the repositories the workload clones at the commits the
+# committed pins name and serves on 127.0.0.1.
 default_extensions=(calculator applications quicklinks files clipboard-history)
 # A development build takes its default extensions' pins from PANE_DEFAULTS;
 # the hidden phase names its own pins, and every other phase names none:
@@ -69,9 +73,11 @@ printf '[]\n' >"$no_default_pins"
 export PANE_DEFAULTS=$no_default_pins
 
 [ -x "$pane" ] || { echo "no pane binary at $pane (cargo build -p pane)"; exit 1; }
-# The hidden phase needs the guests' assembled packages; the rest does too.
+# The hidden phase needs the guests' assembled sample packages and the
+# default extensions' repositories, cloned at the commits the committed
+# pins name; the rest needs the guests too.
 skipped=
-if [ ! -f target/guests/packages/calculator/pane.json ]; then
+if [ ! -f target/guests/packages/sample-rust/pane.json ]; then
   echo "SKIPPED the hidden phase (#189): the guests are not built (cargo xtask guests)" >&2
   skipped=hidden-idle
 fi
@@ -117,7 +123,7 @@ record = {
         "calculatorRuns": int(calculator), "warmRestarts": int(warm), "reloads": int(reloads),
         "disables": int(disables), "sampleSeconds": float(cadence),
         "hiddenSeconds": int(hidden), "settleSeconds": int(settle),
-        "unusedPackages": ["calculator", "quicklinks", "applications", "files", "sample-rust", "sample-js", "sample-ts"],
+        "unusedPackages": ["sample-applications-js", "sample-rust", "sample-js", "sample-ts"],
         "defaultExtensions": ["calculator", "applications", "quicklinks", "files", "clipboard-history"],
     },
 }
@@ -449,9 +455,10 @@ stop_pane
 # 4. Hidden idle (#189): Pane with its default extensions and nothing
 # else, hidden after the one show of its start and left alone, as it sits
 # in the background most of a user's day. A data folder of its own; the
-# defaults are set up at its first setup from the repositories the
-# workload makes of the guests' assembled packages and serves on
-# 127.0.0.1, as the smoke serves them.
+# defaults are set up at its first setup from their repositories, cloned
+# at the commits the committed pins name (the workload's own setup on the
+# runner; the Pane under test fetches only from 127.0.0.1) and served as
+# the smoke serves them, so the phase measures what a release installs.
 # Files' index covers an empty folder of the workload's
 # (PANE_TEST_FILE_INDEX_HOME), not the runner's home, so the phase
 # measures Pane idling, not a first walk of a home folder. The launcher is
@@ -480,7 +487,10 @@ repository_server_pid=$!
 for _ in $(seq 600); do [ -s "$out/hidden-repository-server.port" ] && break; kill -0 "$repository_server_pid" 2>/dev/null || break; sleep 0.1; done
 [ -s "$out/hidden-repository-server.port" ] \
   || { echo "the default extensions' repository server did not start (see $out/hidden-repository-server.log)"; exit 1; }
-python3 "$here/repository_server.py" make-defaults target/guests/packages \
+# The clones reach the real repositories, the workload's own setup on this
+# computer, as the smoke's; a failure ends the workload, as a failure to
+# make them from the guests' packages did.
+python3 "$here/repository_server.py" clone-defaults crates/pane/defaults.json \
   "$hidden_repositories" "$out/hidden-pins.json" \
   "http://127.0.0.1:$(cat "$out/hidden-repository-server.port")"
 export PANE_DEFAULTS=$out/hidden-pins.json
@@ -507,8 +517,8 @@ export PANE_DEFAULTS=$no_default_pins
 export PANE_DATA_DIR=$main_data
 fi   # the hidden phase
 
-# 5. Installed but unused: the seven packages, none of them invoked. The
-# applications extension's host-side scan of desktop entries runs, as it
+# 5. Installed but unused: the four packages, none of them invoked. The
+# applications sample's host-side scan of desktop entries runs, as it
 # does for a user's Pane; no command is opened and nothing is typed.
 set_phase install-unused-packages
 for package in "${unused_packages[@]}"; do
@@ -521,19 +531,21 @@ sleep "$unused_seconds"
 capture 3-installed-root.png
 stop_pane
 
-# 6. The calculator, a default extension, run repeatedly: an expression
-# typed into root search, Enter copies the answer, Escape clears it. The
-# first answer is checked to be sure the workload runs the calculator.
+# 6. A root answer, run repeatedly: a query typed into root search, Enter
+# copies the answer, Escape clears it. The Rust sample computes the
+# answers ("reverse <text>"), as the calculator does its arithmetic for a
+# user's Pane; the first answer is checked to be sure the workload runs
+# it.
 start_pane
 set_phase calculator
 focus_launcher
-"$xdotool" type --delay 50 '6*7'; sleep 2
+"$xdotool" type --delay 50 'reverse 42'; sleep 2
 capture 4-calculator-answer.png
 check 4-calculator-answer.png answer   # the selected answer card
 "$xdotool" key Return; sleep 1
 "$xdotool" key Escape; sleep 1
 for run in $(seq $((calculator_runs - 1))); do
-  "$xdotool" type --delay 50 "$((run * 11))+$run"; sleep 1
+  "$xdotool" type --delay 50 "reverse $((run * 11))"; sleep 1
   "$xdotool" key Return; sleep 1
   "$xdotool" key Escape; sleep 1
 done

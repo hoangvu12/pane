@@ -1,8 +1,8 @@
 //! Search Files like Raycast's (#177), through the launcher's public
 //! interface: Pane's registered Files default extension, installed from
-//! its pinned commit in a repository served over Git's smart HTTP
-//! protocol from 127.0.0.1 (`support/repo_server.rs`,
-//! `support/defaults.rs`), over the real file
+//! its pinned commit in a repository made from the Rust files sample's
+//! component and served over Git's smart HTTP protocol from 127.0.0.1
+//! (`support/repo_server.rs`, `support/defaults.rs`), over the real file
 //! index of a fixture folder standing for the home folder, with a recording
 //! opener and system so that nothing opens or shows. Search Files opens with
 //! no folder to choose on "Recently Used" (the most recently modified
@@ -12,8 +12,15 @@
 //! detail has its Metadata and previews an image; its actions are Pane's,
 //! Copy Name among them, and Enter on a program shows it without running
 //! it; the index's state is said while it is built or stopped. A copy of
-//! Files installed from a folder keeps its own search. The window's side
-//! is `crates/pane/tests/window.rs`'s `search_files_split`.
+//! the Files package installed from a folder keeps its own search. The
+//! window's side is `crates/pane/tests/window.rs`'s `search_files_split`.
+//!
+//! The Files extension's own sources live in their repository (#285),
+//! which the tests cannot read; the repository the pin names here is
+//! made to the default's package shape over the same sample's component
+//! (`sample_files.wasm`, which implements the same contract), with the
+//! manifest the default's own holds: its command's id `files`, which the
+//! host keys the Search Files view on, and `"fileIndex": true`.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -71,9 +78,40 @@ fn same_file(reported: &Path, made: &Path) -> bool {
     fs::canonicalize(reported).unwrap() == fs::canonicalize(made).unwrap()
 }
 
-/// The files of the assembled Files package, by their path in the package.
+/// The files of the package the Files pin names: the Rust files sample's
+/// component under the default's own manifest (its command's id `files`,
+/// which the host keys the Search Files view on, `"fileIndex": true`),
+/// as the default's repository holds its release revision.
 fn package_files() -> Vec<(String, Vec<u8>)> {
-    defaults::package_files("files")
+    let mut files: Vec<(String, Vec<u8>)> = defaults::package_files("sample-files")
+        .into_iter()
+        .filter(|(path, _)| path != "pane.json")
+        .collect();
+    files.push(("pane.json".into(), manifest().into_bytes()));
+    files
+}
+
+/// The manifest of the Files package: the default's own shape, naming
+/// the sample's component.
+fn manifest() -> String {
+    r#"{
+  "manifestVersion": 1,
+  "title": "Files",
+  "version": "0.1.0",
+  "apiVersion": "0.1",
+  "commands": [
+    {
+      "id": "files",
+      "title": "Search Files",
+      "subtitle": "Finds the files of your home folder: recently used, by name and by type, with a preview",
+      "component": "sample_files.wasm",
+      "search": true,
+      "rootResults": true
+    }
+  ],
+  "fileIndex": true
+}"#
+        .to_owned()
 }
 
 /// `path`'s last modified time set `days` days before now.
@@ -138,7 +176,9 @@ impl Home {
         }
         let server = repo_server::Server::start();
         let repos = tempfile::tempdir().unwrap();
-        let pin = defaults::from_package(&server, repos.path(), "files", "Files");
+        let files = package_files();
+        let tag = format!("v{}", defaults::version_of(&files));
+        let pin = defaults::pinned(&server, repos.path(), "files", "Files", &tag, &files);
         Home {
             dir,
             home,

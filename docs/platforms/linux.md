@@ -215,25 +215,24 @@ only by the window tests. The macOS and Windows smokes run the same phase
 
 ### Calculator (#27)
 
-The calculator phase installs the calculator package
-(`--install target/guests/packages/calculator`), types "6*7" with real X11
-key events and checks the selected answer row's color; Enter copies the
-answer. Ctrl+A and typing "42+1" gives screenshot 29; Ctrl+A, Ctrl+V (the
-copied "42") and typing "+1" must give exactly the same screen (`--same`),
-which holds only if the X11 clipboard held "42"; screens 27 to 29 must
-differ. Run locally on 2026-09-28 (Ubuntu 26.04.1 LTS, kernel
-7.0.0-31-generic, x86_64, same Xvfb/lavapipe setup): all checks of the
-whole smoke passed.
+The installer phase (screenshots 501 and 502) covers the calculator: the
+extension is set up on a clean machine from the commit this release pins
+(its repository cloned at that commit and served on 127.0.0.1), typing
+"6*7" with real X11 key events checks the selected answer row's color, and
+Enter copies the answer — with no developer tool anywhere. (A by-hand
+calculator phase, which installed the package from this repository's
+guests tree and also checked the X11 clipboard round-trip, left with the
+extension's sources, #285: the arithmetic is the extension's repository's
+to test; screenshots 27 to 30 below were that phase's, of the run on
+2026-09-28, Ubuntu 26.04.1 LTS, kernel 7.0.0-31-generic, x86_64, same
+Xvfb/lavapipe setup.) Disabling the
+calculator is covered by the launcher tests, not natively.
 
 | Step | Evidence |
 | --- | --- |
 | "6*7" typed: the answer 42, first and selected, computed by the calculator's guest | [27-answer.png](evidence/linux-x11/27-answer.png) |
 | Enter: "Copied 42 to the clipboard", root search unchanged | [28-copied.png](evidence/linux-x11/28-copied.png) |
 | Pasted "42", typed "+1": the answer 43, the same screen as typing "42+1" | [30-pasted.png](evidence/linux-x11/30-pasted.png) |
-
-The macOS and Windows smokes run the same phase (screenshots 27 to 30, with
-Cmd and Ctrl respectively); it has not run there yet. Disabling the
-calculator is covered by the launcher tests, not natively.
 
 ### Operations (#22)
 
@@ -320,10 +319,12 @@ has not run there yet.
 
 The applications phase adds a desktop entry "Pane Smoke App" whose `Exec` writes a
 marker file, in an `XDG_DATA_HOME` given to Pane only (the system's
-`XDG_DATA_DIRS` entries are searched too), installs the
-[applications](../applications.md) package, types "pane smoke" with real
+`XDG_DATA_DIRS` entries are searched too), installs the JavaScript
+applications sample (which supplies the host's applications to root search
+as the [Applications](../applications.md) default extension does), types
+"pane smoke" with real
 X11 key events, checks the selected row, presses Return and checks "Opened
-Pane Smoke App" and that the marker was written. Run locally on 2026-09-28
+Launch Pane Smoke App" and that the marker was written. Run locally on 2026-09-28
 (Ubuntu 26.04.1 LTS, kernel 7.0.0-31-generic, x86_64, same Xvfb/lavapipe
 setup): all checks of the whole smoke passed. The adapter tests also run a
 desktop entry's program natively and explain a missing program and a
@@ -338,33 +339,28 @@ Only X11 (Xvfb, no desktop session) ran; Wayland and real desktops'
 `XDG_CURRENT_DESKTOP`, Flatpak and Snap folders are untested. Disabling is
 covered by the launcher tests, not natively.
 
-### Quicklinks (#28)
+### Opening a web link (#28)
 
-The quicklinks phase, after the applications phase, installs the Quicklinks package
-(`--install target/guests/packages/quicklinks`), opens its command, and in
-"Create quicklink" types "Pane issues", Tab and
-"https://example.com/pane-issues" with real X11 key events, then Return.
-After a restart it types "pane iss" (the selected row's color must appear)
-and presses Return: `xdg-open` runs with no desktop session variables, every
+The web-link phase, after the applications phase, installs the actions
+sample, opens its "Actions" command, selects its "System" item, opens the
+Actions panel (Ctrl+K) and runs "Open Website", which opens
+https://example.com through Pane's link handler: `xdg-open` runs with no
+desktop session variables, every
 XDG configuration and data location in the smoke's output folder and
 `BROWSER` set to a script that records its argument, so no real browser
-starts; the script must have received the URL. Run locally on 2026-09-28
+starts; the script must have received the URL. (The Quicklinks extension
+that carried this left with its sources for its own repository, #285, its
+quicklinks being its repository's to test; screenshots 46 to 48 were its
+phase's.) Run locally on 2026-09-28
 (Ubuntu 26.04.1 LTS, kernel 7.0.0-31-generic, x86_64, same Xvfb/lavapipe
 setup): all checks of the whole smoke passed.
 
-| Step | Evidence |
-| --- | --- |
-| Form submitted: "Saved quicklink “Pane issues”" | [46-quicklink-saved.png](evidence/linux-x11/46-quicklink-saved.png) |
-| Restarted, "pane iss" typed: the quicklink, first and selected | [47-quicklink-found.png](evidence/linux-x11/47-quicklink-found.png) |
-| Return: "Opened https://example.com/pane-issues", the URL received by the handler | [48-quicklink-opened.png](evidence/linux-x11/48-quicklink-opened.png) |
-
 A real desktop's handler (GNOME's `gio open`, a browser chosen in the
-desktop settings) was not run. The macOS and Windows smokes run the phase up
-to screenshot 47; it has not run there yet.
+desktop settings) was not run.
 
 ### Uninstalling an extension (#40)
 
-The last phase, after the quicklinks phase, restarts Pane, chooses
+The last phase, after the web-link phase, restarts Pane, chooses
 Uninstall in the Actions menu of the settings sample's page in Settings
 (since #168; "Uninstall Settings sample" in **Manage extensions…** in the
 run below) and the first choice, "Uninstall and keep saved

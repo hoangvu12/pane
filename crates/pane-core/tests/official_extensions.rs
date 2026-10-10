@@ -5,10 +5,11 @@
 //! at first setup or by the user by hand alike. An extension from any
 //! other source, another Git host, npm or a folder, is not official.
 //!
-//! The default calculator is installed from its pinned commit in a
-//! repository made with the `git` program and served over Git's smart
-//! HTTP protocol from 127.0.0.1 (`support/repo_server.rs`,
-//! `support/defaults.rs`), the npm sample from a local registry
+//! The default extension is the Rust sample, installed from its pinned
+//! commit in a repository made with the `git` program and served over
+//! Git's smart HTTP protocol from 127.0.0.1 (`support/repo_server.rs`,
+//! `support/defaults.rs`) — a stand-in for a default's own repository,
+//! which lives outside this one (#285) — the npm sample from a local registry
 //! (`support/npm_registry.rs`), and the Git sample from a repository each
 //! test makes with the `git` program and serves over Git's smart HTTP
 //! protocol (`support/repo_server.rs`): nothing reaches the network. A
@@ -31,7 +32,7 @@ use tempfile::TempDir;
 #[path = "support/defaults.rs"]
 mod defaults;
 
-use defaults::from_package;
+use defaults::from_sample;
 
 #[path = "support/guests.rs"]
 mod guests;
@@ -53,7 +54,7 @@ const GREETER: &str = "@pane-samples/greeter";
 
 /// The world of one test: Pane's data location, the runtime the tests
 /// share, the servers nothing outside this computer reaches — the
-/// repository the calculator is acquired from, the npm registry the
+/// repository the default extension is acquired from, the npm registry the
 /// sample installs from, the Git server its repository is served from —
 /// and a frozen clock, so the launcher's background updater never checks
 /// on its own while the test is fetching from and moving the same
@@ -66,19 +67,27 @@ struct Dirs {
     registry: Registry,
     server: Server,
     clock: Arc<ManualClock>,
-    /// The pin that names the calculator's served repository.
-    calculator: DefaultExtension,
+    /// The pin that names the default extension's served repository.
+    sample: DefaultExtension,
 }
 
 impl Dirs {
     fn new() -> Dirs {
         let server = Server::start();
         let repos = tempfile::tempdir().unwrap();
-        // The calculator's repository, made from the real assembled
-        // package `cargo xtask guests` leaves under
+        // The default extension's repository, made from the Rust sample's
+        // assembled package `cargo xtask guests` leaves under
         // `target/guests/packages` and served as a Pane release pins it
-        // (`support/defaults.rs`): the default the tests acquire.
-        let calculator = from_package(&server, repos.path(), "calculator", "Calculator");
+        // (`support/defaults.rs`): the default the tests acquire. The
+        // default extensions' own repositories live outside this one
+        // (#285), so a sample's package stands in for one.
+        let sample = from_sample(
+            &server,
+            repos.path(),
+            "sample-rust",
+            "Rust sample",
+            "sample-rust",
+        );
         Dirs {
             sources: tempfile::tempdir().unwrap(),
             data: tempfile::tempdir().unwrap(),
@@ -87,7 +96,7 @@ impl Dirs {
             registry: Registry::start(),
             server,
             clock: ManualClock::at(SystemClock.now()),
-            calculator,
+            sample,
         }
     }
 
@@ -96,13 +105,13 @@ impl Dirs {
     }
 
     /// A launcher on this data folder; a new one is a restart of Pane. It
-    /// acquires the calculator as a default from its pinned repository,
-    /// installs npm packages from the local registry, and runs on the
-    /// frozen clock, so nothing happens in the background that the test
-    /// did not ask for.
+    /// acquires the sample as a default extension from its pinned
+    /// repository, installs npm packages from the local registry, and runs
+    /// on the frozen clock, so nothing happens in the background that the
+    /// test did not ask for.
     fn launcher(&self) -> Launcher {
         Launcher::with_packages(Ok(self.runtime.clone()), vec![], self.packages_dir())
-            .with_defaults(vec![self.calculator.clone()])
+            .with_defaults(vec![self.sample.clone()])
             .with_npm_registry(NpmRegistry::local(self.registry.url()).unwrap())
             .with_clock(self.clock.clone())
     }
@@ -187,10 +196,10 @@ fn a_default_extension_is_one_of_panes_own() {
     // identity: official (ADR 0045).
     let packages = launcher.packages();
     assert_eq!(packages.len(), 1);
-    assert_eq!(packages[0].title(), "Calculator");
-    assert_eq!(packages[0].identity.key(), "default:calculator");
+    assert_eq!(packages[0].title(), "Rust sample");
+    assert_eq!(packages[0].identity.key(), "default:sample-rust");
     assert!(launcher.extension_is_official(&packages[0].identity));
-    assert_eq!(official_titles(&launcher), ["Calculator"]);
+    assert_eq!(official_titles(&launcher), ["Rust sample"]);
 }
 
 #[test]

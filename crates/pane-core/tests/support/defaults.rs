@@ -1,10 +1,13 @@
-//! The default extensions' repositories for tests, made from the real
-//! assembled packages `cargo xtask guests` leaves under
+//! The default extensions' repositories for tests, made from the
+//! assembled sample packages `cargo xtask guests` leaves under
 //! `target/guests/packages`, served over Git's smart HTTP protocol from
 //! 127.0.0.1 (`repo_server.rs`): the repositories a Pane release pins its
-//! default extensions to, and the pins that name them — a test's
-//! stand-in for the committed ones (`crates/pane/defaults.json`).
-//! Nothing reaches the network or a real Git host.
+//! default extensions to, and the pins that name them — a test's stand-in
+//! for the committed ones (`crates/pane/defaults.json`). The default
+//! extensions' own sources left this repository for their own (#285), so
+//! a test that needs a default pins a sample's package over the default's
+//! identity, or files of its own (`made`); nothing reaches the network or
+//! a real Git host.
 //!
 //! Only these tests run `git` (the `repo_server` module does, with none
 //! of the user's configuration); Pane itself never does. The module
@@ -25,10 +28,10 @@ fn guests() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/guests")
 }
 
-/// The files of the assembled package `package` under
+/// The files of the assembled sample package `sample` under
 /// `target/guests/packages`, by their path in the package.
-pub fn package_files(package: &str) -> Vec<(String, Vec<u8>)> {
-    let folder = guests().join("packages").join(package);
+pub fn package_files(sample: &str) -> Vec<(String, Vec<u8>)> {
+    let folder = guests().join("packages").join(sample);
     assert!(
         folder.is_dir(),
         "{} is missing; run `cargo xtask guests`",
@@ -127,11 +130,20 @@ pub fn pinned(
     pin
 }
 
-/// The pin of the default extension `id` from its real assembled package
-/// under `target/guests/packages`, tagged as its manifest's version, made
-/// and served as [`pinned`] does.
-pub fn from_package(server: &Server, work: &Path, id: &str, title: &str) -> DefaultExtension {
-    let files = package_files(id);
+/// The pin of the default extension `id` over the assembled sample
+/// package `sample` under `target/guests/packages`, tagged as its
+/// manifest's version, made and served as [`pinned`] does: the sample
+/// stands in for the default's own repository, which lives outside this
+/// one. The pin's id names the default's identity (`default:<id>`),
+/// whatever the sample's manifest titles it.
+pub fn from_sample(
+    server: &Server,
+    work: &Path,
+    id: &str,
+    title: &str,
+    sample: &str,
+) -> DefaultExtension {
+    let files = package_files(sample);
     let tag = format!("v{}", version_of(&files));
     pinned(server, work, id, title, &tag, &files)
 }

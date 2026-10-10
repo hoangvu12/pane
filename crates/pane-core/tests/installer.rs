@@ -10,11 +10,14 @@
 //! rows, Manage extensions) stays usable.
 //!
 //! The packages are the ones `cargo xtask guests` assembles under
-//! `target/guests/packages`: the real calculator (`guests/calculator`)
+//! `target/guests/packages`: the icons sample (`guests/sample-icons`)
 //! and the helper sample (`guests/sample-helper`) with its real helper
 //! program `pane-echo` built for this system, so the helper is run as an
 //! end user runs it: a prebuilt program from the repository, with no
-//! Node, Rust, npm, Git or compiler involved.
+//! Node, Rust, npm, Git or compiler involved. The default extensions'
+//! own packages live in their repositories (#285), which these tests
+//! cannot read; the samples stand in for them, pinned as Pane pins the
+//! defaults.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -32,7 +35,7 @@ mod defaults;
 #[path = "support/repo_server.rs"]
 mod repo_server;
 
-use defaults::{from_package, made, package_files, pinned, version_of};
+use defaults::{from_sample, made, package_files, pinned, version_of};
 use repo_server::{Mode, Server};
 
 #[path = "support/feedback.rs"]
@@ -43,12 +46,13 @@ mod rows;
 use feedback::shown;
 use rows::{select_title, titles};
 
-/// The default set the tests set up: the calculator, and the
-/// prebuilt-helper sample with it, a repository carrying a native helper.
-/// Pane's own build no longer sets the sample up (#162); the core still
-/// sets up whatever default set it is given, helpers included.
+/// The default set the tests set up: the icons sample, whose package
+/// ships a tile its rows draw, and the prebuilt-helper sample with it, a
+/// repository carrying a native helper. Pane's own build no longer sets
+/// the samples up (#162); the core still sets up whatever default set it
+/// is given, helpers included.
 const DEFAULTS: [(&str, &str); 2] = [
-    ("calculator", "Calculator"),
+    ("sample-icons", "Icons sample"),
     ("helper-sample", "Helper sample"),
 ];
 
@@ -124,8 +128,9 @@ impl Dirs {
             .unwrap_or_else(|| panic!("no pin of {id}"))
     }
 
-    /// Makes and serves the default set's repositories, each tagged as
-    /// its manifest's version, and keeps the pins that name them.
+    /// Makes and serves the default set's repositories, each from its
+    /// sample's assembled package and tagged as its manifest's version,
+    /// and keeps the pins that name them.
     fn publish(&mut self) {
         let mut pins = Vec::new();
         for (id, title) in DEFAULTS {
@@ -262,7 +267,7 @@ fn read_files(folder: &Path, prefix: &str) -> Vec<String> {
 }
 
 #[test]
-fn a_first_setup_installs_the_pinned_commits_and_the_calculator_answers() {
+fn a_first_setup_installs_the_pinned_commits_and_the_sample_answers() {
     let mut dirs = Dirs::new();
     dirs.publish();
     let launcher = dirs.launcher();
@@ -274,19 +279,19 @@ fn a_first_setup_installs_the_pinned_commits_and_the_calculator_answers() {
         Status::Result("Set up Pane's default extensions".into())
     );
     // Both default extensions are installed, from their pinned commits.
-    assert_eq!(installed(&launcher), ["Calculator", "Helper sample"]);
-    let identity = PackageIdentity::default_extension("calculator");
-    assert_eq!(identity.key(), "default:calculator");
+    assert_eq!(installed(&launcher), ["Icons sample", "Helper sample"]);
+    let identity = PackageIdentity::default_extension("sample-icons");
+    assert_eq!(identity.key(), "default:sample-icons");
     let package = &launcher.packages()[0];
     assert_eq!(package.identity, identity);
     // The record keeps the default identity, the version the manifest
     // declares, and the Git source the revision came from: the
     // repository, the pin's release tag, its commit and that it is
     // pinned — what a later release's updater reads (#269).
-    let record = dirs.record("calculator");
-    assert_eq!(record["default"], "calculator");
-    assert_eq!(record["defaultVersion"], "0.5.0");
-    let pin = dirs.pin("calculator");
+    let record = dirs.record("sample-icons");
+    assert_eq!(record["default"], "sample-icons");
+    assert_eq!(record["defaultVersion"], "0.1.0");
+    let pin = dirs.pin("sample-icons");
     assert_eq!(record["gitUrl"], pin.repository.as_str());
     assert_eq!(record["gitRef"], format!("refs/tags/{}", pin.tag));
     assert_eq!(record["gitCommit"], pin.commit.as_str());
@@ -294,38 +299,43 @@ fn a_first_setup_installs_the_pinned_commits_and_the_calculator_answers() {
     assert_eq!(record.get("local"), None);
     assert_eq!(record.get("npm"), None);
     assert_eq!(record.get("git"), None, "the identity is the default's");
-    // The managed copy holds the manifest and the component and tile icon
-    // it names (#163), installed as a package from a folder is, and the
-    // calculator shows that tile from its managed copy.
+    // The managed copy holds everything the package ships (#163) — the
+    // manifest, the component, its tile icon and the images its rows
+    // name — installed as a package from a folder is, and the sample
+    // shows that tile from its managed copy.
     assert_eq!(
         read_files(&package.location, ""),
-        ["calculator.wasm", "icon.svg", "pane.json"]
+        [
+            "assets/logo.png",
+            "assets/logo@dark.png",
+            "assets/logo@light.png",
+            "assets/moon.svg",
+            "assets/photo.png",
+            "assets/sun.svg",
+            "command.svg",
+            "icon.png",
+            "pane.json",
+            "sample_icons.wasm",
+        ]
     );
     let icon = launcher.icon_of(&identity.key()).expect("the icon");
     let IconSource::Image { light, dark } = &icon.source else {
-        panic!("the calculator's icon is not its tile: {icon:?}");
+        panic!("the sample's icon is not its tile: {icon:?}");
     };
     assert!(light.starts_with(&package.location), "{light:?}");
-    assert_eq!(light.file_name().unwrap(), "icon.svg");
+    assert_eq!(light.file_name().unwrap(), "icon.png");
     assert_eq!(dark, light);
     // Each repository was fetched from once; nothing is left in the
     // downloads folder.
-    assert_eq!(dirs.fetches("calculator"), 1);
+    assert_eq!(dirs.fetches("sample-icons"), 1);
     assert_eq!(dirs.fetches("helper-sample"), 1);
     dirs.wait_for_no_downloads();
 
-    // The calculator answers in root search: an expression lists its
-    // answer first, and invoking it copies the answer.
-    search(&launcher, "6*7");
-    assert_eq!(titles(&launcher), ["42"]);
+    // The sample answers from root search: its command is listed, opens
+    // and runs an item.
     assert_eq!(
-        launcher.view().rows[0].subtitle.as_deref(),
-        Some("6*7 = 42 · Enter copies the answer")
-    );
-    block_on(launcher.activate_selected());
-    assert_eq!(
-        launcher.view().status,
-        Status::Result("Copied 42 to the clipboard".into())
+        run(&launcher, "Icons", "Built-in icon"),
+        Status::Result("Chose Built-in icon".into())
     );
 
     // After a restart the default extensions are listed from their managed
@@ -333,10 +343,12 @@ fn a_first_setup_installs_the_pinned_commits_and_the_calculator_answers() {
     let asked = dirs.server.requests().len();
     drop(launcher);
     let launcher = dirs.launcher();
-    assert_eq!(installed(&launcher), ["Calculator", "Helper sample"]);
+    assert_eq!(installed(&launcher), ["Icons sample", "Helper sample"]);
     assert_eq!(dirs.server.requests().len(), asked);
-    search(&launcher, "12*3");
-    assert_eq!(titles(&launcher), ["36"]);
+    assert_eq!(
+        run(&launcher, "Icons", "Packaged image"),
+        Status::Result("Chose Packaged image".into())
+    );
 }
 
 #[test]
@@ -358,15 +370,15 @@ fn acquiring_says_what_is_being_set_up_and_leaves_the_core_usable() {
     // the install rows.
     let deadline = Instant::now() + Duration::from_secs(10);
     let progress = loop {
-        assert!(Instant::now() < deadline, "no progress of the calculator");
+        assert!(Instant::now() < deadline, "no progress of the sample");
         if let Status::Progress(text) = launcher.view().status
-            && text.starts_with("Acquiring the Calculator")
+            && text.starts_with("Acquiring the Icons sample")
         {
             break text;
         }
         std::thread::sleep(Duration::from_millis(5));
     };
-    assert_eq!(progress, "Acquiring the Calculator…");
+    assert_eq!(progress, "Acquiring the Icons sample…");
     assert!(
         titles(&launcher).contains(&"Install extension from folder…".to_owned()),
         "{:?}",
@@ -383,7 +395,7 @@ fn acquiring_says_what_is_being_set_up_and_leaves_the_core_usable() {
         titles(&launcher)
     );
     // Typing in root search still works while the fetches are in flight.
-    search(&launcher, "calc");
+    search(&launcher, "zzz");
     assert!(titles(&launcher).is_empty(), "{:?}", titles(&launcher));
     acquiring.join().unwrap();
 
@@ -395,15 +407,15 @@ fn acquiring_says_what_is_being_set_up_and_leaves_the_core_usable() {
     // (the query typed meanwhile is cleared first).
     search(&launcher, "");
     assert!(titles(&launcher).contains(&"Manage Extensions".to_owned()));
-    search(&launcher, "6*7");
-    assert_eq!(titles(&launcher), ["42"]);
+    search(&launcher, "icons");
+    assert_eq!(titles(&launcher), ["Icons", "Icons (package icon)"]);
 }
 
 #[test]
 fn an_interrupted_fetch_is_tried_again_and_set_up() {
     let mut dirs = Dirs::new();
     dirs.publish();
-    // The calculator's first fetch is interrupted partway: the connection
+    // The sample's first fetch is interrupted partway: the connection
     // ends in the middle of the pack it is sending.
     dirs.server.drop_once();
     let launcher = dirs.launcher();
@@ -411,13 +423,13 @@ fn an_interrupted_fetch_is_tried_again_and_set_up() {
     block_on(launcher.acquire_defaults());
 
     // The interrupted fetch was tried again and set up.
-    assert_eq!(installed(&launcher), ["Calculator", "Helper sample"]);
-    search(&launcher, "6*7");
-    assert_eq!(titles(&launcher), ["42"]);
-    // The calculator's repository was fetched from twice: the interrupted
+    assert_eq!(installed(&launcher), ["Icons sample", "Helper sample"]);
+    search(&launcher, "icons");
+    assert_eq!(titles(&launcher), ["Icons", "Icons (package icon)"]);
+    // The sample's repository was fetched from twice: the interrupted
     // fetch and the one that recovered it. The helper sample's was asked
     // for once.
-    assert_eq!(dirs.fetches("calculator"), 2);
+    assert_eq!(dirs.fetches("sample-icons"), 2);
     assert_eq!(dirs.fetches("helper-sample"), 1);
     // Nothing half-written is left: the downloads folder is emptied in
     // the background once the installs end.
@@ -426,7 +438,7 @@ fn an_interrupted_fetch_is_tried_again_and_set_up() {
 
 /// A default extension a build no longer sets up stays what it became:
 /// an installed package (#162, the helper sample leaving Pane's default
-/// set). A Pane whose default set is the calculator alone, started over
+/// set). A Pane whose default set is the icons sample alone, started over
 /// data that set the helper sample up before, keeps it installed and
 /// listed, fetches nothing for it, and lets the user uninstall it, after
 /// which no first setup brings it back.
@@ -436,17 +448,17 @@ fn a_default_extension_that_left_the_default_set_stays_until_uninstalled() {
     dirs.publish();
     let launcher = dirs.launcher();
     block_on(launcher.acquire_defaults());
-    assert_eq!(installed(&launcher), ["Calculator", "Helper sample"]);
+    assert_eq!(installed(&launcher), ["Icons sample", "Helper sample"]);
     drop(launcher);
 
     // The next build's default set no longer has the helper sample.
-    let calculator_only = || dirs.launcher_with(vec![dirs.pin("calculator")]);
+    let sample_only = || dirs.launcher_with(vec![dirs.pin("sample-icons")]);
     let fetched = dirs.fetches("helper-sample");
-    let launcher = calculator_only();
+    let launcher = sample_only();
     block_on(launcher.acquire_defaults());
     assert_eq!(
         installed(&launcher),
-        ["Calculator", "Helper sample"],
+        ["Icons sample", "Helper sample"],
         "Pane removes nothing it set up"
     );
     assert_eq!(dirs.record("helper-sample")["default"], "helper-sample");
@@ -463,13 +475,13 @@ fn a_default_extension_that_left_the_default_set_stays_until_uninstalled() {
     // The user uninstalls it, as any installed package.
     let identity = PackageIdentity::default_extension("helper-sample");
     block_on(launcher.uninstall(&identity, pane_core::SavedData::Delete));
-    assert_eq!(installed(&launcher), ["Calculator"]);
+    assert_eq!(installed(&launcher), ["Icons sample"]);
     drop(launcher);
-    let launcher = calculator_only();
+    let launcher = sample_only();
     block_on(launcher.acquire_defaults());
     assert_eq!(
         installed(&launcher),
-        ["Calculator"],
+        ["Icons sample"],
         "a first setup does not bring it back"
     );
     assert_eq!(dirs.fetches("helper-sample"), fetched);
@@ -481,29 +493,29 @@ fn a_default_extension_that_left_the_default_set_stays_until_uninstalled() {
 fn a_default_with_retained_data_is_not_acquired_again() {
     let mut dirs = Dirs::new();
     dirs.publish();
-    // The calculator's saved data: a value its command saved in an earlier
+    // The sample's saved data: a value its command saved in an earlier
     // session, which Pane reads with the data folder at start and an
     // install again keeps.
     fs::create_dir_all(dirs.packages_dir()).unwrap();
     fs::write(
         dirs.packages_dir().join("settings.json"),
-        r#"{ "version": 1, "packages": { "default:calculator": { "style": "formal" } } }"#,
+        r#"{ "version": 1, "packages": { "default:sample-icons": { "style": "formal" } } }"#,
     )
     .unwrap();
     let launcher = dirs.launcher();
     block_on(launcher.acquire_defaults());
-    assert_eq!(installed(&launcher), ["Calculator", "Helper sample"]);
+    assert_eq!(installed(&launcher), ["Icons sample", "Helper sample"]);
 
-    // Uninstalling the calculator while keeping its data.
-    let identity = PackageIdentity::default_extension("calculator");
+    // Uninstalling the sample while keeping its data.
+    let identity = PackageIdentity::default_extension("sample-icons");
     block_on(launcher.uninstall(&identity, pane_core::SavedData::Keep));
     assert_eq!(
         launcher.view().status,
-        Status::Result("Uninstalled Calculator; its settings and content are kept".into())
+        Status::Result("Uninstalled Icons sample; its settings and content are kept".into())
     );
     drop(launcher);
 
-    let fetched = dirs.fetches("calculator");
+    let fetched = dirs.fetches("sample-icons");
     let launcher = dirs.launcher();
     block_on(launcher.acquire_defaults());
     assert_eq!(
@@ -511,7 +523,7 @@ fn a_default_with_retained_data_is_not_acquired_again() {
         ["Helper sample"],
         "the uninstalled default is not re-acquired"
     );
-    assert_eq!(dirs.fetches("calculator"), fetched);
+    assert_eq!(dirs.fetches("sample-icons"), fetched);
     // Its retained data is still managed, and nothing was fetched for it.
     search(&launcher, "");
     assert!(titles(&launcher).contains(&"Manage Extensions".to_owned()));
@@ -524,53 +536,55 @@ fn a_default_with_retained_data_is_not_acquired_again() {
 fn an_install_that_acquired_a_default_from_the_artifact_source_keeps_it() {
     let mut dirs = Dirs::new();
     dirs.publish();
-    // The record an older Pane wrote, which acquired the calculator from
-    // its own downloads: the default identity and a version, and no Git
-    // source. The managed copy is in place, as Pane left it.
+    // The record an older Pane wrote, which acquired the sample as a
+    // default from its own downloads: the default identity and a version,
+    // and no Git source. The managed copy is in place, as Pane left it.
     let copy = dirs.packages_dir().join("packages").join("1");
     fs::create_dir_all(&copy).unwrap();
-    for (path, contents) in &package_files("calculator") {
-        fs::write(copy.join(path), contents).unwrap();
+    for (path, contents) in &package_files("sample-icons") {
+        let file = copy.join(path);
+        fs::create_dir_all(file.parent().expect("inside the copy")).unwrap();
+        fs::write(&file, contents).unwrap();
     }
     let registry = r#"{
         "version": 1,
         "next": 2,
         "packages": [
-            { "default": "calculator", "defaultVersion": "0.5.0", "dir": "1" }
+            { "default": "sample-icons", "defaultVersion": "0.1.0", "dir": "1" }
         ]
     }"#;
     fs::write(dirs.packages_dir().join("installed.json"), registry).unwrap();
-    // The data the old Pane's calculator saved, under its identity.
+    // The data the old Pane's sample saved, under its identity.
     fs::write(
         dirs.packages_dir().join("settings.json"),
-        r#"{ "version": 1, "packages": { "default:calculator": { "style": "formal" } } }"#,
+        r#"{ "version": 1, "packages": { "default:sample-icons": { "style": "formal" } } }"#,
     )
     .unwrap();
 
     // The new Pane opens it and acquires nothing over it: its own default
-    // set is the calculator alone, so the pin's repository is never asked
+    // set is the sample alone, so the pin's repository is never asked
     // for anything.
     let asked = dirs.server.requests().len();
-    let launcher = dirs.launcher_with(vec![dirs.pin("calculator")]);
+    let launcher = dirs.launcher_with(vec![dirs.pin("sample-icons")]);
     block_on(launcher.acquire_defaults());
-    assert_eq!(installed(&launcher), ["Calculator"]);
-    let record = dirs.record("calculator");
-    assert_eq!(record["default"], "calculator");
-    assert_eq!(record["defaultVersion"], "0.5.0");
+    assert_eq!(installed(&launcher), ["Icons sample"]);
+    let record = dirs.record("sample-icons");
+    assert_eq!(record["default"], "sample-icons");
+    assert_eq!(record["defaultVersion"], "0.1.0");
     assert_eq!(record.get("gitUrl"), None);
     assert_eq!(record.get("gitRef"), None);
     assert_eq!(record.get("gitCommit"), None);
     assert_eq!(record.get("pinned"), None);
     assert_eq!(dirs.server.requests().len(), asked);
-    // Its identity keeps the data, and the calculator answers from the
+    // Its identity keeps the data, and the sample answers from the
     // managed copy the old Pane wrote.
     let data: Value = serde_json::from_str(
         &fs::read_to_string(dirs.packages_dir().join("settings.json")).unwrap(),
     )
     .unwrap();
-    assert_eq!(data["packages"]["default:calculator"]["style"], "formal");
-    search(&launcher, "6*7");
-    assert_eq!(titles(&launcher), ["42"]);
+    assert_eq!(data["packages"]["default:sample-icons"]["style"], "formal");
+    search(&launcher, "icons");
+    assert_eq!(titles(&launcher), ["Icons", "Icons (package icon)"]);
 }
 
 #[test]
@@ -604,7 +618,7 @@ fn an_unreachable_repository_leaves_the_core_usable_and_a_row_tries_again() {
             "Install extension from folder…",
             "Install extension from npm…",
             "Install extension from Git…",
-            "Set up Calculator",
+            "Set up Icons sample",
             "Set up Helper sample",
             // Pane's own row, listed after every command.
             "Settings…"
@@ -612,14 +626,14 @@ fn an_unreachable_repository_leaves_the_core_usable_and_a_row_tries_again() {
     );
     // The row tries again, and the failure is explained again: the
     // repositories are still unreachable, and the row stays.
-    select_title(&launcher, "Set up Calculator");
+    select_title(&launcher, "Set up Icons sample");
     block_on(launcher.activate_selected());
     let error = error_of(&launcher);
     assert!(
-        error.starts_with("Could not set up the Calculator: "),
+        error.starts_with("Could not set up the Icons sample: "),
         "{error}"
     );
-    assert!(titles(&launcher).contains(&"Set up Calculator".to_owned()));
+    assert!(titles(&launcher).contains(&"Set up Icons sample".to_owned()));
     assert!(titles(&launcher).contains(&"Set up Helper sample".to_owned()));
 }
 
@@ -628,7 +642,13 @@ fn a_row_tries_again_and_sets_the_extension_up() {
     let dirs = Dirs::new();
     // The helper sample's repository is made, but not served: the server
     // answers 404 for it.
-    let calculator = from_package(&dirs.server, dirs.repos.path(), "calculator", "Calculator");
+    let sample = from_sample(
+        &dirs.server,
+        dirs.repos.path(),
+        "sample-icons",
+        "Icons sample",
+        "sample-icons",
+    );
     let files = helper_files();
     let tag = format!("v{}", version_of(&files));
     let (repo, helper) = made(
@@ -639,22 +659,22 @@ fn a_row_tries_again_and_sets_the_extension_up() {
         &tag,
         &files,
     );
-    let launcher = dirs.launcher_with(vec![calculator, helper]);
+    let launcher = dirs.launcher_with(vec![sample, helper]);
     block_on(launcher.acquire_defaults());
     let error = error_of(&launcher);
     assert!(
         error.contains("There is no Git repository at http://127.0.0.1:"),
         "{error}"
     );
-    // The calculator was set up; only the helper sample failed.
-    assert_eq!(installed(&launcher), ["Calculator"]);
+    // The sample was set up; only the helper sample failed.
+    assert_eq!(installed(&launcher), ["Icons sample"]);
 
     // The repository is there now; the row that tries again sets it up.
     dirs.server.serve("helper-sample", &repo);
     select_title(&launcher, "Set up Helper sample");
     block_on(launcher.activate_selected());
 
-    assert_eq!(installed(&launcher), ["Calculator", "Helper sample"]);
+    assert_eq!(installed(&launcher), ["Icons sample", "Helper sample"]);
     assert_eq!(
         launcher.view().status,
         Status::Result("Set up the Helper sample".into())
@@ -683,7 +703,7 @@ fn an_acquired_helper_runs_from_the_managed_copy() {
     // The helper sample is installed, and its helper program is this
     // system's prebuilt file, copied into the managed copy with the
     // permission Pane gives it.
-    assert_eq!(installed(&launcher), ["Calculator", "Helper sample"]);
+    assert_eq!(installed(&launcher), ["Icons sample", "Helper sample"]);
     let package = &launcher.packages()[1];
     assert_eq!(
         package.identity,
@@ -717,17 +737,17 @@ fn an_acquired_helper_runs_from_the_managed_copy() {
 fn a_revision_without_a_pane_json_is_explained_and_not_installed() {
     let mut dirs = Dirs::new();
     dirs.publish();
-    // The calculator's pin names a commit of a repository holding its
+    // The sample's pin names a commit of a repository holding its
     // built component and tile but no manifest.
-    let whole = package_files("calculator");
+    let whole = package_files("sample-icons");
     let tag = format!("v{}", version_of(&whole));
     let mut files = whole;
     files.retain(|(path, _)| path != "pane.json");
     let manifestless = pinned(
         &dirs.server,
         &dirs.repos.path().join("manifestless"),
-        "calculator",
-        "Calculator",
+        "sample-icons",
+        "Icons sample",
         &tag,
         &files,
     );
@@ -738,14 +758,14 @@ fn a_revision_without_a_pane_json_is_explained_and_not_installed() {
     assert_eq!(installed(&launcher), ["Helper sample"]);
     let error = error_of(&launcher);
     assert!(
-        error.starts_with("Could not set up the Calculator: Tag"),
+        error.starts_with("Could not set up the Icons sample: Tag"),
         "{error}"
     );
     assert!(
         error.contains("is not a Pane extension: it has no pane.json"),
         "{error}"
     );
-    assert!(titles(&launcher).contains(&"Set up Calculator".to_owned()));
+    assert!(titles(&launcher).contains(&"Set up Icons sample".to_owned()));
     dirs.wait_for_no_downloads();
 }
 
@@ -755,14 +775,14 @@ fn a_revision_without_a_pane_json_is_explained_and_not_installed() {
 fn a_source_only_revision_is_explained_and_not_installed() {
     let mut dirs = Dirs::new();
     dirs.publish();
-    let mut files = package_files("calculator");
-    files.retain(|(path, _)| path != "calculator.wasm");
+    let mut files = package_files("sample-icons");
+    files.retain(|(path, _)| path != "sample_icons.wasm");
     let tag = format!("v{}", version_of(&files));
     let source_only = pinned(
         &dirs.server,
         &dirs.repos.path().join("source-only"),
-        "calculator",
-        "Calculator",
+        "sample-icons",
+        "Icons sample",
         &tag,
         &files,
     );
@@ -773,14 +793,14 @@ fn a_source_only_revision_is_explained_and_not_installed() {
     assert_eq!(installed(&launcher), ["Helper sample"]);
     let error = error_of(&launcher);
     assert!(
-        error.contains("Could not set up the Calculator: Tag"),
+        error.contains("Could not set up the Icons sample: Tag"),
         "{error}"
     );
     assert!(
-        error.contains("holds only the source of \"Calculator\""),
+        error.contains("holds only the source of \"Icons\""),
         "{error}"
     );
-    assert!(titles(&launcher).contains(&"Set up Calculator".to_owned()));
+    assert!(titles(&launcher).contains(&"Set up Icons sample".to_owned()));
     dirs.wait_for_no_downloads();
 }
 
@@ -788,8 +808,8 @@ fn a_source_only_revision_is_explained_and_not_installed() {
 fn an_incompatible_payload_is_explained_and_not_installed() {
     let mut dirs = Dirs::new();
     dirs.publish();
-    // The calculator's repository declares a platform this is not.
-    let mut files = package_files("calculator");
+    // The sample's repository declares a platform this is not.
+    let mut files = package_files("sample-icons");
     let others: Vec<String> = pane_core::Platform::ALL
         .iter()
         .filter(|platform| Some(**platform) != pane_core::Platform::current())
@@ -807,8 +827,8 @@ fn an_incompatible_payload_is_explained_and_not_installed() {
     let elsewhere = pinned(
         &dirs.server,
         &dirs.repos.path().join("elsewhere"),
-        "calculator",
-        "Calculator",
+        "sample-icons",
+        "Icons sample",
         &tag,
         &files,
     );
@@ -819,7 +839,7 @@ fn an_incompatible_payload_is_explained_and_not_installed() {
     assert_eq!(installed(&launcher), ["Helper sample"]);
     let error = error_of(&launcher);
     assert!(
-        error.contains("Could not set up the Calculator: Not available on"),
+        error.contains("Could not set up the Icons sample: Not available on"),
         "{error}"
     );
     assert!(error.contains("this package supports only"), "{error}");
@@ -843,13 +863,13 @@ fn a_payload_without_its_declared_helper_file_is_explained_and_not_installed() {
         &tag,
         &files,
     );
-    let launcher = dirs.launcher_with(vec![dirs.pin("calculator"), helperless]);
+    let launcher = dirs.launcher_with(vec![dirs.pin("sample-icons"), helperless]);
 
     block_on(launcher.acquire_defaults());
 
-    // The calculator is set up; the helper sample is explained and not
+    // The sample is set up; the helper sample is explained and not
     // installed, with the row that tries again.
-    assert_eq!(installed(&launcher), ["Calculator"]);
+    assert_eq!(installed(&launcher), ["Icons sample"]);
     let error = error_of(&launcher);
     assert!(
         error.contains("Could not set up the Helper sample: "),
@@ -875,9 +895,9 @@ fn a_disabled_default_extension_is_not_acquired_again() {
     dirs.publish();
     let launcher = dirs.launcher();
     block_on(launcher.acquire_defaults());
-    // Disabling the calculator is the opt-out: it stays installed, so
+    // Disabling the sample is the opt-out: it stays installed, so
     // acquisition never re-acquires or re-enables it.
-    let identity = PackageIdentity::default_extension("calculator");
+    let identity = PackageIdentity::default_extension("sample-icons");
     block_on(launcher.set_enabled(&identity, false));
     let asked = dirs.server.requests().len();
 
@@ -885,12 +905,12 @@ fn a_disabled_default_extension_is_not_acquired_again() {
     let launcher = dirs.launcher();
     block_on(launcher.acquire_defaults());
 
-    assert_eq!(installed(&launcher), ["Calculator", "Helper sample"]);
+    assert_eq!(installed(&launcher), ["Icons sample", "Helper sample"]);
     let packages = launcher.packages();
-    let calculator = packages.iter().find(|p| p.identity == identity).unwrap();
-    assert!(!calculator.enabled);
+    let sample = packages.iter().find(|p| p.identity == identity).unwrap();
+    assert!(!sample.enabled);
     assert_eq!(dirs.server.requests().len(), asked);
-    // Its command contributes nothing while it is disabled.
-    search(&launcher, "6*7");
+    // Its commands contribute nothing while it is disabled.
+    search(&launcher, "icons");
     assert_eq!(titles(&launcher), Vec::<String>::new());
 }

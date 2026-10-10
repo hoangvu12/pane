@@ -517,25 +517,6 @@ check 23-color-click.png 1b5e20 3000   # dark green
 key 53; key 53; sleep 1
 stop_pane
 
-# The calculator, a default extension: an expression typed into root search
-# lists its answer first, selected, and Enter copies it. Pasting the copy
-# over the query and typing on shows exactly the screen typing the whole
-# expression shows, so the clipboard held the answer.
-start_pane --install target/guests/packages/calculator
-key 36; sleep 2   # Install
-type_text '6*7'; sleep 2
-capture 27-answer.png
-check 27-answer.png answer   # the selected answer card
-key 36; sleep 1
-capture 28-copied.png   # "Copied 42 to the clipboard"
-command_key a; type_text '42+1'; sleep 2
-capture 29-typed.png
-command_key a; command_key v; type_text '+1'; sleep 2
-capture 30-pasted.png
-python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{27-answer,28-copied,29-typed}.png
-python3 "$(dirname "$0")/check_screenshot.py" --same "$out/29-typed.png" "$out/30-pasted.png"
-stop_pane
-
 # Operations: install the JavaScript operations sample, then the Rust one,
 # whose command (Call from Rust, selected once installed) opens its form,
 # takes the JavaScript package's identity (local: and the folder's resolved
@@ -669,11 +650,12 @@ grep -q '"greeting-style": "formal"' "$out/data/extensions/settings.json" || { e
 grep -q '"note": "Water the plants"' "$out/data/extensions/content.json" || { echo "note lost"; exit 1; }
 grep -q '"token": "sample-token"' "$out/data/extensions/credentials.json" || { echo "credential lost"; exit 1; }
 
-# Applications, a default extension: an installed application is found by
-# name in root search and Enter opens it. The application is a bundle the
-# smoke adds in ~/Applications of a HOME of its own (for Pane only), whose
-# program writes a marker file, so nothing else is started; Pane still
-# searches the system's applications too.
+# Applications: an installed application is found by name in root search
+# and Enter opens it, through the JavaScript applications sample (the same
+# host import and results the Applications default extension holds). The
+# application is a bundle the smoke adds in ~/Applications of a HOME of its
+# own (for Pane only), whose program writes a marker file, so nothing else
+# is started; Pane still searches the system's applications too.
 apps=$(cd "$out" && pwd)/apps
 rm -rf "$apps"
 bundle="$apps/home/Applications/Pane Smoke App.app"
@@ -690,7 +672,7 @@ cat >"$bundle/Contents/Info.plist" <<EOF
 EOF
 printf '#!/bin/sh\necho launched > "%s"\n' "$apps/launched" >"$bundle/Contents/MacOS/smoke"
 chmod +x "$bundle/Contents/MacOS/smoke"
-HOME=$apps/home "$pane" --install target/guests/packages/applications 2>>"$out/stderr.log" &
+HOME=$apps/home "$pane" --install target/guests/packages/sample-applications-js 2>>"$out/stderr.log" &
 pid=$!
 sleep 8
 focus_pane
@@ -701,33 +683,10 @@ check 44-application.png selected 3000   # the selected application row
 key 36; sleep 3
 focus_pane
 capture 45-opened.png
-check 45-opened.png success   # "Opened Pane Smoke App"
+check 45-opened.png success   # "Opened Launch Pane Smoke App"
 for _ in $(seq 50); do [ -f "$apps/launched" ] && break; sleep 0.2; done
 [ -f "$apps/launched" ] || { echo "the application did not run"; exit 1; }
 python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{44-application,45-opened}.png
-stop_pane
-
-# Quicklinks, a default extension: installed, its Create Quicklink command,
-# found by typing its name, opens its form, which saves a quicklink and
-# returns to root search. After a restart, typing part of its name lists it,
-# selected. Enter would open the default browser, so this smoke stops there
-# (the Linux smoke opens it through a recording handler).
-start_pane --install target/guests/packages/quicklinks
-key 36; sleep 2   # Install
-type_text 'create quicklink'; sleep 2
-key 36; sleep 3   # open Create Quicklink's form
-type_text 'Pane issues'
-key 48
-type_text 'https://example.com/pane-issues'
-key 36; sleep 2
-capture 46-quicklink-saved.png
-check 46-quicklink-saved.png success   # "Created “Pane issues”"
-stop_pane
-start_pane
-type_text 'pane iss'; sleep 2
-capture 47-quicklink-found.png
-check 47-quicklink-found.png selected 3000   # the selected quicklink row
-python3 "$(dirname "$0")/check_screenshot.py" --distinct "$out"/{46-quicklink-saved,47-quicklink-found}.png
 stop_pane
 
 # Uninstall the settings sample, keeping its saved data: Uninstall, the last
@@ -1664,11 +1623,12 @@ moved=$(python3 "$(dirname "$0")/repository_server.py" commit "$out/git-reposito
 python3 "$(dirname "$0")/check_git_record.py" --ref refs/heads/release --unpinned "$PANE_DATA_DIR/extensions/installed.json" "$moved" || { echo "the tracked Git package was not recorded at its moved branch"; exit 1; }
 [ -z "$(ls -A "$PANE_DATA_DIR/extensions/downloads" 2>/dev/null)" ] || { echo "a Git download was left"; exit 1; }
 
-# File search (#29, #175): Files, a default extension (its data folder is
-# this phase's own), answers from Pane's file index, which covers the home
+# File search (#29, #175): the Rust files sample (the same contract the
+# Files default extension holds; its data folder is this phase's own),
+# answers from Pane's file index, which covers the home
 # folder; the smoke names a fixture folder for it to cover instead in
 # PANE_TEST_FILE_INDEX_HOME (a debug build's hook, which also keeps the index
-# in the data folder). Installing Files starts the index, and showing the
+# in the data folder). Installing it starts the index, and showing the
 # window lets its first walk start. The fixture folder's
 # path has spaces, and a file in it has non-ASCII letters too; typing "plan"
 # lists that file under "Files", selected, and Enter hands it to Pane's handler for files,
@@ -1693,10 +1653,10 @@ printf '#!/bin/sh\ntouch "%s/runner-ran"\n' "$files_fixture" >"$files_folder/not
 chmod +x "$files_folder/notes/runner.sh"
 rm -f "$out/opened-file.txt"
 export PANE_TEST_FILE_INDEX_HOME=$files_folder PANE_TEST_OPEN_FILE_LOG=$out/opened-file.txt
-start_pane --install target/guests/packages/files
+start_pane --install target/guests/packages/sample-files
 key 36; sleep 3   # Install; the index walks the fixture
 capture 220-files-installed.png
-check 220-files-installed.png success   # "Installed Files"
+check 220-files-installed.png success   # "Installed Rust files sample"
 # The install lands on a blank root search, where Escape hides the
 # launcher (release run 37698693722's Windows frame 221 was the desktop):
 # the return to root key keeps it.
@@ -1812,12 +1772,16 @@ stop_service
 # Rust, Node, npm, Git or compiler can be reached — and Pane, started from
 # the Pane.app bundle the install script made in that home's ~/Applications,
 # fetches its default extensions (the five of #60; no sample is one,
-# #162) from the commits this release pins: their repositories, made
-# from the packages `cargo xtask guests` assembles and served on
+# #162) from the commits this release pins: their repositories, cloned
+# at those commits from their real addresses on GitHub (the smoke's own
+# setup on the runner) and served on
 # 127.0.0.1 over Git's smart HTTP protocol
-# (scripts/repository_server.py; nothing reaches the network or a real
-# Git host), named by the pins file the development build reads through
-# PANE_DEFAULTS. The calculator answers "6*7" with 42, with no developer
+# (scripts/repository_server.py; the Pane under test reaches no network
+# address and no real Git host), named by the pins file the development
+# build reads through
+# PANE_DEFAULTS. The clones hold the release revisions' built components,
+# so the first setup installs exactly what a release installs. The
+# calculator answers "6*7" with 42, with no developer
 # tool anywhere. The package is the development profile, because only a
 # development build takes its pins from PANE_DEFAULTS; a release build
 # uses the committed pins, which no controlled source may replace. The
@@ -1834,9 +1798,10 @@ trap '[ -n "$pid" ] && kill "$pid" 2>/dev/null; [ -n "$npm_registry_pid" ] && ki
 cargo xtask package-macos --dev >/dev/null
 package=$(ls target/dist/pane-*-macos-*-dev.zip | head -1)
 [ -n "$package" ] || { echo "the package was not built"; exit 1; }
-# The default extensions' repositories, served from this computer for the
-# rest of the smoke: the phases that check first setup point PANE_DEFAULTS
-# at the pins naming them.
+# The default extensions' repositories, cloned at the commits the
+# committed pins name and served from this computer for the rest of the
+# smoke: the phases that check first setup point PANE_DEFAULTS at the
+# pins naming them.
 default_repositories=$PWD/$out/default-repositories
 default_pins=$PWD/$out/default-pins.json
 rm -rf "$default_repositories"
@@ -1848,7 +1813,7 @@ defaults_server_pid=$!
 for _ in $(seq 600); do [ -s "$out/default-repository-server.port" ] && break; kill -0 "$defaults_server_pid" 2>/dev/null || break; sleep 0.1; done
 [ -s "$out/default-repository-server.port" ] \
   || { echo "the default extensions' repository server did not start (see $out/default-repository-server.log)"; exit 1; }
-python3 "$(dirname "$0")/repository_server.py" make-defaults target/guests/packages \
+python3 "$(dirname "$0")/repository_server.py" clone-defaults crates/pane/defaults.json \
   "$default_repositories" "$default_pins" \
   "http://127.0.0.1:$(cat "$out/default-repository-server.port")/"
 home=$out/clean-home

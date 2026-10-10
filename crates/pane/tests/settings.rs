@@ -1946,23 +1946,30 @@ fn an_official_extension_is_marked_as_panes_own_wherever_settings_lists_it(
     cx: &mut TestAppContext,
 ) {
     let (sources, data) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
-    // Three extensions: the calculator, a default extension Pane installs
-    // at first setup from its pinned commit in a repository served over
-    // Git's smart HTTP protocol from 127.0.0.1 (pane-core's test
-    // support; nothing reaches the network or a real Git host); the
+    // Three extensions: the Rust sample, pinned as a default extension
+    // Pane installs at first setup from a repository served over Git's
+    // smart HTTP protocol from 127.0.0.1 (pane-core's test support; a
+    // stand-in for a default's own repository, which lives outside this
+    // one, #285 — nothing reaches the network or a real Git host); the
     // settings sample, its package given the record an install by hand
     // from a repository under pane-app writes, as a restart of Pane
     // reads it; and the Hello sample, installed from a folder. The first
     // two are Pane's own; the last is not (ADR 0045).
     let server = repo_server::Server::start();
     let repos = tempfile::tempdir().unwrap();
-    let calculator = defaults::from_package(&server, repos.path(), "calculator", "Calculator");
+    let sample = defaults::from_sample(
+        &server,
+        repos.path(),
+        "sample-rust",
+        "Rust sample",
+        "sample-rust",
+    );
     let from_pane_app = settings_package(&sources.path().join("sample"));
     let from_folder = hello_package(&sources.path().join("hello"));
     cx.executor().allow_parking();
     let installing =
         Launcher::with_packages(Runtime::start(), vec![], data.path().join("extensions"))
-            .with_defaults(vec![calculator]);
+            .with_defaults(vec![sample]);
     cx.foreground_executor()
         .block_on(installing.acquire_defaults());
     install(&installing, &from_pane_app);
@@ -1979,9 +1986,9 @@ fn an_official_extension_is_marked_as_panes_own_wherever_settings_lists_it(
     // acquired default and the package from pane-app — in the word; only
     // those.
     for drawn in [
-        "extension-entry-official-Calculator",
+        "extension-entry-official-Rust sample",
         "extension-entry-official-Settings sample",
-        "extension-item-official-Calculator",
+        "extension-item-official-Rust sample",
         "extension-item-official-Settings sample",
     ] {
         assert!(
@@ -1994,13 +2001,13 @@ fn an_official_extension_is_marked_as_panes_own_wherever_settings_lists_it(
             .debug_bounds("extension-entry-official-Hello")
             .is_none()
     );
-    for label in ["Calculator, Official", "Settings sample, Official"] {
+    for label in ["Rust sample, Official", "Settings sample, Official"] {
         assert!(has_node(&mut settings_cx, "ListBoxOption", label));
     }
 
     // Their pages carry the mark beside their titles; a folder's page
     // carries none.
-    for title in ["Calculator", "Settings sample"] {
+    for title in ["Rust sample", "Settings sample"] {
         open_page(&mut settings_cx, title);
         assert!(
             settings_cx

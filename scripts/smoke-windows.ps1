@@ -525,28 +525,9 @@ Check "23-color-click.png" "1b5e20" 3000   # dark green
 Send "{ESC}{ESC}"; Start-Sleep -Seconds 1
 Stop-Pane $process
 
-# The calculator, a default extension: an expression typed into root search
-# lists its answer first, selected, and Enter copies it. Pasting the copy
-# over the query and typing on shows exactly the screen typing the whole
-# expression shows, so the clipboard held the answer.
-# SendKeys: {+} is a plus sign, ^ holds Ctrl.
-$process = Start-Pane "stderr-calculator.log" @("--install", "target/guests/packages/calculator")
-Send "{ENTER}"; Start-Sleep -Seconds 2   # Install
-Send "6*7"; Start-Sleep -Seconds 2
-Capture "27-answer.png"
-Check "27-answer.png" "answer"   # the selected answer card
-Send "{ENTER}"; Start-Sleep -Seconds 1
-Capture "28-copied.png"   # "Copied 42 to the clipboard"
-Send "^a"; Send "42{+}1"; Start-Sleep -Seconds 2
-Capture "29-typed.png"
-Send "^a"; Send "^v"; Send "{+}1"; Start-Sleep -Seconds 2
-Capture "30-pasted.png"
-$shots = "27-answer", "28-copied", "29-typed" | ForEach-Object { Join-Path $OutDir "$_.png" }
-python "$PSScriptRoot/check_screenshot.py" --distinct @shots
-if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: the calculator showed the same window twice" }
-python "$PSScriptRoot/check_screenshot.py" --same (Join-Path $OutDir "29-typed.png") (Join-Path $OutDir "30-pasted.png")
-if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: pasting did not give the copied answer" }
-Stop-Pane $process
+# The calculator's answer card is the installer phase's, from the
+# repository its pin names (#285: the extension's own sources live there,
+# and its arithmetic is its repository's to test).
 
 # Operations: install the JavaScript operations sample, then the Rust one,
 # whose command (Call from Rust, selected once installed) opens its form,
@@ -698,8 +679,10 @@ if (-not (Select-String -Quiet -SimpleMatch '"greeting-style": "formal"' (Join-P
 if (-not (Select-String -Quiet -SimpleMatch '"note": "Water the plants"' (Join-Path $data "extensions/content.json"))) { throw "note lost" }
 if (-not (Token-Kept)) { throw "credential lost" }
 
-# Applications, a default extension: an installed application is found by
-# name in root search and Enter opens it. The application is a Start menu
+# Applications: an installed application is found by name in root search
+# and Enter opens it, through the JavaScript applications sample (the same
+# host import and results the Applications default extension holds). The
+# application is a Start menu
 # shortcut the smoke adds under an APPDATA of its own (for Pane only), to
 # cmd.exe writing a marker file, so nothing else is started; Pane still
 # searches the system's applications too.
@@ -715,7 +698,7 @@ $shortcut.WindowStyle = 7   # minimized, so it does not cover Pane
 $shortcut.Save()
 $appData = $env:APPDATA
 $env:APPDATA = Join-Path $apps "AppData"
-$process = Start-Pane "stderr-applications.log" @("--install", "target/guests/packages/applications")
+$process = Start-Pane "stderr-applications.log" @("--install", "target/guests/packages/sample-applications-js")
 $env:APPDATA = $appData
 Send "{ENTER}"; Start-Sleep -Seconds 2   # Install
 Send "pane smoke"; Start-Sleep -Seconds 3
@@ -724,7 +707,7 @@ Check "44-application.png" "selected" 3000   # the selected application row
 Send "{ENTER}"; Start-Sleep -Seconds 3
 Focus-Pane $process
 Capture "45-opened.png"
-Check "45-opened.png" "success"   # "Opened Pane Smoke App"
+Check "45-opened.png" "success"   # "Opened Launch Pane Smoke App"
 for ($i = 0; $i -lt 50 -and -not (Test-Path $launched); $i++) { Start-Sleep -Milliseconds 200 }
 if (-not (Test-Path $launched)) { throw "the application did not run" }
 $shots = "44-application", "45-opened" | ForEach-Object { Join-Path $OutDir "$_.png" }
@@ -732,30 +715,9 @@ python "$PSScriptRoot/check_screenshot.py" --distinct @shots
 if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: opening the application changed nothing" }
 Stop-Pane $process
 
-# Quicklinks, a default extension: installed, its Create Quicklink command,
-# found by typing its name, opens its form, which saves a quicklink and
-# returns to root search. After a restart, typing part of its name lists it,
-# selected. Enter would open the default browser, so this smoke stops there
-# (the Linux smoke opens it through a recording handler).
-$process = Start-Pane "stderr-quicklinks.log" @("--install", "target/guests/packages/quicklinks")
-Send "{ENTER}"; Start-Sleep -Seconds 2   # Install
-Send "create quicklink"; Start-Sleep -Seconds 2
-Send "{ENTER}"; Start-Sleep -Seconds 3   # open Create Quicklink's form
-Send "Pane issues"
-Send "{TAB}"
-Send "https://example.com/pane-issues"
-Send "{ENTER}"; Start-Sleep -Seconds 2
-Capture "46-quicklink-saved.png"
-Check "46-quicklink-saved.png" "success"   # "Created “Pane issues”"
-Stop-Pane $process
-$process = Start-Pane "stderr-quicklinks-restart.log"
-Send "pane iss"; Start-Sleep -Seconds 2
-Capture "47-quicklink-found.png"
-Check "47-quicklink-found.png" "selected" 3000   # the selected quicklink row
-$shots = "46-quicklink-saved", "47-quicklink-found" | ForEach-Object { Join-Path $OutDir "$_.png" }
-python "$PSScriptRoot/check_screenshot.py" --distinct @shots
-if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: the quicklink was not found" }
-Stop-Pane $process
+# Quicklinks' own behaviour is its repository's to test (#285, its sources
+# left this one); the web-link opening the Linux smoke checks reaches the
+# handler through the actions sample's "Open Website" there.
 
 # Uninstall the settings sample, keeping its saved data: Uninstall, the last
 # item of its page's Actions menu. Pane asks first, showing its saved data,
@@ -1799,11 +1761,12 @@ if ($fromGit[0].pinned) { throw "the tracked branch recorded as pinned" }
 $downloads = Join-Path $updateData "extensions/downloads"
 if ((Test-Path $downloads) -and (Get-ChildItem $downloads)) { throw "a Git download was left" }
 
-# File search (#29, #175): Files, a default extension (its data folder is
-# this phase's own), answers from Pane's file index, which covers the home
+# File search (#29, #175): the Rust files sample (the same contract the
+# Files default extension holds; its data folder is this phase's own),
+# answers from Pane's file index, which covers the home
 # folder; the smoke names a fixture folder for it to cover instead in
 # PANE_TEST_FILE_INDEX_HOME (a debug build's hook, which also keeps the index
-# in the data folder). Installing Files starts the index, and showing the
+# in the data folder). Installing it starts the index, and showing the
 # window lets its first walk start. The fixture folder's
 # path has spaces, and a file in it has non-ASCII letters too; typing "plan"
 # lists that file under "Files", selected, and Enter (Open, the file's first action, #150)
@@ -1831,10 +1794,10 @@ $openLog = Join-Path $OutDir "opened-file.txt"
 if (Test-Path $openLog) { Remove-Item -Force $openLog }
 $env:PANE_TEST_FILE_INDEX_HOME = (Resolve-Path -LiteralPath $filesFolder).Path
 $env:PANE_TEST_OPEN_FILE_LOG = $openLog
-$process = Start-Pane "stderr-files.log" @("--install", "target/guests/packages/files")
+$process = Start-Pane "stderr-files.log" @("--install", "target/guests/packages/sample-files")
 Send "{ENTER}"; Start-Sleep -Seconds 3   # Install; the index walks the fixture
 Capture "220-files-installed.png"
-Check "220-files-installed.png" "success"   # "Installed Files"
+Check "220-files-installed.png" "success"   # "Installed Rust files sample"
 # The install lands on a blank root search, where Escape hides the
 # launcher (release run 37698693722's frame 221 was the desktop): the
 # return to root key keeps it.
@@ -1970,11 +1933,14 @@ try {
 # nothing at all, so no Rust, Node, npm, Git or compiler can be reached —
 # and Pane, started from what the install script installed, fetches its
 # default extensions (the five of #60; no sample is one, #162) from the
-# commits this release pins: their repositories, made from the packages
-# `cargo xtask guests` assembles and served on 127.0.0.1 over Git's smart
-# HTTP protocol (scripts/repository_server.py; nothing reaches the
-# network or a real Git host), named by the pins file the development
-# build reads through PANE_DEFAULTS. The calculator answers "6*7" with 42,
+# commits this release pins: their repositories, cloned at those commits
+# from their real addresses on GitHub (the smoke's own setup on the
+# runner) and served on 127.0.0.1 over Git's smart
+# HTTP protocol (scripts/repository_server.py; the Pane under test
+# reaches no network address and no real Git host), named by the pins
+# file the development build reads through PANE_DEFAULTS. The clones hold
+# the release revisions' built components, so the first setup installs
+# exactly what a release installs; the calculator answers "6*7" with 42,
 # with no developer tool anywhere. The package is the development
 # profile, because only a development build takes its pins from
 # PANE_DEFAULTS; a release build uses the committed pins, which no
@@ -1987,9 +1953,10 @@ cargo xtask package-windows --dev
 if ($LASTEXITCODE -ne 0) { throw "the package was not built" }
 $package = Get-ChildItem "target/dist/pane-*-windows-*-dev.zip" | Select-Object -First 1
 if (-not $package) { throw "the package was not built" }
-# The default extensions' repositories, served from this computer for the
-# rest of the smoke: the phases that check first setup point PANE_DEFAULTS
-# at the pins naming them.
+# The default extensions' repositories, cloned at the commits the
+# committed pins name and served from this computer for the rest of the
+# smoke: the phases that check first setup point PANE_DEFAULTS at the
+# pins naming them.
 $DefaultRepositories = Join-Path $OutDir "default-repositories"
 if (Test-Path $DefaultRepositories) { Remove-Item -Recurse -Force $DefaultRepositories }
 New-Item -ItemType Directory -Force -Path $DefaultRepositories | Out-Null
@@ -2021,8 +1988,8 @@ try {
     if (-not (Test-Path $portFile)) { throw "the local artifact source did not start (see artifact-server.log)" }
     for ($i = 0; $i -lt 600 -and -not (Test-Path $defaultsPortFile) -and -not $defaultsServer.HasExited; $i++) { Start-Sleep -Milliseconds 100 }
     if (-not (Test-Path $defaultsPortFile)) { throw "the default extensions' repository server did not start (see default-repository-server.log)" }
-    python "$PSScriptRoot/repository_server.py" make-defaults target/guests/packages "$DefaultRepositories" "$DefaultPins" "http://127.0.0.1:$((Get-Content $defaultsPortFile).Trim())/"
-    if ($LASTEXITCODE -ne 0) { throw "the default extensions' repositories were not made" }
+    python "$PSScriptRoot/repository_server.py" clone-defaults "crates/pane/defaults.json" "$DefaultRepositories" "$DefaultPins" "http://127.0.0.1:$((Get-Content $defaultsPortFile).Trim())/"
+    if ($LASTEXITCODE -ne 0) { throw "the default extensions' repositories were not cloned" }
     Expand-Archive -Path $package.FullName -DestinationPath $unpack
     $env:LOCALAPPDATA = Join-Path $cleanProfile "Local"
     $env:APPDATA = Join-Path $cleanProfile "Roaming"

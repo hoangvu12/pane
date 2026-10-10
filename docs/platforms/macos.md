@@ -137,10 +137,15 @@ In run [36420611977](https://github.com/wasimysaid/pane/actions/runs/36420611977
 
 ## Calculator (#27)
 
-The smoke's calculator phase (screenshots 27 to 30) installs the calculator
-package, types "6*7", checks the selected answer row, presses Enter to copy
-it, then compares typing "42+1" with pasting the copy (Cmd+A, Cmd+V) and typing
-"+1", which must look the same. In run [36423871204](https://github.com/wasimysaid/pane/actions/runs/36423871204) (commit `ab91081`) every step passed: "6*7" answered 42, Enter copied it, and pasting then typing "+1" matched typing "42+1", so the system clipboard held "42" ([27-answer.png](evidence/macos/27-answer.png), [30-pasted.png](evidence/macos/30-pasted.png)).
+The smoke's installer phase (screenshots 501 and 502) covers the
+calculator: set up on a clean machine from the commit this release pins
+(its repository cloned at that commit and served on 127.0.0.1), typing
+"6*7" checks the selected answer row and Enter copies the answer, with
+no developer tool anywhere. (A by-hand calculator phase, whose
+screenshots 27 to 30 below are from, installed the package from this
+repository's guests tree and also checked the clipboard round-trip; it
+left with the extension's sources, #285, its arithmetic being its
+repository's to test.) In that phase's run [36423871204](https://github.com/wasimysaid/pane/actions/runs/36423871204) (commit `ab91081`) every step passed: "6*7" answered 42, Enter copied it, and pasting then typing "+1" matched typing "42+1", so the system clipboard held "42" ([27-answer.png](evidence/macos/27-answer.png), [30-pasted.png](evidence/macos/30-pasted.png)).
 
 ## Applications (#25)
 
@@ -149,21 +154,24 @@ it, then compares typing "42+1" with pasting the copy (Cmd+A, Cmd+V) and typing
 subfolders such as `Utilities`) and opens one with `/usr/bin/open`. The
 smoke's last phase (screenshots 44 and 45) makes a bundle "Pane Smoke App"
 whose program is a shell script writing a marker file, in `~/Applications`
-of a HOME given to Pane only, installs the package, types "pane smoke",
-checks the selected row, presses Return and checks "Opened Pane Smoke App"
+of a HOME given to Pane only, installs the JavaScript applications sample
+(which supplies the host's applications to root search as the
+[Applications](../applications.md) default extension does), types "pane smoke",
+checks the selected row, presses Return and checks "Opened Launch Pane Smoke App"
 and the marker. The adapter tests also open such a bundle and require
 Calculator among the system's applications. **Not run on macOS yet**: this
 branch was not pushed, so the phase, the native tests and the
 `open`/Launch Services path are unverified here, including whether Launch
 Services runs an unsigned script bundle on the runner.
 
-## Quicklinks (#28)
+## Opening a web link (#28)
 
-The smoke's last phase (screenshots 46 and 47) installs the Quicklinks
-package, creates "Pane issues" (https://example.com/pane-issues) in its
-form, restarts Pane and types "pane iss", which must list it selected. It
-stops before Enter, which would open the default browser; opening a link
-here is checked only through the tests' recording opener. Not run yet.
+The smoke's quicklinks phase, which installed the Quicklinks package and
+created a quicklink in its form, left with the extension's sources
+(#285, its quicklinks being its repository's to test); the host's link
+opening is the Linux smoke's web-link phase, which runs the actions
+sample's Open Website through the system's handler. Opening a link on
+macOS is checked only through the tests' recording opener.
 
 ## Global hotkeys (#33)
 
@@ -686,7 +694,7 @@ Screenshots from run [36371205770](https://github.com/wasimysaid/pane/actions/ru
   (commit `1848494`) every step passed: the Rust guest's call into the
   JavaScript package answered "Hello, Rust, from JavaScript"
   ([32-operation-answer.png](evidence/macos/32-operation-answer.png)).
-- **Reload (#11):** after the calculator and operations phases, the smoke installs a package from
+- **Reload (#11):** after the operations phase, the smoke installs a package from
   `<output-dir>/dev`, replaces its component with the JavaScript sample and
   reloads it in Manage extensions, then reloads it without its component (the
   checks fail and the old code keeps answering) and with the `failing-start`

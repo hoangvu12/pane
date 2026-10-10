@@ -34,7 +34,7 @@ mod defaults;
 #[path = "support/repo_server.rs"]
 mod repo_server;
 
-use defaults::from_package;
+use defaults::from_sample;
 
 #[path = "support/rows.rs"]
 mod rows;
@@ -148,11 +148,19 @@ impl Dirs {
         read_names(self.install.path(), "")
     }
 
-    /// Makes and serves the calculator's repository — the real assembled
-    /// package, tagged as its manifest's version — and returns the pin
-    /// that names it, as a Pane release pins its default extensions.
-    fn calculator(&self) -> pane_core::DefaultExtension {
-        from_package(&self.server, self.repos.path(), "calculator", "Calculator")
+    /// Makes and serves a default extension's repository — the Rust
+    /// sample's assembled package, tagged as its manifest's version — and
+    /// returns the pin that names it, as a Pane release pins its default
+    /// extensions: a stand-in, the default extensions' own repositories
+    /// living outside this one (#285).
+    fn sample(&self) -> pane_core::DefaultExtension {
+        from_sample(
+            &self.server,
+            self.repos.path(),
+            "sample-rust",
+            "Rust sample",
+            "sample-rust",
+        )
     }
 
     /// The names at the top of the install folder, sorted.
@@ -643,10 +651,10 @@ fn a_check_the_source_answers_with_an_error_is_explained_until_it_answers() {
 #[test]
 fn an_index_pane_cannot_take_is_explained_and_the_defaults_are_set_up() {
     let dirs = Dirs::new();
-    // The calculator's repository is served, so the default extension is
+    // The sample's repository is served, so the default extension is
     // set up from it whatever the artifact source's index says of Pane's
     // own update.
-    let calculator = dirs.calculator();
+    let sample = dirs.sample();
     dirs.running(b"the 0.1.0 program");
     // The index describes an application package for another system.
     let mut index: serde_json::Value = serde_json::from_str(&dirs.artifacts.index()).unwrap();
@@ -659,7 +667,7 @@ fn an_index_pane_cannot_take_is_explained_and_the_defaults_are_set_up() {
     });
     dirs.artifacts.serve_index(index.to_string());
     let launcher = Launcher::with_packages(Ok(dirs.runtime.clone()), vec![], dirs.packages_dir())
-        .with_defaults(vec![calculator])
+        .with_defaults(vec![sample])
         .with_application_update(
             "0.1.0",
             ArtifactSource::local(dirs.artifacts.url()).unwrap(),
@@ -680,7 +688,7 @@ fn an_index_pane_cannot_take_is_explained_and_the_defaults_are_set_up() {
     // explanation stays in its row.
     assert_eq!(
         launcher.view().status,
-        Status::Result("Set up the Calculator".into())
+        Status::Result("Set up the Rust sample".into())
     );
     assert_eq!(
         launcher
@@ -688,7 +696,7 @@ fn an_index_pane_cannot_take_is_explained_and_the_defaults_are_set_up() {
             .iter()
             .map(|p| p.title())
             .collect::<Vec<_>>(),
-        ["Calculator"]
+        ["Rust sample"]
     );
     // An index whose format version this Pane does not read is explained
     // as a broken source, for the update check as for the defaults.
@@ -762,12 +770,12 @@ fn an_install_keeps_pane_s_data() {
     let dirs = Dirs::new();
     dirs.publish_update("99.0.0", b"the 99.0.0 program");
     dirs.running(b"the 0.1.0 program");
-    // The calculator is set up first: a default extension, installed in
+    // The sample is set up first: a default extension, installed in
     // Pane's data folder under the install folder, exactly as the Windows
     // install keeps it.
-    let calculator = dirs.calculator();
+    let sample = dirs.sample();
     let launcher = Launcher::with_packages(Ok(dirs.runtime.clone()), vec![], dirs.packages_dir())
-        .with_defaults(vec![calculator])
+        .with_defaults(vec![sample])
         .with_application_update(
             "0.1.0",
             ArtifactSource::local(dirs.artifacts.url()).unwrap(),
@@ -780,7 +788,7 @@ fn an_install_keeps_pane_s_data() {
             .iter()
             .map(|p| p.title())
             .collect::<Vec<_>>(),
-        ["Calculator"]
+        ["Rust sample"]
     );
     let data = read_all(&dirs.install.path().join("data"));
     block_on(launcher.check_application_update());
@@ -800,7 +808,7 @@ fn an_install_keeps_pane_s_data() {
     assert_eq!(dirs.top_level(), ["data", "pane", "pane.old"]);
 
     // A Pane starting with the new program still has its extensions: the
-    // calculator is installed, its record where it was, and nothing of
+    // sample is installed, its record where it was, and nothing of
     // the update is left in the install folder.
     drop(launcher);
     let launcher = dirs.launcher("99.0.0");
@@ -810,12 +818,12 @@ fn an_install_keeps_pane_s_data() {
             .iter()
             .map(|p| p.title())
             .collect::<Vec<_>>(),
-        ["Calculator"]
+        ["Rust sample"]
     );
     assert_eq!(dirs.top_level(), ["data", "pane"]);
-    // The calculator still answers.
-    block_on(launcher.set_query("6*7"));
-    assert_eq!(titles(&launcher), ["42"]);
+    // The sample still answers.
+    block_on(launcher.set_query("reverse 42"));
+    assert_eq!(titles(&launcher), ["24"]);
 }
 
 /// Every file under `folder`, by its path and contents.

@@ -5,11 +5,14 @@
 # default) on a scratch profile in the temporary folder - PANE_DATA_DIR and
 # LOCALAPPDATA (where Pane keeps its cache) point there for that one
 # process - so Pane acquires its default extensions there, and nothing
-# else, from their repositories, which this script makes from the
-# packages `cargo xtask guests` assembles (target/guests/packages) and
+# else, from their repositories, which this script clones at the commits
+# the committed pins name (crates/pane/defaults.json) from their real
+# addresses on GitHub (the script's own setup on this computer) and
 # serves on 127.0.0.1 over Git's smart HTTP protocol
 # (scripts/repository_server.py, as the smoke's first-setup phases serve
-# them). Only a development build takes its pins from PANE_DEFAULTS,
+# them); the clones hold the release revisions' built components, so the
+# hidden phase measures what a release installs. Only a development build
+# takes its pins from PANE_DEFAULTS,
 # which this script points at those repositories; the Pane under test
 # fetches only from 127.0.0.1, exactly the pins it is given, so nothing
 # reaches the network. No application update source is named, so the
@@ -46,11 +49,11 @@
 #
 # It runs only with the user's consent: the measured machine is the user's
 # own. Requires 64-bit PowerShell (5.1 or 7), Python 3 and git on PATH
-# (the repository server runs git; Pane itself never does), the Pane
-# build, and the guests built (`cargo xtask guests`), whose assembled
-# packages the repositories are made from; without them the hidden phase
-# skips and reports so, as the Linux workload's does, and nothing is
-# measured.
+# (the repository server runs git, and the clones need the network; Pane
+# itself never does), the Pane
+# build, and the guests built (`cargo xtask guests`); without them the
+# hidden phase skips and reports so, as the Linux workload's does, and
+# nothing is measured.
 #
 # Usage: scripts/measure-windows.ps1 [-OutDir measure-windows]
 #   [-Binary target/debug/pane.exe]
@@ -78,12 +81,12 @@ if (-not (Get-Command git -ErrorAction SilentlyContinue)) { throw "git is not on
 $Binary = (Resolve-Path -LiteralPath $Binary).Path
 New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
 $OutDir = (Resolve-Path -LiteralPath $OutDir).Path
-# The hidden phase makes the default extensions' repositories from the
-# packages `cargo xtask guests` assembles; without them it skips and
+# The hidden phase clones the default extensions' repositories at the
+# commits the committed pins name; without the guests it skips and
 # reports so, as the Linux workload's hidden phase does, and nothing is
 # measured.
 $skipped = @()
-if (-not (Test-Path -LiteralPath "target/guests/packages/calculator/pane.json")) {
+if (-not (Test-Path -LiteralPath "target/guests/packages/sample-rust/pane.json")) {
     Write-Warning "SKIPPED the hidden phase (#189): the guests are not built (cargo xtask guests); nothing was measured"
     $skipped = @("hidden-idle")
 }
@@ -494,11 +497,12 @@ try {
     # The hidden phase, skipped without the guests (see above); its lines
     # are left unindented, as the Linux workload's are.
     if (-not $skipped) {
-    # The default extensions' repositories, made from the packages
-    # `cargo xtask guests` assembles and served on 127.0.0.1 over Git's
-    # smart HTTP protocol, as the smoke's first-setup phases serve them:
-    # the pins PANE_DEFAULTS names point at them, and only this computer
-    # is reached.
+    # The default extensions' repositories, cloned at the commits the
+    # committed pins name and served on 127.0.0.1 over Git's smart HTTP
+    # protocol, as the smoke's first-setup phases serve them: the pins
+    # PANE_DEFAULTS names point at them, and the Pane under test reaches
+    # only this computer (the clone reaches the real repositories, as the
+    # smoke's own setup on the runner).
     $repositories = Join-Path $OutDir "hidden-repositories"
     if (Test-Path -LiteralPath $repositories) { Remove-Item -Recurse -Force $repositories }
     New-Item -ItemType Directory -Force -Path $repositories | Out-Null
@@ -510,8 +514,8 @@ try {
     for ($i = 0; $i -lt 600 -and -not (Test-Path -LiteralPath $portFile) -and -not $server.HasExited; $i++) { Start-Sleep -Milliseconds 100 }
     if (-not (Test-Path -LiteralPath $portFile)) { throw "the default extensions' repository server did not start (see hidden-repository-server.log)" }
     $pins = Join-Path $OutDir "hidden-pins.json"
-    python "$PSScriptRoot/repository_server.py" make-defaults "target/guests/packages" "$repositories" "$pins" "http://127.0.0.1:$((Get-Content -LiteralPath $portFile).Trim())/"
-    if ($LASTEXITCODE -ne 0) { throw "the default extensions' repositories were not made (see hidden-repository-server.log)" }
+    python "$PSScriptRoot/repository_server.py" clone-defaults "crates/pane/defaults.json" "$repositories" "$pins" "http://127.0.0.1:$((Get-Content -LiteralPath $portFile).Trim())/"
+    if ($LASTEXITCODE -ne 0) { throw "the default extensions' repositories were not cloned (see hidden-repository-server.log)" }
 
     # The scratch Pane's environment, for its start only: every PANE_
     # variable of this shell is left out, the scratch ones are set, and
