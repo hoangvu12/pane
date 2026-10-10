@@ -437,7 +437,6 @@ impl Launcher {
     /// whose screen was never shown. A refresh's answer is shown the same
     /// way, numbered with the events.
     pub(super) fn show_designed_answer(
-
         &self,
         epoch: u64,
         view: ViewId,

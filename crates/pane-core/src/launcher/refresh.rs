@@ -264,12 +264,8 @@ impl RefreshRun {
     /// through the change channel, and the refresh marked answered.
     fn run(self) {
         let result = futures::executor::block_on(self.event.reply);
-        self.launcher.show_designed_answer(
-            self.epoch,
-            self.event.view,
-            self.event.number,
-            result,
-        );
+        self.launcher
+            .show_designed_answer(self.epoch, self.event.view, self.event.number, result);
         // The window redraws although no user action waited for the
         // answer, as it does for a service's or a schedule's change.
         self.launcher.changed();
