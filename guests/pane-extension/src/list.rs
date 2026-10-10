@@ -51,10 +51,7 @@ use core::pin::Pin;
 
 use crate::exports::pane::extension::command as wit;
 use crate::pane::extension::commands::LaunchRecord;
-use wit::{
-    CustomView, CustomViewInfo, CustomViewRole, FieldKind, FieldValue, Form, FormError,
-    GuestCustomView, Platform,
-};
+use wit::{CustomView, CustomViewInfo, CustomViewRole, GuestCustomView, Platform};
 
 /// The version of the tree this SDK writes (`docs/list-tree.md`).
 const TREE_VERSION: u32 = 1;
@@ -327,20 +324,12 @@ impl Action {
     }
 }
 
-/// A command's screen: a list view, its title and items in order, or a
-/// form that is the whole screen ([`List::form`]).
+/// A command's screen: a list view, its title and items in order. A form
+/// is a designed view now (#241, `crate::view::form`), not a screen the
+/// list tree names.
 pub struct List {
     title: String,
     items: Vec<Item>,
-    form: Option<ScreenForm>,
-}
-
-/// A form that is a command's whole screen, with the values its fields
-/// start with.
-struct ScreenForm {
-    id: String,
-    form: Form,
-    values: Vec<(String, String)>,
 }
 
 impl List {
@@ -349,77 +338,19 @@ impl List {
         List {
             title: title.into(),
             items: Vec::new(),
-            form: None,
         }
     }
-
-    /// A screen that is `form` rather than a list, as a command such as
-    /// "Create Quicklink" opens: the user fills it in at once, submitting
-    /// it calls [`Command::submit_form`] with `id`, and Back (Escape)
-    /// leaves the command. Its fields start empty (a choice with its first
-    /// option), or with the values [`List::value`] gives them. A list's
-    /// items given to it are ignored.
-    pub fn form(id: impl Into<String>, form: Form) -> List {
-        List {
-            title: form.title.clone(),
-            items: Vec::new(),
-            form: Some(ScreenForm {
-                id: id.into(),
-                form,
-                values: Vec::new(),
-            }),
-        }
-    }
-
-    /// For a form screen ([`List::form`]): the field `field` starts with
-    /// `value`, a text field's text or the id of the option chosen first.
-    /// A list ignores it.
-    pub fn value(mut self, field: impl Into<String>, value: impl Into<String>) -> List {
-        if let Some(screen) = &mut self.form {
-            screen.values.push((field.into(), value.into()));
-        }
-        self
-    }
-
-    /// This list with `item` after its items.
-    pub fn item(mut self, item: Item) -> List {
-        self.items.push(item);
-        self
-    }
-
-    /// This list with `items` after its items.
-    pub fn items(mut self, items: impl IntoIterator<Item = Item>) -> List {
-        self.items.extend(items);
-        self
-    }
-}
-
-/// One entry in a command's list. Choosing it opens its form, else its
-/// custom view, else runs its primary action (its first); an item with none
-/// of them cannot be activated, and Pane says so.
-pub struct Item {
-    id: String,
-    title: String,
-    subtitle: Option<String>,
-    actions: Vec<Action>,
-    form: Option<Form>,
-    platforms: Option<Vec<Platform>>,
-    custom_view: Option<CustomViewInfo>,
-    /// Its icon, tooltips and accessories (`crate::icon`, #139).
-    pub(crate) look: crate::icon::Look,
-}
 
 impl Item {
     /// An item titled `title`. `id` identifies it among the list's items:
     /// Pane keeps the selection on it when the list is drawn again, and
-    /// passes it to [`Command::submit_form`] and [`Command::open_view`].
+    /// passes it to [`Command::open_view`].
     pub fn new(id: impl Into<String>, title: impl Into<String>) -> Item {
         Item {
             id: id.into(),
             title: title.into(),
             subtitle: None,
             actions: Vec::new(),
-            form: None,
             platforms: None,
             custom_view: None,
             look: crate::icon::Look::default(),
@@ -470,24 +401,16 @@ impl Item {
         self
     }
 
-    /// This item opening `form` when chosen, instead of running its action;
-    /// submitting it calls [`Command::submit_form`] with the item's id.
-    pub fn form(mut self, form: Form) -> Item {
-        self.form = Some(form);
-        self
-    }
-
-    /// This item's action (or form) working on `platforms` only. Elsewhere
-    /// Pane still lists the item but shows it as unavailable with the
-    /// reason, and never runs its action or opens its form.
+    /// This item's action working on `platforms` only. Elsewhere Pane
+    /// still lists the item but shows it as unavailable with the reason,
+    /// and never runs its action.
     pub fn platforms(mut self, platforms: impl IntoIterator<Item = Platform>) -> Item {
         self.platforms = Some(platforms.into_iter().collect());
         self
     }
 
     /// This item opening a custom view when chosen, instead of running its
-    /// action: Pane calls [`Command::open_view`] with the item's id. Ignored
-    /// when the item has a form.
+    /// action: Pane calls [`Command::open_view`] with the item's id.
     pub fn custom_view(mut self, info: CustomViewInfo) -> Item {
         self.custom_view = Some(info);
         self
@@ -514,7 +437,7 @@ impl Item {
 ///             Ok(())
 ///         })))
 ///     }
-///     // submit_form, open_custom_view ...
+///     // open_custom_view ...
 /// }
 /// ```
 ///
@@ -609,23 +532,6 @@ pub trait Command: 'static {
         async move { Err(format!("unknown action: {id}")) }
     }
 
-    /// Handles the submitted form of the item with `item_id`. `values`
-    /// holds every field of the form, in order. The text is shown as the
-    /// result; an error is shown next to its field. Without it, a submitted
-    /// form is refused.
-    fn submit_form(
-        item_id: String,
-        values: Vec<FieldValue>,
-    ) -> impl Future<Output = Result<String, FormError>> {
-        let _ = (item_id, values);
-        async {
-            Err(FormError {
-                field: None,
-                message: "this command has no forms".into(),
-            })
-        }
-    }
-
     /// Opens the custom view of the item with `item_id`. Each call opens a
     /// new view with its own state. Without it, opening one is an error.
     /// The canvas retires it (#242), which moves a custom view's shapes
@@ -697,9 +603,6 @@ impl<T: Command> wit::Guest for T {
         }
     }
 
-    async fn submit_form(item_id: String, values: Vec<FieldValue>) -> Result<String, FormError> {
-        <T as Command>::submit_form(item_id, values).await
-    }
 
     async fn open_custom_view(item_id: String) -> Result<CustomView, String> {
         <T as Command>::open_custom_view(item_id).await
@@ -754,14 +657,6 @@ fn take(callback: &str) -> Option<Callback> {
 fn remember(list: List) -> String {
     let mut actions = ACTIONS.0.borrow_mut();
     actions.clear();
-    if let Some(screen) = list.form {
-        let mut tree = format!("{{\"version\":{TREE_VERSION},\"view\":{{\"type\":\"form\",\"id\":");
-        string(&mut tree, &screen.id);
-        tree.push(',');
-        write_form_fields(&mut tree, &screen.form, &screen.values);
-        tree.push_str("}}");
-        return tree;
-    }
     let mut tree = format!("{{\"version\":{TREE_VERSION},\"view\":{{\"type\":\"list\",\"title\":");
     string(&mut tree, &list.title);
     tree.push_str(",\"items\":[");
@@ -794,10 +689,6 @@ fn remember(list: List) -> String {
                 },
                 &mut actions,
             );
-        }
-        if let Some(form) = &item.form {
-            tree.push_str(",\"form\":");
-            write_form(&mut tree, form);
         }
         if let Some(platforms) = &item.platforms {
             tree.push_str(",\"platforms\":[");
@@ -955,61 +846,6 @@ fn write_keys(tree: &mut String, keys: &Keys) {
     tree.push_str("],\"key\":");
     string(tree, &keys.key);
     tree.push('}');
-}
-
-/// Writes `form` as the tree's JSON.
-fn write_form(tree: &mut String, form: &Form) {
-    tree.push('{');
-    write_form_fields(tree, form, &[]);
-    tree.push('}');
-}
-
-/// Writes `form`'s title, submit label and fields as members of a JSON
-/// object, each field with the value `values` gives it, if any.
-fn write_form_fields(tree: &mut String, form: &Form, values: &[(String, String)]) {
-    tree.push_str("\"title\":");
-    string(tree, &form.title);
-    tree.push_str(",\"submitLabel\":");
-    string(tree, &form.submit_label);
-    tree.push_str(",\"fields\":[");
-    for (index, field) in form.fields.iter().enumerate() {
-        if index > 0 {
-            tree.push(',');
-        }
-        tree.push_str("{\"id\":");
-        string(tree, &field.id);
-        tree.push_str(",\"label\":");
-        string(tree, &field.label);
-        if let Some((_, value)) = values.iter().find(|(id, _)| *id == field.id) {
-            tree.push_str(",\"value\":");
-            string(tree, value);
-        }
-        match &field.kind {
-            FieldKind::Text(text) => {
-                tree.push_str(",\"kind\":\"text\"");
-                if let Some(placeholder) = &text.placeholder {
-                    tree.push_str(",\"placeholder\":");
-                    string(tree, placeholder);
-                }
-            }
-            FieldKind::Choice(choices) => {
-                tree.push_str(",\"kind\":\"choice\",\"choices\":[");
-                for (index, choice) in choices.iter().enumerate() {
-                    if index > 0 {
-                        tree.push(',');
-                    }
-                    tree.push_str("{\"id\":");
-                    string(tree, &choice.id);
-                    tree.push_str(",\"label\":");
-                    string(tree, &choice.label);
-                    tree.push('}');
-                }
-                tree.push(']');
-            }
-        }
-        tree.push('}');
-    }
-    tree.push(']');
 }
 
 /// Writes `text` as a JSON string.

@@ -161,6 +161,19 @@ impl<V: View> Cx<'_, V> {
         ValueListener(id)
     }
 
+    /// The listener `run` becomes, told the values the form was submitted
+    /// with: `cx.form_listener(|this: &mut V, values: &FormValues| ...)`,
+    /// handed to [`Form::on_submit`](crate::view::form::Form::on_submit)
+    /// (#241). Each field's value is keyed by its key.
+    pub fn form_listener(
+        &mut self,
+        run: impl FnOnce(&mut V, &crate::form::FormValues) + 'static,
+    ) -> FormListener {
+        let id = self.listeners.len() as u32 + 1;
+        self.listeners.push(Run::Form(Box::new(run)));
+        FormListener(id)
+    }
+
     /// A press that pushes a view above this one: `open` builds the
     /// pushed view's state from this view's, this view staying below it
     /// (its state kept, its tree shown again when the pushed view pops).
@@ -252,6 +265,9 @@ enum Run<V> {
     Listener(Box<dyn FnOnce(&mut V)>),
     /// Runs the listener with the event's text; nothing next.
     Value(Box<dyn FnOnce(&mut V, &str)>),
+    /// Runs the listener with the form's submitted values; nothing next
+    /// (#241).
+    Form(Box<dyn FnOnce(&mut V, &crate::form::FormValues)>),
     /// Builds the state of a view pushed above this one, `on_pop` (when
     /// given) kept to answer this view when it pops.
     Push {
@@ -297,7 +313,7 @@ pub struct Node {
 }
 
 impl Node {
-    fn of(kind: NodeKind) -> Node {
+    pub(crate) fn of(kind: NodeKind) -> Node {
         Node {
             kind,
             style: Style::default(),
@@ -413,8 +429,8 @@ pub enum NodeKind {
         on_click: Option<Listener>,
         color: Option<Paint>,
     },
-    Icon(IconNode),
-    IconTile(IconNode),
+    Icon(IconNodePayload),
+    IconTile(IconNodePayload),
     Image {
         image: Icon,
         size: Option<IconSize>,
@@ -423,12 +439,12 @@ pub enum NodeKind {
     RichRow(RichRow),
     Keycap(String),
     KeySequence(Vec<String>),
-    Tag(Tag),
-    Badge(Tag),
-    Toggle(Toggle),
-    Checkbox(Toggle),
-    Segmented(Segmented),
-    Select(Segmented),
+    Tag(TagPayload),
+    Badge(TagPayload),
+    Toggle(TogglePayload),
+    Checkbox(TogglePayload),
+    Segmented(SegmentedPayload),
+    Select(SegmentedPayload),
     Slider {
         value: f32,
         min: f32,
@@ -446,12 +462,24 @@ pub enum NodeKind {
     },
     Markdown(String),
     Card(Layout),
-    SectionHeader(SectionHeader),
-    MetadataList(MetadataList),
-    EmptyState(EmptyState),
-    TextInput(TextInput),
-    PasswordInput(TextInput),
-    TextArea(TextInput),
+    SectionHeader(SectionHeaderPayload),
+    MetadataList(MetadataListPayload),
+    EmptyState(EmptyStatePayload),
+    TextInput(TextInputPayload),
+    PasswordInput(TextInputPayload),
+    TextArea(TextInputPayload),
+    /// A form: a column of fields whose submission is an action (#241).
+    Form(FormPayload),
+    /// One date field, "YYYY-MM-DD".
+    DatePicker(DatePayload),
+    /// One date and time field, "YYYY-MM-DD HH:MM".
+    DateTimePicker(DatePayload),
+    /// One tag picker: a multi-select of its options.
+    TagPicker(TagPickerPayload),
+    /// One file picker: a path typed or chosen with the system's dialog.
+    FilePicker(PathPayload),
+    /// One folder picker: a path typed or chosen with the system's dialog.
+    FolderPicker(PathPayload),
 }
 
 /// The layout of a `column`, `row` or `card`: its gap, padding,
@@ -651,10 +679,10 @@ pub struct Span {
 }
 
 /// One icon or image node: the icon it draws, and how big.
-#[derive(Debug)]
-pub struct IconNode {
-    icon: Icon,
-    size: Option<IconSize>,
+#[derive(Debug, Default)]
+pub(crate) struct IconNodePayload {
+    pub(crate) icon: Option<Icon>,
+    pub(crate) size: Option<IconSize>,
 }
 
 /// A rich row: the launcher's own result row as a component.
@@ -675,36 +703,14 @@ pub struct Accessory {
     color: Option<Paint>,
 }
 
-/// One tag or badge: a short label in a chip.
-#[derive(Debug)]
-pub struct Tag {
-    text: String,
-    color: Option<Paint>,
-}
-
-/// One toggle or checkbox: its state and the listener a change of it
-/// runs.
-#[derive(Debug, Default)]
-pub struct Toggle {
-    on: bool,
-    on_click: Option<Listener>,
-    label: Option<String>,
-}
-
-/// A segmented control or a select: its options and the one chosen.
-#[derive(Debug)]
-pub struct Segmented {
-    options: Vec<Choice>,
-    value: Option<String>,
-    on_click: Option<Listener>,
-    label: Option<String>,
-}
-
-/// One option of a segmented control or a select.
+/// One option of a segmented control, select or tag picker: its value,
+/// what is drawn for it, and the section it belongs to (#241).
 #[derive(Debug)]
 pub struct Choice {
     value: String,
     label: Option<String>,
+    /// The section the option belongs to, drawn as a group's header.
+    pub(crate) section: Option<String>,
 }
 
 /// A section header: a title over a group, with an optional note.
@@ -746,9 +752,17 @@ pub struct EmptyState {
 #[derive(Debug, Default)]
 pub struct TextInput {
     value: String,
+    /// The value the field starts from when the view names none of its
+    /// own: a form field's `default` (#241).
+    pub(crate) default: Option<String>,
     placeholder: Option<String>,
-    on_click: Option<Listener>,
+    pub(crate) on_input: Option<ValueListener>,
+    pub(crate) on_change: Option<ValueListener>,
+    /// The least time between this field's input events.
+    pub(crate) throttle: Option<Duration>,
     label: Option<String>,
+    /// What the field says around its control as a form field (#241).
+    pub(crate) field: FieldPayload,
 }
 
 /// A space token: the named distances of the UI component set, resolved
@@ -1161,6 +1175,8 @@ macro_rules! builder {
     };
 }
 
+pub(crate) use builder;
+
 /// A column: children below each other.
 pub fn column() -> Container {
     Container(Node::of(NodeKind::Column(Layout::default())))
@@ -1331,6 +1347,7 @@ pub fn toggle(on: bool) -> Toggle {
         on,
         on_click: None,
         label: None,
+        field: FieldPayload::default(),
     })))
 }
 
@@ -1340,35 +1357,31 @@ pub fn checkbox(checked: bool) -> Toggle {
         on: checked,
         on_click: None,
         label: None,
+        field: FieldPayload::default(),
     })))
 }
 
 /// A segmented control over `choices`, the first chosen until one is.
 pub fn segmented(choices: impl IntoIterator<Item = Choice>) -> Segmented {
-    Segmented(Node::of(NodeKind::Segmented(SegmentedPayload {
-        options: choices.into_iter().collect(),
-        value: None,
-        on_click: None,
-        label: None,
-    })))
+    Segmented(Node::of(NodeKind::Segmented(SegmentedPayload::of(
+        choices.into_iter().collect(),
+    ))))
 }
 
 /// A select over `choices`, the first drawn until one is chosen.
 pub fn select(choices: impl IntoIterator<Item = Choice>) -> Segmented {
-    Segmented(Node::of(NodeKind::Select(SegmentedPayload {
-        options: choices.into_iter().collect(),
-        value: None,
-        on_click: None,
-        label: None,
-    })))
+    Segmented(Node::of(NodeKind::Select(SegmentedPayload::of(
+        choices.into_iter().collect(),
+    ))))
 }
 
-/// One option of a segmented control or a select, named `value` and drawn
-/// as `label` when one is given.
+/// One option of a segmented control, select or tag picker, named `value`
+/// and drawn as `label` when one is given.
 pub fn choice(value: impl Into<String>) -> Choice {
     Choice {
         value: value.into(),
         label: None,
+        section: None,
     }
 }
 
@@ -1463,11 +1476,7 @@ pub fn empty_state(title: impl Into<String>) -> EmptyState {
 pub fn text_input(value: impl Into<String>) -> TextInput {
     TextInput(Node::of(NodeKind::TextInput(TextInputPayload {
         value: value.into(),
-        placeholder: None,
-        on_input: None,
-        on_change: None,
-        throttle: None,
-        label: None,
+        ..TextInputPayload::default()
     })))
 }
 
@@ -1494,60 +1503,186 @@ struct IconNodePayload {
 
 /// The payload the tag and badge kinds read.
 #[derive(Debug)]
-struct TagPayload {
-    text: String,
-    color: Option<Paint>,
+pub(crate) struct TagPayload {
+    pub(crate) text: String,
+    pub(crate) color: Option<Paint>,
 }
 
 /// The payload the toggle and checkbox kinds read.
 #[derive(Debug, Default)]
-struct TogglePayload {
-    on: bool,
-    on_click: Option<Listener>,
-    label: Option<String>,
+pub(crate) struct TogglePayload {
+    pub(crate) on: bool,
+    pub(crate) on_click: Option<Listener>,
+    pub(crate) label: Option<String>,
+    /// What the field says around its control as a form field (#241).
+    pub(crate) field: FieldPayload,
 }
 
 /// The payload the segmented and select kinds read.
 #[derive(Debug)]
-struct SegmentedPayload {
-    options: Vec<Choice>,
-    value: Option<String>,
-    on_click: Option<Listener>,
-    label: Option<String>,
+pub(crate) struct SegmentedPayload {
+    pub(crate) options: Vec<Choice>,
+    pub(crate) value: Option<String>,
+    pub(crate) on_click: Option<Listener>,
+    /// The callback the popup's query runs as the user types it, when the
+    /// dropdown's search is the extension's (#241).
+    pub(crate) on_input: Option<ValueListener>,
+    /// Whether the popup filters its choices: `false` for a dropdown whose
+    /// search the extension handles.
+    pub(crate) search: bool,
+    /// Shown while no option is chosen (#241).
+    pub(crate) placeholder: Option<String>,
+    pub(crate) label: Option<String>,
+    /// What the field says around its control as a form field (#241).
+    pub(crate) field: FieldPayload,
 }
 
 /// The payload the section-header kind reads.
 #[derive(Debug)]
-struct SectionHeaderPayload {
+pub(crate) struct SectionHeaderPayload {
     title: String,
     note: Option<String>,
 }
 
 /// The payload the metadata-list kind reads.
 #[derive(Debug)]
-struct MetadataListPayload {
+pub(crate) struct MetadataListPayload {
     items: Vec<MetadataItem>,
 }
 
 /// The payload the empty-state kind reads.
 #[derive(Debug)]
-struct EmptyStatePayload {
+pub(crate) struct EmptyStatePayload {
     title: String,
     description: Option<String>,
     icon: Option<Icon>,
 }
 
+/// What every field of a form carries (#241): its title, the note under
+/// it, the error the view's last answer set, and whether its last
+/// submitted value is kept as the package's settings and prefilled the
+/// next time the field appears.
+#[derive(Debug, Default)]
+pub(crate) struct FieldPayload {
+    pub(crate) title: Option<String>,
+    pub(crate) info: Option<String>,
+    pub(crate) error: Option<String>,
+    pub(crate) remember: bool,
+}
+
 /// The payload the text-input, password-input and text-area kinds read.
 #[derive(Debug, Default)]
-struct TextInputPayload {
-    value: String,
-    placeholder: Option<String>,
-    on_input: Option<ValueListener>,
-    on_change: Option<ValueListener>,
+pub(crate) struct TextInputPayload {
+    pub(crate) value: String,
+    /// The value the field starts from when the view names none of its
+    /// own: a form field's `default` (#241).
+    pub(crate) default: Option<String>,
+    pub(crate) placeholder: Option<String>,
+    pub(crate) on_input: Option<ValueListener>,
+    pub(crate) on_change: Option<ValueListener>,
     /// The least time between this field's input events.
-    throttle: Option<Duration>,
-    label: Option<String>,
+    pub(crate) throttle: Option<Duration>,
+    pub(crate) label: Option<String>,
+    /// What the field says around its control as a form field (#241).
+    pub(crate) field: FieldPayload,
 }
+
+impl SegmentedPayload {
+    /// The payload over `options`, none chosen.
+    pub(crate) fn of(options: Vec<Choice>) -> SegmentedPayload {
+        SegmentedPayload {
+            options,
+            ..SegmentedPayload::default()
+        }
+    }
+}
+
+impl Default for SegmentedPayload {
+    /// The control a tree gives no properties: it offers nothing, and a
+    /// select's popup searches as one always does.
+    fn default() -> SegmentedPayload {
+        SegmentedPayload {
+            options: Vec::new(),
+            value: None,
+            on_click: None,
+            on_input: None,
+            search: true,
+            placeholder: None,
+            label: None,
+            field: FieldPayload::default(),
+        }
+    }
+}
+
+impl Default for TogglePayload {
+    fn default() -> TogglePayload {
+        TogglePayload {
+            on: false,
+            on_click: None,
+            label: None,
+            field: FieldPayload::default(),
+        }
+    }
+}
+
+/// The payload the `form` kind reads (#241): its submission, and what its
+/// submit button says.
+#[derive(Debug, Default)]
+pub(crate) struct FormPayload {
+    /// The listener a submission runs, told every field's value.
+    pub(crate) on_submit: Option<FormListener>,
+    pub(crate) submit_label: Option<String>,
+}
+
+/// The payload the date-picker and date-time-picker kinds read.
+#[derive(Debug, Default)]
+pub(crate) struct DatePayload {
+    /// The field's value ("YYYY-MM-DD" or "YYYY-MM-DD HH:MM").
+    pub(crate) value: String,
+    /// The value the field starts from when the view names none of its
+    /// own.
+    pub(crate) default: Option<String>,
+    pub(crate) placeholder: Option<String>,
+    pub(crate) on_change: Option<ValueListener>,
+    /// What the field says around its control as a form field (#241).
+    pub(crate) field: FieldPayload,
+}
+
+/// The payload the tag-picker kind reads.
+#[derive(Debug, Default)]
+pub(crate) struct TagPickerPayload {
+    /// The tags chosen, by their options' values.
+    pub(crate) tags: Vec<String>,
+    /// The tags offered.
+    pub(crate) options: Vec<Choice>,
+    /// The value the picker starts from when the view names none of its
+    /// own.
+    pub(crate) default: Vec<String>,
+    pub(crate) on_change: Option<Listener>,
+    /// What the field says around its control as a form field (#241).
+    pub(crate) field: FieldPayload,
+}
+
+/// The payload the file-picker and folder-picker kinds read.
+#[derive(Debug, Default)]
+pub(crate) struct PathPayload {
+    /// The paths chosen.
+    pub(crate) paths: Vec<String>,
+    /// The path the picker starts from when the view names none of its
+    /// own.
+    pub(crate) default: Option<String>,
+    /// Whether the picker chooses several paths.
+    pub(crate) multiple: bool,
+    pub(crate) on_change: Option<ValueListener>,
+    /// What the field says around its control as a form field (#241).
+    pub(crate) field: FieldPayload,
+}
+
+/// A form's submission listener, as the tree's `form` node names it
+/// (#241): what [`Cx::form_listener`] answers, told the values the form
+/// was submitted with.
+#[derive(Debug)]
+pub struct FormListener(pub(crate) u32);
 
 /// A `column`, `row` or `card` being built.
 #[derive(Debug)]
@@ -2111,6 +2246,13 @@ impl Choice {
         self.label = Some(label.into());
         self
     }
+
+    /// The section the option belongs to, drawn as a group's header above
+    /// the choices of one section (#241).
+    pub fn section(mut self, section: impl Into<String>) -> Choice {
+        self.section = Some(section.into());
+        self
+    }
 }
 
 impl Slider {
@@ -2454,6 +2596,11 @@ impl<V: View> GuestView for Open<V> {
             }
             Some(Run::Value(run)) => {
                 run(&mut self.state.borrow_mut(), &text);
+                None
+            }
+            Some(Run::Form(run)) => {
+                let values = crate::form::FormValues::of(&payload);
+                run(&mut self.state.borrow_mut(), &values);
                 None
             }
             Some(Run::Push { open, on_pop }) => {
@@ -2923,6 +3070,7 @@ fn write_node(tree: &mut String, node: &Node) -> Result<(), String> {
                 tree.push_str(",\"onChange\":");
                 let _ = write!(tree, "{id}");
             }
+            write_field(tree, &toggle.field)?;
         }
         NodeKind::Checkbox(toggle) => {
             if toggle.on {
@@ -2937,6 +3085,8 @@ fn write_node(tree: &mut String, node: &Node) -> Result<(), String> {
                 let _ = write!(tree, "{id}");
             }
         }
+            write_field(tree, &toggle.field)?;
+        }
         NodeKind::Segmented(control) | NodeKind::Select(control) => {
             tree.push_str(",\"options\":[");
             for (index, option) in control.options.iter().enumerate() {
@@ -2949,12 +3099,20 @@ fn write_node(tree: &mut String, node: &Node) -> Result<(), String> {
                     tree.push_str(",\"label\":");
                     string(tree, label)?;
                 }
+                if let Some(section) = &option.section {
+                    tree.push_str(",\"section\":");
+                    string(tree, section)?;
+                }
                 tree.push('}');
             }
             tree.push(']');
             if let Some(value) = &control.value {
                 tree.push_str(",\"value\":");
                 string(tree, value)?;
+            }
+            if let Some(placeholder) = &control.placeholder {
+                tree.push_str(",\"placeholder\":");
+                string(tree, placeholder)?;
             }
             if let Some(label) = &control.label {
                 tree.push_str(",\"label\":");
@@ -2964,6 +3122,14 @@ fn write_node(tree: &mut String, node: &Node) -> Result<(), String> {
                 tree.push_str(",\"onChange\":");
                 let _ = write!(tree, "{id}");
             }
+            if let Some(ValueListener(id)) = &control.on_input {
+                tree.push_str(",\"onInput\":");
+                let _ = write!(tree, "{id}");
+            }
+            if !control.search {
+                tree.push_str(",\"search\":false");
+            }
+            write_field(tree, &control.field)?;
         }
         NodeKind::Slider {
             value,
@@ -3074,6 +3240,10 @@ fn write_node(tree: &mut String, node: &Node) -> Result<(), String> {
         NodeKind::TextInput(input) | NodeKind::PasswordInput(input) | NodeKind::TextArea(input) => {
             tree.push_str(",\"value\":");
             string(tree, &input.value)?;
+            if let Some(default) = &input.default {
+                tree.push_str(",\"default\":");
+                string(tree, default)?;
+            }
             if let Some(placeholder) = &input.placeholder {
                 tree.push_str(",\"placeholder\":");
                 string(tree, placeholder)?;
@@ -3095,6 +3265,50 @@ fn write_node(tree: &mut String, node: &Node) -> Result<(), String> {
                 tree.push_str(",\"throttleMs\":");
                 let _ = write!(tree, "{ms}");
             }
+            write_field(tree, &input.field)?;
+        }
+        NodeKind::Form(form) => {
+            if let Some(FormListener(id)) = &form.on_submit {
+                tree.push_str(",\"onSubmit\":");
+                let _ = write!(tree, "{id}");
+            }
+            if let Some(label) = &form.submit_label {
+                tree.push_str(",\"submitLabel\":");
+                string(tree, label)?;
+            }
+        }
+        NodeKind::DatePicker(date) | NodeKind::DateTimePicker(date) => {
+            tree.push_str(",\"value\":");
+            string(tree, &date.value)?;
+            if let Some(default) = &date.default {
+                tree.push_str(",\"default\":");
+                string(tree, default)?;
+            }
+            if let Some(placeholder) = &date.placeholder {
+                tree.push_str(",\"placeholder\":");
+                string(tree, placeholder)?;
+            }
+            if let Some(ValueListener(id)) = &date.on_change {
+                tree.push_str(",\"onChange\":");
+                let _ = write!(tree, "{id}");
+            }
+            write_field(tree, &date.field)?;
+        }
+        NodeKind::TagPicker(picker) => {
+            tree.push_str(",\"tags\":[");
+            for (index, tag) in picker.tags.iter().enumerate() {
+                if index > 0 {
+                    tree.push(',');
+                }
+                string(tree, tag)?;
+            }
+            tree.push(']');
+            write_field(tree, &picker.field)?;
+        }
+        NodeKind::FilePicker(picker) | NodeKind::FolderPicker(picker) => {
+            tree.push_str(",\"multiple\":");
+            let _ = write!(tree, "{}", picker.multiple);
+            write_field(tree, &picker.field)?;
         }
     }
     if !node.children.is_empty() {
@@ -3150,6 +3364,12 @@ fn kind_of(node: &Node) -> &'static str {
         NodeKind::TextInput(_) => "text-input",
         NodeKind::PasswordInput(_) => "password-input",
         NodeKind::TextArea(_) => "text-area",
+        NodeKind::Form(_) => "form",
+        NodeKind::DatePicker(_) => "date-picker",
+        NodeKind::DateTimePicker(_) => "date-time-picker",
+        NodeKind::TagPicker(_) => "tag-picker",
+        NodeKind::FilePicker(_) => "file-picker",
+        NodeKind::FolderPicker(_) => "folder-picker",
     }
 }
 
@@ -3472,6 +3692,27 @@ fn string_field(tree: &mut String, name: &str, value: &str) -> Result<(), String
 }
 
 /// Writes `text` as the tree's JSON string.
+/// Writes what a field of a form says around its control: its `title`,
+/// `info`, `error` and `remember` (#241).
+fn write_field(tree: &mut String, field: &FieldPayload) -> Result<(), String> {
+    if let Some(title) = &field.title {
+        tree.push_str(",\"title\":");
+        string(tree, title)?;
+    }
+    if let Some(info) = &field.info {
+        tree.push_str(",\"info\":");
+        string(tree, info)?;
+    }
+    if let Some(error) = &field.error {
+        tree.push_str(",\"error\":");
+        string(tree, error)?;
+    }
+    if field.remember {
+        tree.push_str(",\"remember\":true");
+    }
+    Ok(())
+}
+
 fn string(tree: &mut String, text: &str) -> Result<(), String> {
     tree.push('"');
     for character in text.chars() {

@@ -51,11 +51,12 @@ wit_bindgen::generate!({
 });
 
 pub use exports::pane::extension::command::{
-    Choice, CustomView, CustomViewInfo, CustomViewRole, Field, FieldKind, FieldValue, Form,
-    FormError, Frame, GuestCustomView, Key, Platform, Point, Rect, Shape, Text, TextField,
-    ViewEvent,
+    CustomView, CustomViewInfo, CustomViewRole, Frame, GuestCustomView, Key, Platform, Point, Rect,
+    Shape, Text, ViewEvent,
 };
 pub use list::{Action, Command, Item, List, Modifier, Shortcut, Submenu};
+pub mod form;
+pub use form::{FormValues, FormValue};
 pub mod view;
 pub use view::{
     Align, Answer, Cx, IntoAnswer, IntoNode, Justify, Listener, Node, Pending, Space, TextLevel,
