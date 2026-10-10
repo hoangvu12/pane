@@ -1992,68 +1992,8 @@ impl SourcePackage {
     /// it, self-contained, with the identity of the collection folder and
     /// the id (ADR 0044). Nothing in the folder runs.
     pub(crate) fn read_collection(folder: &Path, id: &str) -> Result<SourcePackage, PackageError> {
-        if !crate::collections::is_id(id) {
-            return Err(PackageError::Collection(format!(
-                "the extension id `{id}` of a collection must be lowercase letters, digits and \
-                 `-`"
-            )));
-        }
-        // The collection's folder, resolved as any local package's folder
-        // is, and the identity of the extension of it that `id` names.
-        let identity = PackageIdentity::local_extension(folder, id)?;
-        let root = PackageIdentity::local(folder)?
-            .local_folder()
-            .expect("a local identity has a folder")
-            .to_path_buf();
-        let invalid = |why: String| {
-            PackageError::Collection(format!(
-                "The collection at {} holds an invalid {}: {why}",
-                root.display(),
-                crate::collections::COLLECTION_FILE
-            ))
-        };
-        let file = crate::collections::COLLECTION_FILE;
-        let one_extension = root.join(MANIFEST_FILE).is_file();
-        let Some(collection) = crate::collections::read(&root).map_err(invalid)? else {
-            if one_extension {
-                return Err(PackageError::Collection(format!(
-                    "The folder {} is not a collection: its root holds {MANIFEST_FILE}, one \
-                     extension, and no {file}; `#` names one extension of a collection",
-                    root.display()
-                )));
-            }
-            return Err(PackageError::Collection(format!(
-                "The folder {} is not a collection: it holds no {file}; `#` names one \
-                 extension of a collection",
-                root.display()
-            )));
-        };
-        if one_extension {
-            return Err(PackageError::Collection(format!(
-                "The folder {} holds both {MANIFEST_FILE} and {file}: a folder is one extension \
-                 or a collection, never both",
-                root.display()
-            )));
-        }
-        let Some(entry) = collection.find(id) else {
-            return Err(PackageError::Collection(format!(
-                "The collection at {} lists no extension `{id}` in its {file}",
-                root.display()
-            )));
-        };
-        let subfolder = root.join(&entry.path);
-        let (manifest, manifest_text) = match Manifest::read_text(&subfolder) {
-            Ok(read) => read,
-            Err(PackageError::NoManifest(_)) => {
-                return Err(PackageError::Collection(format!(
-                    "The collection at {} lists its extension `{id}` at `{}`, which is not a \
-                     package: it has no {MANIFEST_FILE}",
-                    root.display(),
-                    shown(&entry.path)
-                )));
-            }
-            Err(error) => return Err(error),
-        };
+        let (identity, _root, subfolder) = collection_extension(folder, id)?;
+        let (manifest, manifest_text) = Manifest::read_text(&subfolder)?;
         Ok(SourcePackage {
             identity,
             folder: subfolder,
@@ -2119,6 +2059,78 @@ impl ListedExtension {
                 .and_then(|icon| icon.resolved(&subfolder)),
         }
     }
+
+/// The extension `id` of the collection at `folder`, as an install
+/// resolves one (#307): its identity — the collection's resolved folder
+/// with the id (ADR 0044) — the collection's folder, and the folder
+/// holding the extension's package, which is checked to be a package
+/// folder but not read, so a development build of it is what is checked
+/// ([`crate::develop::target`]). Refused every way an install of one
+/// extension is.
+///
+/// A tuple: the identity, the collection's folder, the extension's.
+pub(crate) fn collection_extension(
+    folder: &Path,
+    id: &str,
+) -> Result<(PackageIdentity, PathBuf, PathBuf), PackageError> {
+    if !crate::collections::is_id(id) {
+        return Err(PackageError::Collection(format!(
+            "the extension id `{id}` of a collection must be lowercase letters, digits and `-`"
+        )));
+    }
+    // The collection's folder, resolved as any local package's folder is,
+    // and the identity of the extension of it that `id` names.
+    let identity = PackageIdentity::local_extension(folder, id)?;
+    let root = PackageIdentity::local(folder)?
+        .local_folder()
+        .expect("a local identity has a folder")
+        .to_path_buf();
+    let invalid = |why: String| {
+        PackageError::Collection(format!(
+            "The collection at {} holds an invalid {}: {why}",
+            root.display(),
+            crate::collections::COLLECTION_FILE
+        ))
+    };
+    let file = crate::collections::COLLECTION_FILE;
+    let one_extension = root.join(MANIFEST_FILE).is_file();
+    let Some(collection) = crate::collections::read(&root).map_err(invalid)? else {
+        if one_extension {
+            return Err(PackageError::Collection(format!(
+                "The folder {} is not a collection: its root holds {MANIFEST_FILE}, one \
+                 extension, and no {file}; `#` names one extension of a collection",
+                root.display()
+            )));
+        }
+        return Err(PackageError::Collection(format!(
+            "The folder {} is not a collection: it holds no {file}; `#` names one extension \
+             of a collection",
+            root.display()
+        )));
+    };
+    if one_extension {
+        return Err(PackageError::Collection(format!(
+            "The folder {} holds both {MANIFEST_FILE} and {file}: a folder is one extension \
+             or a collection, never both",
+            root.display()
+        )));
+    }
+    let Some(entry) = collection.find(id) else {
+        return Err(PackageError::Collection(format!(
+            "The collection at {} lists no extension `{id}` in its {file}",
+            root.display()
+        )));
+    };
+    let subfolder = root.join(&entry.path);
+    if !subfolder.join(MANIFEST_FILE).is_file() {
+        return Err(PackageError::Collection(format!(
+            "The collection at {} lists its extension `{id}` at `{}`, which is not a package: \
+             it has no {MANIFEST_FILE}",
+            root.display(),
+            shown(&entry.path)
+        )));
+    }
+    Ok((identity, root, subfolder))
 }
 
 /// An installed package, as read from its managed copy.
