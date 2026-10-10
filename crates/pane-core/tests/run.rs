@@ -29,9 +29,10 @@ use std::sync::{Arc, Mutex};
 
 use futures::executor::block_on;
 use pane_core::run::{
-    Run, RunError, Sources, classify, decode, encode, normalize, record, remove, split,
+    Candidates, Completion, Run, RunError, Source, Sources, classify, complete, decode, encode,
+    normalize, record, remove, split,
 };
-use pane_core::{Launcher, Runtime, Screen, Status};
+use pane_core::{Launcher, PackageIdentity, Runtime, Screen, Status};
 use tempfile::TempDir;
 
 #[path = "support/artifacts.rs"]
@@ -108,6 +109,49 @@ fn error(message: &str) -> Status {
     Status::Error(format!("The extension reported an error: {message}"))
 }
 
+/// A marker program named `name` in `folder`, which records the arguments
+/// it is given in `<folder>/<name>.txt` — each on a line of its own where
+/// the shell splits them, the whole tail where Windows' command
+/// interpreter does not: a shell script on the Unix systems, a `.cmd`
+/// file on Windows, the file Pane runs either way. Its path, for a test
+/// to answer as Windows Terminal.
+fn marker_program(folder: &Path, name: &str) -> PathBuf {
+    #[cfg(unix)]
+    let program = folder.join(name);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::write(&program, "#!/bin/sh\nprintf '%s\\n' \"$@\" >> \"$0.txt\"\n").unwrap();
+        fs::set_permissions(&program, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    #[cfg(windows)]
+    let program = folder.join(format!("{name}.cmd"));
+    #[cfg(windows)]
+    fs::write(
+        &program,
+        format!("@echo off\r\necho %*>> \"%~dp0{name}.txt\"\r\n"),
+    )
+    .unwrap();
+    program
+}
+
+/// Asserts the marker program `name` in `folder` was given `args`: each
+/// on a line of its own where the shell splits them, each somewhere in
+/// the recorded tail where Windows' command interpreter does not.
+fn asked_for(folder: &Path, name: &str, args: &[&str]) {
+    let recorded = fs::read_to_string(folder.join(format!("{name}.txt"))).unwrap_or_default();
+    #[cfg(unix)]
+    assert_eq!(
+        recorded.lines().collect::<Vec<_>>(),
+        args,
+        "the marker recorded {recorded:?}"
+    );
+    #[cfg(windows)]
+    for arg in args {
+        assert!(recorded.contains(arg), "{arg:?} is not in {recorded:?}");
+    }
+}
+
 /// A fake of the Run dialog's work: it answers as scripted, records what
 /// ran in a history of its own with the pure half's [`record`], and
 /// remembers what it was asked. An elevated run is declined when told to
@@ -125,6 +169,11 @@ struct State {
     history: Vec<String>,
     /// Whether an elevated run is declined instead of run.
     declines: bool,
+    /// The sources its completions are drawn from, as the pure half
+    /// matches them.
+    candidates: Candidates,
+    /// What `terminal` answers: Windows Terminal's `wt.exe`, or none.
+    terminal: Option<String>,
 }
 
 impl FakeRun {
@@ -141,6 +190,22 @@ impl FakeRun {
     /// Every elevated run is declined from now on.
     fn decline_elevated(&self) {
         self.state.lock().unwrap().declines = true;
+    }
+
+    /// Answers completions drawn from `candidates`, as the pure half
+    /// matches them.
+    fn complete_from(&self, candidates: Candidates) {
+        self.state.lock().unwrap().candidates = candidates;
+    }
+
+    /// Answers that Windows Terminal is `wt`, the path it answers.
+    fn terminal_at(&self, wt: &Path) {
+        self.state.lock().unwrap().terminal = Some(wt.to_string_lossy().into_owned());
+    }
+
+    /// Answers that Windows Terminal is not installed.
+    fn without_terminal(&self) {
+        self.state.lock().unwrap().terminal = None;
     }
 }
 
@@ -175,6 +240,15 @@ impl Run for FakeRun {
             ))),
         }
     }
+
+    fn completions(&self, text: &str) -> Result<Vec<Completion>, RunError> {
+        let state = self.state.lock().unwrap();
+        Ok(complete(&state.candidates, text))
+    }
+
+    fn terminal(&self) -> Result<Option<String>, RunError> {
+        Ok(self.state.lock().unwrap().terminal.clone())
+    }
 }
 
 /// A sample installed with the fake adapter, on its own data folder.
@@ -183,6 +257,8 @@ struct Installed {
     data: TempDir,
     fake: FakeRun,
     launcher: Launcher,
+    /// The folder the package was installed from, for its identity.
+    folder: PathBuf,
 }
 
 impl Installed {
@@ -204,7 +280,16 @@ impl Installed {
             data,
             fake,
             launcher,
+            folder,
         }
+    }
+
+    /// Sets the package's preference kept as `key` to `value`, as its
+    /// card in Settings does.
+    fn set_preference(&self, key: &str, value: &str) {
+        let identity = PackageIdentity::local(&self.folder).unwrap();
+        block_on(self.launcher.set_preference(&identity, key, Some(value)))
+            .unwrap_or_else(|why| panic!("{key} = {value}: {why}"));
     }
 
     /// The same launcher started again on the same data folder, with the
@@ -415,6 +500,66 @@ fn explorers_history_format_decodes_encodes_and_records() {
 }
 
 #[test]
+fn the_completions_match_the_typed_text_from_every_source() {
+    let candidates = Candidates {
+        history: vec!["notepad -a".into(), "cmd".into()],
+        app_paths: vec!["winget".into()],
+        programs: vec!["notepad".into(), "mspaint".into()],
+        applets: vec!["desk.cpl".into()],
+        consoles: vec!["devmgmt.msc".into()],
+        schemes: vec!["ms-settings:".into()],
+        variables: vec!["%TEMP%".into()],
+    };
+    let completion = |line: &str, source: Source| Completion {
+        line: line.into(),
+        source,
+    };
+    // The history's entries come first (newest first, as they are given),
+    // then each source in its order, each matching the typed text,
+    // ignoring case: a history entry matches its head, as typed with
+    // arguments, and a program's name is offered without the extension
+    // the search path resolves.
+    assert_eq!(
+        complete(&candidates, "not"),
+        [
+            completion("notepad -a", Source::History),
+            completion("notepad", Source::SearchPath),
+        ]
+    );
+    assert_eq!(
+        complete(&candidates, "CM"),
+        [completion("cmd", Source::History)]
+    );
+    assert_eq!(
+        complete(&candidates, "win"),
+        [completion("winget", Source::AppPath)]
+    );
+    assert_eq!(
+        complete(&candidates, "des"),
+        [completion("desk.cpl", Source::Applet)]
+    );
+    assert_eq!(
+        complete(&candidates, "dev"),
+        [completion("devmgmt.msc", Source::Console)]
+    );
+    assert_eq!(
+        complete(&candidates, "%te"),
+        [completion("%TEMP%", Source::Variable)]
+    );
+    assert_eq!(
+        complete(&candidates, "ms"),
+        [
+            completion("mspaint", Source::SearchPath),
+            completion("ms-settings:", Source::Scheme),
+        ]
+    );
+    // A text no line starts with is answered with nothing, as blank text
+    // is: a blank field shows the command's own list.
+    assert!(complete(&candidates, "nothing").is_empty());
+    assert!(complete(&candidates, "").is_empty());
+}
+
+#[test]
 fn a_command_line_sent_through_an_alias_runs_and_is_recorded() {
     for sample in SAMPLES {
         let pane = Installed::new(&sample);
@@ -582,6 +727,198 @@ fn deleting_an_entry_removes_it_from_the_history() {
 
         // The list is drawn again without it.
         assert_eq!(titles(&pane.launcher), ["cmd"]);
+    }
+}
+
+#[test]
+fn completions_appear_while_typing_and_run_what_they_offer() {
+    for sample in SAMPLES {
+        let pane = Installed::new(&sample);
+        pane.fake.complete_from(Candidates {
+            history: vec!["notepad -a".into()],
+            app_paths: vec!["registered".into()],
+            programs: vec!["notepad".into()],
+            applets: vec!["desk.cpl".into()],
+            consoles: vec!["devmgmt.msc".into()],
+            schemes: vec!["ms-settings:".into()],
+            variables: vec!["%TEMP%".into()],
+        });
+
+        // Opening "Run with Completions" says to type a command line: its
+        // search field holds one, and what the field matches replaces the
+        // list while it holds text.
+        search(&pane.launcher, "Run with completions");
+        select_title(&pane.launcher, "Run with Completions");
+        block_on(pane.launcher.activate_selected());
+        assert_eq!(
+            pane.launcher.view().screen,
+            Screen::CommandSearch {
+                query: String::new()
+            }
+        );
+        assert_eq!(titles(&pane.launcher), ["Type a command line"]);
+
+        // Typing completes from every source, the typed text's own row
+        // first.
+        block_on(pane.launcher.set_query("note"));
+        assert_eq!(
+            titles(&pane.launcher),
+            ["Run “note”", "notepad -a", "notepad"],
+            "{}",
+            sample.title
+        );
+        block_on(pane.launcher.set_query("ms-s"));
+        assert_eq!(titles(&pane.launcher), ["Run “ms-s”", "ms-settings:"]);
+        block_on(pane.launcher.set_query("%te"));
+        assert_eq!(titles(&pane.launcher), ["Run “%te”", "%TEMP%"]);
+        // A text nothing completes still offers its own row: Enter runs
+        // the text as typed.
+        block_on(pane.launcher.set_query("zqx"));
+        assert_eq!(titles(&pane.launcher), ["Run “zqx”"]);
+
+        // Enter on a completion runs its line.
+        block_on(pane.launcher.set_query("note"));
+        select_title(&pane.launcher, "notepad");
+        block_on(pane.launcher.activate_selected());
+        assert_eq!(
+            shown(&pane.launcher),
+            Status::Result("Ran notepad".into()),
+            "{}",
+            sample.title
+        );
+        assert_eq!(pane.fake.history(), ["notepad"]);
+
+        // Enter on the typed text's own row runs the text as typed.
+        block_on(pane.launcher.set_query("not"));
+        select_title(&pane.launcher, "Run “not”");
+        block_on(pane.launcher.activate_selected());
+        assert_eq!(
+            shown(&pane.launcher),
+            Status::Result("Ran not".into()),
+            "{}",
+            sample.title
+        );
+        assert_eq!(
+            pane.fake.asked(),
+            [("notepad".to_owned(), false), ("not".to_owned(), false)]
+        );
+        assert_eq!(pane.fake.history(), ["not", "notepad"]);
+    }
+}
+
+#[test]
+fn run_in_terminal_opens_a_new_windows_terminal_tab() {
+    for sample in SAMPLES {
+        let pane = Installed::new(&sample);
+        let bin = tempfile::tempdir().unwrap();
+        // The marker program stands for Windows Terminal: what the guest
+        // asks the run-program host function to run, it records.
+        pane.fake.terminal_at(&marker_program(bin.path(), "wt"));
+        set_alias(&pane.launcher, "Run in Terminal", "rt");
+
+        assert_eq!(
+            run_through_alias(&pane.launcher, "Run in Terminal", "rt", "ipconfig /all"),
+            Status::Result("Ran ipconfig /all in the terminal".into()),
+            "{}",
+            sample.title
+        );
+        // Windows Terminal was asked for a new tab running the command
+        // line in the shell the preference chooses (its default,
+        // PowerShell), through the run-program host function: nothing was
+        // asked of the run host function, and a tab records nothing in
+        // the Run dialog's history.
+        asked_for(
+            bin.path(),
+            "wt",
+            &[
+                "-w",
+                "0",
+                "new-tab",
+                "powershell",
+                "-NoExit",
+                "-Command",
+                "ipconfig /all",
+            ],
+        );
+        assert!(pane.fake.asked().is_empty());
+        assert!(pane.fake.history().is_empty());
+    }
+}
+
+#[test]
+fn run_in_terminal_without_windows_terminal_opens_the_shells_own_window() {
+    for sample in SAMPLES {
+        let pane = Installed::new(&sample);
+        set_alias(&pane.launcher, "Run in Terminal", "rt");
+
+        assert_eq!(
+            run_through_alias(&pane.launcher, "Run in Terminal", "rt", "ipconfig"),
+            Status::Result("Ran ipconfig in the terminal".into()),
+            "{}",
+            sample.title
+        );
+        // The shell's own window is opened by the run host function's own
+        // open (a program the run-program function starts belongs to the
+        // call that started it and its streams are Pane's, so its console
+        // window would show nothing): the shell runs the command line and
+        // stays to be read, and the run records it in the Run dialog's
+        // history.
+        assert_eq!(
+            pane.fake.asked(),
+            [("powershell -NoExit -Command ipconfig".to_owned(), false)]
+        );
+        assert_eq!(
+            pane.fake.history(),
+            ["powershell -NoExit -Command ipconfig"]
+        );
+    }
+}
+
+#[test]
+fn the_shell_preference_chooses_the_terminal_s_shell() {
+    for sample in SAMPLES {
+        let pane = Installed::new(&sample);
+        pane.set_preference("shell", "cmd");
+        let bin = tempfile::tempdir().unwrap();
+        pane.fake.terminal_at(&marker_program(bin.path(), "wt"));
+        set_alias(&pane.launcher, "Run in Terminal", "rt");
+
+        // Windows Terminal's tab runs the Command Prompt.
+        run_through_alias(&pane.launcher, "Run in Terminal", "rt", "ipconfig");
+        asked_for(
+            bin.path(),
+            "wt",
+            &["-w", "0", "new-tab", "cmd", "/d", "/k", "ipconfig"],
+        );
+
+        // Without Windows Terminal, the Command Prompt's own window is
+        // opened instead.
+        pane.fake.without_terminal();
+        run_through_alias(&pane.launcher, "Run in Terminal", "rt", "ipconfig");
+        assert_eq!(
+            pane.fake.asked().last(),
+            Some(&("cmd /d /k ipconfig".to_owned(), false))
+        );
+    }
+}
+
+#[test]
+fn a_terminal_run_that_failed_says_why() {
+    for sample in SAMPLES {
+        let pane = Installed::new(&sample);
+        // Windows Terminal is answered as a program that is not there, so
+        // the run-program host function's error is shown.
+        let nowhere = tempfile::tempdir().unwrap();
+        pane.fake
+            .terminal_at(&nowhere.path().join("no-such-terminal"));
+        set_alias(&pane.launcher, "Run in Terminal", "rt");
+
+        run_through_alias(&pane.launcher, "Run in Terminal", "rt", "ipconfig");
+        match shown(&pane.launcher) {
+            Status::Error(why) => assert!(why.contains("no program at"), "{why}"),
+            other => panic!("expected an error, got {other:?}"),
+        }
+        assert!(pane.fake.asked().is_empty());
     }
 }
 
@@ -825,6 +1162,94 @@ mod windows {
         forget_app_path(&name);
     }
 
+    #[test]
+    fn the_completions_come_from_every_source_it_is_given() {
+        // Every source, with values of this test's own: the RunMRU key, a
+        // program App Paths registers, a program, an applet and a console
+        // the search path's folder holds, a scheme registered in the
+        // classes root, and an environment variable.
+        let bin = tempfile::tempdir().unwrap();
+        let (program, _) = marker_program(bin.path(), "pane-run-tool");
+        fs::write(bin.path().join("pane-run-applet.cpl"), b"").unwrap();
+        fs::write(bin.path().join("pane-run-console.msc"), b"").unwrap();
+        let folder = bin.path().to_path_buf();
+        let source: SearchPath = Arc::new(move || search_path(&folder));
+        let mru = own_key();
+        seed(&mru, &[("a", "pane-run history")], "a");
+        let registered = own("app");
+        register_app_path(&format!("{registered}.exe"), &program.display().to_string());
+        let scheme = own("scheme");
+        register_scheme(&scheme);
+        let variable = own("var");
+        // SAFETY: this test's own process (one a test), whose environment
+        // nothing else reads while it runs.
+        unsafe {
+            std::env::set_var(&variable, "1");
+        }
+
+        let run = adapter(&mru, source);
+        let offered = |text: &str| {
+            run.completions(text)
+                .unwrap()
+                .into_iter()
+                .map(|completion| (completion.line, completion.source))
+                .collect::<Vec<_>>()
+        };
+        // The history first, then each source in its order, each matching
+        // the typed text ignoring case: a program is named without the
+        // extension the search path resolves, an applet and a console by
+        // their file names, a scheme with the `:` the Run dialog runs it
+        // with.
+        assert_eq!(
+            offered("pane-run"),
+            vec![
+                ("pane-run history".into(), Source::History),
+                (registered.clone(), Source::AppPath),
+                ("pane-run-tool".into(), Source::SearchPath),
+                ("pane-run-applet.cpl".into(), Source::Applet),
+                ("pane-run-console.msc".into(), Source::Console),
+                (format!("{scheme}:"), Source::Scheme),
+            ]
+        );
+        // An environment variable's line is its `%NAME%`, so it completes
+        // the text once the `%` is typed.
+        assert_eq!(
+            offered("%pane-run"),
+            vec![(format!("%{variable}%"), Source::Variable)]
+        );
+        // Typing more of the text narrows the same sources, and a text no
+        // line starts with is answered with nothing.
+        assert_eq!(
+            offered("pane-run-tool"),
+            vec![("pane-run-tool".into(), Source::SearchPath)]
+        );
+        assert!(offered("nothing-by-this-name").is_empty());
+
+        // The values are this test's own; they are removed again.
+        forget_app_path(&format!("{registered}.exe"));
+        forget_scheme(&scheme);
+        // SAFETY: as above.
+        unsafe {
+            std::env::remove_var(&variable);
+        }
+    }
+
+    #[test]
+    fn windows_terminal_is_found_by_its_name() {
+        // Windows Terminal is found as the Run dialog finds programs: App
+        // Paths, where its installer registers it, then the search path.
+        // A machine that has it is answered its own wherever it is; this
+        // test puts one on the search path for a machine that has none.
+        let bin = tempfile::tempdir().unwrap();
+        fs::write(bin.path().join("wt.exe"), b"").unwrap();
+        let folder = bin.path().to_path_buf();
+        let source: SearchPath = Arc::new(move || search_path(&folder));
+        let run = adapter(&own_key(), source);
+        let found = run.terminal().unwrap().expect("Windows Terminal was found");
+        assert!(found.to_lowercase().ends_with("wt.exe"), "{found}");
+        assert!(Path::new(&found).is_file(), "{found}");
+    }
+
     /// Writes `values` (letter names) and `list` to the RunMRU key `mru`
     /// as Explorer writes them: REG_SZ strings, the command lines with
     /// the marker byte.
@@ -992,6 +1417,66 @@ mod windows {
         }
     }
 
+    /// Registers the scheme `name` in the classes root, with the `URL
+    /// Protocol` marker a registered scheme carries; this test's own key,
+    /// which it removes again.
+    fn register_scheme(name: &str) {
+        use ::windows::Win32::Foundation::ERROR_SUCCESS;
+        use ::windows::Win32::System::Registry::{
+            HKEY, HKEY_CLASSES_ROOT, KEY_SET_VALUE, REG_OPTION_NON_VOLATILE, REG_SZ, RegCloseKey,
+            RegCreateKeyExW, RegSetValueExW,
+        };
+        use ::windows::core::{HSTRING, PCWSTR};
+
+        let subkey = wide(name);
+        let mut key = HKEY::default();
+        // SAFETY: `key` is a handle the call fills in when it succeeds,
+        // creating this test's own key.
+        let created = unsafe {
+            RegCreateKeyExW(
+                HKEY_CLASSES_ROOT,
+                PCWSTR(subkey.as_ptr()),
+                None,
+                PCWSTR::null(),
+                REG_OPTION_NON_VOLATILE,
+                KEY_SET_VALUE,
+                None,
+                &mut key,
+                None,
+            )
+        };
+        assert_eq!(
+            created, ERROR_SUCCESS,
+            "the test's scheme could not be made"
+        );
+        let marker = HSTRING::from("URL Protocol");
+        // An empty string: the value's being there is what marks the
+        // scheme.
+        let bytes: Vec<u8> = vec![0, 0];
+        // SAFETY: `key` is open for writing, and `bytes` is a plain byte
+        // buffer the call copies before returning.
+        let written = unsafe { RegSetValueExW(key, &marker, None, REG_SZ, Some(bytes.as_slice())) };
+        assert_eq!(written, ERROR_SUCCESS);
+        // SAFETY: the handle the create returned, closed once.
+        unsafe {
+            let _ = RegCloseKey(key);
+        }
+    }
+
+    /// Removes the scheme key `name` from the classes root, this test's
+    /// own.
+    fn forget_scheme(name: &str) {
+        use ::windows::Win32::System::Registry::{HKEY_CLASSES_ROOT, RegDeleteTreeW};
+        use ::windows::core::PCWSTR;
+
+        let subkey = wide(name);
+        // SAFETY: a NUL-terminated subkey path that outlives the call,
+        // deleting this test's own key.
+        unsafe {
+            let _ = RegDeleteTreeW(HKEY_CLASSES_ROOT, PCWSTR(subkey.as_ptr()));
+        }
+    }
+
     /// `text` as Windows takes it, NUL-terminated.
     fn wide(text: impl AsRef<std::ffi::OsStr>) -> Vec<u16> {
         use std::os::windows::ffi::OsStrExt;
@@ -1111,7 +1596,13 @@ mod windows {
         search(&launcher, "Run");
         assert_eq!(
             command_titles(&launcher),
-            ["Run", "Run History", "Run as Administrator"]
+            [
+                "Run",
+                "Run History",
+                "Run as Administrator",
+                "Run in Terminal",
+                "Run with Completions",
+            ]
         );
 
         // A command line typed in root search runs through an alias and is
@@ -1162,7 +1653,13 @@ mod windows {
         search(&launcher, "Run");
         assert_eq!(
             command_titles(&launcher),
-            ["Run", "Run History", "Run as Administrator"]
+            [
+                "Run",
+                "Run History",
+                "Run as Administrator",
+                "Run in Terminal",
+                "Run with Completions",
+            ]
         );
         // Disabled on its own: its commands contribute nothing.
         let identity = PackageIdentity::default_extension("run");
@@ -1175,8 +1672,107 @@ mod windows {
         search(&launcher, "Run");
         assert_eq!(
             command_titles(&launcher),
-            ["Run", "Run History", "Run as Administrator"]
+            [
+                "Run",
+                "Run History",
+                "Run as Administrator",
+                "Run in Terminal",
+                "Run with Completions",
+            ]
         );
+    }
+
+    #[test]
+    fn the_run_default_extension_completes_as_the_user_types() {
+        let pane = Pane::new();
+        pane.fake.complete_from(Candidates {
+            history: vec!["notepad -a".into()],
+            app_paths: vec!["registered".into()],
+            programs: vec!["notepad".into()],
+            applets: vec!["desk.cpl".into()],
+            consoles: vec!["devmgmt.msc".into()],
+            schemes: vec!["ms-settings:".into()],
+            variables: vec!["%TEMP%".into()],
+        });
+        let launcher = pane.started();
+        let window = RecordingWindow::attach(&launcher);
+
+        // Opening "Run with Completions" says to type a command line; the
+        // field completes from every source, the typed text's own row
+        // first.
+        search(&launcher, "Run with completions");
+        select_title(&launcher, "Run with Completions");
+        block_on(launcher.activate_selected());
+        assert_eq!(
+            launcher.view().screen,
+            Screen::CommandSearch {
+                query: String::new()
+            }
+        );
+        assert_eq!(titles(&launcher), ["Type a command line"]);
+        block_on(launcher.set_query("note"));
+        assert_eq!(titles(&launcher), ["Run “note”", "notepad -a", "notepad"]);
+
+        // Enter on a completion runs its line, the HUD closing the
+        // launcher as the Run dialog does.
+        select_title(&launcher, "notepad");
+        block_on(launcher.activate_selected());
+        assert_eq!(
+            window
+                .huds()
+                .iter()
+                .map(|hud| hud.title.clone())
+                .collect::<Vec<_>>(),
+            ["Ran notepad".to_owned()]
+        );
+        assert_eq!(
+            pane.fake.asked(),
+            [("notepad".to_owned(), false)],
+            "the completion's line ran through the host"
+        );
+    }
+
+    #[test]
+    fn the_run_default_extension_runs_in_the_terminal() {
+        let pane = Pane::new();
+        let launcher = pane.started();
+        let window = RecordingWindow::attach(&launcher);
+        // The marker program stands for Windows Terminal: what the
+        // extension asks the run-program host function to run, it records.
+        let bin = tempfile::tempdir().unwrap();
+        let (terminal, marker) = marker_program(bin.path(), "terminal");
+        pane.fake.terminal_at(&terminal);
+        set_alias(&launcher, "Run in Terminal", "rt");
+
+        run_through_alias(&launcher, "Run in Terminal", "rt", "ipconfig");
+        // The HUD says what ran, closing the launcher, and Windows
+        // Terminal was asked for a new tab running the command line in
+        // the shell the preference chooses (its default, PowerShell):
+        // nothing was asked of the run host function, and a tab records
+        // nothing in the Run dialog's history.
+        assert_eq!(
+            window
+                .huds()
+                .iter()
+                .map(|hud| hud.title.clone())
+                .collect::<Vec<_>>(),
+            ["Ran ipconfig in the terminal".to_owned()]
+        );
+        let asked = fs::read_to_string(&marker).unwrap_or_default();
+        for part in ["new-tab", "powershell", "ipconfig"] {
+            assert!(asked.contains(part), "Windows Terminal was asked {asked:?}");
+        }
+        assert!(pane.fake.asked().is_empty());
+
+        // The preference chooses the Command Prompt.
+        let identity = PackageIdentity::default_extension("run");
+        block_on(launcher.set_preference(&identity, "shell", Some("cmd"))).unwrap();
+        fs::remove_file(&marker).unwrap();
+        run_through_alias(&launcher, "Run in Terminal", "rt", "ipconfig");
+        let asked = fs::read_to_string(&marker).unwrap_or_default();
+        for part in ["new-tab", "cmd", "ipconfig"] {
+            assert!(asked.contains(part), "Windows Terminal was asked {asked:?}");
+        }
     }
 
     #[test]

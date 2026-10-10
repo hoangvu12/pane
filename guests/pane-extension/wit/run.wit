@@ -9,11 +9,17 @@ package pane:extension@0.1.0;
 // environment variables expanded — run for the command, through Windows'
 // own elevation prompt (ADR 0033) when asked — together with the Run
 // dialog's own history, which Pane reads, records what ran in and deletes
-// from, so one history serves Windows' Run dialog and Pane's Run alike.
+// from, so one history serves Windows' Run dialog and Pane's Run alike —
+// and the completions for the text typed in Run's field (#264): history
+// entries, programs from App Paths and the registry search path, Control
+// Panel applets, management consoles, registered schemes and environment
+// variables, each matching the typed text. Where Windows Terminal is
+// installed, `terminal` answers `wt.exe`'s path, so a command can run a
+// command line in a new Windows Terminal tab (ADR 0033's run-program host
+// function) rather than the shell's own window.
 // Windows only: elsewhere every function answers `not-available`.
-// Completions while typing and running a command line in a terminal are
-// decided later (#264) and are not part of this interface. Kept apart from
-// the other files so a command that runs nothing does not import it. Rust
+// Kept apart from the other files so a command that runs nothing does not
+// import it. Rust
 // commands use it through pane-extension (`pane_extension::run`), and
 // JavaScript and TypeScript commands whose package.json sets
 // `"pane": { "run": true }` import it (guests/js/run.d.ts).
@@ -62,6 +68,53 @@ interface run {
   /// case, rewriting it without the entry so it is gone from Windows' Run
   /// dialog too; a line that is not in the history is an error.
   delete-from-history: func(line: string) -> result<_, run-error>;
+
+  /// Which source a completion came from, as its subtitle says: the Run
+  /// dialog's history, a program App Paths registered (`app-path`), a
+  /// program on the registry search path (`search-path`), a Control Panel
+  /// applet, a management console, a registered scheme, or an environment
+  /// variable.
+  enum completion-source {
+    history,
+    app-path,
+    search-path,
+    applet,
+    console,
+    scheme,
+    variable,
+  }
+
+  /// One completion for the text typed in Run's field: the command line
+  /// the text completes to, `line`, and which source it came from.
+  /// Running the line is the completion's own work: a history entry runs
+  /// again, a program's name resolves on the search path and in App Paths,
+  /// an applet's and a console's file names are kept with their extension,
+  /// a scheme's address ends in `:`, an environment variable's line is
+  /// `%NAME%` — each a line the Run dialog runs as it is.
+  record completion {
+    line: string,
+    source: completion-source,
+  }
+
+  /// The completions for `text`, the text typed so far, in the order they
+  /// are offered: the Run dialog's history first (newest first), then
+  /// programs from App Paths and the registry search path, Control Panel
+  /// applets, management consoles, registered schemes and environment
+  /// variables — each a line that starts with the typed text, ignoring
+  /// case, and no line two sources offer twice (matched ignoring case).
+  /// At most 100 are answered; typing more of the text narrows them. Blank
+  /// text answers nothing, as a blank field shows the command's own list.
+  /// The sources are read as they are at the time of the call, so a tool
+  /// installed after Pane started is completed; a source that cannot be
+  /// read contributes nothing, its own function reporting why.
+  completions: func(text: string) -> result<list<completion>, run-error>;
+
+  /// Windows Terminal, when it is installed: `wt.exe`'s absolute path,
+  /// as App Paths registered it (`wt.exe`) and then the registry search
+  /// path spell it. `none` when it is not installed, so the caller runs
+  /// the command line another way (the shell's own window). Windows
+  /// Terminal is asked as the Run dialog finds programs, not started here.
+  terminal: func() -> result<option<string>, run-error>;
 }
 
 /// The Run import alone, for guest bindings.

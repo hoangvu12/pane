@@ -1,5 +1,7 @@
 //! The guest's side of the `run` host functions (`wit/run.wit`): running
-//! what Windows' Run dialog (Win+R) runs, and the history the two share.
+//! what Windows' Run dialog (Win+R) runs, the history the two share, the
+//! completions for the text typed in Run's field, and where Windows
+//! Terminal is for a command that runs a command line in a terminal.
 //! Each takes the launcher's [`Run`] (through its `HostFunctions`) and has
 //! the work done on a thread of its own: the runtime thread awaits it,
 //! serving other packages' calls meanwhile, and the wait is Pane's time,
@@ -37,6 +39,22 @@ fn wire_error(error: RunError) -> run_host::RunError {
         RunError::NotAvailable(why) => run_host::RunError::NotAvailable(why),
         RunError::Failed(why) => run_host::RunError::Failed(why),
         RunError::Declined(why) => run_host::RunError::Declined(why),
+    }
+}
+
+/// `completion` as the WIT carries it.
+fn wire_completion(completion: host_run::Completion) -> run_host::Completion {
+    run_host::Completion {
+        line: completion.line,
+        source: match completion.source {
+            host_run::Source::History => run_host::CompletionSource::History,
+            host_run::Source::AppPath => run_host::CompletionSource::AppPath,
+            host_run::Source::SearchPath => run_host::CompletionSource::SearchPath,
+            host_run::Source::Applet => run_host::CompletionSource::Applet,
+            host_run::Source::Console => run_host::CompletionSource::Console,
+            host_run::Source::Scheme => run_host::CompletionSource::Scheme,
+            host_run::Source::Variable => run_host::CompletionSource::Variable,
+        },
     }
 }
 
@@ -92,6 +110,26 @@ impl run_host::Host for GuestState {
                 move || run.delete_from_history(&line),
                 || Err(failed()),
             ))
+            .await;
+        answer.map_err(wire_error)
+    }
+
+    async fn completions(
+        &mut self,
+        text: String,
+    ) -> Result<Vec<run_host::Completion>, run_host::RunError> {
+        let run = self.run_adapter().map_err(run_host::RunError::Failed)?;
+        let answer = self
+            .hosted(off_thread(move || run.completions(&text), || Err(failed())))
+            .await;
+        let completions = answer.map_err(wire_error)?;
+        Ok(completions.into_iter().map(wire_completion).collect())
+    }
+
+    async fn terminal(&mut self) -> Result<Option<String>, run_host::RunError> {
+        let run = self.run_adapter().map_err(run_host::RunError::Failed)?;
+        let answer = self
+            .hosted(off_thread(move || run.terminal(), || Err(failed())))
             .await;
         answer.map_err(wire_error)
     }

@@ -10,3 +10,4 @@ crate-type = ["cdylib"]
 
 [dependencies]
 pane-extension.workspace = true
+serde = { version = "1", default-features = false, features = ["alloc", "derive"] }

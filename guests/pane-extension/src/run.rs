@@ -5,8 +5,11 @@
 //! registered scheme, with environment variables expanded — run for the
 //! command, through Windows' own elevation prompt (ADR 0033) when asked
 //! — together with the Run dialog's own history, which this command and
-//! Windows' share in both directions. Windows only: elsewhere every
-//! function answers [`RunError::NotAvailable`], which is not a failure.
+//! Windows' share in both directions, and the completions for the text
+//! typed in Run's field: history entries, programs, applets, consoles,
+//! registered schemes and environment variables, each matching the typed
+//! text. Windows only: elsewhere every function answers
+//! [`RunError::NotAvailable`], which is not a failure.
 //!
 //! ```ignore
 //! use pane_extension::run::{self, RunError};
@@ -15,6 +18,8 @@
 //! run::run("regedit", true)?; // Windows asks first
 //! let history = run::history()?;
 //! run::delete_from_history("notepad.exe C:\\Notes\\todo.txt")?;
+//! let completions = run::completions("note")?; // what the field offers
+//! let terminal = run::terminal()?; // Windows Terminal, when installed
 //! ```
 //!
 //! A run that answered is recorded in the history, the line as the user
@@ -27,7 +32,10 @@ wit_bindgen::generate!({
     default_bindings_module: "pane_extension::run",
 });
 
-pub use pane::extension::run::{RunError, delete_from_history, history, run};
+pub use pane::extension::run::{
+    Completion, CompletionSource, RunError, completions, delete_from_history, history, run,
+    terminal,
+};
 
 impl RunError {
     /// What it says, for the user: why running what the Run dialog runs

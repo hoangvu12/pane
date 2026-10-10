@@ -6,13 +6,19 @@
 //! variables expanded. Pane runs it for a command (elevated, through
 //! Windows' own prompt, when asked, ADR 0033) and shares the Run dialog's
 //! own history — Windows keeps it in the registry as Explorer's RunMRU
-//! — in both directions: what ran in either appears in both.
+//! — in both directions: what ran in either appears in both. The
+//! completions for the text typed in Run's field (#264) come from the
+//! same places: the history first, then programs from App Paths and the
+//! registry search path, Control Panel applets, management consoles,
+//! registered schemes and environment variables, each matching the typed
+//! text ([`complete`], pure like the rest of the decision logic).
 //!
 //! The decision logic is plain text work, compiled and tested on every
-//! system ([`parse`], [`normalize`], [`classify`], [`mru`]): how a command
-//! line splits into what runs and what it is given, how a rooted path is
-//! spelled as the system spells it, what kind of thing the head names and
-//! how the history's format reads and writes. Only the acting half is
+//! system ([`parse`], [`normalize`], [`classify`], [`mru`], [`complete`]):
+//! how a command line splits into what runs and what it is given, how a
+//! rooted path is spelled as the system spells it, what kind of thing the
+//! head names, how the history's format reads and writes, and which
+//! offered lines complete the typed text. Only the acting half is
 //! Windows' ([`windows`]); elsewhere [`native`] answers that running what
 //! the Run dialog runs is not available yet, which is not a failure.
 //!
@@ -26,6 +32,7 @@
 use std::sync::Arc;
 
 mod classify;
+mod complete;
 mod mru;
 mod normalize;
 mod parse;
@@ -34,6 +41,7 @@ mod parse;
 mod windows;
 
 pub use classify::{Target, classify};
+pub use complete::{Candidates, Completion, Source, complete};
 pub use mru::{decode, encode, record, remove};
 pub use normalize::normalize;
 pub use parse::{Sources, Split, split};
@@ -86,6 +94,20 @@ pub trait Run: Send + Sync + 'static {
     /// Removes `line` from the Run dialog's history, matched ignoring
     /// case, rewriting it without the entry.
     fn delete_from_history(&self, line: &str) -> Result<(), RunError>;
+
+    /// The completions for `text`, the text typed so far in Run's field
+    /// (see [`complete`]): the sources read as they are at the time of
+    /// the call, so a tool installed after Pane started is completed; a
+    /// source that cannot be read contributes nothing.
+    fn completions(&self, text: &str) -> Result<Vec<Completion>, RunError>;
+
+    /// Windows Terminal's `wt.exe`, as an absolute path, when it is
+    /// installed — as App Paths registered it and then the search path
+    /// spell it — so a command can run a command line in a new Windows
+    /// Terminal tab through ADR 0033's run-program host function;
+    /// `Ok(None)` when it is not installed, and the caller runs the
+    /// command line another way.
+    fn terminal(&self) -> Result<Option<String>, RunError>;
 }
 
 /// What an elevated `ShellExecuteExW` answered, as the run answers: the
@@ -147,6 +169,14 @@ impl Run for Unavailable {
     fn delete_from_history(&self, _line: &str) -> Result<(), RunError> {
         Err(self.0.clone())
     }
+
+    fn completions(&self, _text: &str) -> Result<Vec<Completion>, RunError> {
+        Err(self.0.clone())
+    }
+
+    fn terminal(&self) -> Result<Option<String>, RunError> {
+        Err(self.0.clone())
+    }
 }
 
 #[cfg(test)]
@@ -182,6 +212,8 @@ mod tests {
         );
         assert_eq!(run.history().unwrap_err(), why);
         assert_eq!(run.delete_from_history("notepad").unwrap_err(), why);
+        assert_eq!(run.completions("note").unwrap_err(), why);
+        assert_eq!(run.terminal().unwrap_err(), why);
     }
 
     #[test]
@@ -199,5 +231,15 @@ mod tests {
             }
             other => panic!("expected not available, got {other:?}"),
         }
+        // The completions and the terminal answer the same, as every
+        // function of the capability does.
+        assert!(
+            matches!(native().completions("note"), Err(RunError::NotAvailable(_))),
+            "the completions say why they are not available"
+        );
+        assert!(
+            matches!(native().terminal(), Err(RunError::NotAvailable(_))),
+            "the terminal says why it is not available"
+        );
     }
 }

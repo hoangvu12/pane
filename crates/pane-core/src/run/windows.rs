@@ -10,17 +10,25 @@
 //! `runas` verb (Windows' own prompt, ADR 0033), waiting only until the
 //! shell has started it. The history is Explorer's RunMRU key in its own
 //! format (`mru`); the key and the search path are given to the adapter,
-//! so the tests use keys and paths of their own, never the user's.
+//! so the tests use keys and paths of their own, never the user's. The
+//! completions are gathered from the same places at each call: the
+//! RunMRU key, App Paths' names, the search path's folders, the classes
+//! root's registered schemes and the environment's variable names, each
+//! read as it is and matched by the pure half. Windows Terminal, for a
+//! command that runs a command line in a terminal, is `wt.exe` as App
+//! Paths and then the search path spell it.
 
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use windows::Win32::Foundation::{ERROR_FILE_NOT_FOUND, ERROR_SUCCESS, WIN32_ERROR};
 use windows::Win32::System::Environment::ExpandEnvironmentStringsW;
 use windows::Win32::System::Registry::{
-    HKEY, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, KEY_SET_VALUE, REG_OPTION_NON_VOLATILE, REG_SZ,
-    RRF_RT_REG_EXPAND_SZ, RRF_RT_REG_SZ, RegCloseKey, RegCreateKeyExW, RegDeleteValueW,
-    RegGetValueW, RegSetValueExW,
+    HKEY, HKEY_CLASSES_ROOT, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, KEY_ENUMERATE_SUB_KEYS,
+    KEY_SET_VALUE, REG_OPTION_NON_VOLATILE, REG_SZ, RRF_RT_REG_EXPAND_SZ, RRF_RT_REG_SZ,
+    RegCloseKey, RegCreateKeyExW, RegDeleteValueW, RegEnumKeyW, RegGetValueW, RegOpenKeyExW,
+    RegSetValueExW,
 };
 use windows::Win32::UI::Shell::{
     SEE_MASK_FLAG_NO_UI, SEE_MASK_NOASYNC, SHELLEXECUTEINFOW, ShellExecuteExW,
@@ -29,7 +37,9 @@ use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
 use windows::core::{HSTRING, PCWSTR};
 
 use super::parse::Sources;
-use super::{Run, RunError, Target, classify, mru, normalize, parse};
+use super::{
+    Candidates, Completion, Run, RunError, Target, classify, complete, mru, normalize, parse,
+};
 use crate::programs::runner::{ErrorKind, SearchPath};
 use crate::programs::search;
 use crate::util::wide;
@@ -49,6 +59,18 @@ const APP_PATHS: &str = r"Software\Microsoft\Windows\CurrentVersion\App Paths";
 /// The Control Panel program, which opens a Control Panel applet, found
 /// by its bare name on the search path.
 const CONTROL: &str = "control";
+
+/// Windows Terminal's program, as App Paths registers it: what a command
+/// that runs a command line in a terminal opens its tab with.
+const TERMINAL: &str = "wt.exe";
+
+/// The value that marks a classes-root key as a registered scheme.
+const URL_PROTOCOL: &str = "URL Protocol";
+
+/// The extensions a program's name takes when it has none, as `PATHEXT`
+/// spells them: what the search path's program completions resolve
+/// through.
+const DEFAULT_PATHEXT: &str = ".COM;.EXE;.BAT;.CMD";
 
 /// The adapter: the Run dialog's history in the registry, and the search
 /// path its bare names are found on.
@@ -186,6 +208,34 @@ impl Run for WindowsRun {
                 "“{line}” is not in the Run dialog’s history"
             ))),
         }
+    }
+
+    fn completions(&self, text: &str) -> Result<Vec<Completion>, RunError> {
+        // The sources are read as they are at the time of the call, so a
+        // tool installed after Pane started is completed; a source that
+        // cannot be read contributes nothing, its own function reporting
+        // why — the history's own read is the one that can fail here, and
+        // a history that cannot be read holds nothing to complete.
+        let (programs, applets, consoles) = on_path(&(self.search_path)());
+        let candidates = Candidates {
+            history: read_history(&self.mru).unwrap_or_default(),
+            app_paths: app_path_names(),
+            programs,
+            applets,
+            consoles,
+            schemes: scheme_names(text),
+            variables: variable_names(),
+        };
+        Ok(complete(&candidates, text))
+    }
+
+    fn terminal(&self) -> Result<Option<String>, RunError> {
+        // App Paths is where Windows Terminal's installer registers it;
+        // the search path is the other place its name resolves. Neither
+        // starts it: the caller opens the tab.
+        let found =
+            app_paths(TERMINAL).or_else(|| search::resolve(TERMINAL, &(self.search_path)()).ok());
+        Ok(found.map(|found| normalize(&found.to_string_lossy(), &real_case)))
     }
 }
 
@@ -350,6 +400,178 @@ fn app_paths(name: &str) -> Option<PathBuf> {
         }
     }
     None
+}
+
+/// The names of the subkeys of the key `subkey` under `root`, in the
+/// order the registry lists them; empty when the key cannot be opened.
+/// A key name is at most 255 characters.
+fn subkey_names(root: HKEY, subkey: &str) -> Vec<String> {
+    let given = wide(subkey);
+    let mut key = HKEY::default();
+    // SAFETY: `key` is a handle the call fills in when it succeeds.
+    let opened = unsafe {
+        RegOpenKeyExW(
+            root,
+            PCWSTR(given.as_ptr()),
+            None,
+            KEY_ENUMERATE_SUB_KEYS,
+            &mut key,
+        )
+    };
+    if opened != ERROR_SUCCESS {
+        return Vec::new();
+    }
+    let mut names = Vec::new();
+    let mut at: u32 = 0;
+    loop {
+        let mut buffer = [0u16; 256];
+        // SAFETY: `key` is open for enumeration, and `buffer` holds room
+        // for a key name with its NUL.
+        let read = unsafe { RegEnumKeyW(key, at, Some(&mut buffer)) };
+        if read != ERROR_SUCCESS {
+            break;
+        }
+        let length = buffer
+            .iter()
+            .position(|&unit| unit == 0)
+            .unwrap_or(buffer.len());
+        names.push(String::from_utf16_lossy(&buffer[..length]));
+        at += 1;
+    }
+    // SAFETY: the handle the open returned, closed once here.
+    unsafe {
+        let _ = RegCloseKey(key);
+    }
+    names
+}
+
+/// The names App Paths registered programs for, as completion lines: the
+/// subkeys of the machine's and the user's App Paths whose registered
+/// program exists, each named as the Run dialog takes it — a name with
+/// an extension without it, so `wt.exe` offers `wt`, which the Run
+/// dialog finds there again.
+fn app_path_names() -> Vec<String> {
+    let mut names = Vec::new();
+    for root in [HKEY_LOCAL_MACHINE, HKEY_CURRENT_USER] {
+        for name in subkey_names(root, APP_PATHS) {
+            let subkey = format!(r"{APP_PATHS}\{name}");
+            let registered = registry_string(root, &subkey, None)
+                .map(|value| PathBuf::from(value.trim().trim_matches('"')));
+            // A name whose program is not there is not offered: one whose
+            // registration is gone does not complete.
+            if registered.is_some_and(|program| program.is_file()) {
+                names.push(without_extension(&name));
+            }
+        }
+    }
+    sorted(names)
+}
+
+/// `name`, as the Run dialog takes it: a name with an extension without
+/// it, a name without one as it is.
+fn without_extension(name: &str) -> String {
+    Path::new(name).file_stem().map_or_else(
+        || name.to_owned(),
+        |stem| stem.to_string_lossy().into_owned(),
+    )
+}
+
+/// What the search path's folders hold for the completions, read at each
+/// call so a tool installed after Pane started is completed: the names of
+/// their programs — each without the extension the search path resolves,
+/// as the Run dialog takes a bare name — their Control Panel applets and
+/// their management consoles, by their file names, which the Run dialog
+/// runs as they are.
+fn on_path(search_path: &OsStr) -> (Vec<String>, Vec<String>, Vec<String>) {
+    let extensions = program_extensions();
+    let mut programs = Vec::new();
+    let mut applets = Vec::new();
+    let mut consoles = Vec::new();
+    for folder in std::env::split_paths(search_path).filter(|folder| folder.is_absolute()) {
+        // A folder that cannot be read holds nothing to complete.
+        let Ok(entries) = std::fs::read_dir(&folder) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            if !entry.file_type().is_ok_and(|kind| kind.is_file()) {
+                continue;
+            }
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let Some((_, extension)) = name.rsplit_once('.') else {
+                continue;
+            };
+            if extensions
+                .iter()
+                .any(|known| known.eq_ignore_ascii_case(extension))
+            {
+                if let Some(stem) = Path::new(&name).file_stem() {
+                    if !stem.is_empty() {
+                        programs.push(stem.to_string_lossy().into_owned());
+                    }
+                }
+            } else if extension.eq_ignore_ascii_case("cpl") {
+                applets.push(name);
+            } else if extension.eq_ignore_ascii_case("msc") {
+                consoles.push(name);
+            }
+        }
+    }
+    (sorted(programs), sorted(applets), sorted(consoles))
+}
+
+/// The extensions a program's name takes when it has none, as `PATHEXT`
+/// spells them, without their dots and in lower case.
+fn program_extensions() -> Vec<String> {
+    std::env::var("PATHEXT")
+        .unwrap_or_else(|_| DEFAULT_PATHEXT.to_owned())
+        .split(';')
+        .map(str::trim)
+        .filter(|extension| extension.starts_with('.') && extension.len() > 1)
+        .map(|extension| extension[1..].to_ascii_lowercase())
+        .collect()
+}
+
+/// The registered schemes the typed text can complete to, as lines
+/// (`ms-settings:`): the classes root's keys whose offered line starts
+/// with the typed text, ignoring case — only those are read, so the
+/// classes root's many keys are enumerated but not each opened — and
+/// that carry the `URL Protocol` marker, as a registered scheme does.
+fn scheme_names(text: &str) -> Vec<String> {
+    let text = text.trim().to_lowercase();
+    if text.is_empty() {
+        return Vec::new();
+    }
+    let mut schemes = Vec::new();
+    for name in subkey_names(HKEY_CLASSES_ROOT, "") {
+        // The line a scheme offers is its name with the `:` the Run
+        // dialog runs it with.
+        let line = format!("{name}:");
+        if !line.to_lowercase().starts_with(&text) {
+            continue;
+        }
+        if registry_string(HKEY_CLASSES_ROOT, &name, Some(URL_PROTOCOL)).is_some() {
+            schemes.push(line);
+        }
+    }
+    sorted(schemes)
+}
+
+/// The environment's variable names, as the `%NAME%` lines the Run
+/// dialog expands.
+fn variable_names() -> Vec<String> {
+    sorted(
+        std::env::vars()
+            .map(|(name, _)| format!("%{name}%"))
+            .collect(),
+    )
+}
+
+/// `names`, sorted ignoring case, so a source the registry or the file
+/// system lists in its own order answers the same every time. The
+/// history keeps its own order, newest first.
+fn sorted(mut names: Vec<String>) -> Vec<String> {
+    names.sort_by(|one, other| one.to_lowercase().cmp(&other.to_lowercase()));
+    names
 }
 
 /// The history the RunMRU key `mru` holds, decoded; a key that does not

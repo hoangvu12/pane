@@ -30,9 +30,10 @@
 // (wit/files.wit), `fileIndex` the file index Pane keeps (wit/file-index.wit)
 // and `clipboardHistory` the clipboard history Pane keeps
 // for it (wit/clipboard.wit), which no other command imports, `run`
-// what Windows' Run dialog runs, sharing its history (wit/run.wit), and
-// `windows` the open windows it may list and bring one of to the front
-// (wit/windows.wit), Windows only. The build
+// what Windows' Run dialog runs, sharing its history and completing the
+// command line as it is typed (wit/run.wit), `windows` the open windows
+// it may list and bring one of to the front (wit/windows.wit), Windows
+// only. The build
 // writes a world
 // `js-command` including this one with those exports and imports
 // (tools/componentize-js/pane_js.py).

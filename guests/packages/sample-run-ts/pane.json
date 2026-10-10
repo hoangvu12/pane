@@ -1,8 +1,21 @@
 {
   "manifestVersion": 1,
   "title": "TypeScript run sample",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "apiVersion": "0.1",
+  "preferences": [
+    {
+      "name": "shell",
+      "type": "dropdown",
+      "title": "Terminal Shell",
+      "description": "The shell Run in Terminal opens the command line in",
+      "default": "powershell",
+      "options": [
+        { "value": "powershell", "title": "PowerShell" },
+        { "value": "cmd", "title": "Command Prompt" }
+      ]
+    }
+  ],
   "commands": [
     {
       "id": "run",
@@ -19,6 +32,21 @@
       "component": "sample_run_ts.wasm",
       "mode": "no-view",
       "takesQuery": true
+    },
+    {
+      "id": "in-terminal",
+      "title": "Run in Terminal",
+      "subtitle": "Runs a command line in a new Windows Terminal tab, or the shell's own window",
+      "component": "sample_run_ts.wasm",
+      "mode": "no-view",
+      "takesQuery": true
+    },
+    {
+      "id": "with-completions",
+      "title": "Run with Completions",
+      "subtitle": "Type a command line; what you ran and installed completes it as you type",
+      "component": "sample_run_ts.wasm",
+      "search": true
     },
     {
       "id": "history",

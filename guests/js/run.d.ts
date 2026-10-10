@@ -7,9 +7,11 @@
 // address or another registered scheme, with environment variables
 // expanded — run for the command, through Windows' own elevation prompt
 // when asked, together with the Run dialog's own history, which the
-// command and Windows' Run dialog share in both directions. Windows
-// only. Only a command whose package.json sets `"pane": { "run": true }`
-// imports it.
+// command and Windows' Run dialog share in both directions, and the
+// completions for the text typed in Run's field: history entries,
+// programs, applets, consoles, registered schemes and environment
+// variables, each matching the typed text. Windows only. Only a command
+// whose package.json sets `"pane": { "run": true }` imports it.
 
 /** `pane:extension/run@0.1.0`. */
 declare module "pane:extension/run@0.1.0" {
@@ -56,4 +58,51 @@ declare module "pane:extension/run@0.1.0" {
    * history throws an object whose `payload` is the {@link RunError}.
    */
   export function deleteFromHistory(line: string): void;
+
+  /**
+   * Which source a completion came from, as the WIT's `completion-source`
+   * enum: the Run dialog's history (`"history"`), a program App Paths
+   * registered (`"app-path"`), a program on the registry search path
+   * (`"search-path"`), a Control Panel applet (`"applet"`), a management
+   * console (`"console"`), a registered scheme (`"scheme"`), or an
+   * environment variable (`"variable"`).
+   */
+  export type CompletionSource =
+    | "history"
+    | "app-path"
+    | "search-path"
+    | "applet"
+    | "console"
+    | "scheme"
+    | "variable";
+
+  /**
+   * One completion for the text typed in Run's field, as the WIT's
+   * `completion` record: the command line the text completes to, `line`,
+   * which the Run dialog runs as it is, and which source it came from.
+   */
+  export interface Completion {
+    line: string;
+    source: CompletionSource;
+  }
+
+  /**
+   * The completions for `text`, the text typed so far, in the order they
+   * are offered: the Run dialog's history first, then programs from App
+   * Paths and the registry search path, Control Panel applets,
+   * management consoles, registered schemes and environment variables —
+   * each a line that starts with the typed text, ignoring case, at most
+   * 100. On failure it throws an object whose `payload` is the
+   * {@link RunError}.
+   */
+  export function completions(text: string): Completion[];
+
+  /**
+   * Windows Terminal, when it is installed: `wt.exe`'s absolute path, as
+   * App Paths registered it and then the registry search path spell it;
+   * `null` when it is not installed, so the caller runs the command line
+   * another way. On failure it throws an object whose `payload` is the
+   * {@link RunError}.
+   */
+  export function terminal(): string | null;
 }
