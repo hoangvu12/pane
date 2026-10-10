@@ -455,6 +455,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "sample-timer"
+version = "0.1.0"
+dependencies = [
+ "pane-extension",
+]
+
+[[package]]
 name = "sample-view"
 version = "0.1.0"
 dependencies = [
