@@ -107,9 +107,10 @@ fn install_cli(node_modules: &Path) {
 /// Runs the create package's bin with `args`, returning whether it
 /// succeeded and what it printed. `path` is the PATH the bin sees, so a
 /// test can keep pane-ext off it (cargo puts the target folder, where the
-/// workspace's pane-ext sits, on the PATH tests run with).
+/// workspace's pane-ext sits, on the PATH tests run with). Node itself is
+/// started by its absolute path, so a restricted PATH still starts it.
 fn create_with_path(create_js: &Path, path: &str, args: &[&str]) -> (bool, String) {
-    let output = Command::new("node")
+    let output = Command::new(node())
         .env("PATH", path)
         .arg(create_js)
         .args(args)
@@ -127,6 +128,22 @@ fn create_with_path(create_js: &Path, path: &str, args: &[&str]) -> (bool, Strin
 fn create(create_js: &Path, args: &[&str]) -> (bool, String) {
     let path = std::env::var("PATH").unwrap_or_default();
     create_with_path(create_js, &path, args)
+}
+
+/// Where node is on the test's own PATH, as an absolute path.
+fn node() -> PathBuf {
+    let path = std::env::var_os("PATH").expect("the tests run with a PATH");
+    for dir in std::env::split_paths(&path) {
+        let program = if cfg!(windows) {
+            dir.join("node.exe")
+        } else {
+            dir.join("node")
+        };
+        if program.is_file() {
+            return program;
+        }
+    }
+    panic!("no node on the test's PATH");
 }
 
 #[test]
