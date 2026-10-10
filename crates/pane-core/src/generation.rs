@@ -259,11 +259,13 @@ pub(crate) struct Registration {
 
 impl Drop for Registration {
     fn drop(&mut self) {
-        eprintln!(
-            "pane-generation: registration {0:?} entry {1:?} dropped",
-            std::backtrace::Backtrace::force_capture().to_string().lines().nth(1).unwrap(),
-            self.entry
-        );
+        let frames: Vec<String> = std::backtrace::Backtrace::force_capture()
+            .to_string()
+            .lines()
+            .filter(|line| line.contains("./crates/") || line.contains("./guests/"))
+            .map(str::to_owned)
+            .collect();
+        eprintln!("pane-generation: registration entry {} dropped from\n{}", self.entry, frames.join("\n"));
         let Some(shared) = self.list.upgrade() else {
             return;
         };
