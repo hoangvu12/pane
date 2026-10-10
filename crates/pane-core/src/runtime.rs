@@ -3749,9 +3749,9 @@ impl Host {
         match self.render_designed(opened, 1, &chain, Why::Open).await {
             Ok(rendered) => {
                 if replacing {
-                    //                selected: RefCell::default(),
-                canvases: RefCell::default(),
-    let replaced = self.designed_views.borrow_mut().remove(&view);
+                    // The replaced view's resource goes, now that the view
+                    // replacing it drew; the launcher's stack entry with it.
+                    let replaced = self.designed_views.borrow_mut().remove(&view);
                     if let Some(replaced) = replaced {
                         self.drop_designed_view(&replaced).await;
                     }
