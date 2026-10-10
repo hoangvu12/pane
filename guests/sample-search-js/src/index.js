@@ -204,9 +204,8 @@ function AddressView() {
         children: [address],
       }),
       jsxs(Button, {
-        onClick: pop(
-          `Searching ${address.trim().replace(/\/+$/, "")} from now on`,
-        ),
+        onClick: () =>
+          pop(`Searching ${address.trim().replace(/\/+$/, "")} from now on`),
         children: ["Save"],
       }),
     ],
