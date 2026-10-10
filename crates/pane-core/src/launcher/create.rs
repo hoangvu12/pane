@@ -208,13 +208,13 @@ impl Launcher {
         let name = match Name::parse(&value(NAME_FIELD)) {
             Ok(name) => name,
             Err(problem) => {
-                if let Screen::Form(form) = &mut state.view.screen {
-                    if let Some(field) = form.fields.iter_mut().find(|field| field.id == NAME_FIELD)
-                    {
-                        field.error = Some(problem.clone());
-                        let label = field.label.clone();
-                        state.view.status = Status::Error(format!("{label}: {problem}"));
-                    }
+                if let Screen::Form(form) = &mut state.view.screen
+                    && let Some(field) =
+                        form.fields.iter_mut().find(|field| field.id == NAME_FIELD)
+                {
+                    field.error = Some(problem.clone());
+                    let label = field.label.clone();
+                    state.view.status = Status::Error(format!("{label}: {problem}"));
                 }
                 return None;
             }

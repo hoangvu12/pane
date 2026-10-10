@@ -135,7 +135,9 @@ impl Name {
     /// sources hold it in.
     pub fn parse(given: &str) -> Result<Name, String> {
         let title: String = given.chars().filter(|c| *c != '"' && *c != '\\').collect();
-        let title = title_case(title.trim());
+        // A name the author spells with the package separator (`-`) holds
+        // its words apart; the title spells them with spaces, capitalized.
+        let title = title_case(&title.trim().replace('-', " "));
         let Some(package) = kebab(given) else {
             return Err(format!(
                 "\"{given}\" has no letters or digits in it, so it names no package; give the \
@@ -163,12 +165,9 @@ impl Name {
         let mut name = String::new();
         for word in self.package.split('-') {
             let mut letters = word.chars();
-            match letters.next() {
-                Some(first) => {
-                    name.extend(first.to_uppercase());
-                    name.push_str(letters.as_str());
-                }
-                None => {}
+            if let Some(first) = letters.next() {
+                name.extend(first.to_uppercase());
+                name.push_str(letters.as_str());
             }
         }
         name
@@ -347,8 +346,13 @@ pub fn add_command(folder: &Path, command: &NewCommand, kind: Kind) -> Result<()
         return Err(format!("{} cannot be written: {error}", entry.display()));
     }
     // The command's own file, after the entry file's dispatch calls it, so
-    // a refusal above leaves nothing behind.
-    let (path, contents) = command_file(language, kind);
+    // a refusal above leaves nothing behind: named for the command's id,
+    // as the entry file's `mod` or import of it spells it.
+    let contents = command_file(language, kind);
+    let path = match language {
+        Language::Rust => format!("src/{}.rs", command.id),
+        Language::TypeScript => format!("src/{}.ts", command.id),
+    };
     let command_name = Name {
         title: command.title.clone(),
         package: command.id.clone(),
@@ -422,16 +426,13 @@ fn identifier(language: Language, id: &str) -> String {
             let mut name = String::new();
             for (at, word) in id.split('-').enumerate() {
                 let mut letters = word.chars();
-                match letters.next() {
-                    Some(first) => {
-                        if at > 0 {
-                            name.extend(first.to_uppercase());
-                        } else {
-                            name.push(first);
-                        }
-                        name.push_str(letters.as_str());
+                if let Some(first) = letters.next() {
+                    if at > 0 {
+                        name.extend(first.to_uppercase());
+                    } else {
+                        name.push(first);
                     }
-                    None => {}
+                    name.push_str(letters.as_str());
                 }
             }
             name
@@ -612,40 +613,27 @@ fn template(language: Language, kind: Kind) -> Template {
 
 /// The command file [`add_command`] writes for `kind` in `language`, by its
 /// path and its contents.
-fn command_file(language: Language, kind: Kind) -> (String, &'static str) {
+/// The source of the command a `kind` template adds, which
+/// [`add_command`] writes beside the entry file, named for the command's
+/// own id (as the entry file's import of it spells it).
+fn command_file(language: Language, kind: Kind) -> &'static str {
     match (language, kind) {
-        (Language::Rust, Kind::List) => (
-            "src/list.rs".into(),
-            include_str!("../templates/rust/command/list.rs"),
-        ),
-        (Language::Rust, Kind::Detail) => (
-            "src/detail.rs".into(),
-            include_str!("../templates/rust/command/detail.rs"),
-        ),
-        (Language::Rust, Kind::Form) => (
-            "src/form.rs".into(),
-            include_str!("../templates/rust/command/form.rs"),
-        ),
-        (Language::Rust, Kind::NoView) => (
-            "src/no_view.rs".into(),
-            include_str!("../templates/rust/command/no-view.rs"),
-        ),
-        (Language::TypeScript, Kind::List) => (
-            "src/list.ts".into(),
-            include_str!("../templates/typescript/command/list.ts"),
-        ),
-        (Language::TypeScript, Kind::Detail) => (
-            "src/detail.ts".into(),
-            include_str!("../templates/typescript/command/detail.ts"),
-        ),
-        (Language::TypeScript, Kind::Form) => (
-            "src/form.ts".into(),
-            include_str!("../templates/typescript/command/form.ts"),
-        ),
-        (Language::TypeScript, Kind::NoView) => (
-            "src/no-view.ts".into(),
-            include_str!("../templates/typescript/command/no-view.ts"),
-        ),
+        (Language::Rust, Kind::List) => include_str!("../templates/rust/command/list.rs"),
+        (Language::Rust, Kind::Detail) => include_str!("../templates/rust/command/detail.rs"),
+        (Language::Rust, Kind::Form) => include_str!("../templates/rust/command/form.rs"),
+        (Language::Rust, Kind::NoView) => include_str!("../templates/rust/command/no-view.rs"),
+        (Language::TypeScript, Kind::List) => {
+            include_str!("../templates/typescript/command/list.ts")
+        }
+        (Language::TypeScript, Kind::Detail) => {
+            include_str!("../templates/typescript/command/detail.ts")
+        }
+        (Language::TypeScript, Kind::Form) => {
+            include_str!("../templates/typescript/command/form.ts")
+        }
+        (Language::TypeScript, Kind::NoView) => {
+            include_str!("../templates/typescript/command/no-view.ts")
+        }
     }
 }
 
@@ -694,7 +682,7 @@ fn placeholder_icon() -> Vec<u8> {
     // A plain two-tone square: a lighter inner square on its frame. The
     // shade is arithmetic, so every scaffold of every template holds the
     // same bytes.
-    for (at, pixel) in rgba.chunks_exact_mut(4).enumerate() {
+    for (at, pixel) in rgba.as_chunks_mut::<4>().0.iter_mut().enumerate() {
         let square = 64..pixels - 64;
         let inner = square.contains(&(at % pixels)) && square.contains(&(at / pixels));
         let shade = u8::from(inner) * 60;
@@ -715,10 +703,10 @@ fn written(contents: &str, name: &Name) -> String {
 /// Writes `contents`, substituted for `name`, to `folder`/`path`.
 fn write(folder: &Path, path: &str, contents: &str, name: &Name) -> Result<(), String> {
     let file = folder.join(path);
-    if let Some(parent) = file.parent() {
-        if let Err(error) = fs::create_dir_all(parent) {
-            return Err(format!("{} cannot be created: {error}", parent.display()));
-        }
+    if let Some(parent) = file.parent()
+        && let Err(error) = fs::create_dir_all(parent)
+    {
+        return Err(format!("{} cannot be created: {error}", parent.display()));
     }
     fs::write(&file, written(contents, name))
         .map_err(|error| format!("{} cannot be written: {error}", file.display()))
@@ -908,8 +896,11 @@ mod tests {
             assert_eq!(note.component, manifest.commands[0].component);
             // The command's file is the template's, with the command's
             // spellings in it.
-            let (path, contents) = command_file(language, Kind::Detail);
-            let path = folder.path().join(&path);
+            let contents = command_file(language, Kind::Detail);
+            let path = match language {
+                Language::Rust => folder.path().join("src/note.rs"),
+                Language::TypeScript => folder.path().join("src/note.ts"),
+            };
             let expected = contents.replace("__TITLE__", "Note");
             let expected = expected.replace("__NAME__", "note");
             assert_eq!(fs::read_to_string(&path).unwrap(), expected);
