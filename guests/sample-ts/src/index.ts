@@ -5,9 +5,10 @@
 // view, and a root result computed from the query ("reverse <text>").
 // Items, titles, results, errors and drawings match the Rust sample
 // (guests/sample-rust) and the JavaScript sample.
-import type { CanvasEvent, Draw } from "@pane-app/extension/view";
+import type { CanvasEvent, Draw, Paint } from "@pane-app/extension/view";
 import type {
   Command,
+  DesignedView,
   FieldValue,
   Form,
   FormError,
@@ -108,7 +109,7 @@ const MOVES: Record<"left" | "right" | "up" | "down", [number, number]> = {
 const FRAME = "#f1f3f5";
 
 /** A swatch's own colour, drawn exactly as the sample authored it. */
-const swatch = (fill: number): Draw => ({ raw: hex(fill) });
+const swatch = (fill: number): Paint => ({ raw: hex(fill) });
 
 /**
  * An open color picker: a grid of swatches and a preview of the chosen
@@ -135,7 +136,7 @@ function ColorPicker() {
     { op: "rect", x: column * STEP, y: row * STEP, width: STEP, height: STEP, fill: FRAME },
   ];
   for (let x = 0; x < COLUMNS; x += 1) {
-    const shades = COLORS[x].slice(1);
+    const [, ...shades] = COLORS[x];
     for (let y = 0; y < ROWS; y += 1) {
       ops.push({
         op: "rect",
@@ -196,8 +197,8 @@ function ColorPicker() {
         label: "Color",
         value: `${shade ? `${shade} ${hue.toLowerCase()}` : hue}, ${code}`,
         onKey: key,
-        onPointerDown: (event) => pointed(event, true),
-        onPointerMove: (event) => pointed(event, false),
+        onPointerDown: (event: CanvasEvent) => pointed(event, true),
+        onPointerMove: (event: CanvasEvent) => pointed(event, false),
         onPointerUp: () => {
           dragging.current = false;
         },

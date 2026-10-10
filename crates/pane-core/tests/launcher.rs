@@ -494,7 +494,7 @@ fn send_right_like(launcher: &Launcher, key: &str) -> impl Future<Output = ()> {
         callback,
         key,
         Some(render),
-        format!("{{\"key\":\"{key}\"}}"),
+        format!("{{\"key\":\"{}\"}}", key.unwrap_or_default()),
     )
 }
 

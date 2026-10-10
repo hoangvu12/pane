@@ -19,13 +19,13 @@ mod settle;
 #[path = "support/a11y.rs"]
 mod a11y;
 
-use a11y::{accessible_nodes, focused_label};
+use a11y::focused_label;
 use settle::{settle, until};
 
 /// The launcher window with the designed fixture's package installed and
 /// its canvas command (a canvas filling its space, drawing what it
 /// receives) open.
-fn open(cx: &mut TestAppContext) -> (Entity<LauncherWindow>, &'a mut VisualTestContext) {
+fn open(cx: &mut TestAppContext) -> (Entity<LauncherWindow>, &mut VisualTestContext) {
     let data = tempfile::tempdir().unwrap();
     let assembled = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../target/guests/packages/designed");
@@ -106,7 +106,7 @@ fn canvas_size(cx: &mut VisualTestContext) -> (u32, u32) {
         .debug_bounds("designed-canvas-fill")
         .expect("the canvas is drawn")
         .size;
-    (size.width.0 as u32, size.height.0 as u32)
+    (size.width.as_f32() as u32, size.height.as_f32() as u32)
 }
 
 /// A canvas that fills its space is told its size, and a change of it is
@@ -185,8 +185,7 @@ fn the_canvas_is_one_node_with_a_role_a_label_and_a_value(cx: &mut TestAppContex
     // The canvas has the keyboard, and assistive technology reads it as
     // the slider its tree named, by its label.
     assert_eq!(focused_label(cx).as_deref(), Some("Filler"));
-    let nodes = accessible_nodes(cx);
-    let roles: Vec<String> = nodes
+    let roles: Vec<String> = accessible_nodes(cx)
         .iter()
         .map(|node| node["role"].as_str().unwrap_or_default().to_owned())
         .collect();

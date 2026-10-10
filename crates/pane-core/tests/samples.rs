@@ -611,21 +611,15 @@ fn keys_move_the_chosen_color(sample: &Sample) {
     // The preview shows the chosen color too.
     assert_eq!(
         canvas(&launcher).ops[25],
-        CanvasOp::Rect {
-            fill: Some(Paint {
+        square(
+            300.,
+            2.,
+            64.,
+            Some(Paint {
                 tint: pane_core::Tint::Same(pane_core::Color::Rgba(0xf48fb1ff)),
                 exact: true,
-            }),
-            ..CanvasOp::Rect {
-                x: 300.,
-                y: 2.,
-                width: 64.,
-                height: 64.,
-                radius: None,
-                fill: None,
-                stroke: None,
-            }
-        }
+            })
+        )
     );
 }
 

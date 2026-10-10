@@ -1062,7 +1062,7 @@ fn a_form_still_submits_with_the_rebound_key_and_the_footer_button(cx: &mut Test
 fn a_canvas_keeps_its_own_keys_under_a_rebound_binding(cx: &mut TestAppContext) {
     let (sources, data) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
     let folder = packages::color_package(&sources.path().join("hello"));
-    let (window, cx) = open_package(cx, &data, &folder);
+    let (window, cx) = open_package(cx, data.path(), &folder);
 
     // The next result's binding is rebound to Ctrl+N.
     let (_settings, mut settings_cx) = keyboard_page(cx);

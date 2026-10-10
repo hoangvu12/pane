@@ -107,7 +107,7 @@ fn open<'a>(
 fn open_installed<'a>(
     cx: &'a mut TestAppContext,
     name: &str,
-) -> (Entity<LauncherWindow>, tempfile::TempDir, &'a mut VisualTestContext) {
+) -> (Entity<LauncherWindow>, tempfile::TempDir, &mut VisualTestContext) {
     let data = tempfile::tempdir().unwrap();
     let folder = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../target/guests/packages")
@@ -1029,7 +1029,7 @@ fn assistive_technology_sees_the_list_the_selection_and_the_result(cx: &mut Test
 fn open_color(
     cx: &mut TestAppContext,
     sample: &Sample,
-) -> (Entity<LauncherWindow>, tempfile::TempDir, &'a mut VisualTestContext) {
+) -> (Entity<LauncherWindow>, tempfile::TempDir, &mut VisualTestContext) {
     let (window, data, cx) = open_installed(cx, &sample.component.replace('_', "-"));
     cx.simulate_keystrokes("enter");
     settle(&window, cx);
