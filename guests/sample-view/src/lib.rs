@@ -67,7 +67,7 @@ impl View for Screen {
                 )
                 .into_node();
         }
-        scroll().key("gallery").child(
+        scroll().key("gallery").grow(1.).child(
             column()
                 .gap(Space::L)
                 .child(

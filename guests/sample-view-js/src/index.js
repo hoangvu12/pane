@@ -104,7 +104,7 @@ function Components() {
     label: "Notes",
     onChange: (value) => setNotes(value),
   });
-  return jsxs(Scroll, { key: "gallery",
+  return jsxs(Scroll, { key: "gallery", grow: 1,
     children: [
       jsxs(Column, {
         gap: "l",

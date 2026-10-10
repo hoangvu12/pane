@@ -82,7 +82,7 @@ function Components() {
   const [notes, setNotes] = useState("two lines");
   const [swapped, setSwapped] = useState(false);
   return (
-    <Scroll key="gallery">
+    <Scroll key="gallery" grow={1}>
       <Column gap="l">
         <Text style="heading">The UI component set</Text>
         {/* A stack: a badge over an icon tile, placed. */}
