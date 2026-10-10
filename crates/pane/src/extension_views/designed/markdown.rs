@@ -170,12 +170,7 @@ fn list(
                                 .iter()
                                 .enumerate()
                                 .map(|(at, block)| {
-                                    block_element(
-                                        block,
-                                        &format!("{path}/{index}/{at}"),
-                                        draw,
-                                        cx,
-                                    )
+                                    block_element(block, &format!("{path}/{index}/{at}"), draw, cx)
                                 })
                                 .collect::<Vec<AnyElement>>(),
                         ),
@@ -220,14 +215,7 @@ fn table(
                     .zip(aligns.iter().chain(std::iter::repeat(&no_align)))
                     .enumerate()
                     .map(|(at, (cell, align))| {
-                        cell_element(
-                            cell,
-                            *align,
-                            true,
-                            &format!("{path}/head/{at}"),
-                            draw,
-                            cx,
-                        )
+                        cell_element(cell, *align, true, &format!("{path}/head/{at}"), draw, cx)
                     })
                     .collect::<Vec<AnyElement>>(),
             ),
@@ -297,11 +285,7 @@ fn cell_element(
 /// One run of inline content: prose, code, emphasis, strong text and
 /// links, flowing beside each other and wrapping onto lines as the width
 /// runs out.
-fn inlines_element(
-    inlines: &[Inline],
-    draw: &Draw,
-    cx: &mut Context<LauncherWindow>,
-) -> Div {
+fn inlines_element(inlines: &[Inline], draw: &Draw, cx: &mut Context<LauncherWindow>) -> Div {
     let theme = draw.theme;
     let mut element = div()
         .flex()
@@ -336,13 +320,11 @@ fn inlines_element(
                 height,
                 icon,
             } => {
-                let pixels = width
-                    .or(*height)
-                    .map_or(px(96.), |named| px(named as f32));
+                let pixels = width.or(*height).map_or(px(96.), |named| px(named as f32));
                 let named: gpui::SharedString = source.clone().into();
-                let tooltip = title.clone().or_else(|| {
-                    (!alt.is_empty()).then(|| alt.clone())
-                });
+                let tooltip = title
+                    .clone()
+                    .or_else(|| (!alt.is_empty()).then(|| alt.clone()));
                 let image = match icon {
                     Some(icon) => super::components::grid_image(
                         icon,

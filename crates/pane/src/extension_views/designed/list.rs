@@ -394,8 +394,7 @@ impl LauncherWindow {
             .map(|(title, _)| title.clone())
             .filter(|title| !title.is_empty())
             .map(SharedString::from);
-        let subtitle: Option<String> =
-            titles.get(index).and_then(|(_, subtitle)| subtitle.clone());
+        let subtitle: Option<String> = titles.get(index).and_then(|(_, subtitle)| subtitle.clone());
         let aspect = shape.aspect_ratio;
         let cell = div()
             .id(format!("designed-cell-{}", row.key))
@@ -405,9 +404,10 @@ impl LauncherWindow {
             .min_w(px(0.))
             .w(width)
             .gap(tokens::space(Space::Xs))
-            .when_some(aspect.map(|pane_core::Finite(ratio)| ratio), |cell, ratio| {
-                cell.aspect_ratio(ratio)
-            })
+            .when_some(
+                aspect.map(|pane_core::Finite(ratio)| ratio),
+                |cell, ratio| cell.aspect_ratio(ratio),
+            )
             .map(|cell| match drawn {
                 Some(drawn) => cell.child(
                     div()
@@ -480,8 +480,8 @@ impl LauncherWindow {
         if !pressable {
             return cell.into_any_element();
         }
-        cell.on_click(cx.listener(
-            move |this, event: &gpui::ClickEvent, window, cx| {
+        cell.on_click(
+            cx.listener(move |this, event: &gpui::ClickEvent, window, cx| {
                 if event.click_count() <= 1 {
                     // A double click's second click runs nothing more.
                     this.launcher.select(index);
@@ -489,8 +489,8 @@ impl LauncherWindow {
                     this.activate_selected(window, cx);
                     this.motion.pointer_open();
                 }
-            },
-        ))
+            }),
+        )
         .into_any_element()
     }
 
