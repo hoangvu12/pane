@@ -334,12 +334,10 @@ fn resolve_dynamic(state: &State, _target: &PinTarget, command: &str, item: &str
         kind: None,
         outcome: Err(reason),
     };
-    if !package.enabled {
-        return unresolved(format!("{} is disabled", package.title()));
-    }
-    if state.paused.is_paused(&package.identity) {
-        return unresolved(paused_reason(&package.title()));
-    }
+    // While the item is registered, the slot does what its row does, the
+    // row itself saying why it cannot run (a disabled or paused package
+    // does not list it); while it is not, the slot keeps its place and
+    // says so, whatever the package's state.
     if let Some(found) = super::dynamic::pinned(state, command, item) {
         return Resolved {
             title: found.row.title.clone(),

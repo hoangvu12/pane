@@ -223,7 +223,10 @@ impl Timers {
                     // on until it is dropped.
                     entry.spent = true;
                 } else {
-                    entry.next = now.saturating_add(every_ms);
+                    // From the firing before, not from now: a clock that
+                    // jumped ahead fires every interval it covered, one
+                    // firing at a time.
+                    entry.next = entry.next.saturating_add(every_ms);
                 }
                 entry.owed = false;
                 entry.in_flight = true;

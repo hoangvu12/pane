@@ -60,7 +60,6 @@ use crate::generation::EndMark;
 use crate::hotkeys::Shortcut;
 use crate::launch::LaunchSource;
 use crate::launcher::CommandRegistration;
-use crate::packages::paused_reason;
 use crate::packages::{CommandId, CommandMode, InstalledPackage, PackageIdentity};
 
 /// Each command's hotkey by command id, recorded in `hotkeys.json` as
@@ -276,16 +275,12 @@ fn gone_dynamic(state: &State, shortcut: &Shortcut) -> Option<String> {
         .packages
         .iter()
         .find(|package| package.identity.key() == key)?;
-    if !package.enabled {
-        return Some(format!("{} is disabled", package.title()));
-    }
-    if state.paused.is_paused(&package.identity) {
-        return Some(paused_reason(&package.title()));
-    }
     let offered = package
         .commands()
         .into_iter()
         .find(|offered| offered.manifest_id() == manifest)?;
+    // A disabled or paused package does not list the item either: the
+    // hotkey says the item is gone, as the slot does.
     Some(format!("{} no longer lists it", offered.title))
 }
 
