@@ -301,7 +301,7 @@ fn inlines_element(inlines: &[Inline], draw: &Draw) -> Div {
                 let label = plain(text);
                 element.child(
                     div()
-                        .id(format!("{}/{label}"))
+                        .id(format!("markdown-link-{href}"))
                         .flex_none()
                         .min_w(px(0.))
                         .underline()

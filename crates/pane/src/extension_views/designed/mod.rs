@@ -36,6 +36,7 @@ mod tree;
 
 use std::collections::HashMap;
 
+use gpui::prelude::*;
 use gpui::{App, Context, FocusHandle, KeyBinding, actions, div, px};
 
 use pane_core::{DesignedTree, DesignedViewSnapshot, Node, NodeKind, ViewId};

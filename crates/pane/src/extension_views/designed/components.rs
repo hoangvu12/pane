@@ -1463,7 +1463,7 @@ fn metadata_row(
     let value = match (&item.value, item.on_press) {
         // A value with a callback is a link.
         (Some(value), Some(callback)) => link_of(
-            Some(*callback),
+            Some(callback),
             value,
             &format!("{path}/value"),
             None,
@@ -1473,6 +1473,7 @@ fn metadata_row(
         )
         .into_any_element(),
         (Some(value), None) => div()
+            .id(format!("{path}/value"))
             .min_w(px(0.))
             .flex_1()
             .truncate()
@@ -1503,6 +1504,7 @@ fn metadata_row(
         .when_some(item.label.clone(), |row, label| {
             row.child(
                 div()
+                    .id(format!("{path}/label"))
                     .flex_none()
                     .text_size(theme.typography.row_subtitle_size)
                     .text_color(theme.text_muted)
@@ -1516,6 +1518,18 @@ fn metadata_row(
             row.child(div().flex().flex_wrap().gap_1().children(tags))
         })
         .into_any_element()
+}
+
+/// The row of an empty state's actions, when it has any.
+fn actions_row(actions: Vec<AnyElement>) -> Option<Stateful<Div>> {
+    (!actions.is_empty()).then(move || {
+        div()
+            .id("designed-empty-actions")
+            .flex()
+            .flex_wrap()
+            .gap(tokens::space(Space::S))
+            .children(actions)
+    })
 }
 
 /// An empty state: an icon, a title and a description — the notice the
@@ -1576,6 +1590,7 @@ pub(super) fn empty_state(
                 .gap(tokens::space(Space::Xs))
                 .child(
                     div()
+                        .id(format!("{path}/title"))
                         .min_w(px(0.))
                         .text_size(theme.typography.results.notice_title.size)
                         .font_weight(theme.typography.medium)
@@ -1593,16 +1608,7 @@ pub(super) fn empty_state(
                             .child(description),
                     )
                 })
-                .when(!actions.is_empty(), |empty, _| {
-                    let actions = actions.clone();
-                    empty.child(
-                        div()
-                            .flex()
-                            .flex_wrap()
-                            .gap(tokens::space(Space::S))
-                            .children(actions),
-                    )
-                }),
+                .when_some(actions_row(actions), |empty, actions| empty.child(actions)),
         )
         .into_any_element()
 }

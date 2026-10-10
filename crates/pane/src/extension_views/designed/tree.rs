@@ -104,12 +104,12 @@ pub(super) fn draw_node(
         NodeKind::Scroll { orientation } => {
             let own = path.clone();
             let children = children(node, path, inner, cx);
-            let div = apply(scroll(*orientation, children).id(own), node, &draw);
+            let div = apply(scroll(*orientation, children, own), node, &draw);
             named(div, name.as_deref()).into_any_element()
         }
         NodeKind::Spacer => {
             let own = path.clone();
-            apply(div().id(own).flex_grow(), node, &draw).into_any_element()
+            apply(div().id(own).flex_grow(1.), node, &draw).into_any_element()
         }
         NodeKind::Divider { orientation } => {
             let own = path.clone();
@@ -467,8 +467,9 @@ fn stack(children: Vec<AnyElement>) -> Div {
 /// A scrolling region, whose position Pane keeps by key: the element's
 /// id is the node's path, so a re-render that still draws the region
 /// keeps where it was scrolled to.
-fn scroll(orientation: Orientation, children: Vec<AnyElement>) -> Div {
+fn scroll(orientation: Orientation, children: Vec<AnyElement>, id: String) -> Stateful<Div> {
     div()
+        .id(id)
         .flex()
         .min_w(px(0.))
         .min_h(px(0.))
@@ -507,8 +508,9 @@ fn styled(node: &Node, path: &mut String, draw: Draw, element: AnyElement) -> An
     // the wrapper's) and draws its surface around whatever the node is,
     // its child filling it.
     let id = format!("{path}/surface");
-    let div = apply(div().id(id).flex().flex_col().min_w(px(0.)), node, &draw);
-    div.child(div().flex_1().min_w(px(0.)).min_h(px(0.)).child(element))
+    let wrapper = apply(div().id(id).flex().flex_col().min_w(px(0.)), node, &draw);
+    wrapper
+        .child(div().flex_1().min_w(px(0.)).min_h(px(0.)).child(element))
         .into_any_element()
 }
 
@@ -538,7 +540,7 @@ fn apply(div: Stateful<Div>, node: &Node, draw: &Draw) -> Stateful<Div> {
 
 /// The sizing a node asks for: how it takes space in its parent, and how
 /// big it is.
-fn sized<D: Styled>(div: D, sizing: &Sizing) -> D {
+fn sized<D: Styled + IntoElement>(div: D, sizing: &Sizing) -> D {
     div.when_some(sizing.grow, |div, Finite(grow)| div.flex_grow(grow))
         .when_some(sizing.shrink, |div, Finite(shrink)| div.flex_shrink(shrink))
         .when_some(sizing.basis, |div, basis| div.flex_basis(length(basis)))
@@ -559,7 +561,7 @@ fn length(value: NodeLength) -> GpuiLength {
         // A space token in a length: the pixels it names.
         NodeLength::Space(token) => tokens::space(token).into(),
         NodeLength::Px(Finite(pixels)) => px(pixels).into(),
-        NodeLength::Fraction(Finite(fraction)) => relative(fraction),
+        NodeLength::Fraction(Finite(fraction)) => relative(fraction).into(),
     }
 }
 
@@ -575,7 +577,7 @@ fn length_pixels(value: NodeLength, theme: Option<&Theme>) -> Pixels {
 
 /// The surface a node draws: its background, border, corner radius and
 /// opacity.
-fn surface<D: Styled>(div: D, surface: &Surface, theme: &Theme) -> D {
+fn surface<D: Styled + IntoElement>(div: D, surface: &Surface, theme: &Theme) -> D {
     let border = surface.border.as_ref();
     div.when_some(surface.background, |div, background| {
         div.bg(tokens::paint_color(&background, theme))

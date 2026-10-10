@@ -118,7 +118,7 @@ pub use runtime::{
     MAX_FRAME_SHAPES, MAX_FRAME_SIZE, MAX_INLINE_IMAGE, MAX_MARKDOWN_CHARS, MAX_NODES, MAX_PX,
     MAX_TREE_BYTES, Markdown, MetadataItem, MetadataList, Node, NodeKind, Offset, Orientation,
     Paint, Padding, PathKind, Place, Point, Progress, RadiusLength, RichRow, RowAccessory,
-    Runtime, RuntimeFailure, RuntimeStatus, Rgb, SectionHeader, Segmented, Select, Shape, Sizing, Slider, Span,
+    Runtime, RuntimeFailure, RuntimeStatus, Rgb, SectionHeader, Segment, Segmented, Select, Shape, Sizing, Slider, Span,
     Space, Style, SubmenuEntries, Surface, TREE_VERSION, Tag, Text, TextInput, TextContent,
     TextLevel, TextStyle, Toggle, UNRESPONSIVE_LIMIT, View, ViewEvent, ViewId, WARN_AFTER,
 };

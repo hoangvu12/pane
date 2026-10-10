@@ -205,6 +205,7 @@ fn opening_the_sample_shows_its_first_tree_and_presses_change_it() {
         package,
         language,
         title,
+        ..
     } in SAMPLES
     {
         let pane = Pane::new(&[package]);
