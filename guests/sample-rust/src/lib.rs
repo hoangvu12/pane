@@ -14,8 +14,7 @@ use pane_extension::root::{RootAction, RootResult};
 use pane_extension::view::{Cx, IntoAnswer, View};
 use pane_extension::{
     Command, CustomView, CustomViewInfo, CustomViewRole, Frame, GuestCustomView, Item, Key, List,
-    Platform, Rect, Shape, Text, ViewEvent, choice,
-};
+    Platform, Rect, Shape, Text, ViewEvent, choice};
 
 struct Sample;
 pane_extension::export!(Sample);
@@ -23,8 +22,7 @@ pane_extension::export!(Sample);
 /// Settings the "validate" item checks; the port is out of range on purpose.
 struct Settings {
     name: &'static str,
-    port: u32,
-}
+    port: u32}
 
 impl Settings {
     fn validate(&self) -> Result<(), &'static str> {
@@ -55,8 +53,7 @@ struct Greeting {
     /// The name the last submission answered with, shown as the answer.
     answered: RefCell<String>,
     /// Why the last submission was refused, on the name's field.
-    error: RefCell<Option<&'static str>>,
-}
+    error: RefCell<Option<&'static str>>}
 
 impl View for Greeting {
     fn render(&mut self, cx: &mut Cx<Self>) -> impl IntoAnswer {
@@ -166,8 +163,7 @@ const ROWS: i32 = SHADES.len() as i32;
 struct ColorPicker {
     column: Cell<i32>,
     row: Cell<i32>,
-    dragging: Cell<bool>,
-}
+    dragging: Cell<bool>}
 
 impl ColorPicker {
     fn new() -> ColorPicker {
@@ -175,8 +171,7 @@ impl ColorPicker {
         ColorPicker {
             column: Cell::new(5),
             row: Cell::new(1),
-            dragging: Cell::new(false),
-        }
+            dragging: Cell::new(false)}
     }
 
     /// Chooses the swatch nearest to `x`, `y`.
@@ -192,8 +187,7 @@ fn rect(x: i32, y: i32, size: u32, fill: u32) -> Shape {
         y,
         width: size,
         height: size,
-        fill,
-    })
+        fill})
 }
 
 /// "#RRGGBB" for 0xRRGGBB.
@@ -218,18 +212,15 @@ impl GuestCustomView for ColorPicker {
             x: COLUMNS * STEP + 12,
             y: 74,
             content: hex(chosen),
-            color: 0xf1f3f5,
-        }));
+            color: 0xf1f3f5}));
         let name = match SHADES[row as usize] {
             "" => String::from(hue),
-            shade => format!("{shade} {}", hue.to_lowercase()),
-        };
+            shade => format!("{shade} {}", hue.to_lowercase())};
         Frame {
             width: (COLUMNS * STEP + 88) as u32,
             height: (ROWS * STEP) as u32,
             shapes,
-            value: format!("{name}, {}", hex(chosen)),
-        }
+            value: format!("{name}, {}", hex(chosen))}
     }
 
     async fn handle_event(&self, event: ViewEvent) -> Result<(), String> {
@@ -242,8 +233,7 @@ impl GuestCustomView for ColorPicker {
                     Key::Up => (column, row - 1),
                     Key::Down => (column, row + 1),
                     Key::Home => (0, row),
-                    Key::End => (COLUMNS - 1, row),
-                };
+                    Key::End => (COLUMNS - 1, row)};
                 self.column.set(column.clamp(0, COLUMNS - 1));
                 self.row.set(row.clamp(0, ROWS - 1));
             }
@@ -259,8 +249,7 @@ impl GuestCustomView for ColorPicker {
                     self.choose(at.x, at.y);
                 }
             }
-            ViewEvent::PointerUp(_) => self.dragging.set(false),
-        }
+            ViewEvent::PointerUp(_) => self.dragging.set(false)}
         Ok(())
     }
 }
@@ -285,8 +274,7 @@ async fn outcome(id: &str) -> Result<String, String> {
         "validate" => {
             let settings = Settings {
                 name: "Pane",
-                port: 70000,
-            };
+                port: 70000};
             settings
                 .validate()
                 .map_err(|problem| format!("Invalid settings: {problem}"))?;
@@ -302,8 +290,7 @@ async fn outcome(id: &str) -> Result<String, String> {
         }
         "windows-only" => Ok("Ran the Windows-only action in the Rust guest".into()),
         "not-windows" => Ok("Ran the macOS and Linux action in the Rust guest".into()),
-        other => Err(format!("unknown item: {other}")),
-    }
+        other => Err(format!("unknown item: {other}"))}
 }
 
 impl Command for Sample {
@@ -341,8 +328,7 @@ impl Command for Sample {
             .custom_view(CustomViewInfo {
                 title: "Choose a color".into(),
                 label: "Color".into(),
-                role: CustomViewRole::ColorWell,
-            }),
+                role: CustomViewRole::ColorWell}),
             // Elsewhere Pane lists these as unavailable, says why, and
             // never runs their actions.
             acting(
@@ -376,8 +362,7 @@ impl Command for Sample {
         }
         Ok(Greeting {
             answered: RefCell::new(String::new()),
-            error: RefCell::new(None),
-        })
+            error: RefCell::new(None)})
     }
 }
 
@@ -397,8 +382,7 @@ impl pane_extension::root::Guest for Sample {
                 id: "website".into(),
                 title: "Pane's website".into(),
                 subtitle: Some("Opened by the Rust guest".into()),
-                action: RootAction::OpenUrl(WEBSITE.into()),
-            }]);
+                action: RootAction::OpenUrl(WEBSITE.into())}]);
         }
         let text = query.strip_prefix("reverse ").unwrap_or_default().trim();
         if text.is_empty() {
@@ -409,7 +393,6 @@ impl pane_extension::root::Guest for Sample {
             id: "reversed".into(),
             title: reversed.clone(),
             subtitle: Some("Reversed by the Rust guest".into()),
-            action: RootAction::Copy(reversed),
-        }])
+            action: RootAction::Copy(reversed)}])
     }
 }

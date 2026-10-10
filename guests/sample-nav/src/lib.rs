@@ -10,8 +10,7 @@
 use pane_extension::alloc::{format, string::String};
 use pane_extension::alloc::string::ToString as _;
 use pane_extension::view::{
-    Cx, IntoNode, Space, TextLevel, TextStyle, View, button, column, row, text,
-};
+    Cx, IntoNode, Space, TextLevel, TextStyle, View, button, column, row, text};
 use pane_extension::{Command, LaunchRecord};
 
 /// The sample's screen: the rows, the detail one of them pushed, or the
@@ -21,13 +20,11 @@ enum Screen {
     Rows {
         /// The text the last `onPop` answered, when one ran: "Picked: …",
         /// or "Picked: nothing" for a pop that carried no result.
-        picked: Option<String>,
-    },
+        picked: Option<String>},
     /// The detail of `name`, pushed above the rows.
     Detail { name: String },
     /// A deeper view, pushed above the detail or replacing it.
-    Deeper { name: String },
-}
+    Deeper { name: String }}
 
 impl View for Screen {
     fn render(&mut self, cx: &mut Cx<Self>) -> impl IntoNode {
@@ -51,8 +48,7 @@ impl View for Screen {
                                 };
                                 *picked = Some(match result {
                                     Some(result) => format!("Picked: {result}"),
-                                    None => "Picked: nothing".into(),
-                                });
+                                    None => "Picked: nothing".into()});
                             },
                         ))
                     }),
@@ -71,8 +67,7 @@ impl View for Screen {
                         button("Swap for deeper").on_click(cx.replace(|this| deeper_of(this))),
                         button("Done").on_click(cx.pop_with(|this| match this {
                             Screen::Detail { name } => format!("done:{name}"),
-                            _ => String::new(),
-                        })),
+                            _ => String::new()})),
                     ]),
                 ),
             Screen::Deeper { name } => column()
@@ -90,8 +85,7 @@ impl View for Screen {
                             pane_extension::window::pop_to_root(false);
                         })),
                     ]),
-                ),
-        }
+                )}
     }
 }
 
@@ -101,8 +95,7 @@ fn deeper_of(on_screen: &Screen) -> Screen {
         Screen::Detail { name } | Screen::Deeper { name } => {
             Screen::Deeper { name: name.clone() }
         }
-        Screen::Rows { .. } => Screen::Deeper { name: String::new() },
-    }
+        Screen::Rows { .. } => Screen::Deeper { name: String::new() }}
 }
 
 struct Sample;

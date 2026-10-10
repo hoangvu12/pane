@@ -15,8 +15,7 @@ use alloc::vec::Vec;
 wit_bindgen::generate!({ path: "wit", world: "extension" });
 
 use exports::pane::extension::command::{
-    CustomView, FieldValue, FormError, Frame, Guest, GuestCustomView, ViewEvent,
-};
+    CustomView, Frame, Guest, GuestCustomView, ViewEvent};
 
 #[global_allocator]
 static ALLOC: dlmalloc::GlobalDlmalloc = dlmalloc::GlobalDlmalloc;
@@ -86,10 +85,6 @@ impl Guest for Mismatched {
 
     async fn handle_event(callback: String, _details: String) -> Result<String, String> {
         Err(callback)
-    }
-
-    async fn submit_form(item_id: String, _values: Vec<FieldValue>) -> Result<String, FormError> {
-        Ok(item_id)
     }
 
     async fn open_view(item_id: String) -> Result<CustomView, String> {

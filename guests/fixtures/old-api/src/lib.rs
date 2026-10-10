@@ -15,7 +15,7 @@ use alloc::vec::Vec;
 
 wit_bindgen::generate!({ path: "wit", world: "extension" });
 
-use exports::pane::extension::command::{FieldValue, FormError, Guest, Item, View};
+use exports::pane::extension::command::{ Guest, Item, View};
 
 #[global_allocator]
 static ALLOC: dlmalloc::GlobalDlmalloc = dlmalloc::GlobalDlmalloc;
@@ -68,16 +68,10 @@ impl Guest for OldApi {
                 id: "x".into(),
                 title: "x".into(),
                 subtitle: None,
-                form: None,
-            }],
-        })
+                form: None}]})
     }
 
     async fn run_action(item_id: String) -> Result<String, String> {
-        Ok(item_id)
-    }
-
-    async fn submit_form(item_id: String, _values: Vec<FieldValue>) -> Result<String, FormError> {
         Ok(item_id)
     }
 }

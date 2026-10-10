@@ -27,8 +27,7 @@ use pane_extension::alloc::{format, string::String, string::ToString, vec::Vec};
 use pane_extension::feedback::{Toast, show_toast};
 use pane_extension::operations::call;
 use pane_extension::{
-    Command, CustomView, FieldValue, FormError, Item, List, NoCustomView, publish, settings,
-};
+    Command, CustomView, Item, List, NoCustomView, publish, settings};
 use serde_json::{Value, json};
 
 struct Fixture;
@@ -94,8 +93,7 @@ fn sources() -> Result<Value, String> {
 fn source(sources: &Value, name: &str) -> String {
     match sources.get(name).and_then(Value::as_str) {
         Some(source) => source.into(),
-        None => name.into(),
-    }
+        None => name.into()}
 }
 
 /// `forward`'s input for a chain from `p<from>` to `p9`, which echoes.
@@ -107,8 +105,7 @@ fn chain(sources: &Value, from: u32) -> Value {
     json!({
         "to": source(sources, &format!("p{next}")),
         "operation": "forward",
-        "input": chain(sources, next),
-    })
+        "input": chain(sources, next)})
 }
 
 /// Saves `spin` as "started", then computes without yielding until reading
@@ -159,8 +156,7 @@ async fn outcome(item_id: &str) -> Result<String, String> {
         }
         // p1 forwards to p2, and so on to p9.
         "Call a chain of nine" => chain(&sources, 1).to_string(),
-        _ => input.into(),
-    };
+        _ => input.into()};
     match title {
         "Spin, then save and call b's remember" => {
             spin()?;
@@ -211,13 +207,6 @@ impl Command for Fixture {
         Ok(List::new("Operations fixture").items(items))
     }
 
-    async fn submit_form(item_id: String, _values: Vec<FieldValue>) -> Result<String, FormError> {
-        Err(FormError {
-            field: None,
-            message: format!("unknown form: {item_id}"),
-        })
-    }
-
     async fn open_custom_view(item_id: String) -> Result<CustomView, String> {
         Err(format!("unknown view: {item_id}"))
     }
@@ -247,7 +236,6 @@ impl publish::Guest for Fixture {
                 Ok("true".into())
             }
             "secret" => Ok(r#""the secret""#.into()),
-            other => Err(format!("unknown operation: {other}")),
-        }
+            other => Err(format!("unknown operation: {other}"))}
     }
 }

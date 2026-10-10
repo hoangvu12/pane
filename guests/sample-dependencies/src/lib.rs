@@ -18,7 +18,7 @@
 use pane_extension::alloc::{format, string::String, string::ToString, vec::Vec};
 use pane_extension::feedback::{Toast, show_toast};
 use pane_extension::operations::{CallErrorKind, call};
-use pane_extension::{Command, CustomView, FieldValue, FormError, Item, List, NoCustomView};
+use pane_extension::{Command, CustomView, Item, List, NoCustomView};
 use serde_json::{Value, json};
 
 struct Dependencies;
@@ -59,10 +59,8 @@ async fn greeting(item_id: &str) -> Result<String, String> {
                  sample to use it"
                     .into(),
             ),
-            Err(error) => Err(error.explain()),
-        },
-        _ => Err(format!("unknown item: {item_id}")),
-    }
+            Err(error) => Err(error.explain())},
+        _ => Err(format!("unknown item: {item_id}"))}
 }
 
 /// An item whose action is [`act`] with its id.
@@ -89,13 +87,6 @@ impl Command for Dependencies {
                 "The Rust operations sample, if you installed it",
             ),
         ]))
-    }
-
-    async fn submit_form(item_id: String, _values: Vec<FieldValue>) -> Result<String, FormError> {
-        Err(FormError {
-            field: None,
-            message: format!("unknown form: {item_id}"),
-        })
     }
 
     async fn open_custom_view(item_id: String) -> Result<CustomView, String> {

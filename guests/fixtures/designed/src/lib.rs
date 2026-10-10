@@ -69,9 +69,8 @@ use core::ffi::c_void;
 wit_bindgen::generate!({ path: "../../../wit", world: "extension" });
 
 use exports::pane::extension::command::{
-    CustomView, FieldValue, FormError, Frame, Guest, GuestCustomView, GuestView, LaunchRecord,
-    Outcome, Rendered, UiEvent, View, ViewEvent,
-};
+    CustomView, Frame, Guest, GuestCustomView, GuestView, LaunchRecord,
+    Outcome, Rendered, UiEvent, View, ViewEvent};
 
 /// The version of the UI component set the fixture writes.
 const COMPONENT_SET: &str = "1.0";
@@ -105,8 +104,7 @@ enum Next {
     Fields,
     /// A tree whose keys two siblings share and whose text input has
     /// none, which a developed package's log reports.
-    KeyProblems,
-}
+    KeyProblems}
 
 /// The root view's state, kept in the resource.
 struct State {
@@ -130,8 +128,7 @@ struct State {
     /// How many renders away answers slowly: the slow push button sets 2,
     /// so the render that asks answers promptly and the drawing Pane
     /// sends for the ask is the one held back.
-    slow_in: Cell<u32>,
-}
+    slow_in: Cell<u32>}
 
 // SAFETY: a component's code runs on one thread.
 unsafe impl Sync for State {}
@@ -145,8 +142,7 @@ struct Designed {
     root: bool,
     /// The pop event this view last received, if any: the result it
     /// carried (`None` for one that carried none).
-    popped: RefCell<Option<Option<String>>>,
-}
+    popped: RefCell<Option<Option<String>>>}
 
 impl GuestView for Designed {
     async fn render(&self, context: String) -> Result<Rendered, String> {
@@ -174,8 +170,7 @@ impl GuestView for Designed {
         if !self.root {
             return Ok(Rendered {
                 tree: pushed(popped),
-                refresh_after_ms: STATE.refresh_ms.get(),
-            });
+                refresh_after_ms: STATE.refresh_ms.get()});
         }
         let next = STATE.next.replace(Next::Counter);
         // The component set stays on screen until the counter's buttons
@@ -207,17 +202,14 @@ impl GuestView for Designed {
             Next::Unreadable => {
                 return Ok(Rendered {
                     tree: "{\"version\":\"1.0\",\"root\":".into(),
-                    refresh_after_ms: None,
-                })
+                    refresh_after_ms: None})
             }
             Next::Components => components(),
             Next::Fields => fields(&received_texts()),
-            Next::KeyProblems => key_problems(),
-        };
+            Next::KeyProblems => key_problems()};
         Ok(Rendered {
             tree,
-            refresh_after_ms: STATE.refresh_ms.get(),
-        })
+            refresh_after_ms: STATE.refresh_ms.get()})
     }
 
     async fn handle_event(&self, event: UiEvent) -> Result<Outcome, String> {
@@ -252,22 +244,19 @@ impl GuestView for Designed {
                 return Ok(Outcome {
                     push: Some(View::new(Designed::pushed_view())),
                     replace: None,
-                    pop: None,
-                })
+                    pop: None})
             }
             11 => {
                 return Ok(Outcome {
                     push: None,
                     replace: None,
-                    pop: Some("the result".into()),
-                })
+                    pop: Some("the result".into())})
             }
             12 => {
                 return Ok(Outcome {
                     push: None,
                     replace: Some(View::new(Designed::pushed_view())),
-                    pop: None,
-                })
+                    pop: None})
             }
             13 => STATE.next.set(Next::Components),
             18 => STATE.next.set(Next::Fields),
@@ -301,8 +290,7 @@ impl GuestView for Designed {
                 STATE.push.set(true);
                 STATE.slow_in.set(2);
             }
-            _ => return Err(format!("unknown callback: {}", event.callback)),
-        }
+            _ => return Err(format!("unknown callback: {}", event.callback))}
         Ok(outcome())
     }
 }
@@ -312,8 +300,7 @@ impl Designed {
     fn pushed_view() -> Designed {
         Designed {
             root: false,
-            popped: RefCell::new(None),
-        }
+            popped: RefCell::new(None)}
     }
 }
 
@@ -322,8 +309,7 @@ fn outcome() -> Outcome {
     Outcome {
         push: None,
         replace: None,
-        pop: None,
-    }
+        pop: None}
 }
 
 /// The text naming the pop event the view last received, when it received
@@ -332,8 +318,7 @@ fn popped_text(popped: &Option<Option<String>>) -> Option<String> {
     match popped {
         None => None,
         Some(None) => Some("Popped".into()),
-        Some(Some(result)) => Some(format!("Popped: {result}")),
-    }
+        Some(Some(result)) => Some(format!("Popped: {result}"))}
 }
 
 /// The view `context` names — its id, what `ask-to-render` asks for — or 0
@@ -378,8 +363,7 @@ static STATE: State = State {
     refresh_ms: Cell::new(None),
     received: RefCell::new(Vec::new()),
     push: Cell::new(false),
-    slow_in: Cell::new(0),
-};
+    slow_in: Cell::new(0)};
 
 /// The buttons the counter's tree names: (label, key, callback id). The
 /// navigation ones answer the stack (#239), the component set's draws
@@ -597,8 +581,7 @@ fn escaped(text: &str) -> String {
             other if (other as u32) < 0x20 => {
                 escaped.push_str(&format!("\\u{:04x}", other as u32));
             }
-            other => escaped.push(other),
-        }
+            other => escaped.push(other)}
     }
     escaped
 }
@@ -648,13 +631,6 @@ impl Guest for Fixture {
         Err(format!("unknown callback: {callback}"))
     }
 
-    async fn submit_form(item_id: String, _values: Vec<FieldValue>) -> Result<String, FormError> {
-        Err(FormError {
-            field: None,
-            message: format!("unknown form: {item_id}"),
-        })
-    }
-
     async fn open_custom_view(item_id: String) -> Result<CustomView, String> {
         Err(format!("unknown view: {item_id}"))
     }
@@ -667,8 +643,7 @@ impl Guest for Fixture {
         STATE.received.borrow_mut().clear();
         Ok(View::new(Designed {
             root: true,
-            popped: RefCell::new(None),
-        }))
+            popped: RefCell::new(None)}))
     }
 }
 

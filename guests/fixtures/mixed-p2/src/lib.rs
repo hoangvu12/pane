@@ -2,9 +2,8 @@
 wit_bindgen::generate!({ path: "../../../wit", world: "extension" });
 
 use exports::pane::extension::command::{
-    CustomView, FieldValue, FormError, Frame, Guest, GuestCustomView, GuestView, LaunchRecord,
-    Outcome, Rendered, UiEvent, View, ViewEvent,
-};
+    CustomView, Frame, Guest, GuestCustomView, GuestView, LaunchRecord,
+    Outcome, Rendered, UiEvent, View, ViewEvent};
 
 struct Mixed;
 export!(Mixed);
@@ -55,10 +54,6 @@ impl Guest for Mixed {
 
     async fn handle_event(callback: String, _details: String) -> Result<String, String> {
         Ok(format!("{{\"status\": \"{callback}\"}}"))
-    }
-
-    async fn submit_form(item_id: String, _values: Vec<FieldValue>) -> Result<String, FormError> {
-        Ok(item_id)
     }
 
     async fn open_custom_view(item_id: String) -> Result<CustomView, String> {

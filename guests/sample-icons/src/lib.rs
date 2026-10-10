@@ -57,9 +57,8 @@ use pane_extension::alloc::{format, string::String, vec::Vec};
 use pane_extension::feedback::{Toast, show_toast};
 use pane_extension::icon::{avatar, favicon, file_icon, progress_ring};
 use pane_extension::{
-    Accessory, Action, Color, Command, CustomView, FieldValue, FormError, Icon, Item, List, Mask,
-    NoCustomView, Tint, Tone, settings,
-};
+    Accessory, Action, Color, Command, CustomView, Icon, Item, List, Mask,
+    NoCustomView, Tint, Tone, settings};
 
 /// 2026-01-01T00:00:00Z, in milliseconds since the Unix epoch: the
 /// "Packaged image" row's date.
@@ -191,13 +190,6 @@ impl Command for Icons {
                 .subtitle("The system's icon of an application, drawn bare")
                 .icon(file_icon(&setting(ICON_APPLICATION))),
         ]))
-    }
-
-    async fn submit_form(_item_id: String, _values: Vec<FieldValue>) -> Result<String, FormError> {
-        Err(FormError {
-            field: None,
-            message: "The icons sample has no forms".into(),
-        })
     }
 
     async fn open_custom_view(_item_id: String) -> Result<CustomView, String> {

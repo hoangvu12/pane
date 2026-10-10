@@ -23,9 +23,8 @@ use pane_extension::feedback::{Toast, show_toast};
 use pane_extension::http;
 use pane_extension::search::SearchResult;
 use pane_extension::{
-    Command, CustomView, Field, FieldKind, FieldValue, Form, FormError, Item, List, NoCustomView,
-    TextField, settings,
-};
+    Command, CustomView, Field, FieldKind, Form, Item, List, NoCustomView,
+    TextField, settings};
 use serde::Deserialize;
 
 /// The address used until the user sets another.
@@ -41,27 +40,23 @@ pane_extension::search::export!(Packages);
 
 #[derive(Deserialize)]
 struct Found {
-    results: Vec<Summary>,
-}
+    results: Vec<Summary>}
 
 #[derive(Deserialize)]
 struct Summary {
     name: String,
-    summary: String,
-}
+    summary: String}
 
 #[derive(Deserialize)]
 struct Details {
     name: String,
     summary: String,
     version: String,
-    license: String,
-}
+    license: String}
 
 #[derive(Deserialize)]
 struct Problem {
-    error: String,
-}
+    error: String}
 
 /// The service address: the saved one, or the default.
 fn service() -> Result<String, String> {
@@ -95,8 +90,7 @@ fn encode(text: &str) -> String {
             b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
                 encoded.push(char::from(byte))
             }
-            other => encoded.push_str(&format!("%{other:02X}")),
-        }
+            other => encoded.push_str(&format!("%{other:02X}"))}
     }
     encoded
 }
@@ -144,11 +138,8 @@ impl Command for Packages {
                     id: "address".into(),
                     label: "Address".into(),
                     kind: FieldKind::Text(TextField {
-                        placeholder: Some(DEFAULT_SERVICE.into()),
-                    }),
-                }],
-                submit_label: "Save".into(),
-            }),
+                        placeholder: Some(DEFAULT_SERVICE.into())})}],
+                submit_label: "Save".into()}),
         ]))
     }
 
@@ -156,31 +147,6 @@ impl Command for Packages {
     /// ("package:<name>"): fetches that package's details and shows them.
     async fn run_search_result(id: String) -> Result<(), String> {
         act(&id).await
-    }
-
-    async fn submit_form(item_id: String, values: Vec<FieldValue>) -> Result<String, FormError> {
-        if item_id != "service" {
-            return Err(FormError {
-                field: None,
-                message: format!("unknown form: {item_id}"),
-            });
-        }
-        let address = values
-            .iter()
-            .find(|value| value.id == "address")
-            .map(|value| value.value.trim().trim_end_matches('/').to_owned())
-            .unwrap_or_default();
-        if !(address.starts_with("http://") || address.starts_with("https://")) {
-            return Err(FormError {
-                field: Some("address".into()),
-                message: "Enter an address starting with http:// or https://".into(),
-            });
-        }
-        settings::set(SERVICE, &address).map_err(|message| FormError {
-            field: None,
-            message,
-        })?;
-        Ok(format!("Searching {address} from now on"))
     }
 
     async fn open_custom_view(_item_id: String) -> Result<CustomView, String> {
@@ -202,8 +168,7 @@ impl pane_extension::search::Guest for Packages {
                 title: package.name,
                 subtitle: Some(package.summary),
                 // A package, not a file of a granted folder.
-                file: None,
-            })
+                file: None})
             .collect())
     }
 }

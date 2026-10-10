@@ -35,8 +35,7 @@ use pane_extension::form::{self, FormValues};
 use pane_extension::view::{Cx, IntoAnswer, View};
 use pane_extension::{
     Action, Command, Item, LaunchRecord, List, Modifier, NoCustomView, Shortcut, actions,
-    applications,
-};
+    applications};
 
 use links::Quicklink;
 
@@ -68,8 +67,7 @@ struct QuicklinkForm {
     link: RefCell<String>,
     open_with: RefCell<String>,
     /// Why the last submission was refused: the field and its message.
-    error: RefCell<Option<(String, String)>>,
-}
+    error: RefCell<Option<(String, String)>>}
 
 impl QuicklinkForm {
     /// The view `launch` asks for: a new quicklink's, one filled in to
@@ -102,8 +100,7 @@ impl QuicklinkForm {
             name: RefCell::new(name),
             link: RefCell::new(link.target),
             open_with: RefCell::new(application.into()),
-            error: RefCell::new(None),
-        })
+            error: RefCell::new(None)})
     }
 
     /// An empty form, for a new quicklink.
@@ -113,8 +110,7 @@ impl QuicklinkForm {
             name: RefCell::new(String::new()),
             link: RefCell::new(String::new()),
             open_with: RefCell::new(String::new()),
-            error: RefCell::new(None),
-        }
+            error: RefCell::new(None)}
     }
 
     /// Saves what the form was submitted with: the quicklink edited, or a
@@ -130,8 +126,7 @@ impl QuicklinkForm {
                 links::with_id(&saved, id)
                     .ok_or_else(|| form_problem("This quicklink no longer exists".into()))?,
             ),
-            None => None,
-        };
+            None => None};
         check(&saved, editing, name, target)?;
         let application =
             links::application(open_with, &installed()).map_err(|problem| (OPEN_WITH.into(), problem))?;
@@ -149,8 +144,7 @@ impl QuicklinkForm {
                     id,
                     name: name.into(),
                     target: target.into(),
-                    application,
-                });
+                    application});
                 format!("Created \u{201c}{name}\u{201d}")
             }
         };
@@ -172,8 +166,7 @@ impl View for QuicklinkForm {
                         // there.
                         let search = CommandRef {
                             source: None,
-                            command: SEARCH.into(),
-                        };
+                            command: SEARCH.into()};
                         let _ = commands::launch(
                             &search,
                             LaunchType::UserInitiated,
@@ -186,13 +179,11 @@ impl View for QuicklinkForm {
                         window::pop_to_root(false);
                     }
                 }
-                Err(problem) => *this.error.borrow_mut() = Some(problem),
-            }
+                Err(problem) => *this.error.borrow_mut() = Some(problem)}
         });
         let error = |field: &str| match &*self.error.borrow() {
             Some((at, message)) if at == field => message.clone(),
-            _ => String::new(),
-        };
+            _ => String::new()};
         let mut view = form::Form::new()
             .key("form")
             .submit_title(if editing { "Save Quicklink" } else { "Create Quicklink" })
@@ -237,8 +228,7 @@ fn form_problem(message: String) -> (String, String) {
 fn open_form(context: Option<&str>) -> Result<(), String> {
     let create = CommandRef {
         source: None,
-        command: CREATE.into(),
-    };
+        command: CREATE.into()};
     commands::launch(&create, LaunchType::UserInitiated, &[], context)
 }
 
@@ -358,8 +348,7 @@ fn installed() -> Vec<applications::Application> {
 fn quicklinks(count: usize) -> String {
     match count {
         1 => "1 quicklink".into(),
-        count => format!("{count} quicklinks"),
-    }
+        count => format!("{count} quicklinks")}
 }
 
 /// Export Quicklinks: copies them as JSON and says how many in a HUD.
@@ -403,8 +392,7 @@ fn import() -> Result<(), String> {
                 saved.push(link);
                 added += 1;
             }
-            None => skipped += 1,
-        }
+            None => skipped += 1}
     }
     if added > 0 {
         links::save(&saved)?;
@@ -438,16 +426,12 @@ fn new_quicklink(
             Err(_) if open_with.chars().any(char::is_control) => return None,
             Err(_) => Some(links::Application {
                 id: open_with.clone(),
-                name: open_with,
-            }),
-        },
-    };
+                name: open_with})}};
     Some(Quicklink {
         id: links::next_id(saved),
         name: given.name,
         target: given.link,
-        application,
-    })
+        application})
 }
 
 impl Command for Quicklinks {
@@ -474,8 +458,7 @@ impl Command for Quicklinks {
             IMPORT => import(),
             other => Err(format!(
                 "`{other}` opens a screen; it has no run entry point"
-            )),
-        }
+            ))}
     }
 
     async fn open_designed_view(
@@ -505,9 +488,7 @@ impl pane_extension::indexed::Guest for Quicklinks {
                 keywords: Vec::new(),
                 action: IndexedAction::Open(OpenTarget {
                     target: link.target,
-                    application: link.application.map(|application| application.id),
-                }),
-            })
+                    application: link.application.map(|application| application.id)})})
             .collect())
     }
 }

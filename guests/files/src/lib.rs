@@ -28,7 +28,7 @@ use pane_extension::feedback::{Toast, show_toast};
 use pane_extension::file_index::{self, FileEntry, IndexState, SearchOptions};
 use pane_extension::root::{RootAction, RootResult};
 use pane_extension::search::SearchResult;
-use pane_extension::{Command, CustomView, FieldValue, FormError, Item, List, NoCustomView};
+use pane_extension::{Command, CustomView, Item, List, NoCustomView};
 
 struct Files;
 pane_extension::export!(Files);
@@ -57,8 +57,7 @@ fn status() -> String {
             "{} files and folders of your home folder are indexed{reason}",
             status.entries
         ),
-        IndexState::Stopped => format!("File search stopped{reason}"),
-    }
+        IndexState::Stopped => format!("File search stopped{reason}")}
 }
 
 /// Runs the action of the item `item_id`: a toast saying what is searched.
@@ -68,8 +67,7 @@ async fn act(item_id: &str) -> Result<(), String> {
             show_toast(Toast::success(status()));
             Ok(())
         }
-        _ => Err(format!("unknown item: {item_id}")),
-    }
+        _ => Err(format!("unknown item: {item_id}"))}
 }
 
 /// The entries `query` finds, best first, at most `limit`.
@@ -93,13 +91,6 @@ impl Command for Files {
         ))
     }
 
-    async fn submit_form(item_id: String, _values: Vec<FieldValue>) -> Result<String, FormError> {
-        Err(FormError {
-            field: None,
-            message: format!("unknown form: {item_id}"),
-        })
-    }
-
     async fn open_custom_view(item_id: String) -> Result<CustomView, String> {
         Err(format!("unknown view: {item_id}"))
     }
@@ -116,8 +107,7 @@ impl pane_extension::search::Guest for Files {
                 title: entry.name,
                 id: entry.path,
                 subtitle: None,
-                file: Some(entry.id),
-            })
+                file: Some(entry.id)})
             .collect())
     }
 }
@@ -135,8 +125,7 @@ impl pane_extension::root::Guest for Files {
                 title: entry.name,
                 id: entry.path,
                 subtitle: None,
-                action: RootAction::OpenFile(entry.id),
-            })
+                action: RootAction::OpenFile(entry.id)})
             .collect())
     }
 }

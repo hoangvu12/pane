@@ -6,8 +6,7 @@
 use pane_extension::alloc::{format, string::String, vec::Vec};
 use pane_extension::feedback::{Toast, show_toast};
 use pane_extension::{
-    Command, CustomView, FieldValue, FormError, Item, List, NoCustomView, settings,
-};
+    Command, CustomView, Item, List, NoCustomView, settings};
 
 /// The settings key recording that a start was attempted.
 const ATTEMPTED: &str = "start-attempted";
@@ -37,13 +36,6 @@ impl Command for FailingStart {
     /// A callback no item names runs as an action of that id too.
     async fn run_search_result(id: String) -> Result<(), String> {
         act(&id).await
-    }
-
-    async fn submit_form(item_id: String, _values: Vec<FieldValue>) -> Result<String, FormError> {
-        Err(FormError {
-            field: None,
-            message: format!("unknown form: {item_id}"),
-        })
     }
 
     async fn open_custom_view(item_id: String) -> Result<CustomView, String> {

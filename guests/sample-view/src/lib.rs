@@ -27,8 +27,7 @@ use pane_extension::view::{
     divider, empty_state, icon, icon_tile, image, key_sequence, keycap, link, loading, markdown,
     metadata_list, metadata, metadata_separator, metadata_tags, password_input, progress, rich_row,
     row, scroll, section_header, segmented, select, slider, spacer, span, spans, stack, tag, text,
-    text_area, text_input, toggle,
-};
+    text_area, text_input, toggle};
 use pane_extension::{Command, LaunchRecord};
 
 /// The screen a command opens: the counter, the gallery of components, or
@@ -47,15 +46,13 @@ struct Screen {
     swapped: Cell<bool>,
     /// The loading sample's data, on its way when the view opens
     /// (`Pending`, #243).
-    loading: Pending<String>,
-}
+    loading: Pending<String>}
 
 /// Which of the package's screens a view is.
 enum Which {
     Counter,
     Components,
-    Loading,
-}
+    Loading}
 
 impl View for Screen {
     fn render(&mut self, cx: &mut Cx<Self>) -> impl IntoAnswer {
@@ -68,8 +65,7 @@ impl View for Screen {
                     .child(text("Loaded").style(TextStyle::Title))
                     .child(text(what.as_str()).level(TextLevel::Secondary))
                     .into_answer(),
-                None => loading(text("Loading…").level(TextLevel::Secondary)),
-            };
+                None => loading(text("Loading…").level(TextLevel::Secondary))};
         }
         if matches!(self.which, Which::Counter) {
             return column()
@@ -262,8 +258,7 @@ impl Screen {
             name: RefCell::new("typed".into()),
             notes: RefCell::new("two lines".into()),
             swapped: Cell::new(false),
-            loading: Pending::loading(async { String::new() }),
-        }
+            loading: Pending::loading(async { String::new() })}
     }
 
     /// The gallery's fields, live and keyed (#238): the name field hears
@@ -326,8 +321,7 @@ impl Command for Sample {
             "sample" => Which::Counter,
             "components" => Which::Components,
             "loading" => Which::Loading,
-            _ => return Err("this command opens no designed view".into()),
-        };
+            _ => return Err("this command opens no designed view".into())};
         let mut screen = Screen::opening(which);
         if matches!(which, Which::Loading) {
             screen.loading = Pending::loading(load());

@@ -8,9 +8,8 @@ use core::cell::Cell;
 use pane_extension::alloc::{format, string::String, vec, vec::Vec};
 use pane_extension::feedback::{Toast, show_toast};
 use pane_extension::{
-    Command, CustomView, CustomViewInfo, CustomViewRole, Field, FieldKind, FieldValue, Form,
-    FormError, Frame, GuestCustomView, Item, Key, List, Shape, Text, TextField, ViewEvent,
-};
+    Command, CustomView, CustomViewInfo, CustomViewRole, Frame, GuestCustomView, Item, Key, List,
+    Shape, Text, ViewEvent};
 
 struct Faulty;
 pane_extension::export!(Faulty);
@@ -84,8 +83,7 @@ async fn outcome(id: &str) -> Result<String, String> {
             core::hint::black_box(&block);
             Ok("allocated past the cap".into())
         }
-        _ => Ok("fine".into()),
-    }
+        _ => Ok("fine".into())}
 }
 
 /// A custom view that counts the events it handled, refuses Left and traps
@@ -94,8 +92,7 @@ async fn outcome(id: &str) -> Result<String, String> {
 /// event.
 struct Counter {
     events: Cell<u32>,
-    oversize: Cell<Option<Key>>,
-}
+    oversize: Cell<Option<Key>>}
 
 impl GuestCustomView for Counter {
     async fn render(&self) -> Frame {
@@ -104,21 +101,18 @@ impl GuestCustomView for Counter {
                 x: 0,
                 y: 0,
                 content,
-                color: 0xffffff,
-            })
+                color: 0xffffff})
         };
         let (width, shapes) = match self.oversize.get() {
             Some(Key::Down) => (100, vec![text("x".into()); 4097]),
             Some(Key::Home) => (100, vec![text("x".repeat(257))]),
             Some(Key::End) => (4097, Vec::new()),
-            _ => (100, Vec::new()),
-        };
+            _ => (100, Vec::new())};
         Frame {
             width,
             height: 20,
             shapes,
-            value: format!("{} events", self.events.get()),
-        }
+            value: format!("{} events", self.events.get())}
     }
 
     async fn handle_event(&self, event: ViewEvent) -> Result<(), String> {
@@ -128,8 +122,7 @@ impl GuestCustomView for Counter {
             _ => {
                 self.oversize.set(match event {
                     ViewEvent::Key(key @ (Key::Down | Key::Home | Key::End)) => Some(key),
-                    _ => None,
-                });
+                    _ => None});
                 self.events.set(self.events.get() + 1);
                 Ok(())
             }
@@ -142,34 +135,27 @@ impl Command for Faulty {
     type DesignedView = pane_extension::view::NoDesignedView;
 
     async fn render() -> Result<List, String> {
-        // A form whose submission is always refused as a whole.
-        let form = Form {
-            title: "Refused".into(),
-            fields: vec![Field {
-                id: "text".into(),
-                label: "Text".into(),
-                kind: FieldKind::Text(TextField { placeholder: None }),
-            }],
-            submit_label: "Submit".into(),
-        };
         Ok(List::new("Faulty").items([
             acting("ok"),
             acting("error"),
             acting("trap"),
-            item("form").form(form.clone()),
+            // A form item of the typed form's shape, which the tree's
+            // reading ignores now that a form is a designed view (#241):
+            // activating it runs its action like any item's.
+            item("form").on_action(|| async {
+                Err("the guest refused the form".into())
+            }),
             // Declares no operating system, so it is unavailable on every
-            // system; activating it must not open its form.
-            item("nowhere").form(form).platforms([]),
+            // system; activating it runs nothing.
+            item("nowhere").on_action(|| async { Ok(()) }).platforms([]),
             item("view").custom_view(CustomViewInfo {
                 title: "Counter".into(),
                 label: "Counter".into(),
-                role: CustomViewRole::ColorWell,
-            }),
+                role: CustomViewRole::ColorWell}),
             item("no-view").custom_view(CustomViewInfo {
                 title: "Refused view".into(),
                 label: "Refused".into(),
-                role: CustomViewRole::ColorWell,
-            }),
+                role: CustomViewRole::ColorWell}),
             acting("grow-near-cap"),
             acting("grow-past-cap"),
         ]))
@@ -181,21 +167,12 @@ impl Command for Faulty {
         run(&id).await
     }
 
-    async fn submit_form(_item_id: String, _values: Vec<FieldValue>) -> Result<String, FormError> {
-        Err(FormError {
-            field: None,
-            message: "the guest refused the form".into(),
-        })
-    }
-
     async fn open_custom_view(item_id: String) -> Result<CustomView, String> {
         match item_id.as_str() {
             "view" => Ok(CustomView::new(Counter {
                 events: Cell::new(0),
-                oversize: Cell::new(None),
-            })),
-            _ => Err("the guest refused the view".into()),
-        }
+                oversize: Cell::new(None)})),
+            _ => Err("the guest refused the view".into())}
     }
 }
 
@@ -212,16 +189,14 @@ impl pane_extension::root::Guest for Faulty {
                 id: "file".into(),
                 title: "A local file".into(),
                 subtitle: None,
-                action: pane_extension::root::RootAction::OpenUrl("file:///etc/hosts".into()),
-            }]),
+                action: pane_extension::root::RootAction::OpenUrl("file:///etc/hosts".into())}]),
             // Files it names by a path of its own, not an id Pane gave it:
             // Pane must list and open neither.
             "forged file" => Ok(vec![pane_extension::root::RootResult {
                 id: "forged".into(),
                 title: "hosts".into(),
                 subtitle: None,
-                action: pane_extension::root::RootAction::OpenFile("/etc/hosts".into()),
-            }]),
+                action: pane_extension::root::RootAction::OpenFile("/etc/hosts".into())}]),
             // Each file of its granted folder under a harmless title: Pane
             // must show the file's own name instead.
             "spoof" => match pane_extension::files::list_folder()? {
@@ -232,11 +207,9 @@ impl pane_extension::root::Guest for Faulty {
                         id: file.relative,
                         title: "harmless.txt".into(),
                         subtitle: Some("File in Documents".into()),
-                        action: pane_extension::root::RootAction::OpenFile(file.id),
-                    })
+                        action: pane_extension::root::RootAction::OpenFile(file.id)})
                     .collect()),
-                _ => Ok(Vec::new()),
-            },
+                _ => Ok(Vec::new())},
             "trap" => panic!("trap requested"),
             "0 + 0" => {
                 let mut sum = 0u64;
@@ -247,10 +220,8 @@ impl pane_extension::root::Guest for Faulty {
                     id: "slow".into(),
                     title: "Slow answer".into(),
                     subtitle: Some(format!("after {sum} steps")),
-                    action: pane_extension::root::RootAction::Copy("slow".into()),
-                }])
+                    action: pane_extension::root::RootAction::Copy("slow".into())}])
             }
-            _ => Ok(Vec::new()),
-        }
+            _ => Ok(Vec::new())}
     }
 }
