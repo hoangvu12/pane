@@ -21,8 +21,9 @@ Adding to the tree needs no WIT change: every later list feature (several
 actions, icons, accessories) is a field here, and the "Extension UI you can
 design" specification (#121) adds layout primitives, components, Detail,
 Grid, Form, navigation and the canvas to the same envelope without
-redefining it. Forms (#20) and custom views (#21) keep their own functions,
-`submit-form` and `open-custom-view`, which take the item's id.
+redefining it. Forms (#20) keep their own function, `submit-form`, which
+takes the item's id; the custom view of #21 became the canvas of the
+designed tree (#242, [designed-tree.md](designed-tree.md)).
 
 Authors never see the JSON or the callback ids. In Rust (`pane-extension`) a
 command implements `pane_extension::Command`, whose `render` returns a
@@ -102,7 +103,6 @@ and a lazy submenu's `onOpen` as the action itself would be named.
       {
         "id": "color",
         "title": "Choose a color",
-        "customView": { "title": "Choose a color", "label": "Color", "role": "color-well" },
         "platforms": ["windows", "macos"]
       }
     ]
@@ -123,8 +123,8 @@ and a lazy submenu's `onOpen` as the action itself would be named.
   Quicklink", "submitLabel": "Create Quicklink", "fields": [...]}}`). The
   "Extension UI you can design" specification (#121) extends it.
 - An item has an **`id`** (Pane keeps the selection on it when the list is
-  drawn again, and passes it to `submit-form` and `open-custom-view`), a
-  **`title`**, and optionally:
+  drawn again, and passes it to `submit-form`), a **`title`**, and
+  optionally:
   - **`subtitle`**: a second line;
   - **`actions`**: what the item offers, in order (#137). The first is its
     **primary action**: Enter and the footer's button run it, and the
@@ -179,8 +179,6 @@ and a lazy submenu's `onOpen` as the action itself would be named.
     A field's optional **`value`** is what it starts with (#149): a text
     field's text, or the id of the choice chosen first; without one a text
     field starts empty and a choice with its first option;
-  - **`customView`**: choosing the item opens this custom view instead
-    (ignored when `form` is set);
   - **`platforms`**: the systems (`windows`, `macos`, `linux`) the item's
     action works on; elsewhere the item is listed as unavailable;
   - **`icon`**: drawn before the title ([Icons](#icons), #139);
@@ -190,7 +188,7 @@ and a lazy submenu's `onOpen` as the action itself would be named.
   - **`accessories`**: shown on the right of the row, in order
     ([Accessories](#accessories), #139).
 
-  An item with no action, form or custom view cannot be activated: the
+  An item with no action or form cannot be activated: the
   footer's button says "No actions", and Enter says so in the status line.
   A held key's repeats and a double click's second click never run an
   action again. Optional fields may be omitted or `null`. A field whose

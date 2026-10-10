@@ -281,9 +281,11 @@ Rust's standard library on `wasm32-wasip2`) is rejected with an explanation.
   extension; they read on both themes, so none has `@light` or `@dark`
   variants. The artwork is Pane's own, under this folder's licences, and
   is held by `crates/pane/tests/default_icons.rs`.
-- `fixtures/faulty`: test fixture whose actions, form, custom view and root
-  results return an error or trap, and whose actions grow its memory to
-  just under the 128 MiB cap or past it.
+- `fixtures/faulty`: test fixture whose actions, form and root results
+  return an error or trap, whose actions grow its memory to just under
+  the 128 MiB cap or past it, and whose counting designed view (its
+  `counter` command) refuses, traps and draws a canvas over Pane's
+  limits.
 - `fixtures/failing-start`: test fixture that builds and installs but traps
   the first time it is asked for its view (after saving a setting), so a
   reload to it fails to start and Retry then starts it.
@@ -315,8 +317,7 @@ Rust's standard library on `wasm32-wasip2`) is rejected with an explanation.
 The [sample](sample-rust/src/lib.rs) is the complete example. A command is a
 `cdylib` crate depending on `pane-extension` that implements `pane_extension::Command`:
 `render`, its list, whose items' actions are closures, and two functions
-for forms and custom views (see [Forms](#forms) and
-[Custom views](#custom-views)), and names its custom view type. The SDK hands
+for forms (see [Forms](#forms)) and opens its designed views. The SDK hands
 Pane the list as a versioned JSON tree and runs an item's closure when the
 user chooses it, then Pane asks for the list again
 ([list-tree.md](../docs/list-tree.md)):
@@ -326,13 +327,14 @@ user chooses it, then Pane asks for the list again
 
 use pane_extension::alloc::{string::String, vec::Vec};
 use pane_extension::feedback::{Toast, show_toast};
-use pane_extension::{Command, CustomView, FieldValue, FormError, Item, List, NoCustomView};
+use pane_extension::{Command, FieldValue, FormError, Item, List};
+use pane_extension::view::NoDesignedView;
 
 struct Hello;
 pane_extension::export!(Hello);
 
 impl Command for Hello {
-    type CustomView = NoCustomView;
+    type DesignedView = NoDesignedView;
 
     async fn render() -> Result<List, String> {
         Ok(List::new("Hello").item(Item::new("hi", "Say hi").on_action(|| async {
@@ -345,8 +347,11 @@ impl Command for Hello {
         Err(FormError { field: None, message: "this command has no forms".into() })
     }
 
-    async fn open_view(_item_id: String) -> Result<CustomView, String> {
-        Err("this command has no custom views".into())
+    async fn open_designed_view(
+        _command: String,
+        _launch: pane_extension::LaunchRecord,
+    ) -> Result<NoDesignedView, String> {
+        Err("this command opens no designed view".into())
     }
 }
 ```
@@ -471,8 +476,9 @@ The [JavaScript](sample-js/src/index.js) and
 [TypeScript](sample-ts/src/index.ts) samples are complete examples. A command
 is an npm package whose `main` module exports `command` with `render`, its
 list, whose items' actions are functions (`onAction`), and two functions for
-forms and custom views (see [Forms](#forms) and
-[Custom views](#custom-views)). The SDK hands Pane the list as a versioned
+forms, and opens its designed views (see [Forms](#forms) and
+[The canvas](#the-canvas-drawing-inside-a-designed-view)). The SDK hands
+Pane the list as a versioned
 JSON tree and runs an item's `onAction` when the user chooses it, then Pane
 asks for the list again ([list-tree.md](../docs/list-tree.md)). Pane's types
 come from
@@ -504,7 +510,7 @@ export const command: Command = {
     throw { message: "this command has no forms" };
   },
   async openView() {
-    throw new Error("this command has no custom views");
+    throw new Error("this command opens no designed view");
   },
 };
 ```
@@ -687,7 +693,7 @@ running, however often it happens. The JS/TS build wraps the exported
 handlers ([`guests/js/adapt.js`](js/adapt.js)) so that a thrown `Error`,
 string or `{ message }` object is always such an error. A crash is
 different: a Rust panic, or in JS/TS resolving with a value of the wrong
-type (or a custom view's `render` throwing), traps the guest. Pane reports it and starts a fresh instance for the next
+type, traps the guest. Pane reports it and starts a fresh instance for the next
 call; after three crashes within five minutes, or a component that cannot
 start, Pane pauses the whole package until the user chooses Retry in
 **Settings › Extensions** (where "Why <title> is paused" shows the details),
@@ -744,7 +750,7 @@ and while it is developed each build and reload) between its lines:
   message and location are logged as an error before the guest traps
   ([`pane_extension::log`](pane-extension/src/log.rs)). Logging waits for Pane to
   take the line, which it does at once; it works in a command's calls, not
-  in a custom view's `Drop`.
+  in a view's destructor.
 - **JavaScript and TypeScript:** `console.debug`, `log`, `info`, `warn`,
   `error`, `trace` and `assert`, formatting their arguments roughly as Node
   does (an `Error` with its stack). What a handler throws is logged too,
@@ -1126,9 +1132,10 @@ declare what only a launched command uses (`search`, `takesQuery`,
 reason. It may run a continuing `service` and declare preferences. Its
 component exports the root-results or indexed-results interface beside
 `command` as any other does, but Pane never opens or runs it, so it needs no
-`render` or `run` of its own: in Rust, `impl pane_extension::Command` with only
-`type CustomView = pane_extension::NoCustomView`; in JavaScript or TypeScript,
-`export const command: Command = {}`. Pins, aliases, fallbacks and hotkeys
+`render` or `run` of its own: in Rust, `impl pane_extension::Command`
+with only `type DesignedView = pane_extension::view::NoDesignedView`; in
+JavaScript or TypeScript, `export const command: Command = {}`. Pins,
+aliases, fallbacks and hotkeys
 recorded for a command before it became a provider (an update that changes
 its mode) are dropped at the next start, with a toast naming them.
 
@@ -1364,13 +1371,14 @@ needs none of them:
 ```rust
 use pane_extension::alloc::{format, string::String};
 use pane_extension::feedback::{Toast, show_toast};
-use pane_extension::{Command, LaunchRecord, LaunchType, NoCustomView};
+use pane_extension::view::NoDesignedView;
+use pane_extension::{Command, LaunchRecord, LaunchType};
 
 struct Toggle;
 pane_extension::export!(Toggle);
 
 impl Command for Toggle {
-    type CustomView = NoCustomView;
+    type DesignedView = NoDesignedView;
 
     async fn run(command: String, launch: LaunchRecord) -> Result<(), String> {
         // A background launch, such as a schedule's, shows nothing.
@@ -1878,98 +1886,105 @@ default address; `-- --port N` for another, which their item "Service
 address" then sets), install
 `target/guests/packages/sample-search`, open Package search and type.
 
-## Custom views
+## The canvas: drawing inside a designed view
 
-An item can open a custom view that the command draws itself: filled
-rectangles and one-line text in a fixed-size area, redrawn after each key
-(arrows, Home, End) or pointer event (press over the view, drag, release).
-Pane keeps focus and the focus ring, and exposes the view to assistive
-technology as one control with the item's label and role and the value the
-view reports. The command keeps each open view's state in a `custom-view`
-resource that `open-view` returns; Pane drops it when the view closes. The
-contract, input, lifecycle and accessibility are described in
-[docs/custom-views.md](../docs/custom-views.md). The "Choose a color" item of
-each sample is the complete example.
+A command whose `pane.json` entry says `"mode": "designed"` opens a
+designed view: a screen it describes as a tree of layout nodes and UI
+components that Pane renders ([designed-tree.md](../docs/designed-tree.md)).
+What a custom view drew — the filled rectangles and one-line text of #21 —
+is one leaf of it now: the **canvas**, a drawing surface for what the UI
+components cannot show (a chart, a colour wheel, a game board), beside
+ordinary controls. The "Choose a color" item of each sample launches its
+package's `color` command, whose designed view draws the picker as a
+canvas.
 
-Rust (the view is a type implementing `GuestCustomView`; its methods take
-`&self`, so state goes in `Cell`s or `RefCell`s):
+The canvas is sized by its style as any node is — a fixed `width` and
+`height`, or the space the layout gives it, which the render context
+names for it (`"canvases"`, by its key; a change of it is the resize
+event). It takes input — the pointer's press, drag, release, enter and
+leave, the wheel, a double click, the secondary button, keys with their
+modifiers (Tab, Enter and Escape stay with Pane) — and is one node to
+assistive technology, with a role from the widened set, a label and a
+value. A control-like canvas can name the semantic handlers instead of
+parsing keys: `onIncrement` (the up arrow), `onDecrement` (the down one)
+and `onActivate` (Space).
+
+Rust (the view is a type implementing
+[`pane_extension::view::View`](../docs/designed-tree.md#the-canvas);
+drawing operations are `Draw` values, events `CanvasEvent`s):
 
 ```rust
 use core::cell::Cell;
-use pane_extension::alloc::{format, string::String, vec};
-use pane_extension::{
-    CustomView, CustomViewInfo, CustomViewRole, Frame, GuestCustomView, Key, Rect, Shape, ViewEvent,
-};
+use pane_extension::view::{CanvasEvent, Cx, Draw, Paint, View, canvas, column};
+use pane_extension::Color;
 
 struct Picker { column: Cell<i32> }
 
-impl GuestCustomView for Picker {
-    async fn render(&self) -> Frame {
-        let x = self.column.get() * 36;
-        Frame {
-            width: 288,
-            height: 36,
-            shapes: vec![Shape::Rect(Rect { x, y: 0, width: 36, height: 36, fill: 0x1e88e5 })],
-            value: format!("Column {}", self.column.get() + 1),
-        }
-    }
-
-    async fn handle_event(&self, event: ViewEvent) -> Result<(), String> {
-        match event {
-            ViewEvent::Key(Key::Right) => self.column.set((self.column.get() + 1).min(7)),
-            ViewEvent::Key(Key::Left) => self.column.set((self.column.get() - 1).max(0)),
-            ViewEvent::PointerDown(at) => self.column.set((at.x / 36).clamp(0, 7)),
-            _ => {}
-        }
-        Ok(())
+impl View for Picker {
+    fn render(&mut self, cx: &mut Cx<Self>) -> impl IntoAnswer {
+        let x = self.column.get() as f32 * 36.;
+        column().child(
+            canvas()
+                .key("grid")
+                .width(Length::Px(288.))
+                .height(Length::Px(36.))
+                .role(CanvasRole::ColorWell)
+                .label("Column")
+                .value(format!("Column {}", self.column.get() + 1))
+                .on_key(cx.value_listener(|this, key| {
+                    if key == "right" { this.column.set((this.column.get() + 1).min(7)) }
+                }))
+                .on_pointer_down(cx.canvas_listener(|this, event| {
+                    if let CanvasEvent::PointerDown { x, .. } = event {
+                        this.column.set((x as i32 / 36).clamp(0, 7));
+                    }
+                }))
+                .ops([
+                    Draw::rect(x, 0., 36., 36.).filled(Paint::Exact(Color::hex("#1e88e5"))),
+                ]),
+        )
     }
 }
 
-// The item: `Item::new("pick", "Pick").custom_view(CustomViewInfo { title:
-// "Pick".into(), label: "Column".into(), role: CustomViewRole::ColorWell })`.
-// In `impl Command`:
-type CustomView = Picker;
-
-async fn open_view(_item_id: String) -> Result<CustomView, String> {
-    Ok(CustomView::new(Picker { column: Cell::new(0) }))
+// In `impl Command`: `type DesignedView = Picker;`
+async fn open_designed_view(_command: String, _launch: LaunchRecord) -> Result<Picker, String> {
+    Ok(Picker { column: Cell::new(0) })
 }
 ```
 
-JavaScript or TypeScript (a view is any object with `async render()` and
-`async handleEvent(event)`; shapes and events are tagged values):
+JavaScript or TypeScript (a view is what
+[`createView`](../docs/designed-tree.md) makes of a component; operations
+and events are plain objects, every property typed):
 
-```ts
-class Picker implements CustomView {
-  column = 0;
-  async render(): Promise<Frame> {
-    return {
-      width: 288,
-      height: 36,
-      shapes: [{ tag: "rect", val: { x: this.column * 36, y: 0, width: 36, height: 36, fill: 0x1e88e5 } }],
-      value: `Column ${this.column + 1}`,
-    };
-  }
-  async handleEvent(event: ViewEvent) {
-    if (event.tag === "key" && event.val === "right") this.column = Math.min(this.column + 1, 7);
-    if (event.tag === "key" && event.val === "left") this.column = Math.max(this.column - 1, 0);
-    if (event.tag === "pointer-down") this.column = Math.min(Math.max(Math.floor(event.val.x / 36), 0), 7);
-  }
+```tsx
+function Picker() {
+  const [column, setColumn] = useState(0);
+  return (
+    <Column>
+      <Canvas
+        key="grid"
+        width={288}
+        height={36}
+        role="color-well"
+        label="Column"
+        value={`Column ${column + 1}`}
+        onKey={(key) => key === "right" && setColumn(Math.min(column + 1, 7))}
+        onPointerDown={(event) => setColumn(Math.min(Math.max(Math.floor(event.x / 36), 0), 7))}
+        ops={[{ op: "rect", x: column * 36, y: 0, width: 36, height: 36, fill: { raw: "#1e88e5" } }]}
+      />
+    </Column>
+  );
 }
-// items: [{ id: "pick", title: "Pick", customView: { title: "Pick", label: "Column", role: "color-well" } }]
 
-async openView(itemId) {
-  return new Picker();
-},
+// In the command: `openView(commandId) { return createView(Picker); }`.
 ```
 
-Both methods must be `async` in JS/TS (see the
-[contract notes](../docs/custom-views.md#contract)); `@pane-app/extension` types
-them as returning a `Promise`, so the build's type check rejects a
-synchronous one. A frame may have at most 4096 shapes, 256 characters per
-text and 4096 x 4096 pixels; Pane shows a larger one as your error. Throwing from
-`handleEvent` shows the error and keeps the view; a crash closes it. A
-command without custom views uses `type CustomView = NoCustomView;` in Rust
-and makes `open_view`/`openView` fail.
+A canvas may hold at most 20,000 drawing operations (64 KiB per text
+operation); Pane shows a larger one as your error, the view keeping its
+last good tree. While the view renders, its canvases can ask Pane to
+measure text (`measureText` in JS/TS, `pane_extension::view::measure_text`
+in Rust), so text drawn beside shapes fits what it says. Throwing from a
+listener shows the error and keeps the view; a crash closes it.
 
 ## Operations
 
@@ -2414,8 +2429,8 @@ After rebuilding a component, reload the package instead of restarting
 Pane: on the package's page in Settings (its sidebar's **Extensions**
 group), the Actions menu of every enabled package from a folder has
 **Reload**. Choosing it reads the package's source folder again and replaces only that
-package; Pane and every other package keep running, including a custom view
-of another package that is open. It works the same for Rust, JavaScript and
+package; Pane and every other package keep running, including a designed
+view of another package that is open. It works the same for Rust, JavaScript and
 TypeScript packages, since Pane sees only components. A reload goes through
 two stages, and a failure in each is reported differently:
 

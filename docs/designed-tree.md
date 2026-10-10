@@ -18,8 +18,8 @@ needs:
   Enter on its row, its alias, a fallback, its hotkey, its quick slot,
   another command — and never calls the command's `render`. A component
   that serves no designed command answers with an error; Pane never calls
-  it then. The custom view's opener is `open-custom-view(item-id)`
-  (retired when the canvas lands, #242).
+  it then. (The custom view's own opener, `open-custom-view(item-id)`, is
+  retired: what a custom view drew is a canvas in the tree now, #242.)
 - **`view.render(context) -> result<rendered, string>`** draws the view:
   `rendered` carries the tree as JSON, naming the version of the UI
   component set it uses, and `refresh-after-ms`, how long Pane waits
@@ -28,9 +28,16 @@ needs:
   draws, why Pane asks (`"open"`, the view's first drawing; `"event"`,
   the render an event's answer asks for; `"refresh"`, the drawing the
   view asked to wait for; `"push"`, the drawing the view's own work asked
-  for, #243) and the version of the component set Pane supports, such as
-  `{"render": 1, "view": 7, "why": "open", "ui": "1.1"}`; it can grow
-  without WIT changes.
+  for, #243), the version of the component set Pane supports, and the
+  sizes its canvases were laid out at (#242), such as `{"render": 1,
+  "view": 7, "why": "open", "ui": "1.3", "canvases": {"grid":
+  {"width": 376, "height": 108}}}`; it can grow without WIT changes.
+  While it renders, the view's canvases may ask Pane to measure text
+  (`pane:extension/view.measure-text`, wit/view.wit): the width and
+  height a text run occupies at the size and weight the tree's text
+  styles resolve to, so text drawn beside shapes fits what it says —
+  `pane_extension::view::measure_text` in Rust, `measureText` in
+  JavaScript and TypeScript.
 - **`view.handle-event(event) -> result<outcome, string>`** handles the
   user's input: `ui-event` carries the callback id the tree named
   (`callback`), the sequence number of the render whose tree the user saw
@@ -85,6 +92,11 @@ exported command's `openView` resolves with `createView(Component)` from
 state; the SDK's runtime writes the tree. Both SDKs keep the callbacks of
 the last two renders, so a press of what the user could see is delivered
 even if the view has rendered since, and an older event is dropped.
+
+The custom views of #21 (see the retired `docs/custom-views.md`, folded
+into this document's [canvas](#the-canvas)) became the canvas: their
+rectangles and text are canvas operations, their keys and pointer input
+the canvas's events, their one accessibility node the canvas's one.
 
 The samples are a counter and a components gallery, in
 [Rust](../guests/sample-view/src/lib.rs),
@@ -312,7 +324,7 @@ A document is one JSON object: its version and its root node.
   tokens' colour grammar and Markdown (#237); 1.2 added the keyed state
   — fields that edit, the select's searchable state, scroll by key —
   with the inputs' partial control and the focus, blur and key events
-  (#238).
+  (#238); 1.3 added the canvas (#242).
 - Every node has a `type`, and may have:
   - `key`: the node's stable identity among its siblings, which Pane
     keeps node state under (the keyed reconciler, below: the focus of a
@@ -496,6 +508,107 @@ does for a custom view: it leaves the screen.
   to the latest while one is in flight, throttled to `throttleMs` when
   given), and `onChange` runs on its commits — Enter (a text area's
   Enter inserts a newline; its commits are blurs') and a blur.
+
+### The canvas
+
+`canvas` is a leaf the extension draws into, for what the UI components
+cannot show (#242, the custom view's successor): a chart, a colour wheel,
+a game board, beside ordinary controls. It is **keyed** like every
+stateful node (its focus, its drag and its bounds surviving a re-render
+that still draws it), and **sized by its style** as any node is — a fixed
+`width` and `height`, or the space the layout gives it (`grow`), which
+the render context names for it by its key, a change of which is the
+resize event.
+
+- **`ops`**: the drawing operations, painted in order (later ones over
+  earlier ones), clipped to the canvas's size. At most 20,000; a canvas
+  over it is the extension's error, the view keeping its last good tree.
+  Each text operation at most 64 KiB.
+- **`role`**, **`label`**, **`value`**: what the canvas is to assistive
+  technology — **one node**, whatever it draws. The role is one of the
+  widened set `color-well`, `slider`, `image`, `figure`, `group`,
+  `generic` (the default); the value is what it holds, as a colour well
+  names its chosen colour. The drawing itself adds no nodes.
+- The input handlers, each naming a callback id: **`onPointerDown`**,
+  **`onPointerUp`**, **`onPointerMove`** (a drag's, coalesced to the
+  latest while one is in flight, as the custom view's were),
+  **`onPointerEnter`** and **`onPointerLeave`** (the hover: enter carries
+  no point, and neither is a drag), **`onWheel`**, **`onDoubleClick`**,
+  **`onSecondary`** (the right button), and **`onResize`**. A press
+  outside the drawing area is no press of the canvas; a drag continues
+  outside it; the window's deactivation ends one the window can no
+  longer see the release of.
+- The semantic handlers, for a control-like canvas that parses no keys:
+  **`onIncrement`** (the up arrow), **`onDecrement`** (the down one) and
+  **`onActivate`** (Space). A canvas naming them takes those keys
+  itself; they reach no `onKey`.
+- Keys ride the node's own **`onKey`** as every focusable node's do: all
+  non-reserved keys with their modifiers. Tab, Enter and Escape stay
+  with Pane.
+
+The canvas's payload events, as the listeners read them:
+
+- A pointer event: `{"event":"pointer-down"|"pointer-move"|
+  "pointer-up"|"pointer-enter"|"pointer-leave"|"double-click"|
+  "secondary","x":12,"y":34,"button":"left"|"right","clicks":1,
+  "ctrl":false,"alt":false,"shift":false}` — the point in the canvas's
+  own space, its origin the top-left corner. Enter and leave carry no
+  point: the window learns of the hover before it sees a position.
+- A wheel event: `{"event":"wheel","x":..,"y":..,"dx":0,"dy":-2,
+  "unit":"pixel"|"line","ctrl":..,"alt":..,"shift":..}`.
+- A resize: `{"event":"resize","width":376,"height":108}`.
+
+Every payload's numbers are JSON numbers; the SDKs read them into typed
+events (`pane_core`'s tests hold the three languages to the same trees).
+
+The drawing operations:
+
+- **Rectangles and circles**: `{"op":"rect","x":..,"y":..,"width":..,
+  "height":..,"radius":..,"fill":<colour>,"stroke":<colour>,
+  "strokeWidth":..}` (the `radius` rounding the corners) and
+  `{"op":"circle","x":..,"y":..,"radius":..,"fill":..,"stroke":..}` —
+  a circle's `x` and `y` its center.
+- **Paths**, built operation by operation and painted by a fill or a
+  stroke: `{"op":"move"|"line","x":..,"y":..}`, `{"op":"quad","cx":..,
+  "cy":..,"x":..,"y":..}` and `{"op":"cubic","c1x":..,"c1y":..,"c2x":..,
+  "c2y":..,"x":..,"y":..}`, `{"op":"arc","x":..,"y":..,"radius":..,
+  "start":..,"end":..,"ccw":false}` (radians), `{"op":"close"}`, then
+  `{"op":"fill","color":<colour>}` or `{"op":"stroke","color":<colour>,
+  "width":..,"cap":"butt"|"round"|"square","join":"miter"|"round"|
+  "bevel"}` — the stroke one pixel wide when the tree gives none.
+- **Text**: `{"op":"text","x":..,"y":..,"text":"..","style":<text
+  style>,"level":<text level>,"color":<colour>,"size":..,"weight":..}`
+  — one line, its top-left corner at `x`, `y`, in a token style or a
+  raw size, its colour corrected against the canvas's surface as a
+  text's is.
+- **Images**: `{"op":"image","image":<icon model>,"x":..,"y":..,
+  "width":..,"height":..}` — any image source of the icon model, drawn
+  while it loads as its fallback or nothing.
+- **Clip**: `{"op":"clip","x":..,"y":..,"width":..,"height":..}` — what
+  follows is clipped to this rectangle, intersected with the clips
+  before it.
+- **Transform**: `{"op":"translate"|"scale","x":..,"y":..}` and
+  `{"op":"rotate","degrees":..}` — the space the operations that follow
+  draw in, from the origin.
+
+Colours are the tree's grammar everywhere: tokens, raw values, pairs or
+exact ones. A **fill or stroke is a drawing**, drawn as resolved and
+never corrected (an authored swatch shows its exact value); only the
+text of a text operation is corrected, as any text is.
+
+The drawing is painted through GPUI's `canvas` and path builder, never
+one element per shape: a run of shape operations between text and image
+ones is one GPUI canvas, so the order the tree paints them in is kept —
+and text and image operations draw as the positioned elements GPUI's own
+text and images are, above the shapes they follow. Rectangles expand
+into path operations at parse time; a stroke's caps and joins are the
+path builder's.
+
+The samples' colour picker is one: `guests/sample-{rust,js,ts}` draw
+their swatch grid, preview and measured hex code as canvas operations
+inside a layout. The designed fixture's `canvas` command answers one by
+hand, filling its space and drawing what it receives, which
+`crates/pane/tests/designed_canvas.rs` drives.
 
 ### Icons and images
 
