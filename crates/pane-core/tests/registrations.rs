@@ -22,7 +22,7 @@ use std::time::{Duration, Instant};
 
 use futures::executor::block_on;
 use pane_core::clipboard::{Clock, ManualClock, SystemClock};
-use pane_core::hotkeys::Shortcut;
+use pane_core::hotkeys::{HotkeyError, Hotkeys, Shortcut};
 use pane_core::{Launcher, PackageIdentity, ResultAction, Runtime, Status, Unavailable};
 use tempfile::TempDir;
 
@@ -108,12 +108,12 @@ struct AnyHotkeys {
     registered: Mutex<Vec<Shortcut>>,
 }
 
-impl pane_core::Hotkeys for AnyHotkeys {
+impl Hotkeys for AnyHotkeys {
     fn unavailable(&self) -> Option<String> {
         None
     }
 
-    fn register(&self, shortcut: &Shortcut) -> Result<(), pane_core::HotkeyError> {
+    fn register(&self, shortcut: &Shortcut) -> Result<(), HotkeyError> {
         self.registered.lock().unwrap().push(shortcut.clone());
         Ok(())
     }
