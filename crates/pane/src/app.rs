@@ -673,15 +673,16 @@ impl LauncherWindow {
     }
 
     /// Cancels the IME composition active in one of this window's fields
-    /// — the query field, or the open form's text fields — discarding its
-    /// marked text, if one is active: the next key is free to act, as it
-    /// is on a platform whose input method takes the key itself. Whether
-    /// one was cancelled.
+    /// — the query field, the open form's text fields, the open designed
+    /// view's — discarding its marked text, if one is active: the next key
+    /// is free to act, as it is on a platform whose input method takes the
+    /// key itself. Whether one was cancelled.
     fn cancel_composition(&self, window: &mut Window, cx: &mut Context<Self>) -> bool {
         let mut fields = vec![self.query_field()];
         if let Some(form) = &self.form {
             fields.extend(form.text_fields());
         }
+        fields.extend(self.designed_text_fields());
         for input in fields {
             let marked = input.update(cx, |input, cx| input.marked_text_range(window, cx));
             if let Some(marked) = marked {
@@ -1069,6 +1070,7 @@ impl LauncherWindow {
             && keystroke.key == "backspace"
             && self.menu.is_none()
             && self.actions.is_none()
+            && !self.designed_takes_backspace(window)
             && self.launcher.pop_designed_view()
         {
             // Popping lands at once, as the back key's pop does: the view
@@ -1274,7 +1276,7 @@ impl LauncherWindow {
     /// one window's view, so no window is left out; it is an effect, so it
     /// is safe wherever the launcher changed, including from another
     /// window's own flow.
-    fn sync_screen(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn sync_screen(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         // The Actions panel belongs to the screen it opened over, root
         // search or a command's list: a screen that replaced it (a hotkey
         // pressed, a change from Settings) takes the panel with it, and

@@ -30,6 +30,14 @@
 //! the event with callback id 0 — is recorded and drawn ("Popped: …",
 //! or "Popped" when it carried no result), so a test can see it arrive.
 //!
+//! The keyed state (#238) is answered by hand as well: "Draw the fields"
+//! answers a tree of keyed fields — a text input with `onInput` and
+//! `onChange`, a text area — and every event the view receives is
+//! recorded and drawn in it ("Sent: …"), so a test can see the payloads
+//! Pane sent; "Draw a tree with key problems" answers one whose keys two
+//! siblings share and whose text input has none, which a developed
+//! package's log reports.
+//!
 //! Every render also answers `refresh-after-ms` as the state's
 //! `refresh_ms` says, so the tests of #236 drive Pane's refreshing of a
 //! view through it — each button below sets it, its presses' answers
@@ -88,6 +96,11 @@ enum Next {
     /// The component set's vocabulary, once, then again with the toggle
     /// flipped.
     Components,
+    /// The fields, whose events the view records and draws.
+    Fields,
+    /// A tree whose keys two siblings share and whose text input has
+    /// none, which a developed package's log reports.
+    KeyProblems,
 }
 
 /// The root view's state, kept in the resource.
@@ -102,6 +115,9 @@ struct State {
     /// What every render answers `refresh-after-ms` as, which the refresh
     /// buttons below set: None until one is pressed.
     refresh_ms: Cell<Option<u32>>,
+    /// The events the view has received, drawn in the fields' tree so a
+    /// test can see what Pane sent (#238): (callback, key, payload).
+    received: RefCell<Vec<(u32, String, String)>>,
 }
 
 // SAFETY: a component's code runs on one thread.
@@ -134,9 +150,10 @@ impl GuestView for Designed {
         }
         let next = STATE.next.replace(Next::Counter);
         // The component set stays on screen until the counter's buttons
-        // are pressed again; its toggle flips within it.
-        if matches!(next, Next::Components) {
-            STATE.next.set(Next::Components);
+        // are pressed again; its toggle flips within it, as the fields'
+        // and the key problems' trees answer their own events.
+        if matches!(next, Next::Components | Next::Fields | Next::KeyProblems) {
+            STATE.next.set(next);
         }
         let tree = match next {
             Next::Counter => counter(popped),
@@ -165,6 +182,8 @@ impl GuestView for Designed {
                 })
             }
             Next::Components => components(),
+            Next::Fields => fields(&received_texts()),
+            Next::KeyProblems => key_problems(),
         };
         Ok(Rendered {
             tree,
@@ -178,6 +197,14 @@ impl GuestView for Designed {
         if event.callback == POP_CALLBACK {
             *self.popped.borrow_mut() = Some(pop_result_of(&event.payload));
             return Ok(outcome());
+        }
+        // Every event is recorded, drawn in the fields' tree, so a test
+        // can see what Pane sent: the callback, the key, the payload.
+        {
+            let mut received = STATE.received.borrow_mut();
+            received.push((event.callback, event.key.clone(), event.payload.clone()));
+            let excess = received.len().saturating_sub(8);
+            received.drain(0..excess);
         }
         match event.callback {
             1 if event.key == "increment" => {
@@ -214,6 +241,13 @@ impl GuestView for Designed {
                 })
             }
             13 => STATE.next.set(Next::Components),
+            18 => STATE.next.set(Next::Fields),
+            19 => STATE.next.set(Next::KeyProblems),
+            20 => STATE.next.set(Next::Counter),
+            // The fields' input and change handlers: the event is
+            // recorded above, drawn in the fields' tree; nothing next.
+            29 => {}
+            30 => {}
             22 => {
                 // The toggle's change: the payload names the value the
                 // user chose, so the fixture flips with it.
@@ -286,14 +320,16 @@ static STATE: State = State {
     flipped: Cell::new(false),
     renders: Cell::new(0),
     refresh_ms: Cell::new(None),
+    received: RefCell::new(Vec::new()),
 };
 
 /// The buttons the counter's tree names: (label, key, callback id). The
 /// navigation ones answer the stack (#239), the component set's draws
 /// the component tree (#237), and the last four set what every render
-/// asks `refresh-after-ms` (#236); a pushed view's tree names the
+/// asks `refresh-after-ms` (#236); the fields' and the key problems'
+/// trees answer the keyed state (#238); a pushed view's tree names the
 /// navigation ones alone.
-const BUTTONS: [(&str, &str, u32); 17] = [
+const BUTTONS: [(&str, &str, u32); 19] = [
     ("Increment", "increment", 1),
     ("Answer an error", "error", 2),
     ("Answer an over-limit tree", "over-limit", 3),
@@ -307,6 +343,8 @@ const BUTTONS: [(&str, &str, u32); 17] = [
     ("Pop with a result", "pop", 11),
     ("Replace this view", "replace", 12),
     ("Draw the component set", "components", 13),
+    ("Draw the fields", "fields", 18),
+    ("Draw a tree with key problems", "key-problems", 19),
     ("Answer refresh 10ms", "refresh-10", 14),
     ("Answer refresh 25h", "refresh-25h", 15),
     ("Answer refresh 1s", "refresh-1s", 16),
@@ -412,6 +450,98 @@ fn components() -> String {
     )
 }
 
+/// The fields as their tree: a text input keyed `name`, asking for its
+/// value as the user types it (callback 29) and on its commits (30), a
+/// text area keyed `notes`, and the events the view last received drawn
+/// as texts, so a test can see what Pane sent.
+fn fields(received: &[String]) -> String {
+    let mut children = Vec::new();
+    children.push(String::from(
+        "{\"type\":\"text\",\"text\":\"The fields\",\"style\":\"title\"}",
+    ));
+    children.push(format!(
+        "{{\"type\":\"text\",\"text\":\"Renders: {}\"}}",
+        STATE.renders.get()
+    ));
+    children.push(String::from(
+        "{\"type\":\"text-input\",\"key\":\"name\",\"value\":\"typed\",         \"placeholder\":\"Type here\",\"label\":\"Name\",\"onInput\":29,\"onChange\":30}",
+    ));
+    children.push(String::from(
+        "{\"type\":\"text-area\",\"key\":\"notes\",\"value\":\"two lines\",\"label\":\"Notes\"}",
+    ));
+    for text in received {
+        children.push(format!("{{\"type\":\"text\",\"text\":\"{text}\"}}"));
+    }
+    children.push(String::from(
+        "{\"type\":\"row\",\"gap\":\"s\",\"children\":[{\"type\":\"button\",         \"key\":\"again\",\"label\":\"Answer the counter again\",\"onPress\":20}]}",
+    ));
+    format!(
+        "{{\"version\":\"{COMPONENT_SET}\",\"root\":{{\"type\":\"column\",\"gap\":\"m\",         \"children\":[{}]}}}}",
+        children.join(",")
+    )
+}
+
+/// A tree whose keys two siblings share and whose text input has none:
+/// what a developed package's log reports, and what Pane matches by
+/// position instead.
+fn key_problems() -> String {
+    let children = Vec::from([
+        String::from("{\"type\":\"text\",\"text\":\"Key problems\"}"),
+        String::from(
+            "{\"type\":\"row\",\"gap\":\"s\",\"children\":[\
+             {\"type\":\"text\",\"key\":\"shared\",\"text\":\"One\"},\
+             {\"type\":\"text\",\"key\":\"shared\",\"text\":\"Two\"}]}",
+        ),
+        String::from("{\"type\":\"text-input\",\"value\":\"keyless\"}"),
+        String::from(
+            "{\"type\":\"button\",\"key\":\"again\",\"label\":\
+             \"Answer the counter again\",\"onPress\":20}",
+        ),
+    ]);
+    format!(
+        "{{\"version\":\"{COMPONENT_SET}\",\"root\":{{\"type\":\"column\",\"gap\":\"m\",\
+         \"children\":[{}]}}}}",
+        children.join(",")
+    )
+}
+
+/// The events the view last received, as the texts the fields' tree
+/// draws: "Sent: {callback} on {key}: {payload}".
+fn received_texts() -> Vec<String> {
+    STATE
+        .received
+        .borrow()
+        .iter()
+        .map(|(callback, key, payload)| {
+            format!(
+                "Sent: {callback} on {}: {}",
+                if key.is_empty() { "(no key)" } else { key },
+                escaped(payload)
+            )
+        })
+        .collect()
+}
+
+/// `text` with the characters escaped that a JSON string cannot hold
+/// bare, so the fixture can draw a payload it received.
+fn escaped(text: &str) -> String {
+    let mut escaped = String::new();
+    for character in text.chars() {
+        match character {
+            '"' => escaped.push_str("\\\""),
+            '\\' => escaped.push_str("\\\\"),
+            '\n' => escaped.push_str("\\n"),
+            '\r' => escaped.push_str("\\r"),
+            '\t' => escaped.push_str("\\t"),
+            other if (other as u32) < 0x20 => {
+                escaped.push_str(&format!("\\u{:04x}", other as u32));
+            }
+            other => escaped.push(other),
+        }
+    }
+    escaped
+}
+
 /// A tree of one node more than the limit, with a count of 10001.
 fn over_limit() -> String {
     let mut tree = format!(
@@ -473,6 +603,7 @@ impl Guest for Fixture {
         STATE.next.set(Next::Counter);
         STATE.renders.set(0);
         STATE.refresh_ms.set(None);
+        STATE.received.borrow_mut().clear();
         Ok(View::new(Designed {
             root: true,
             popped: RefCell::new(None),

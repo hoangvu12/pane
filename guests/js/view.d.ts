@@ -157,6 +157,18 @@ export interface NodeProps {
   place?: Place;
   /** How far the node sits from its place in a stack. */
   offset?: Length | { x?: Length; y?: Length };
+  /** Asks for the keyboard: a node whose ask is new — the tree the user
+   * saw did not name it — is focused, so a view's opening ask is an
+   * auto-focus and a later one a focus moved from code. An unchanged ask
+   * leaves the focus wherever the user moved it. */
+  focus?: boolean;
+  /** Runs when the node takes the keyboard. */
+  onFocus?: () => unknown;
+  /** Runs when the node loses the keyboard. */
+  onBlur?: () => unknown;
+  /** Runs for a key pressed while the node is focused, told the key as a
+   * key sequence spells it. Tab, Enter and Escape stay with Pane. */
+  onKey?: (key: string) => unknown;
   children?: Children;
 }
 
@@ -388,11 +400,24 @@ export interface EmptyStateProps extends NodeProps {
   icon?: IconSource;
 }
 
-/** One text field's properties. Its children spell its value. */
+/** One text field's properties. Its children spell its value, or `value`
+ * names it; the field is partially controlled — it edits at once, its
+ * state kept by its key, and a `value` that differs from the field's
+ * value in the previous render replaces its text. */
 export interface TextInputProps extends NodeProps {
+  value?: string;
   placeholder?: string;
   label?: string;
-  onChange?: () => unknown;
+  /** Hears the field's value as the user types it — only when the field
+   * asks for it: Pane coalesces the events to the latest while one is in
+   * flight, and throttles them to `throttleMs` when given. */
+  onInput?: (value: string) => unknown;
+  /** Runs when the field's value is committed (Enter, a blur). */
+  onChange?: (value: string) => unknown;
+  /** The least time between the field's input events, when it asks for
+   * them: the events between are dropped, the latest kept for the time's
+   * end. */
+  throttleMs?: number;
 }
 
 /** A column: children below each other. */

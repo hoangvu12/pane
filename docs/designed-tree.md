@@ -33,10 +33,26 @@ needs:
   (`callback`), the sequence number of the render whose tree the user saw
   (`render`), the key of the node the event was raised on (`key`, `""`
   when the tree gave it none) and the event's details as JSON
-  (`payload`: `"{}"` for a press, `{"value": …}` for a change — the
-  value the user chose, a boolean, a string or a number). Pane then calls
-  `view.render` again and draws the answer. `outcome` (`push`, `replace`,
-  `pop`) changes the view's navigation stack, below.
+  (`payload`: `"{}"` for a press, `{"value": …}` for a change or an
+  input — the value the user chose or typed, a boolean, a string or a
+  number — and `{"key": "…"}` for a key). Pane then calls `view.render`
+  again and draws the answer. `outcome` (`push`, `replace`, `pop`)
+  changes the view's navigation stack, below.
+
+The event set: press (a button, a link, a row, a span), change (a
+committed value — a field's, a control's), input (a field's value as the
+user types it, only when the field asks for it), focus and blur (a
+focusable node taking and losing the keyboard), key (a key pressed while
+a node that asks for them is focused), and the pop event of the
+navigation stack. Tab, Enter and Escape stay with Pane, and so does any
+key that acted.
+
+**Stale events:** an event is raised on the tree the user saw — each
+control carries the render it was drawn from — and is delivered even if
+the view has rendered since, while the view holds no render more than
+one past it (the two the SDKs keep) and the node with that key still
+names a handler of the event's kind; otherwise it is dropped, and
+reported in the extension's log while its package is developed.
 
 Events of one view are delivered one at a time, in order; an answer that
 arrives after its view left the screen is discarded, and a tree is shown
@@ -183,6 +199,40 @@ timer, in [Rust](../guests/sample-timer/src/lib.rs),
 [TypeScript](../guests/sample-timer-ts/src/index.tsx), held by
 `crates/pane-core/tests/view_refresh.rs`.
 
+## Keys and host-owned state
+
+What must react within a frame is Pane's, kept by key (#238): each new
+tree is reconciled against the previous one by path key — a parent's key
+composed with the child's own, or the child's position when it gives
+none — and per key the window keeps:
+
+- the text, the caret, the selection and the input method's composition
+  of a field (GPUI's editable text, with undo and the clipboard), and
+  the select's open state, query and highlight;
+- the focus of every focusable control, its hover and pressed, and each
+  scroll region's position;
+- stable accessibility ids: the paths themselves.
+
+A key that disappears loses its state, and a node of a different kind
+under the same key is new. Static nodes may omit keys and are matched by
+position; interactive and stateful nodes (fields, selects, toggles,
+scroll regions, anything with a callback) should take one — keys shared
+by siblings and stateful nodes without one are matched by position
+instead, and reported in the extension's log while the package is
+developed. This generalises the form's reconciliation of its fields'
+ids and focus.
+
+**Partially controlled inputs:** a field edits at once; the extension
+hears `input` as the user types (coalesced to the latest while one is in
+flight, throttled when the field asks) and `change` when a value is
+committed (Enter, a blur). A value the extension sets wins — but only
+when it differs from the node's value in the extension's *previous*
+render: an unchanged value is no instruction, and neither is one the
+field itself reported (its own text, or a value an input or change event
+carried), so echoing a field's value back never fights fast typing. A
+value that counts as set replaces the text and moves the caret to its
+end.
+
 ## The document
 
 A document is one JSON object: its version and its root node.
@@ -211,17 +261,32 @@ A document is one JSON object: its version and its root node.
   one of another major is refused as the extension's error, naming both
   versions. Additive changes (a component, a property, an event) bump the
   minor; 1.1 added the layout primitives, the shared UI components, the
-  tokens' colour grammar and Markdown (#237).
+  tokens' colour grammar and Markdown (#237); 1.2 added the keyed state
+  — fields that edit, the select's searchable state, scroll by key —
+  with the inputs' partial control and the focus, blur and key events
+  (#238).
 - Every node has a `type`, and may have:
   - `key`: the node's stable identity among its siblings, which Pane
-    keeps node state under (the keyed reconciler, #238; the focus of a
-    control survives a re-render that still draws it);
+    keeps node state under (the keyed reconciler, below: the focus of a
+    control, a field's text and caret, a select's open state, a scroll
+    region's position, each surviving a re-render that still draws the
+    node, wherever it moved);
   - `name`: what assistive technology reads the node by, when the node's
     own content does not name it (a column's or row's);
   - `navigationTitle`: what names the view, read from the root node only
     — the screen's title, shown where a screen's title is (the footer's
     left names it as it names a custom view's; the search header, once
     the List's search field owns it, #240). Ignored on any other node;
+  - `focus`: `true` asks for the keyboard — an ask that is new (the tree
+    the user saw did not name it) focuses the node, so a view's opening
+    ask is an auto-focus and a later one a focus moved from code; an
+    unchanged ask leaves the focus wherever the user moved it;
+  - `onFocus`, `onBlur`: callback ids run when a focusable node takes and
+    loses the keyboard;
+  - `onKey`: a callback id run for a key pressed while the node is
+    focused, its payload `{"key": "…"}` naming the key as a key sequence
+    spells it (its modifiers, then its key). Tab, Enter and Escape stay
+    with Pane, and so does any key that acted;
   - `requires`: the minimum minor version of the component set the node
     needs; a node Pane cannot satisfy degrades as an unknown node does;
   - `fallback`: the node drawn instead when Pane does not know the node;
@@ -349,9 +414,13 @@ does for a custom view: it leaves the screen.
 - **`segmented`** — `options` (`{ "value", "label" }`), `value`,
   `label`, `onChange`: the Settings board's track; its arrows move the
   choice, a change telling the extension `{"value": "…"}`.
-- **`select`** — `options`, `value`, `label`, `onChange`: a well showing
-  the chosen option. Enter and a click step through its options until
-  #238's keyed state opens the searchable select.
+- **`select`** — `options`, `value`, `label`, `onChange`: Pane's
+  searchable select, keyed, so its open state, query and highlight
+  survive a re-render that still draws it. Enter, Down and a click open
+  its popup — the choices as rows, narrowed by a local search, the
+  arrows and Enter choosing — and a choice commits through `onChange`;
+  Escape and Tab close it without choosing. The trigger shows the choice
+  the tree names, read live each frame.
 - **`slider`** — `value`, `min` (0), `max` (1), `step` (0.1), `label`,
   `onChange`: its arrows adjust it by its step, a click moves it to
   where its rail was clicked, and a change tells the extension
@@ -369,11 +438,16 @@ does for a custom view: it leaves the screen.
 - **`empty-state`** — `title`, `description`, `icon`, its children its
   actions: the notice the launcher's own empty board draws.
 - **`text-input`**, **`password-input`**, **`text-area`** — `value`,
-  `placeholder`, `label`, `onChange`: a well holding the value the tree
-  named, focusable, Enter committing it. The value drawn is the value
-  the tree names and a commit tells the extension that value; the
-  editing state that survives a re-render — the caret, the typing —
-  arrives with #238's keyed reconciler.
+  `placeholder`, `label`, `onInput`, `throttleMs`, `onChange`: a well
+  holding GPUI's own editable text — typing, the input method's
+  composition, the selection, undo and the clipboard never wait for the
+  extension — keyed, so its editing state survives a re-render that
+  still draws the field. The field is partially controlled: the value
+  the tree names is the value it starts from and the one an echo of it
+  never fights, `onInput` hears its value as the user types (coalesced
+  to the latest while one is in flight, throttled to `throttleMs` when
+  given), and `onChange` runs on its commits — Enter (a text area's
+  Enter inserts a newline; its commits are blurs') and a blur.
 
 ### Icons and images
 

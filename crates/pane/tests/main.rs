@@ -19,6 +19,7 @@ mod confirmations;
 mod crash_record;
 mod default_icons;
 mod designed_components;
+mod designed_inputs;
 mod designed_views;
 mod develop;
 mod extension_log;

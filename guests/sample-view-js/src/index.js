@@ -9,7 +9,10 @@
 // The `components` command of the same package answers a gallery of
 // every component of the UI component set (#237): the layout primitives,
 // the shared components, the tokens and the raw values, with a toggle to
-// show the tree changes.
+// show the tree changes. Its fields hold state (#238): typing edits at
+// once, the view echoes the value back, "Clear" sets it (the
+// extension's value wins), and "Reorder" moves the keyed fields around,
+// their state with them.
 //
 // The view is written as elements (the JSX runtime's `jsxs`), which is
 // what JSX compiles to (the TypeScript sample); the components and hooks
@@ -38,6 +41,7 @@ import {
   Row,
   Scroll,
   SectionHeader,
+  Segmented,
   Select,
   Slider,
   Spacer,
@@ -84,7 +88,23 @@ function Counter() {
 /** The gallery of components the `components` command shows. */
 function Components() {
   const [on, setOn] = useState(false);
-  return jsxs(Scroll, {
+  const [name, setName] = useState("typed");
+  const [notes, setNotes] = useState("two lines");
+  const [swapped, setSwapped] = useState(false);
+  const nameField = jsxs(TextInput, {
+    key: "name",
+    value: name,
+    placeholder: "Type here",
+    label: "Name",
+    onInput: (value) => setName(value),
+  });
+  const notesField = jsxs(TextArea, {
+    key: "notes",
+    value: notes,
+    label: "Notes",
+    onChange: (value) => setNotes(value),
+  });
+  return jsxs(Scroll, { key: "gallery", grow: 1,
     children: [
       jsxs(Column, {
         gap: "l",
@@ -153,7 +173,7 @@ function Components() {
                 label: "Remember",
                 onChange: () => setOn(!on),
               }),
-              jsxs(Select, {
+              jsxs(Segmented, {
                 options: [
                   { value: "daily", label: "Daily" },
                   { value: "weekly", label: "Weekly" },
@@ -162,23 +182,51 @@ function Components() {
                 label: "Digest",
                 onChange: () => {},
               }),
+              jsxs(Select, {
+                options: [
+                  { value: "daily", label: "Daily" },
+                  { value: "weekly", label: "Weekly" },
+                ],
+                value: "daily",
+                label: "Pick",
+                onChange: () => {},
+              }),
               jsxs(Slider, { value: 0.4, label: "Volume", onChange: () => {} }),
               jsxs(Progress, { value: 0.7, label: "Installed" }),
               jsxs(Loading, { label: "Checking" }),
             ],
           }),
+          // The fields, live and keyed (#238): the name field hears its
+          // value as the user types (the view echoing it back, which
+          // never fights the typing), the notes field on its commits,
+          // "Clear" sets both (the extension's value replacing the text),
+          // and "Reorder" swaps the two fields, whose keys keep their
+          // state.
           jsxs(Column, {
             gap: "s",
             children: [
-              jsxs(SectionHeader, { children: ["Fields"] }),
-              jsxs(TextInput, {
-                placeholder: "Type here",
-                label: "Name",
-                onChange: () => {},
-                children: ["typed"],
+              jsxs(SectionHeader, { note: "Live, keyed", children: ["Fields"] }),
+              // "Reorder" swaps the fields' places, not their state: the
+              // keys keep each field's text, caret and focus.
+              ...(swapped ? [notesField, nameField] : [nameField, notesField]),
+              jsxs(Row, {
+                gap: "s",
+                children: [
+                  jsxs(Button, {
+                    onClick: () => {
+                      setName("");
+                      setNotes("");
+                    },
+                    children: ["Clear"],
+                  }),
+                  jsxs(Button, {
+                    onClick: () => setSwapped(!swapped),
+                    children: ["Reorder"],
+                  }),
+                ],
               }),
+              jsxs(Text, { children: [`Echo: ${name}`] }),
               jsxs(PasswordInput, { label: "Secret" }),
-              jsxs(TextArea, { label: "Notes", children: ["two lines"] }),
             ],
           }),
           // Markdown.

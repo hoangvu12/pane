@@ -94,7 +94,7 @@ use wit::{GuestView, Outcome, Rendered, UiEvent};
 
 /// The version of the UI component set this SDK writes
 /// (`docs/designed-tree.md`).
-const COMPONENT_SET: &str = "1.1";
+const COMPONENT_SET: &str = "1.2";
 
 /// The callback id of the pop event, the event Pane sends a view when the
 /// one above it popped: an id no tree names (this SDK's ids start at 1),
@@ -140,6 +140,18 @@ impl<V: View> Cx<'_, V> {
         let id = self.listeners.len() as u32 + 1;
         self.listeners.push(Run::Listener(Box::new(run)));
         Listener(id)
+    }
+
+    /// The listener `run` becomes, told the text the event carried with
+    /// the view's state mutably: `cx.value_listener(|this: &mut V, value:
+    /// &str| ...)`. A field's value as the user typed or committed it,
+    /// or a key as it was pressed, is the text: handed to
+    /// [`TextInput::on_input`], [`TextInput::on_change`] and the key
+    /// listeners.
+    pub fn value_listener(&mut self, run: impl FnOnce(&mut V, &str) + 'static) -> ValueListener {
+        let id = self.listeners.len() as u32 + 1;
+        self.listeners.push(Run::Value(Box::new(run)));
+        ValueListener(id)
     }
 
     /// A press that pushes a view above this one: `open` builds the
@@ -217,6 +229,14 @@ impl<V: View> Cx<'_, V> {
 #[derive(Debug)]
 pub struct Listener(u32);
 
+/// A named listener of the tree that the event's text reaches: what
+/// [`Cx::value_listener`] answers, handed to [`TextInput::on_input`],
+/// [`TextInput::on_change`] and the key listeners. The text is the
+/// event's payload's `value` (a field's, a control's) or `key` (a key
+/// pressed).
+#[derive(Debug)]
+pub struct ValueListener(u32);
+
 /// What a listener of the tree does when its node is pressed: run it and
 /// answer nothing next (the view re-renders, as it always does), or
 /// answer the navigation one of [`Cx`]'s push, replace and pop listeners
@@ -224,6 +244,8 @@ pub struct Listener(u32);
 enum Run<V> {
     /// Runs the listener; nothing next.
     Listener(Box<dyn FnOnce(&mut V)>),
+    /// Runs the listener with the event's text; nothing next.
+    Value(Box<dyn FnOnce(&mut V, &str)>),
     /// Builds the state of a view pushed above this one, `on_pop` (when
     /// given) kept to answer this view when it pops.
     Push {
@@ -257,6 +279,15 @@ pub struct Node {
     requires: Option<u64>,
     fallback: Option<Box<Node>>,
     children: Vec<Node>,
+    /// Whether the node asks for the keyboard (see [`Node::focus`]).
+    focus: bool,
+    /// The listener a focus of this node runs, it taking the keyboard.
+    on_focus: Option<Listener>,
+    /// The listener a blur of this node runs, it losing the keyboard.
+    on_blur: Option<Listener>,
+    /// The listener a key pressed while this node is focused runs, told
+    /// the key as a key sequence spells it.
+    on_key: Option<ValueListener>,
 }
 
 impl Node {
@@ -272,6 +303,10 @@ impl Node {
             requires: None,
             fallback: None,
             children: Vec::new(),
+            focus: false,
+            on_focus: None,
+            on_blur: None,
+            on_key: None,
         }
     }
 
@@ -316,6 +351,35 @@ impl Node {
     /// The children of this node's, after its children.
     pub fn children(mut self, children: impl IntoIterator<Item = impl IntoNode>) -> Node {
         self.children.extend(children.into_iter().map(IntoNode::into_node));
+        self
+    }
+
+    /// Asks for the keyboard: a node whose ask is new — the tree the user
+    /// saw did not name it — is focused, so a view's opening ask is an
+    /// auto-focus and a later one a focus moved from code. An unchanged
+    /// ask leaves the focus wherever the user moved it.
+    pub fn focus(mut self) -> Node {
+        self.focus = true;
+        self
+    }
+
+    /// The listener a focus of this node runs, it taking the keyboard.
+    pub fn on_focus(mut self, listener: Listener) -> Node {
+        self.on_focus = Some(listener);
+        self
+    }
+
+    /// The listener a blur of this node runs, it losing the keyboard.
+    pub fn on_blur(mut self, listener: Listener) -> Node {
+        self.on_blur = Some(listener);
+        self
+    }
+
+    /// The listener a key pressed while this node is focused runs, told
+    /// the key as a key sequence spells it (Tab, Enter and Escape stay
+    /// with Pane).
+    pub fn on_key(mut self, listener: ValueListener) -> Node {
+        self.on_key = Some(listener);
         self
     }
 }
@@ -1034,6 +1098,36 @@ macro_rules! styled {
                 self.0.offset = Some((x, y));
                 self
             }
+
+            /// Asks for the keyboard: a node whose ask is new — the tree
+            /// the user saw did not name it — is focused (see
+            /// [`Node::focus`]).
+            pub fn focus(mut self) -> Self {
+                self.0.focus = true;
+                self
+            }
+
+            /// The listener a focus of this node runs, it taking the
+            /// keyboard.
+            pub fn on_focus(mut self, listener: Listener) -> Self {
+                self.0.on_focus = Some(listener);
+                self
+            }
+
+            /// The listener a blur of this node runs, it losing the
+            /// keyboard.
+            pub fn on_blur(mut self, listener: Listener) -> Self {
+                self.0.on_blur = Some(listener);
+                self
+            }
+
+            /// The listener a key pressed while this node is focused runs,
+            /// told the key as a key sequence spells it (Tab, Enter and
+            /// Escape stay with Pane).
+            pub fn on_key(mut self, listener: ValueListener) -> Self {
+                self.0.on_key = Some(listener);
+                self
+            }
         }
     };
 }
@@ -1345,33 +1439,33 @@ pub fn empty_state(title: impl Into<String>) -> EmptyState {
     })))
 }
 
-/// One text input, starting at `value`.
+/// One text input, starting at `value`. The field edits at once, its
+/// state kept by its key: `on_input` hears its value as the user types
+/// it (coalesced by Pane, throttled by [`TextInput::throttle`]),
+/// `on_change` on its commits, and a value that differs from the field's
+/// value in the previous render replaces its text.
 pub fn text_input(value: impl Into<String>) -> TextInput {
     TextInput(Node::of(NodeKind::TextInput(TextInputPayload {
         value: value.into(),
         placeholder: None,
-        on_click: None,
+        on_input: None,
+        on_change: None,
+        throttle: None,
         label: None,
     })))
 }
 
-/// One password field.
+/// One password field, starting empty (see [`text_input`]).
 pub fn password_input() -> TextInput {
-    TextInput(Node::of(NodeKind::PasswordInput(TextInputPayload {
-        value: String::new(),
-        placeholder: None,
-        on_click: None,
-        label: None,
-    })))
+    TextInput(Node::of(NodeKind::PasswordInput(TextInputPayload::default())))
 }
 
-/// One text area, starting at `value`.
+/// One text area, starting at `value` (see [`text_input`]); its Enter
+/// inserts a newline, its commits are blurs'.
 pub fn text_area(value: impl Into<String>) -> TextInput {
     TextInput(Node::of(NodeKind::TextArea(TextInputPayload {
         value: value.into(),
-        placeholder: None,
-        on_click: None,
-        label: None,
+        ..TextInputPayload::default()
     })))
 }
 
@@ -1432,7 +1526,10 @@ struct EmptyStatePayload {
 struct TextInputPayload {
     value: String,
     placeholder: Option<String>,
-    on_click: Option<Listener>,
+    on_input: Option<ValueListener>,
+    on_change: Option<ValueListener>,
+    /// The least time between this field's input events.
+    throttle: Option<Duration>,
     label: Option<String>,
 }
 
@@ -2137,12 +2234,39 @@ impl TextInput {
         self
     }
 
-    /// A commit of this field runs `listener`, told its value.
-    pub fn on_click(mut self, listener: Listener) -> TextInput {
+    /// This field's value as the user types it runs `listener`, told it —
+    /// only when the field asks: Pane coalesces the events to the latest
+    /// while one is in flight.
+    pub fn on_input(mut self, listener: ValueListener) -> TextInput {
         match &mut self.0.kind {
             NodeKind::TextInput(input)
             | NodeKind::PasswordInput(input)
-            | NodeKind::TextArea(input) => input.on_click = Some(listener),
+            | NodeKind::TextArea(input) => input.on_input = Some(listener),
+            _ => {}
+        }
+        self
+    }
+
+    /// A commit of this field (Enter, a blur) runs `listener`, told its
+    /// value.
+    pub fn on_change(mut self, listener: ValueListener) -> TextInput {
+        match &mut self.0.kind {
+            NodeKind::TextInput(input)
+            | NodeKind::PasswordInput(input)
+            | NodeKind::TextArea(input) => input.on_change = Some(listener),
+            _ => {}
+        }
+        self
+    }
+
+    /// The least time between this field's input events, when it asks for
+    /// them: the events between are dropped, the latest kept for the
+    /// time's end.
+    pub fn throttle(mut self, throttle: Duration) -> TextInput {
+        match &mut self.0.kind {
+            NodeKind::TextInput(input)
+            | NodeKind::PasswordInput(input)
+            | NodeKind::TextArea(input) => input.throttle = Some(throttle),
             _ => {}
         }
         self
@@ -2299,7 +2423,12 @@ impl<V: View> GuestView for Open<V> {
             }
             return Ok(nothing_next());
         }
-        let UiEvent { render, callback, .. } = event;
+        let UiEvent {
+            render,
+            callback,
+            payload,
+            ..
+        } = event;
         // The listener the tree named, taken from the table of the render
         // the user saw: an event of an older render is stale, dropped.
         let id = usize::try_from(callback.saturating_sub(1)).ok();
@@ -2319,9 +2448,16 @@ impl<V: View> GuestView for Open<V> {
             }
         };
         // Run what the tree named, answering the navigation it asked for.
+        // A value listener is told the event's text: its payload's `value`
+        // (a field's, a control's) or `key` (a key pressed).
+        let text = text_of(&payload);
         let next = match taken {
             Some(Run::Listener(run)) => {
                 run(&mut self.state.borrow_mut());
+                None
+            }
+            Some(Run::Value(run)) => {
+                run(&mut self.state.borrow_mut(), &text);
                 None
             }
             Some(Run::Push { open, on_pop }) => {
@@ -2378,6 +2514,56 @@ fn nothing_next() -> Outcome {
     }
 }
 
+/// The text a value-carrying payload names: its `value` (a field's, a
+/// control's) or its `key` (a key pressed), read without parsing the whole
+/// document, so a payload that grew a field still gives its text. An empty
+/// string when it names none.
+fn text_of(payload: &str) -> String {
+    for field in ["value", "key"] {
+        let needle = format!("\"{field}\"");
+        if let Some(at) = payload.find(&needle) {
+            let rest = payload[at + needle.len()..]
+                .trim_start()
+                .strip_prefix(':')
+                .unwrap_or("")
+                .trim_start();
+            if let Some(rest) = rest.strip_prefix('"') {
+                if let Some(end) = rest.find('"') {
+                    let escaped = &rest[..end];
+                    let mut result = String::new();
+                    let mut characters = escaped.chars();
+                    while let Some(character) = characters.next() {
+                        match character {
+                            '\\' => match characters.next() {
+                                Some('"') => result.push('"'),
+                                Some('\\') => result.push('\\'),
+                                Some('/') => result.push('/'),
+                                Some('n') => result.push('\n'),
+                                Some('r') => result.push('\r'),
+                                Some('t') => result.push('\t'),
+                                Some('b') => result.push('\u{8}'),
+                                Some('f') => result.push('\u{c}'),
+                                Some('u') => {
+                                    let digits: String = characters.by_ref().take(4).collect();
+                                    if let Ok(code) = u32::from_str_radix(&digits, 16) {
+                                        if let Some(character) = char::from_u32(code) {
+                                            result.push(character);
+                                        }
+                                    }
+                                }
+                                _ => return String::new(),
+                            },
+                            other => result.push(other),
+                        }
+                    }
+                    return result;
+                }
+            }
+        }
+    }
+    String::new()
+}
+
 /// The result the pop event's payload carries: `{"pop": "…"}` for a pop
 /// that answered one, `{"pop": null}` for a pop that carried none (the
 /// back key's, so no view's result reached the one below). Read without
@@ -2425,7 +2611,7 @@ fn ms_of(after: Duration) -> u32 {
 }
 
 /// The render number `context` names, or 1 when it says none: the context
-/// is JSON, `{"render": N, "ui": "1.1"}`, read without parsing the whole
+/// is JSON, `{"render": N, "ui": "1.2"}`, read without parsing the whole
 /// document, so a context that grew a field still gives its number.
 fn render_of(context: &str) -> u64 {
     let Some(at) = context.find("\"render\"") else {
@@ -2461,6 +2647,21 @@ fn write_node(tree: &mut String, node: &Node) -> Result<(), String> {
     }
     if let Some(requires) = node.requires {
         let _ = write!(tree, ",\"requires\":{requires}");
+    }
+    if node.focus {
+        tree.push_str(",\"focus\":true");
+    }
+    if let Some(Listener(id)) = node.on_focus {
+        tree.push_str(",\"onFocus\":");
+        let _ = write!(tree, "{id}");
+    }
+    if let Some(Listener(id)) = node.on_blur {
+        tree.push_str(",\"onBlur\":");
+        let _ = write!(tree, "{id}");
+    }
+    if let Some(ValueListener(id)) = node.on_key {
+        tree.push_str(",\"onKey\":");
+        let _ = write!(tree, "{id}");
     }
     write_style(tree, &node.style)?;
     if let Some(place) = node.place {
@@ -2823,9 +3024,18 @@ fn write_node(tree: &mut String, node: &Node) -> Result<(), String> {
                 tree.push_str(",\"label\":");
                 string(tree, label)?;
             }
-            if let Some(Listener(id)) = &input.on_click {
+            if let Some(ValueListener(id)) = &input.on_input {
+                tree.push_str(",\"onInput\":");
+                let _ = write!(tree, "{id}");
+            }
+            if let Some(ValueListener(id)) = &input.on_change {
                 tree.push_str(",\"onChange\":");
                 let _ = write!(tree, "{id}");
+            }
+            if let Some(throttle) = input.throttle {
+                let ms = u64::try_from(throttle.as_millis()).unwrap_or(u64::MAX);
+                tree.push_str(",\"throttleMs\":");
+                let _ = write!(tree, "{ms}");
             }
         }
     }

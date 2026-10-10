@@ -7,19 +7,23 @@
 //! The `components` command of the same package answers a gallery of
 //! every component of the UI component set (#237): the layout
 //! primitives, the shared components, the tokens and the raw values,
-//! with a toggle to show the tree changes.
+//! with a toggle to show the tree changes. Its fields hold state (#238):
+//! typing edits at once, the view echoes the value back, "Clear" sets it
+//! (the extension's value wins), and "Reorder" moves the keyed fields
+//! around, their state with them.
 #![no_std]
 
-use core::cell::Cell;
+use core::cell::{Cell, RefCell};
 
+use pane_extension::alloc::string::String;
 use pane_extension::icon::Tone as Colour;
 use pane_extension::view::{
     Cx, Color, Fit, Icon, IconSize, IntoAnswer, IntoNode, Length, Paint, Place, Radius, Space,
     TextLevel, TextStyle, Tone, View, badge, button, card, checkbox, choice, column, divider,
     empty_state, icon, icon_tile, image, key_sequence, keycap, link, loading, markdown,
     metadata_list, metadata, metadata_separator, metadata_tags, password_input, progress, rich_row,
-    row, scroll, section_header, select, slider, spacer, span, spans, stack, tag, text, text_area,
-    text_input, toggle,
+    row, scroll, section_header, segmented, select, slider, spacer, span, spans, stack, tag, text,
+    text_area, text_input, toggle,
 };
 use pane_extension::{Command, LaunchRecord};
 
@@ -29,6 +33,13 @@ struct Screen {
     counter: bool,
     count: Cell<u32>,
     on: Cell<bool>,
+    /// The gallery's fields' values, which the view echoes back (#238):
+    /// typing edits at once, and a value the view sets replaces the text.
+    name: RefCell<String>,
+    notes: RefCell<String>,
+    /// Whether the gallery's fields are swapped: "Reorder" flips it,
+    /// moving the keyed fields around with their state.
+    swapped: Cell<bool>,
 }
 
 impl View for Screen {
@@ -56,7 +67,7 @@ impl View for Screen {
                 )
                 .into_node();
         }
-        scroll().child(
+        scroll().key("gallery").grow(1.).child(
             column()
                 .gap(Space::L)
                 .child(
@@ -126,12 +137,21 @@ impl View for Screen {
                                 })),
                         )
                         .child(
-                            select([
+                            segmented([
                                 choice("daily").label("Daily"),
                                 choice("weekly").label("Weekly"),
                             ])
                             .value("daily")
                             .label("Digest")
+                            .on_click(cx.listener(|_: &mut Self| {})),
+                        )
+                        .child(
+                            select([
+                                choice("daily").label("Daily"),
+                                choice("weekly").label("Weekly"),
+                            ])
+                            .value("daily")
+                            .label("Pick")
                             .on_click(cx.listener(|_: &mut Self| {})),
                         )
                         .child(
@@ -142,19 +162,8 @@ impl View for Screen {
                         .child(progress(0.7).label("Installed"))
                         .child(loading().label("Checking")),
                 )
-                .child(
-                    column()
-                        .gap(Space::S)
-                        .child(section_header("Fields"))
-                        .child(
-                            text_input("typed")
-                                .placeholder("Type here")
-                                .label("Name")
-                                .on_click(cx.listener(|_: &mut Self| {})),
-                        )
-                        .child(password_input().label("Secret"))
-                        .child(text_area("two lines").label("Notes")),
-                )
+                .child(self.fields(cx))
+                .child(password_input().label("Secret"))
                 .child(
                     // Markdown.
                     markdown(concat!(
@@ -216,6 +225,64 @@ impl View for Screen {
     }
 }
 
+impl Screen {
+    /// A screen opening: the counter, or the gallery.
+    fn opening(counter: bool) -> Screen {
+        Screen {
+            counter,
+            count: Cell::new(0),
+            on: Cell::new(false),
+            name: RefCell::new("typed".into()),
+            notes: RefCell::new("two lines".into()),
+            swapped: Cell::new(false),
+        }
+    }
+
+    /// The gallery's fields, live and keyed (#238): the name field hears
+    /// its value as the user types (the view echoing it back, which never
+    /// fights the typing), the notes field on its commits, "Clear" sets
+    /// both (the extension's value replacing the text), and "Reorder"
+    /// swaps the two fields, whose keys keep their state.
+    fn fields(&self, cx: &mut Cx<Self>) -> impl IntoNode {
+        let name = text_input(self.name.borrow().clone())
+            .key("name")
+            .placeholder("Type here")
+            .label("Name")
+            .on_input(cx.value_listener(|this: &mut Self, value| {
+                *this.name.borrow_mut() = value.to_owned();
+            }));
+        let notes = text_area(self.notes.borrow().clone())
+            .key("notes")
+            .label("Notes")
+            .on_change(cx.value_listener(|this: &mut Self, value| {
+                *this.notes.borrow_mut() = value.to_owned();
+            }));
+        // "Reorder" swaps the fields' places, not their state: the keys
+        // keep each field's text, caret and focus.
+        let fields = if self.swapped.get() {
+            [notes, name]
+        } else {
+            [name, notes]
+        };
+        column()
+            .gap(Space::S)
+            .child(section_header("Fields").note("Live, keyed"))
+            .children(fields)
+            .child(
+                row().gap(Space::S).children([
+                    button("Clear").on_click(cx.listener(|this: &mut Self| {
+                        *this.name.borrow_mut() = String::new();
+                        *this.notes.borrow_mut() = String::new();
+                    })),
+                    button("Reorder").on_click(cx.listener(|this: &mut Self| {
+                        this.swapped.set(!this.swapped.get());
+                    })),
+                ]),
+            )
+            .child(text(format!("Echo: {}", self.name.borrow().as_str())))
+    }
+}
+
 struct Sample;
 pane_extension::export!(Sample);
 
@@ -228,16 +295,8 @@ impl Command for Sample {
         _launch: LaunchRecord,
     ) -> Result<Screen, String> {
         match command.as_str() {
-            "sample" => Ok(Screen {
-                counter: true,
-                count: Cell::new(0),
-                on: Cell::new(false),
-            }),
-            "components" => Ok(Screen {
-                counter: false,
-                count: Cell::new(0),
-                on: Cell::new(false),
-            }),
+            "sample" => Ok(Screen::opening(true)),
+            "components" => Ok(Screen::opening(false)),
             _ => Err("this command opens no designed view".into()),
         }
     }
