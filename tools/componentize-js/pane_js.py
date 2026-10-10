@@ -60,6 +60,7 @@ EXPORT_OPTIONS = {
     "service": "pane:extension/service@0.1.0",
     "events": "pane:extension/events@0.1.0",
     "activate": "pane:extension/lifecycle@0.1.0",
+    "snapshot": "pane:extension/lifecycle@0.1.0",
 }
 # `"pane"` option -> the interface a command setting it also imports, beyond
 # what every command may import (`js-extension`): a command that sets none
@@ -85,6 +86,8 @@ SAMPLES = [
     ("sample_capabilities_ts.wasm", "guests/sample-capabilities-ts"),
     ("sample_registrations_js.wasm", "guests/sample-registrations-js"),
     ("sample_registrations_ts.wasm", "guests/sample-registrations-ts"),
+    ("sample_handoff_js.wasm", "guests/sample-handoff-js"),
+    ("sample_handoff_ts.wasm", "guests/sample-handoff-ts"),
     ("sample_applications_js.wasm", "guests/sample-applications-js"),
     ("sample_applications_ts.wasm", "guests/sample-applications-ts"),
     ("sample_query_js.wasm", "guests/sample-query-js"),
@@ -516,15 +519,19 @@ def build(package: Path, out: Path, toolchain: Toolchain) -> dict:
 
 
 # The exports the adapter wraps, by `pane` option (None: always), each with
-# the handler that answers errors as text (see guests/js/adapt.js).
+# the handlers that answer errors as text (see guests/js/adapt.js). The
+# lifecycle interface is one object of three handlers: `activate` names it
+# with its activation entry point alone, `snapshot` with the state
+# handoff's two beside it (ADR 0041).
 ADAPTED_PROVIDERS = {
-    "rootResults": ("rootResults", "resultsFor"),
-    "indexedResults": ("indexedResults", "results"),
-    "operations": ("publishedOperations", "runOperation"),
-    "search": ("commandSearch", "search"),
-    "service": ("service", "runCycle"),
-    "events": ("events", "handleEvent"),
-    "activate": ("lifecycle", "activate"),
+    "rootResults": ("rootResults", ["resultsFor"]),
+    "indexedResults": ("indexedResults", ["results"]),
+    "operations": ("publishedOperations", ["runOperation"]),
+    "search": ("commandSearch", ["search"]),
+    "service": ("service", ["runCycle"]),
+    "events": ("events", ["handleEvent"]),
+    "activate": ("lifecycle", ["activate"]),
+    "snapshot": ("lifecycle", ["activate", "snapshot", "restore"]),
 }
 
 
@@ -542,9 +549,10 @@ def adapted_entry(entry: Path, adapter: Path, options: dict) -> str:
         f"export * from {entry_js};",
         "export const command = adaptCommand(extension.command);",
     ]
-    for option, (name, handler) in ADAPTED_PROVIDERS.items():
+    for option, (name, handlers) in ADAPTED_PROVIDERS.items():
         if options.get(option):
-            lines.append(f"export const {name} = adaptProvider(extension.{name}, {json.dumps(handler)});")
+            adapted = f"adaptProvider(extension.{name}, {json.dumps(handlers)})"
+            lines.append(f"export const {name} = {adapted};")
     return "\n".join(lines) + "\n"
 
 
@@ -575,12 +583,15 @@ def uses_programs(bundle: str) -> bool:
 def command_world(options: dict, http: bool, programs: bool = False) -> str:
     """The world `js-command`: `js-extension` exporting and importing what
     `options` name, importing `wasi:http`'s client if `http` and Pane's
-    system programs if `programs`."""
+    system programs if `programs`. Two options may name one interface
+    (`activate` and `snapshot` both link the lifecycle interface), so the
+    interfaces are deduplicated."""
     unknown = sorted(set(options) - set(EXPORT_OPTIONS) - set(IMPORT_OPTIONS))
     if unknown:
         raise SystemExit(f"pane-js: unknown \"pane\" options in package.json: {', '.join(unknown)}")
-    exports = "".join(f"  export {interface};\n" for option, interface in EXPORT_OPTIONS.items()
-                      if options.get(option))
+    exported = sorted({interface for option, interface in EXPORT_OPTIONS.items()
+                       if options.get(option)})
+    exports = "".join(f"  export {interface};\n" for interface in exported)
     imports = "".join(f"  import {interface};\n" for option, interface in IMPORT_OPTIONS.items()
                       if options.get(option))
     if http:

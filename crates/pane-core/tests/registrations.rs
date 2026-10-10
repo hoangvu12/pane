@@ -841,10 +841,14 @@ fn a_reload_undoes_the_registrations_and_activates_again() {
             .filter(|what| **what != "extension instance")
             .count()
     });
-    // The package's code is replaced from its source folder: a reload.
+    // The package's code is replaced from its source folder: a reload,
+    // with the command's screen on display, so it opens again on the new
+    // code (ADR 0041).
     block_on(launcher.reload(&identity));
     // The undo list ran with the old generation and is empty; activating
-    // again registered the item and the timer afresh.
+    // again registered the item and the timer afresh, listed in root
+    // search.
+    to_root(&launcher);
     pane.until("the item again", true, || {
         launcher
             .view()

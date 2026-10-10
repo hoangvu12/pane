@@ -30,9 +30,9 @@ package pane:extension@0.1.0;
 // `pane_extension::registrations::export_events!`,
 // `pane_extension::lifecycle::export!`); JS/TS commands as the module
 // "pane:extension/registrations@0.1.0" (guests/js/registrations.d.ts)
-// and the `"pane"` options `"events"` and `"activate"` in package.json.
-// The header follows `package`: comments above it would document the
-// package, which extension.wit already does.
+// and the `"pane"` options `"events"`, `"activate"` and `"snapshot"` in
+// package.json. The header follows `package`: comments above it would
+// document the package, which extension.wit already does.
 
 interface registrations {
   /// A dynamic root item under one of the package's commands, as the
@@ -155,23 +155,54 @@ interface events {
   handle-event: async func(event: event) -> result<_, string>;
 }
 
-/// The activation entry point of a package whose `pane.json` declares
-/// `"activate": "<component>"`: the component named there exports this
-/// interface beside `command`. Pane calls `activate` when the package's
-/// code may run and it is not waiting — at install, enable, start,
-/// reload, update, Retry and on coming back from waiting — and again when
-/// the instance that ran it is dropped while the generation continues
-/// unpaused, so registrations made in it are made again. A trap in it is
-/// a crash, counted towards pausing the package; during a reload's start
-/// it is a startup failure. An opt-in exception to lazy activation
-/// (ADR 0005, amended by ADR 0041): without it, a package's code first
-/// runs when the user asks for one of its commands.
+/// The lifecycle of a package's code, as its component exports it: the
+/// activation entry point a `pane.json` may declare under `"activate"`
+/// (#158), and the state handoff to the code that replaces it (ADR 0041,
+/// #159). The component a `pane.json` names there exports this interface
+/// beside `command`, as any component may: a component that exports it
+/// opts in to handing its in-memory state to its new code, while
+/// `activate` is called only for the component `"activate"` names. Pane
+/// calls `activate` when the package's code may run and it is not
+/// waiting — at install, enable, start, reload, update, Retry and on
+/// coming back from waiting — and again when the instance that ran it is
+/// dropped while the generation continues unpaused, so registrations
+/// made in it are made again. A trap in it is a crash, counted towards
+/// pausing the package; during a reload's start it is a startup failure.
+/// An opt-in exception to lazy activation (ADR 0005, amended by
+/// ADR 0041): without it, a package's code first runs when the user asks
+/// for one of its commands.
 interface lifecycle {
   /// Activates the package: registers what it registers. Pane never
   /// calls it twice in one instance; the instance it runs in lives on
   /// until the generation ends, so registrations made in it live as long
   /// as the code that made them.
   activate: async func();
+
+  /// The state this instance hands to its replacement: opaque bytes the
+  /// author versions, asked of each running instance that exports this
+  /// interface and is idle (no call pending in it) before the old
+  /// generation ends — only once the replacement passed its checks, on
+  /// Reload, an Update and a development-mode reload, never after a
+  /// crash, a pause, a failure to start, Retry, a disable followed by an
+  /// enable, or a restart of Pane. `None` hands over nothing. The bytes
+  /// are kept in memory only, never written to disk, and bounded: a
+  /// snapshot over 1 MiB is dropped, and so is one that does not answer
+  /// within 1 second, so a handoff never delays a replacement by more
+  /// than that. Development mode's diagnostics report a dropped,
+  /// oversized or late snapshot.
+  snapshot: async func() -> option<list<u8>>;
+
+  /// Restores the state a replaced instance handed over, on this
+  /// instance's first start and before any other call into it: the new
+  /// code's instance of the same component file receives the bytes. An
+  /// error discards the state and is not a failure: the extension starts
+  /// fresh. A trap is a crash; during a reload's start it is a startup
+  /// failure, so the package is paused and the state is lost. A snapshot
+  /// whose component the new code no longer has is discarded. The SDKs
+  /// offer helpers that serialise a value (serde in Rust, JSON in
+  /// JavaScript and TypeScript), but the bytes are the author's to
+  /// version.
+  restore: async func(state: list<u8>) -> result<_, string>;
 }
 
 /// The registrations import alone, for guest bindings.
@@ -185,9 +216,9 @@ world events-provider {
   export events;
 }
 
-/// The activation entry point export alone: the component a package's
-/// `pane.json` names under `"activate"` exports it besides the
-/// `extension` world's `command`.
+/// The lifecycle export alone: the component a package's `pane.json`
+/// names under `"activate"` exports it besides the `extension` world's
+/// `command`, as any component does that opts in to the state handoff.
 world lifecycle-provider {
   export lifecycle;
 }

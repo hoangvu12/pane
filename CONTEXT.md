@@ -337,7 +337,7 @@ Replacing the managed copy of an installed package from its source while keeping
 _Avoid_: Reinstall
 
 **Reload**:
-Replacing an installed package's code from its source folder while Pane and other packages keep running: the replacement is checked as an install would check it, then replaces the managed copy, the old instances stop and the new code starts. Settings are kept; live state is not carried over, except a snapshot a package opts in to hand over to its new code (ADR 0041).
+Replacing an installed package's code from its source folder while Pane and other packages keep running: the replacement is checked as an install would check it, then replaces the managed copy, the old instances stop and the new code starts. Settings are kept; live state is not carried over, except a snapshot a package opts in to hand over to its new code (ADR 0041), and the command screen that was on display opens again on the new code.
 _Avoid_: Restart, hot swap, update (an update does not start the new code)
 
 **Automatic updates**:
@@ -415,6 +415,10 @@ _Avoid_: Live provider, service registration
 **Activation entry point**:
 The `activate` export a package's `pane.json` may name, which Pane calls when the package's code may run and it is not waiting — at install, enable, start, reload, update, Retry and on coming back from waiting — and again when the instance that ran it is dropped while the generation continues unpaused. An opt-in exception to lazy activation (ADR 0005 as amended by ADR 0041): without it, a package's code first runs when the user asks for one of its commands.
 _Avoid_: Startup hook, bootstrap, background service (a continuing service is another activation model)
+
+**State handoff**:
+The in-memory state a replaced extension's old instance hands to its new code, on Reload, Update or a development-mode reload only, and only once the replacement passed its checks: a bounded snapshot Pane asks of each idle instance that opted in (never after a crash, a pause, a failure to start, Retry, a disable followed by an enable, or a restart of Pane), kept in memory alone, restored on the new code's first start before any other call. The command screen that was on display opens again with its launch record whether or not the package opted in.
+_Avoid_: Hot reload (no old code is reused), session restore (Pane restarting), checkpoint
 
 **Scheduled work**:
 Work Pane runs for an installed package without the user asking: a command's `pane.json` entry declares a schedule, an interval and the item whose action runs, and Pane runs that action each interval while the package's code may run, taking the generation current when the run is due. A disable, an uninstall, a pause or a code replacement ends it; enabling the package, replacing its code or restarting Pane starts it again, from a full interval, never replaying work that fell due meanwhile.

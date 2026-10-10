@@ -568,40 +568,89 @@ impl Launcher {
         let result = self
             .install_planned(request.clone(), &mode, shown.as_ref(), &mut claimed)
             .await;
-        let mut state = self.lock();
-        for identity in &claimed {
-            state.release(identity);
-        }
-        let current = state.screen_epoch == epoch;
-        match result {
-            Ok(outcome) => {
-                let message = outcome_message(&mode, &outcome);
-                for dependency in outcome.dependencies.iter().chain(&outcome.defaults) {
-                    self.put_installed(&mut state, dependency.clone());
+        // What the outcome asks once the state is let go: the command
+        // screen to reopen on the new code and where its outcome belongs
+        // (ADR 0041). The state must be out of scope before the reopen's
+        // calls: a future that holds the launcher's lock is not Send, and
+        // this future is.
+        let reopen = {
+            let mut state = self.lock();
+            for identity in &claimed {
+                state.release(identity);
+            }
+            let current = state.screen_epoch == epoch;
+            match result {
+                Ok(outcome) => {
+                    let message = outcome_message(&mode, &outcome);
+                    for dependency in outcome.dependencies.iter().chain(&outcome.defaults) {
+                        self.put_installed(&mut state, dependency.clone());
+                    }
+                    let package = outcome.package;
+                    let first = package.commands().first().map(|c| c.component.clone());
+                    let was_open = self.put_installed(&mut state, package);
+                    // A command screen of the replaced copy that was on
+                    // display is reopened on the new code, as a reload
+                    // reopens it: an update the user chose replaces as a
+                    // reload does. One whose command the new code no longer
+                    // has goes to root search, as it did before; an update
+                    // Pane applies by itself never finds a screen on
+                    // display.
+                    let taken = if was_open {
+                        match &mode {
+                            Mode::Update(identity) => {
+                                let taken = self.take_reopen(&mut state, identity);
+                                if taken.is_none() {
+                                    self.show_root(&mut state, first);
+                                }
+                                taken
+                            }
+                            // Only an update replaces installed code, so only
+                            // one can have had a screen of it open.
+                            _ => {
+                                self.show_root(&mut state, first);
+                                None
+                            }
+                        }
+                    } else if current {
+                        self.show_root(&mut state, first);
+                        None
+                    } else {
+                        self.refresh(&mut state);
+                        None
+                    };
+                    match taken {
+                        Some(taken) => Some((state.screen_epoch, taken, message)),
+                        None => {
+                            if current || was_open {
+                                state.view.status = Status::Result(message);
+                            }
+                            None
+                        }
+                    }
                 }
-                let package = outcome.package;
-                let first = package.commands().first().map(|c| c.component.clone());
-                let replaced_is_open = self.put_installed(&mut state, package);
-                if current || replaced_is_open {
-                    self.show_root(&mut state, first);
-                    state.view.status = Status::Result(message);
-                } else {
-                    self.refresh(&mut state);
+                Err(Stopped::Changed(changed_plan)) => {
+                    let (package, plan) = *changed_plan;
+                    if current {
+                        let title = package.manifest.title.clone();
+                        self.show_preview(&mut state, &request, Ok((package, plan)));
+                        state.view.status = Status::Error(changed(&title));
+                    }
+                    None
+                }
+                Err(Stopped::Failed(failure)) => {
+                    let message = self.install_left_behind(&mut state, &failure);
+                    if current {
+                        state.view.status = Status::Error(message);
+                    }
+                    None
                 }
             }
-            Err(Stopped::Changed(changed_plan)) => {
-                let (package, plan) = *changed_plan;
-                if current {
-                    let title = package.manifest.title.clone();
-                    self.show_preview(&mut state, &request, Ok((package, plan)));
-                    state.view.status = Status::Error(changed(&title));
-                }
-            }
-            Err(Stopped::Failed(failure)) => {
-                let message = self.install_left_behind(&mut state, &failure);
-                if current {
-                    state.view.status = Status::Error(message);
-                }
+        };
+        if let Some((at, reopen, message)) = reopen {
+            let at = self.reopen(at, reopen).await;
+            let mut state = self.lock();
+            if state.screen_epoch == at {
+                state.view.status = Status::Result(message);
             }
         }
     }
@@ -667,6 +716,13 @@ impl Launcher {
             .collect();
         let install = plan.install;
         let mode = mode.clone();
+        // The state the old code hands to the new one (ADR 0041, #159),
+        // taken now that every check above passed and before the old
+        // generation ends: an update the user chose or one Pane applies by
+        // itself replaces as a reload does.
+        let handoff = self
+            .take_handoff(&package.identity, &package.manifest)
+            .await;
         let retire = self.retire(&package.identity);
         let (installed, package) = off_thread(move || {
             let mut store = store.lock().unwrap_or_else(|p| p.into_inner());
@@ -677,6 +733,9 @@ impl Launcher {
         })
         .await
         .map_err(Stopped::Failed)?;
+        // Staged for the new code's first start, before anything is asked
+        // of it: the old generation ended with the replacement above.
+        self.stage_handoff(&package.identity, &package, handoff);
         // The default providers of uses are installed with the rest; the
         // message says which is which.
         let mut dependencies = Vec::new();

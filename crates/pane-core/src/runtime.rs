@@ -177,8 +177,8 @@ mod events_bindings {
     });
 }
 
-/// The `lifecycle` export of the component a package's `pane.json` names
-/// under `activate`.
+/// The `lifecycle` export of a component that opts in to the activation
+/// entry point or the state handoff (ADR 0041).
 mod lifecycle_bindings {
     wasmtime::component::bindgen!({
         path: "../../wit",
@@ -243,9 +243,33 @@ const SERVICE_INTERFACE: &str = "pane:extension/service@0.1.0";
 /// exports, which their firings are delivered to.
 const EVENTS_INTERFACE: &str = "pane:extension/events@0.1.0";
 
-/// The interface the component a package's `pane.json` names under
-/// `activate` exports.
+/// The interface a component that opts in to the state handoff exports,
+/// as the activation entry point its package's `pane.json` names under
+/// `activate` does (ADR 0041): `pane:extension/lifecycle`.
 const LIFECYCLE_INTERFACE: &str = "pane:extension/lifecycle@0.1.0";
+
+/// How long the runtime waits for the `snapshot` answer of an instance
+/// whose code is being replaced (ADR 0041's state handoff): a snapshot
+/// that is not answered by then is dropped, so a handoff never delays a
+/// replacement by more than this.
+const SNAPSHOT_DEADLINE: std::time::Duration = std::time::Duration::from_secs(1);
+
+/// The state an instance handed to the code that replaced it (ADR 0041's
+/// state handoff), staged in memory for the new code's first instance of
+/// the same component file to restore. Never written to disk.
+struct StagedSnapshot {
+    /// The generation that restores the state: the one that directly
+    /// replaced the code the snapshot came from, so nothing is handed over
+    /// after, say, a disable followed by an enable.
+    generation: Generation,
+    /// The bytes the old code's `snapshot` answered.
+    state: Vec<u8>,
+}
+
+/// Snapshots staged for the new code to restore, by the package's identity
+/// key and the new code's component path: shared by every runtime thread,
+/// so one that replaces a crashed thread still restores them.
+type SharedSnapshots = Arc<Mutex<HashMap<(String, PathBuf), StagedSnapshot>>>;
 
 /// What a result a command answers with shows as a row: the fields its
 /// computed root results, indexed results and search results share (each
@@ -380,7 +404,8 @@ pub(crate) struct Exports {
     /// may run.
     pub service: bool,
     /// `lifecycle`: it is the activation entry point its package's
-    /// `pane.json` names under `activate`.
+    /// `pane.json` names under `activate`, or a component that opts in to
+    /// the state handoff (ADR 0041).
     pub activate: bool,
 }
 
@@ -864,6 +889,14 @@ enum Request {
         component: PathBuf,
         data: Option<PackageData>,
         reply: oneshot::Sender<Result<(), CallError>>,
+    },
+    /// Asks the running instance of `component` that exports `snapshot`
+    /// for the state it hands to its replacement (ADR 0041), before the
+    /// old generation ends.
+    Snapshot {
+        component: PathBuf,
+        data: Option<PackageData>,
+        reply: oneshot::Sender<Result<Option<Vec<u8>>, CallError>>,
     },
     /// Delivers one event of what the package of `data` registered (a
     /// timer's firing, a watcher's coalesced changes) to its component's
@@ -1481,7 +1514,7 @@ impl Runtime {
     /// What the packages' guests registered at run time, and which
     /// activation entry points ran: the registry the launcher reads (see
     /// `registrations`).
-    pub fn registrations(&self) -> Arc<Registrations> {
+    pub(crate) fn registrations(&self) -> Arc<Registrations> {
         self.shared.registrations.clone()
     }
 
@@ -1506,6 +1539,69 @@ impl Runtime {
             response,
         )
         .await
+    }
+
+    /// Asks the running instance of `component` that exports `snapshot`
+    /// for the state it hands to the code the caller is about to install
+    /// (the state handoff, ADR 0041): the instance must be idle (no call
+    /// pending in it), the answer must come within [`SNAPSHOT_DEADLINE`],
+    /// and the bytes are limited to the operation JSON limit. `None` when
+    /// the instance is not running, exports no `snapshot`, is busy, is
+    /// late, answers too much or traps: the replacement goes ahead either
+    /// way, never delayed by more than the deadline. What this returns is
+    /// kept in memory only, for [`Runtime::stage_restores`] to hand to the
+    /// new code; a replacement or build that failed its checks never asks.
+    pub(crate) async fn snapshot_of(
+        &self,
+        component: &Path,
+        data: Option<PackageData>,
+    ) -> Result<Option<Vec<u8>>, CallError> {
+        let (reply, response) = oneshot::channel();
+        self.call(
+            Request::Snapshot {
+                component: component.to_path_buf(),
+                data,
+                reply,
+            },
+            response,
+        )
+        .await
+    }
+
+    /// Stages `states` for the new code of the package with identity key
+    /// `owner` in its generation `generation` to restore (the state
+    /// handoff, ADR 0041): each component path names a component of the
+    /// new code — the instance that first starts at it restores the bytes
+    /// it holds, before any other call into it — and whatever the
+    /// package's earlier code left staged goes. Kept in memory only, never
+    /// written to disk. Called once the replacement passed its checks and
+    /// the old code's generation ended, with the new code not yet started:
+    /// the generation given is the one the new code runs in, so only it
+    /// restores the state.
+    pub(crate) fn stage_restores(
+        &self,
+        owner: &str,
+        generation: &Generation,
+        states: Vec<(PathBuf, Vec<u8>)>,
+    ) {
+        let mut staged = lock(&self.shared.snapshots);
+        staged.retain(|(whose, _), _| whose != owner);
+        for (component, state) in states {
+            staged.insert(
+                (owner.to_owned(), component),
+                StagedSnapshot {
+                    generation: generation.clone(),
+                    state,
+                },
+            );
+        }
+    }
+
+    /// Drops the snapshots staged for the new code of the package with
+    /// identity key `owner` (see [`Runtime::stage_restores`]), for a
+    /// package that will never start again, such as one being uninstalled.
+    pub(crate) fn drop_restores(&self, owner: &str) {
+        lock(&self.shared.snapshots).retain(|(whose, _), _| whose != owner);
     }
 
     /// Delivers one event of what the package of `data` registered — a
@@ -3201,6 +3297,10 @@ struct Host {
     /// threads that replace this one and with the launcher (see
     /// `registrations`).
     registrations: Arc<Registrations>,
+    /// Snapshots staged for the new code of a replaced package to restore
+    /// (the state handoff, ADR 0041), shared with the threads that replace
+    /// this one.
+    snapshots: SharedSnapshots,
 }
 
 impl Code {
@@ -3427,6 +3527,19 @@ impl Code {
                 ))
             })?;
         }
+        // A component opts in to the state handoff (ADR 0041) by exporting
+        // the lifecycle interface, whether or not its package's `pane.json`
+        // names it under `activate`: installing detects the export here,
+        // without running guest code, so a component exporting another
+        // shape of it is refused.
+        if ty.get_export(&self.engine, LIFECYCLE_INTERFACE).is_some() {
+            lifecycle_bindings::LifecycleProviderPre::new(pre.clone()).map_err(|error| {
+                CallError::Interface(format!(
+                    "it does not export {LIFECYCLE_INTERFACE} with the functions Pane calls: \
+                     {error:#}"
+                ))
+            })?;
+        }
         bindings::ExtensionWithFileIndexPre::new(pre).map_err(interface)?;
         Ok(Checked { network, programs })
     }
@@ -3470,6 +3583,7 @@ impl Host {
             search_timer: shared.search_timer.clone(),
             clipboard: shared.clipboard.clone(),
             registrations: shared.registrations.clone(),
+            snapshots: shared.snapshots.clone(),
         }
     }
 
@@ -3592,6 +3706,13 @@ impl Host {
                 reply,
             } => Box::pin(async move {
                 let _ = reply.send(self.activate(&component, data).await);
+            }),
+            Request::Snapshot {
+                component,
+                data,
+                reply,
+            } => Box::pin(async move {
+                let _ = reply.send(Ok(self.snapshot(&component, data).await));
             }),
             Request::Event {
                 component,
@@ -4372,6 +4493,198 @@ impl Host {
         }
     }
 
+    /// Asks `path`'s running instance for the state it hands to the code
+    /// replacing it (see [`Runtime::snapshot_of`]): only an idle instance
+    /// (no call pending in it), only one that exports `snapshot`, within
+    /// [`SNAPSHOT_DEADLINE`], of at most the operation JSON limit. `None`
+    /// whenever it gives none — a busy instance is stopped as today and
+    /// answers nothing — and never a failure of the package: the old
+    /// code's crash while it answers is only logged, since the code is
+    /// going either way.
+    async fn snapshot(&self, path: &Path, data: Option<PackageData>) -> Option<Vec<u8>> {
+        // A call pending in the instance, or holding its turn: stopped as
+        // today, no snapshot.
+        let busy = self
+            .lanes
+            .borrow()
+            .get(path)
+            .is_some_and(|lane| lane.out.is_some() || lane.holder.is_some());
+        if busy {
+            self.handoff_report(
+                data.as_ref(),
+                "a call was still running in the old code's instance",
+            );
+            return None;
+        }
+        let chain = self.chain();
+        let deadline = tokio::time::Instant::now() + SNAPSHOT_DEADLINE;
+        // The turn is waited for within the deadline too: a call that
+        // started meanwhile cannot delay the replacement past it.
+        let turn = unless(
+            self.turn_for(path, &chain),
+            tokio::time::sleep_until(deadline),
+        )
+        .await;
+        let _turn = match turn {
+            Ok(Ok(turn)) => turn,
+            // A fresh chain never waits on itself.
+            Ok(Err(_)) => return None,
+            Err(()) => {
+                self.handoff_report(data.as_ref(), "the old code did not answer within 1 second");
+                return None;
+            }
+        };
+        let lifecycle = self
+            .instances
+            .borrow()
+            .get(path)
+            .and_then(|instance| instance.lifecycle.as_ref())
+            .map(|provider| provider.pane_extension_lifecycle().clone());
+        // An instance that is not running, or exports no snapshot: nothing
+        // to ask. Exporting the interface opts in, whatever the manifest
+        // says.
+        let Some(lifecycle) = lifecycle else {
+            return None;
+        };
+        let answered = self
+            .run_guest_until(
+                path,
+                &chain,
+                async |instance| {
+                    instance
+                        .store
+                        .run_concurrent(async |store| lifecycle.call_snapshot(store).await)
+                        .await
+                },
+                tokio::time::sleep_until(deadline),
+            )
+            .await;
+        // The deadline passed (the instance goes with the call, as a
+        // stopped search's does), or the generation ended, the code was
+        // replaced again, the guest stopped responding or the thread was
+        // given up on: no snapshot and no delay.
+        let answered = match answered {
+            Ok(answered) => answered,
+            Err(CallError::Cancelled) => {
+                self.handoff_report(data.as_ref(), "the old code did not answer within 1 second");
+                return None;
+            }
+            Err(_) => return None,
+        };
+        let state = match answered {
+            Ok(Ok(state)) => state,
+            // A trap while it answers: the old code is going anyway, so it
+            // is logged where its author sees it, not counted against the
+            // new code.
+            Ok(Err(trap)) | Err(trap) => {
+                let out_of_memory = self
+                    .instances
+                    .borrow()
+                    .get(path)
+                    .is_some_and(|instance| instance.store.data().out_of_memory);
+                self.drop_instance(path);
+                let error = crashed(&trap, out_of_memory);
+                self.handoff_report(
+                    data.as_ref(),
+                    &format!("the old code crashed answering it: {error}"),
+                );
+                return None;
+            }
+        };
+        let Some(state) = state else {
+            return None;
+        };
+        if state.len() > operations::MAX_OPERATION_JSON {
+            self.handoff_report(
+                data.as_ref(),
+                &format!(
+                    "the old code answered {} bytes, and at most {} are handed over",
+                    state.len(),
+                    operations::MAX_OPERATION_JSON
+                ),
+            );
+            return None;
+        }
+        Some(state)
+    }
+
+    /// Restores the state an instance of `path`'s component handed to its
+    /// replacement (ADR 0041), on this instance's first start and before
+    /// any other call into it: the snapshot staged for the package of
+    /// `data` for this component, in the generation that directly replaced
+    /// the code the state came from. An error the new code answers with is
+    /// not a failure: the state is discarded and the extension starts
+    /// fresh. A trap is a crash of the package; during a reload's start,
+    /// where the caller pauses it, a startup failure. The caller holds
+    /// `path`'s turn.
+    async fn restore(&self, path: &Path, data: Option<&PackageData>) -> Result<(), CallError> {
+        let Some(data) = data else {
+            return Ok(());
+        };
+        let staged = lock(&self.snapshots).remove(&(data.owner().to_owned(), path.to_path_buf()));
+        let Some(staged) = staged else {
+            return Ok(());
+        };
+        // Only the generation that directly replaced the old code restores
+        // the state: a later one (a disable followed by an enable, a pause,
+        // a retry) hands nothing over.
+        if staged.generation.number() != data.generation().number() {
+            return Ok(());
+        }
+        let lifecycle = self
+            .instances
+            .borrow()
+            .get(path)
+            .and_then(|instance| instance.lifecycle.as_ref())
+            .map(|provider| provider.pane_extension_lifecycle().clone());
+        // The new code exports no snapshot entry point: the state has
+        // nowhere to go, and is discarded.
+        let Some(lifecycle) = lifecycle else {
+            return Ok(());
+        };
+        let chain = self.chain();
+        let state = staged.state;
+        let restored = self
+            .run_guest(path, &chain, async |instance| {
+                instance
+                    .store
+                    .run_concurrent(async |store| lifecycle.call_restore(store, state).await)
+                    .await
+            })
+            .await?;
+        match restored {
+            Ok(Ok(Ok(()))) => Ok(()),
+            // An error the new code answers with is not a failure: the
+            // state is discarded and it starts fresh.
+            Ok(Ok(Err(rejected))) => {
+                self.handoff_report(Some(data), &format!("the new code rejected it: {rejected}"));
+                Ok(())
+            }
+            Ok(Err(trap)) | Err(trap) => {
+                self.drop_instance(path);
+                let error = crashed(&trap, false);
+                self.report(path, Some(data), Health::Crashed(error.clone()));
+                Err(error)
+            }
+        }
+    }
+
+    /// Reports `why` a state handoff did not happen, or the state was
+    /// rejected, to the package's extension log: development mode's
+    /// diagnostics (the Logs screen); silent everywhere else, where
+    /// nothing of a dropped snapshot is shown.
+    fn handoff_report(&self, data: Option<&PackageData>, why: &str) {
+        let Some(data) = data else {
+            return;
+        };
+        self.logs.pane(
+            data.owner(),
+            data.generation().number(),
+            LogLevel::Warn,
+            &format!("the state was not handed over to the new code: {why}"),
+        );
+    }
+
     /// Delivers one event of what the package of `data` registered — a
     /// timer's firing, a watcher's coalesced changes — to `path`'s `events`
     /// export. The call belongs to the generation of the code that
@@ -5101,6 +5414,10 @@ impl Host {
                 self.report(path, data.as_ref(), Health::FailedToStart(error.clone()));
             }
             started?;
+            // The state an instance of this component handed to the code
+            // that replaced it (ADR 0041) is restored on this instance's
+            // first start, before any other call into it.
+            self.restore(path, data.as_ref()).await?;
         }
         Ok(())
     }

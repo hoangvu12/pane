@@ -356,8 +356,12 @@ const ANSWERS = {
   results: (results) => (Array.isArray(results) ? results.map(indexedResult) : results),
 };
 
-/** An exported provider whose handler `name` answers errors as text. */
-export function adaptProvider(provider, name) {
+/** An exported provider whose handlers `names` answer errors as text. */
+export function adaptProvider(provider, names) {
   if (provider === null || typeof provider !== "object") return provider;
-  return { ...provider, [name]: adapted(provider, name, message, ANSWERS[name]) };
+  const wrapping = { ...provider };
+  for (const name of names) {
+    wrapping[name] = adapted(provider, name, message, ANSWERS[name]);
+  }
+  return wrapping;
 }

@@ -91,8 +91,13 @@ recorded in [ADR 0025](adr/0025-a-continuing-service-cycles-at-its-own-cadence.m
   generation ends the instance goes with it (see
   [generations](generations.md) for what stopping costs), so the task
   Pane stops on disable is exactly the guest's in-memory state; enabling
-  the package again starts a fresh one. Data the service saves in its
-  settings or content is kept, as for any package.
+  the package again starts a fresh one. A reload or an update that
+  replaces the code hands the task over instead when the component opts
+  in to the [state handoff](generations.md#the-state-handoff) (ADR 0041,
+  #159): the old instance is asked for a snapshot while it is idle, and
+  the new instance's first cycle finds the restored state — the service
+  sample's "this run" count carries on where it left off. Data the
+  service saves in its settings or content is kept, as for any package.
 - **The generation owns the cycle.** Each cycle belongs to the package's
   generation current when the runner asked for it: a disable, reload,
   update, uninstall or pause that happens while it runs stops it (the
@@ -174,7 +179,10 @@ recorded in [ADR 0025](adr/0025-a-continuing-service-cycles-at-its-own-cadence.m
   cycle answers `Watching: <events> events (cycle <total>, <this run>
   this run)` and asks for the next cycle in a second; "this run" is the
   task's state, kept in the instance and so beginning again whenever the
-  code starts afresh. "Add an event" is what the service watches; "Wait
+  code starts afresh — except across a reload or an update, which the
+  sample opts in to handing over (its component exports the lifecycle
+  interface, with the JavaScript and TypeScript service samples). "Add an
+  event" is what the service watches; "Wait
   on the next cycle" notes "started" in its settings, waits ten seconds,
   then notes "finished"; "Fail the next cycle" answers an error; "Crash
   the next cycle" counts, then traps; "Stop responding on the next cycle"
