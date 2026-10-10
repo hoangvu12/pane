@@ -258,9 +258,10 @@ pub enum Screen {
     ExtensionLog { identity: PackageIdentity },
     /// The update results of the latest pass that recorded (see
     /// `update_results`), searched by `query`: each group in the order
-    /// Updated, Skipped, Failed, the empty ones hidden, each row opening
-    /// its extension's page in Settings. Reached from the failure toast's
-    /// View Details and from the Extensions group in Settings.
+    /// Updated, Waiting, Skipped, Failed, the empty ones hidden, each row
+    /// opening its extension's page in Settings. Reached from the failure
+    /// toast's View Details, from the asked pass's ending toast, and from
+    /// the Extensions group in Settings.
     UpdateResults { query: String },
     /// `question` about an installed package before Pane acts on it, with
     /// lines of information under the title, answered by choosing a row.
@@ -1170,6 +1171,11 @@ enum Entry {
     /// Check for a Pane application update again, after the check failed
     /// (root).
     CheckUpdate,
+    /// Check every updatable extension at once and update what the pass
+    /// finds, whatever the cadence (root): the pass the user asked for,
+    /// whose toast follows it and whose record holds what it came to (see
+    /// `updates`).
+    CheckExtensionUpdates,
     /// Open Pane's log folder with the system's file manager, after Pane
     /// quit unexpectedly last time (root; see `crash_notice`).
     OpenLogFolder,
@@ -1327,6 +1333,7 @@ enum Pending {
     Acquire(String),
     InstallUpdate,
     CheckUpdate,
+    CheckExtensionUpdates,
     OpenLogFolder,
     StopSharing(PackageIdentity),
 }
@@ -2745,6 +2752,7 @@ impl Launcher {
                 Pending::Acquire(id) => launcher.retry_acquiring(&id).await,
                 Pending::InstallUpdate => launcher.install_application_update().await,
                 Pending::CheckUpdate => launcher.check_application_update_again().await,
+                Pending::CheckExtensionUpdates => launcher.check_extension_updates().await,
                 Pending::OpenLogFolder => launcher.open_log_folder().await,
                 Pending::StopSharing(identity) => launcher.stop_sharing_folder(identity).await,
             }
@@ -2943,6 +2951,10 @@ impl Launcher {
             Entry::CheckUpdate => {
                 state.view.status = Status::Running;
                 Pending::CheckUpdate
+            }
+            Entry::CheckExtensionUpdates => {
+                state.view.status = Status::Running;
+                Pending::CheckExtensionUpdates
             }
             Entry::OpenLogFolder => {
                 state.view.status = Status::Running;
@@ -3641,6 +3653,19 @@ impl Launcher {
             for (row, entry) in state.updates.rows() {
                 add(row, entry, None, None);
             }
+        }
+        // The extensions' updates, checked on the user's demand: the row
+        // starts the pass at once, whatever the cadence, over every
+        // extension Pane could update — turned-off, disabled and paused
+        // ones included — with a toast following it.
+        if self.installation.is_some() && !state.packages.is_empty() {
+            let row = Row {
+                id: "pane.check-extensions".into(),
+                title: "Check for Extension Updates".into(),
+                subtitle: Some("Check every extension now, and update what it finds".into()),
+                unavailable: None,
+            };
+            add(row, Entry::CheckExtensionUpdates, None, None);
         }
         // That Pane quit unexpectedly last time, until the user dismisses
         // it or opens the log folder (see `crash_notice`).

@@ -386,6 +386,7 @@ pub(in crate::launcher) fn selected_action(state: &State) -> SelectedAction {
         (_, Some(Entry::Acquire(_))) => acting("Set up extension"),
         (_, Some(Entry::InstallUpdate)) => acting("Install update"),
         (_, Some(Entry::CheckUpdate)) => acting("Check for update"),
+        (_, Some(Entry::CheckExtensionUpdates)) => acting("Check for updates"),
         (_, Some(Entry::OpenLogFolder)) => acting("Open log folder"),
         (_, Some(Entry::Manage)) => acting("Manage Extensions"),
         // Pane's Settings row opens the Settings window, exactly as its

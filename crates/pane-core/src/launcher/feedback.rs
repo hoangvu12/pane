@@ -622,7 +622,35 @@ impl Launcher {
     /// Shows a toast of Pane's own, of no command, with no actions: such as
     /// the one naming what a start forgot for root providers (#164).
     pub(super) fn show_own_toast(&self, state: &mut State, toast: Toast) {
-        self.put_toast(state, PathBuf::new(), None, toast);
+        self.put_own_toast(state, toast);
+    }
+
+    /// Shows a toast of Pane's own, of no command, and its id: for the
+    /// updater's asked pass, which updates it by id through its life (see
+    /// `update_results`).
+    pub(super) fn put_own_toast(&self, state: &mut State, toast: Toast) -> u64 {
+        self.put_toast(state, PathBuf::new(), None, toast)
+    }
+
+    /// Updates Pane's own toast `id` — one [`Launcher::put_own_toast`]
+    /// showed — with `toast`, and shows it again, while it is still the
+    /// launcher's toast: another that replaced it leaves the id stale,
+    /// and nothing happens. Whether it did update. Updating starts the
+    /// toast's time again and bumps its revision, so the window counts it
+    /// anew.
+    pub(super) fn update_own_toast(&self, state: &mut State, id: u64, toast: Toast) -> bool {
+        let Some(current) = state
+            .feedback
+            .toast
+            .as_mut()
+            .filter(|current| current.id == id)
+        else {
+            return false;
+        };
+        current.toast = toast;
+        current.revision += 1;
+        present(&mut state.feedback);
+        true
     }
 
     /// Shows the error `message` the command `command` in `component`

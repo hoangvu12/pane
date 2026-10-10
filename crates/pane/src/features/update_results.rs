@@ -287,8 +287,11 @@ impl LauncherWindow {
 
     /// Runs `action`, one of the view's Actions panel entries, on the row
     /// it opened for (by the extension's identity key): opening its
-    /// extension's page in Settings, as Enter does, or copying its
-    /// details to the clipboard.
+    /// extension's page in Settings, as Enter does; copying its details to
+    /// the clipboard; or checking that extension alone for an update and
+    /// updating what it finds — Retry on a Failed row, Update Now on a
+    /// Skipped row whose only reason is the user's switch — an asked pass
+    /// whose toast follows it as any asked pass's.
     pub(crate) fn run_update_results_action(
         &mut self,
         action: UpdateResultsAction,
@@ -306,6 +309,11 @@ impl LauncherWindow {
                 self.announcer.user_moved();
                 self.moved_on_in_results(cx);
                 self.activate_selected(window, cx);
+            }
+            UpdateResultsAction::Retry | UpdateResultsAction::UpdateNow => {
+                self.moved_on_in_results(cx);
+                let pending = self.launcher.check_extension_update_of(target);
+                self.show_until_done(pending, window, cx);
             }
             UpdateResultsAction::CopyDetails => {
                 let copied = format!(

@@ -604,20 +604,18 @@ impl LauncherWindow {
 
     /// Opens the Actions panel for the update results view's selected row
     /// (#256): opening its extension's page in Settings, which Enter also
-    /// does, and copying its details. With nothing selected, the panel
-    /// says so.
+    /// does, and copying its details — and, on the row the launcher
+    /// offers them for (#267), Retry (a Failed row: check that extension
+    /// alone) and Update Now (a Skipped row whose only reason is the
+    /// user's switch). With nothing selected, the panel says so.
     fn open_update_results_actions(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let view = self.launcher.view();
-        let opened = view
-            .selected
-            .and_then(|index| view.rows.get(index))
-            .map(|row| Opened {
-                target: row.id.clone(),
-                title: row.title.clone(),
-                kind: None,
-                subject: Subject::UpdateResults,
-                entries: vec![
-                    PanelEntry {
+        let opened =
+            view.selected
+                .and_then(|index| view.rows.get(index))
+                .map(|row| {
+                    let actions = self.launcher.update_results_row_actions(&row.id);
+                    let mut entries = vec![PanelEntry {
                         kind: EntryKind::UpdateResults(UpdateResultsAction::ShowExtension),
                         label: "Show Extension".into(),
                         available: true,
@@ -627,8 +625,33 @@ impl LauncherWindow {
                         glyph: Glyph::Gear,
                         icon: None,
                         keys: Some((invoke_keys(cx), CapStyle::Accent)),
-                    },
-                    PanelEntry {
+                    }];
+                    for action in actions {
+                        let (kind, label, glyph) = match action {
+                            UpdateResultsAction::Retry => {
+                                (UpdateResultsAction::Retry, "Retry", Glyph::Reset)
+                            }
+                            UpdateResultsAction::UpdateNow => (
+                                UpdateResultsAction::UpdateNow,
+                                "Update Now",
+                                Glyph::ActionRun,
+                            ),
+                            UpdateResultsAction::ShowExtension
+                            | UpdateResultsAction::CopyDetails => continue,
+                        };
+                        entries.push(PanelEntry {
+                            kind: EntryKind::UpdateResults(kind),
+                            label: label.into(),
+                            available: true,
+                            destructive: false,
+                            submenu: false,
+                            section: None,
+                            glyph,
+                            icon: None,
+                            keys: None,
+                        });
+                    }
+                    entries.push(PanelEntry {
                         kind: EntryKind::UpdateResults(UpdateResultsAction::CopyDetails),
                         label: "Copy Details".into(),
                         available: true,
@@ -638,9 +661,15 @@ impl LauncherWindow {
                         glyph: Glyph::Clipboard,
                         icon: None,
                         keys: None,
-                    },
-                ],
-            });
+                    });
+                    Opened {
+                        target: row.id.clone(),
+                        title: row.title.clone(),
+                        kind: None,
+                        subject: Subject::UpdateResults,
+                        entries,
+                    }
+                });
         self.open_panel(opened, window, cx);
     }
 

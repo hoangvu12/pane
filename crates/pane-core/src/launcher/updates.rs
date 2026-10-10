@@ -51,7 +51,23 @@
 //! failure is announced once, the next time the launcher is shown —
 //! while a successful update is quiet, its outcome the record itself,
 //! which the results screen shows. The status-line messages a single
-//! background update once set are replaced by that.
+//! background update once set are replaced by that. An update staged
+//! whose package is in use waits, listed in the record as waiting until
+//! the package is not in use.
+//!
+//! **The pass the user asks for** ([`Launcher::check_extension_updates`])
+//! checks at once, whatever the cadence, and looks wider than the
+//! automatic pass: every installed package from a source Pane updates,
+//! turned off, disabled and paused ones included — the user asked, so
+//! "update all" means all (an update keeps a disabled package disabled,
+//! and unpauses a paused one, as the preview's Update row does). A toast
+//! follows it — "Checking for extension updates…", "Updating N of M…", a
+//! summary ending with View Details — and it answers even when everything
+//! is up to date. Root search's "Check for Extension Updates" row, the
+//! Settings Extensions group's "Check for updates" button, and the
+//! results view's Retry and Update Now all run it, the last two over one
+//! extension (ADR 0043: two entry points, one flow). Its checks run a
+//! few packages at a time, each bounded by Pane's HTTP limits as ever.
 //!
 //! **Provisional, pending the user's decision:** the cadence (a check a
 //! minute after Pane starts, then every 24 hours, by the launcher's
@@ -61,6 +77,7 @@
 //! is the user's choice to make).
 
 use std::collections::HashSet;
+use std::future::Future;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard, Weak};
 use std::time::Duration;
@@ -97,6 +114,34 @@ const RETRY_EVERY: Duration = Duration::from_secs(1);
 /// of the system's time, or a computer waking from sleep, delays a check
 /// by at most this much. As the scheduler's and the services thread's.
 const MAX_WAIT: Duration = Duration::from_secs(3600);
+
+/// How many packages a pass checks at once: a few, so a pass over many
+/// finishes sooner without the checks of one holding up the rest — each
+/// check is bounded by Pane's HTTP limits as ever. The pass's outcomes
+/// merge per few in the order the packages were checked, so the record
+/// stays in the installed list's order however they completed.
+const AT_ONCE: usize = 4;
+
+/// How long a pass the user asked for is given to end before the future
+/// its entry point returns resolves anyway: bounded, so the window that
+/// started it never waits for ever, while a pass that outlives it goes
+/// on — its toast still reaches the window on its own.
+const ASKED_PASS_WAIT: Duration = Duration::from_secs(600);
+
+/// A pass the user asked for (see [`Launcher::check_extension_updates`]),
+/// and which packages it looks at.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Ask {
+    /// Every installed package from a source Pane updates, whatever the
+    /// user's controls and the package's state: the Check for Extension
+    /// Updates command, and the Settings Extensions group's Check for
+    /// updates button.
+    All,
+    /// The one extension a result row's action names: Retry on a Failed
+    /// row, Update Now on a Skipped one. The pass says nothing of any
+    /// other extension.
+    One(PackageIdentity),
+}
 
 /// The record of the user's automatic-update choices, `updates.json`
 /// beside `installed.json`: whether every eligible package updates in the
@@ -234,11 +279,16 @@ impl Drop for UpdateHold {
 }
 
 /// What the updater keeps: the clock it follows, when it next checks,
-/// one staged update per package, and the pass it is running.
+/// the pass the user asked for that has not begun, one staged update per
+/// package, the pass it is running, and the toast that pass shows.
 struct Checking {
     clock: Arc<dyn Clock>,
     /// When the next check is, in clock milliseconds.
     next_check: u64,
+    /// The pass the user asked for that has not begun yet (set by
+    /// [`Updates::check_now_asked`]); the check that runs it takes it,
+    /// widening what the pass looks at.
+    asked: Option<Ask>,
     /// The updates Pane has downloaded and checked and not applied yet,
     /// each holding its download alive until then.
     staged: Vec<Staged>,
@@ -247,12 +297,23 @@ struct Checking {
     /// in a later look, still this pass), until the next check begins
     /// another. What it came to is Pane's record (see `update_results`).
     pass: Option<Pass>,
+    /// The toast a pass the user asked for shows, by its id, while that
+    /// pass runs: updated through it and ended as its summary (see
+    /// `update_results`), then taken. Only the look that ran the asked
+    /// pass's checks updates it — what that look deferred lands in the
+    /// record without a toast, the summary having ended the pass's say.
+    toast: Option<u64>,
 }
 
 /// A new version of one package, downloaded and checked, waiting for the
 /// package to be quiet so that it can replace the installed copy.
 struct Staged {
     identity: PackageIdentity,
+    /// Whether the pass the user asked for staged this: applying it does
+    /// not re-ask the user's controls — the user asked for the update —
+    /// but still drops it if the package was pinned, uninstalled or
+    /// replaced from another source since.
+    asked: bool,
     /// What marks the revision the installed copy had when this was
     /// staged — the version of an npm package, the commit of a Git one —
     /// so an installed copy at another since means this is not for it.
@@ -275,8 +336,10 @@ impl Updates {
             state: Mutex::new(Checking {
                 clock,
                 next_check,
+                asked: None,
                 staged: Vec::new(),
                 pass: None,
+                toast: None,
             }),
             settled: Settled::default(),
             hold: Arc::default(),
@@ -332,6 +395,21 @@ impl Updates {
         self.settled.poke();
     }
 
+    /// Checks at once, whatever the cadence, for a pass the user asked
+    /// for over `ask`: it looks wider than the automatic pass — every
+    /// installed package from a source Pane updates, turned off, disabled
+    /// and paused ones included — answers even when everything is up to
+    /// date, and shows the toast that follows it. The next check that
+    /// begins runs it (see [`Ask`]).
+    fn check_now_asked(&self, ask: Ask) {
+        {
+            let mut state = self.lock();
+            state.next_check = 0;
+            state.asked = Some(ask);
+        }
+        self.settled.poke();
+    }
+
     /// Waits until a check pass completed and the updater settled — every
     /// poke so far was looked at, and every update that pass staged was
     /// applied or deferred; `false` if it did not within `limit`, or it
@@ -370,16 +448,42 @@ impl Updates {
     /// One look: a check when one is due, then applying what is staged at
     /// the boundary each package allows. Blocks on the network, on the
     /// package checks and on the install's writes, so it runs on the
-    /// updater's own thread, never the window's.
+    /// updater's own thread, never the window's. A look that ran a pass
+    /// the user asked for ends that pass once it has applied what it can:
+    /// what it deferred waits for the package to grow quiet, landing in
+    /// the record without a toast.
     fn pass(&self, launcher: &Launcher) {
         let (now, next) = {
             let state = self.lock();
             (state.clock.now(), state.next_check)
         };
-        if now >= next {
-            self.check(launcher);
-        }
+        let asked = if now >= next {
+            self.check(launcher)
+        } else {
+            None
+        };
         self.apply(launcher);
+        if asked.is_some() {
+            self.end_asked_pass(launcher);
+        }
+    }
+
+    /// Ends the pass the user asked for that this look ran: its toast —
+    /// "Checking for extension updates…", "Updating N of M…" — becomes its
+    /// summary of what it updated and failed, with View Details (see
+    /// `update_results`). What this look deferred (a package in use) is
+    /// not counted: the toast ends when the pass has nothing more it can
+    /// do now, and the row becomes an Updated one once the package grows
+    /// quiet.
+    fn end_asked_pass(&self, launcher: &Launcher) {
+        let (pass, toast) = {
+            let mut state = self.lock();
+            (state.pass.clone(), state.toast.take())
+        };
+        let Some(id) = toast else { return };
+        let Some(pass) = pass else { return };
+        let mut state = launcher.lock();
+        launcher.end_update_pass_toast(&mut state, id, &pass);
     }
 
     /// Checks every eligible installed package for a newer version and
@@ -390,26 +494,45 @@ impl Updates {
     /// too — except one that needs a newer Pane or is not available on
     /// this system, which is skipped with that reason — and every
     /// package the pass does not look at is skipped with why. The
-    /// installed copy is left as it is either way.
-    fn check(&self, launcher: &Launcher) {
+    /// installed copy is left as it is either way. Returns the pass the
+    /// user asked for this check ran, if it ran one (see [`Ask`]): a
+    /// check the user asked for looks wider than the automatic one, and
+    /// answers even when everything is up to date.
+    fn check(&self, launcher: &Launcher) -> Option<Ask> {
+        // The pass the user asked for, which this check runs: taken here,
+        // so the next check begins a fresh (automatic) pass whatever
+        // happens to this one.
+        let asked = self.lock().asked.take();
         // What to check: the eligible installed npm and Git packages,
         // skipping any something is already happening to (an install, an
         // update, a change the user asked for), which the next check
-        // catches. The pass the outcomes collect for, and the rows for
-        // every installed package the pass does not look at, with why it
-        // does not: a pass that records says what became of every
-        // extension it considered.
-        let (candidates, mut pass) = {
-            let state = launcher.lock();
+        // catches. An asked pass looks wider — turned-off, disabled and
+        // paused packages too, the user asking for them — and, asked of
+        // one extension, that one alone. The pass the outcomes collect
+        // for, and the rows for every package the pass looks at but does
+        // not check, with why it does not: a pass that records says what
+        // became of every extension it considered.
+        let (candidates, mut pass, toast) = {
+            let mut state = launcher.lock();
+            let in_scope = |package: &InstalledPackage| match &asked {
+                Some(Ask::One(identity)) => package.identity == *identity,
+                _ => true,
+            };
+            let updatable = |package: &InstalledPackage| match &asked {
+                Some(_) => eligible_when_asked(package),
+                None => eligible(&state, package),
+            };
             let candidates: Vec<InstalledPackage> = state
                 .packages
                 .iter()
                 .filter(|package| {
-                    eligible(&state, package) && !state.changing.contains_key(&package.identity)
+                    in_scope(package)
+                        && updatable(package)
+                        && !state.changing.contains_key(&package.identity)
                 })
                 .cloned()
                 .collect();
-            let mut pass = Pass::after(&state.update_results);
+            let mut pass = Pass::after(&state.update_results, asked.is_some());
             for package in &state.packages {
                 if candidates
                     .iter()
@@ -417,41 +540,120 @@ impl Updates {
                 {
                     continue;
                 }
-                if let Some((identity, title, why)) = skipped_row(launcher, &state, package) {
+                // A pass asked of one extension says nothing of the
+                // others: they were not its business.
+                if !in_scope(package) {
+                    continue;
+                }
+                if let Some((identity, title, why)) =
+                    skipped_row(launcher, &state, package, asked.is_some())
+                {
                     pass.skipped(identity, title, &why);
                 }
             }
-            (candidates, pass)
+            // A pass the user asked for says it is working: one toast,
+            // updated through the pass (see `update_results`).
+            let toast = asked
+                .is_some()
+                .then(|| launcher.begin_update_pass_toast(&mut state));
+            (candidates, pass, toast)
         };
-        // A package that is no longer a candidate, or whose installed copy
-        // is not at the version or commit its staged update was staged
-        // against, keeps nothing staged: the next check plans again.
-        let at: Vec<(PackageIdentity, String)> = candidates
-            .iter()
-            .filter_map(|package| Some((package.identity.clone(), installed_at(package)?)))
-            .collect();
+        // A package that is no longer one a pass could look at, or whose
+        // installed copy is not at the version or commit its staged update
+        // was staged against, keeps nothing staged: the next check plans
+        // again. A staged update of a pass the user asked for survives a
+        // wider set: the user asked for it, so only the package itself
+        // changing ends it.
+        let keep: Vec<(PackageIdentity, String, bool)> = {
+            let state = launcher.lock();
+            state
+                .packages
+                .iter()
+                .filter(|package| !state.changing.contains_key(&package.identity))
+                .filter_map(|package| {
+                    Some((
+                        package.identity.clone(),
+                        installed_at(package)?,
+                        eligible(&state, package) || eligible_when_asked(package),
+                    ))
+                })
+                .collect()
+        };
         self.lock().staged.retain(|staged| {
-            at.iter()
-                .any(|(identity, at)| identity == &staged.identity && at == &staged.installed)
+            keep.iter().any(|(identity, at, looked_at)| {
+                identity == &staged.identity && at == &staged.installed && *looked_at
+            })
         });
-        for package in candidates {
-            if let Some(npm) = package.npm.clone() {
-                self.check_npm(launcher, &package, npm, &mut pass);
-            } else if let Some(git) = package.git.clone() {
-                self.check_git(launcher, &package, git, &mut pass);
+        // The checks run a few packages at a time ([`AT_ONCE`]), each on
+        // its own thread over the updater's shared state, the outcomes
+        // merging per few in the order the packages were checked — so the
+        // record stays in the installed list's order however they
+        // completed ([`Pass::in_order_of`] settles it anyway).
+        let of_an_asked_pass = asked.is_some();
+        for few in candidates.chunks(AT_ONCE) {
+            if few.len() == 1 {
+                let mut outcome = Pass::part(of_an_asked_pass);
+                self.check_one(launcher, &few[0], &mut outcome);
+                pass.merge(outcome);
+                continue;
+            }
+            let outcomes = std::thread::scope(|scope| {
+                let running: Vec<_> = few
+                    .iter()
+                    .map(|package| {
+                        scope.spawn(move || {
+                            let mut outcome = Pass::part(of_an_asked_pass);
+                            self.check_one(launcher, package, &mut outcome);
+                            outcome
+                        })
+                    })
+                    .collect();
+                running
+                    .into_iter()
+                    .map(|run| run.join().expect("a check panicked"))
+                    .collect::<Vec<Pass>>()
+            });
+            for outcome in outcomes {
+                pass.merge(outcome);
             }
         }
-        let mut state = self.lock();
-        state.next_check = state
-            .clock
-            .now()
-            .saturating_add(CHECK_EVERY.as_millis() as u64);
-        drop(state);
+        let checked_at;
+        {
+            let mut state = self.lock();
+            checked_at = state.clock.now();
+            state.next_check = checked_at.saturating_add(CHECK_EVERY.as_millis() as u64);
+            // A pass asked for while this check ran (a second press): it
+            // is still waiting to begin, so the next look runs it rather
+            // than a day away.
+            if state.asked.is_some() {
+                state.next_check = 0;
+            }
+            state.toast = toast;
+        }
         // The pass it is from now on: what applies afterwards (now, or
         // once a deferred update's package is quiet) lands in it.
         self.lock().pass = Some(pass.clone());
         launcher.note_update_pass(&pass);
+        // When this check ran: what "Last checked …" says, whatever the
+        // pass came to — the check itself is done.
+        launcher.note_extension_check(checked_at);
         self.settled.checked_pass();
+        asked
+    }
+
+    /// Checks one installed package for a newer version and stages what it
+    /// finds, collecting the outcome in `pass`: the metadata alone says
+    /// what the latest is (the registry's for an npm package, the
+    /// repository's reference listing for a Git one), and what is newer is
+    /// downloaded and checked as an install checks a package. May run on
+    /// any of the pass's few check threads (see [`Updates::check`]); each
+    /// request is bounded by Pane's HTTP limits as ever.
+    fn check_one(&self, launcher: &Launcher, package: &InstalledPackage, pass: &mut Pass) {
+        if let Some(npm) = package.npm.clone() {
+            self.check_npm(launcher, package, npm, pass);
+        } else if let Some(git) = package.git.clone() {
+            self.check_git(launcher, package, git, pass);
+        }
     }
 
     /// Checks one installed npm package for a newer version and stages
@@ -647,6 +849,7 @@ impl Updates {
         }
         Some(Staged {
             identity: installed.identity.clone(),
+            asked: pass.is_asked(),
             installed: installed_at(installed).unwrap_or_default(),
             package,
             plan,
@@ -654,15 +857,56 @@ impl Updates {
     }
 
     /// Applies every staged update whose package is at the safe boundary,
-    /// deferring the others (see the module documentation).
+    /// deferring the others (see the module documentation). A pass the
+    /// user asked for says how far its applies have got, through the
+    /// toast that pass shows ("Updating N of M…", see `update_results`).
     fn apply(&self, launcher: &Launcher) {
-        let staged = std::mem::take(&mut self.lock().staged);
-        for update in staged {
+        let (staged, toast) = {
+            let mut state = self.lock();
+            (std::mem::take(&mut state.staged), state.toast)
+        };
+        let total = staged.len();
+        for (done, update) in staged.into_iter().enumerate() {
+            if let Some(id) = toast
+                && total > 0
+            {
+                let mut state = launcher.lock();
+                launcher.update_pass_progress(&mut state, id, done + 1, total);
+            }
             match self.apply_one(launcher, update) {
                 Applied::Yes => {}
-                Applied::Deferred(update) => self.lock().staged.push(*update),
+                Applied::Deferred(update) => {
+                    // A package in use: the update waits, and its row in
+                    // the pass's record says so until it applies (see
+                    // `Pass::waiting`).
+                    self.note_waiting(launcher, &update.identity);
+                    self.lock().staged.push(*update);
+                }
                 Applied::Dropped => {}
             }
+        }
+    }
+
+    /// Notes that the staged update of `identity` waits for the package
+    /// to grow quiet, in the pass now running (a later look retries the
+    /// apply without re-noting, `Pass::waiting` saying nothing new), and
+    /// records the pass: the waiting row is the deferred apply's say,
+    /// where it was silent before.
+    fn note_waiting(&self, launcher: &Launcher, identity: &PackageIdentity) {
+        let pass = {
+            let title = {
+                let state = launcher.lock();
+                state.title_of(identity)
+            };
+            let mut checking = self.lock();
+            let Some(pass) = checking.pass.as_mut() else {
+                return;
+            };
+            pass.waiting(identity.clone(), title).then(|| pass.clone())
+        };
+        if let Some(pass) = pass {
+            launcher.note_update_pass(&pass);
+            launcher.changed();
         }
     }
 
@@ -708,8 +952,20 @@ impl Updates {
                 return Applied::Dropped;
             }
             // The user turned updates off for it, pinned, disabled or
-            // paused it, or something else is happening to it: not now.
-            if !eligible(&state, installed) || state.changing.contains_key(&identity) {
+            // paused it, or something else is happening to it: not now —
+            // unless this was staged by a pass the user asked for, where
+            // turning updates off since does not undo the ask; only the
+            // package no longer being one a pass could look at does (it
+            // was pinned, replaced from another source, uninstalled).
+            if state.changing.contains_key(&identity) {
+                return Applied::Dropped;
+            }
+            let updatable = if update.asked {
+                eligible_when_asked(installed)
+            } else {
+                eligible(&state, installed)
+            };
+            if !updatable {
                 return Applied::Dropped;
             }
             if !quiet(launcher, &state, installed) {
@@ -844,28 +1100,60 @@ impl Came {
 /// enabled, not paused after a failure, and not turned off by the user's
 /// controls (the global one first).
 fn eligible(state: &State, package: &InstalledPackage) -> bool {
-    let from_a_source_pane_updates = match (&package.npm, &package.git) {
-        (Some(npm), _) => !npm.pinned,
-        (None, Some(git)) => !git.revision.pinned(),
-        (None, None) => return false,
-    };
-    from_a_source_pane_updates
+    from_a_source_pane_updates(package)
         && package.enabled
         && !state.paused.is_paused(&package.identity)
         && state.update_controls.automatic
         && !state.update_controls.off.contains(&package.identity.key())
 }
 
+/// Whether `package` is one a pass the user asked for looks at: from a
+/// source Pane updates, whatever the user's controls and the package's
+/// state — the user asked, so "update all" means all. An update keeps a
+/// disabled package disabled, and unpauses a paused one, as the
+/// preview's Update row does; only a pinned version or revision, a local
+/// folder's or a development copy's code stays untouched, as ever.
+pub(in crate::launcher) fn eligible_when_asked(package: &InstalledPackage) -> bool {
+    from_a_source_pane_updates(package)
+}
+
+/// Whether the source `package` was installed from is one Pane updates:
+/// npm without a pin, or Git with a tracked reference.
+fn from_a_source_pane_updates(package: &InstalledPackage) -> bool {
+    match (&package.npm, &package.git) {
+        (Some(npm), _) => !npm.pinned,
+        (None, Some(git)) => !git.revision.pinned(),
+        (None, None) => false,
+    }
+}
+
+/// Whether the only reason a pass did not look at `package` is the
+/// user's switch: its automatic updates are turned off (globally or for
+/// it) and everything else would let it update. What
+/// [`crate::Launcher::update_results_row_actions`] offers Update Now on
+/// turns on as the controls do.
+pub(in crate::launcher) fn only_the_switch(state: &State, package: &InstalledPackage) -> bool {
+    eligible_when_asked(package)
+        && package.enabled
+        && !state.paused.is_paused(&package.identity)
+        && !state.changing.contains_key(&package.identity)
+        && (!state.update_controls.automatic
+            || state.update_controls.off.contains(&package.identity.key()))
+}
+
 /// The Skipped row for the installed `package`, which the pass does not
-/// look at (the reverse of [`eligible`], with the words the record
-/// keeps): its identity, its title and why the pass did not look.
-/// `None` when the pass looks at it, or has nothing to say of it — a
-/// default extension, which Pane updates from its artifact source, not
-/// from this pass.
+/// look at (the reverse of [`eligible`] — for a pass the user asked for,
+/// of [`eligible_when_asked`] — with the words the record keeps): its
+/// identity, its title and why the pass did not look. `None` when the
+/// pass looks at it, or has nothing to say of it — a default extension,
+/// which Pane updates from its artifact source (#269 owns its row), not
+/// from this pass. A pass the user asked for looks at turned-off,
+/// disabled and paused packages too, so those are not its skip reasons.
 fn skipped_row(
     launcher: &Launcher,
     state: &State,
     package: &InstalledPackage,
+    asked: bool,
 ) -> Option<(PackageIdentity, String, String)> {
     // Something else is being done to it right now: the next check
     // catches it.
@@ -909,6 +1197,12 @@ fn skipped_row(
             package.title(),
             "Its revision is pinned".into(),
         ));
+    }
+    if asked {
+        // The pass the user asked for looks at everything else: a
+        // turned-off, disabled or paused package is updated by it, not
+        // skipped.
+        return None;
     }
     if !package.enabled {
         return Some((
@@ -1154,6 +1448,65 @@ impl Settled {
 impl Drop for Updates {
     fn drop(&mut self) {
         self.settled.stop();
+    }
+}
+
+impl Launcher {
+    /// Checks every updatable extension at once and updates what the pass
+    /// finds, whatever the cadence: the pass the user asked for, which
+    /// root search's "Check for Extension Updates" row and the Settings
+    /// Extensions group's "Check for updates" button both start (ADR 0043:
+    /// two entry points, one flow). Unlike the automatic pass it includes
+    /// extensions whose automatic updates are turned off, and disabled and
+    /// paused ones — the user asked — and it answers even when everything
+    /// is up to date: a toast follows the pass, ending as its summary with
+    /// View Details, and the record holds what it came to. The pass begins
+    /// at once, on the updater's own thread; await the returned future for
+    /// it to end, as the window that offered it does, so both redraw with
+    /// its outcome. A Pane with no installation checks nothing.
+    pub fn check_extension_updates(&self) -> impl Future<Output = ()> + Send + 'static {
+        self.asked_pass_of(Some(Ask::All))
+    }
+
+    /// Checks the extension whose row in the update results has the
+    /// identity key `target` for an update, and updates what it finds: a
+    /// pass the user asked for whose scope is that one extension, as the
+    /// results view's Retry (a Failed row) and Update Now (a Skipped row
+    /// skipped only for the user's switch) run it, its outcome landing in
+    /// the record and its toast as any asked pass's. Nothing happens when
+    /// no row of the record is that key's. See
+    /// [`Launcher::check_extension_updates`].
+    pub fn check_extension_update_of(
+        &self,
+        target: &str,
+    ) -> impl Future<Output = ()> + Send + 'static {
+        let ask = self
+            .lock()
+            .update_results
+            .results
+            .row_of(target)
+            .map(|row| Ask::One(row.identity.clone()));
+        self.asked_pass_of(ask)
+    }
+
+    /// Starts the pass the user asked for over `ask` at once — `None`
+    /// starts nothing — and returns the future that ends when it has: the
+    /// look that ran it ended and the updater settled (bounded by
+    /// [`ASKED_PASS_WAIT`], so a window never waits for ever; a pass that
+    /// outlives the bound goes on, its toast reaching the window on its
+    /// own).
+    fn asked_pass_of(&self, ask: Option<Ask>) -> impl Future<Output = ()> + Send + 'static {
+        let updates = ask.and_then(|ask| {
+            self.updates.as_ref().map(|updates| {
+                updates.check_now_asked(ask);
+                updates.clone()
+            })
+        });
+        async move {
+            if let Some(updates) = updates {
+                off_thread(move || updates.checked(ASKED_PASS_WAIT)).await;
+            }
+        }
     }
 }
 

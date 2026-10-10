@@ -325,13 +325,14 @@ fn sections(state: &State) -> Vec<Section> {
 }
 
 /// The update results view's sections (see [`sections`]): each group's
-/// label over its first row listed, in the order Updated, Skipped,
-/// Failed, a group with nothing listed hidden.
+/// label over its first row listed, in the order Updated, Waiting,
+/// Skipped, Failed, a group with nothing listed hidden.
 fn update_sections(state: &State) -> Vec<Section> {
     let results = &state.update_results.results;
     let mut sections = Vec::new();
     for (label, group) in [
         ("Updated", &results.updated),
+        ("Waiting", &results.waiting),
         ("Skipped", &results.skipped),
         ("Failed", &results.failed),
     ] {
@@ -428,6 +429,7 @@ pub(super) fn kind(entry: &Entry) -> Option<RowKind> {
         | Entry::Acquire(_)
         | Entry::InstallUpdate
         | Entry::CheckUpdate
+        | Entry::CheckExtensionUpdates
         | Entry::OpenLogFolder
         | Entry::Manage
         | Entry::Settings => Some(RowKind::Command),

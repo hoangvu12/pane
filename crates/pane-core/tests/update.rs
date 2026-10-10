@@ -42,7 +42,7 @@ use pane_core::clipboard::{Clock as _, ManualClock, SystemClock};
 use pane_core::npm::Registry as NpmRegistry;
 use pane_core::{
     Launcher, OperationKind, PackageIdentity, Runtime, Screen, SettingsTarget, Status, ToastStyle,
-    WindowPresence,
+    UpdateResultsAction, WindowPresence,
 };
 use tempfile::TempDir;
 
@@ -179,15 +179,20 @@ impl Dirs {
 
     /// The record of the sample in `installed.json`.
     fn record(&self) -> serde_json::Value {
+        self.record_of(NAME)
+    }
+
+    /// The record of the package `name` in `installed.json`.
+    fn record_of(&self, name: &str) -> serde_json::Value {
         let text = fs::read_to_string(self.packages_dir().join("installed.json")).unwrap();
         let registry: serde_json::Value = serde_json::from_str(&text).unwrap();
         registry["packages"]
             .as_array()
             .unwrap()
             .iter()
-            .find(|record| record["npm"] == NAME)
+            .find(|record| record["npm"] == name)
             .cloned()
-            .unwrap_or_else(|| panic!("no record of {NAME} in {registry:#}"))
+            .unwrap_or_else(|| panic!("no record of {name} in {registry:#}"))
     }
 
     /// The record of the local package installed from `folder` in
@@ -207,7 +212,36 @@ impl Dirs {
 
     /// The version the sample is installed at, from its record.
     fn installed_version(&self) -> String {
-        self.record()["npmVersion"].as_str().unwrap().to_owned()
+        self.version_of(NAME)
+    }
+
+    /// The version the package `name` is installed at, from its record.
+    fn version_of(&self, name: &str) -> String {
+        self.record_of(name)["npmVersion"]
+            .as_str()
+            .unwrap()
+            .to_owned()
+    }
+
+    /// Publishes the sample as a package named `name`, titled `title`, at
+    /// `version`, tagged latest.
+    fn publish_as(&self, name: &str, title: &str, version: &str) {
+        self.registry.publish(
+            name,
+            version,
+            pack(&files_as(name, title, version, sample_component())),
+        );
+    }
+
+    /// A launcher on this data folder that also develops, as the app's
+    /// does: development mode needs the wiring (its builder and the
+    /// channel that tells the window of changes).
+    fn developing_launcher(&self) -> Launcher {
+        let (changes, _) = pane_core::changes::channel();
+        self.launcher().with_development(
+            Arc::new(pane_core::develop::Toolchains::from_env(None)),
+            changes,
+        )
     }
 
     /// What the Greeting command saved in its settings, as the whole
@@ -442,14 +476,23 @@ fn component_of(launcher: &Launcher) -> PathBuf {
 /// command runs the settings sample's component: an installed local-source
 /// copy of the same code, as a user's own folder is.
 fn local_package(sources: &Path) -> PathBuf {
-    let folder = sources.join("settings");
+    local_package_as(sources, "settings", "Local settings", "Local greeting")
+}
+
+/// Writes a local package folder under `sources`'s `name`, titled `title`,
+/// whose Greeting command is titled `command`: the settings sample's
+/// component, as a user's own folder is.
+fn local_package_as(sources: &Path, name: &str, title: &str, command: &str) -> PathBuf {
+    let folder = sources.join(name);
     fs::create_dir_all(&folder).unwrap();
     fs::write(
         folder.join("pane.json"),
-        r#"{ "manifestVersion": 1, "title": "Local settings", "version": "0.1.0",
+        format!(
+            r#"{{ "manifestVersion": 1, "title": "{title}", "version": "0.1.0",
              "apiVersion": "0.1",
-             "commands": [{ "id": "greeting", "title": "Local greeting",
-                             "component": "sample_settings_js.wasm" }] }"#,
+             "commands": [{{ "id": "greeting", "title": "{command}",
+                             "component": "sample_settings_js.wasm" }}] }}"#
+        ),
     )
     .unwrap();
     fs::copy(
@@ -458,6 +501,35 @@ fn local_package(sources: &Path) -> PathBuf {
     )
     .unwrap();
     folder
+}
+
+/// The settings sample's files as a package named `name`, titled `title`,
+/// at `version`, with `component` in place of its built one (the sample's
+/// by default): a second and third package told apart from the first by
+/// its name and title, whose tarball holds the package asked for.
+fn files_as(
+    name: &str,
+    title: &str,
+    version: &str,
+    component: Vec<u8>,
+) -> Vec<(&'static str, Vec<u8>)> {
+    let manifest = format!(
+        r#"{{ "manifestVersion": 1, "title": "{title}", "version": "{version}",
+             "apiVersion": "0.1",
+             "commands": [{{ "id": "greeting", "title": "Greeting",
+                             "component": "sample_settings_js.wasm" }}] }}"#
+    );
+    let package = format!(r#"{{ "name": "{name}", "version": "{version}" }}"#);
+    vec![
+        ("package.json", package.into_bytes()),
+        ("pane.json", manifest.into_bytes()),
+        ("sample_settings_js.wasm", component),
+    ]
+}
+
+/// The metadata path the registry is asked for the package `name`.
+fn metadata_path(name: &str) -> String {
+    format!("/{}", name.replace('/', "%2f"))
 }
 
 #[test]
@@ -1388,4 +1460,496 @@ fn the_update_results_screen_shows_the_groups_and_settings_opens_it() {
     // Back returns to the extension list the flow was entered from.
     launcher.back();
     assert!(matches!(launcher.view().screen, Screen::Extensions { .. }));
+}
+
+/// The npm name of the packages the asked-pass tests install beside the
+/// first: one whose automatic updates are turned off, one disabled, one
+/// paused, one pinned, and a second plain one.
+const SECOND_NAME: &str = "@pane-tests/second";
+const OFF: &str = "@pane-tests/off";
+const DISABLED: &str = "@pane-tests/disabled";
+const PAUSED: &str = "@pane-tests/paused";
+
+/// Writes a local package folder titled "Developed settings" that also
+/// builds: a `Cargo.toml` beside its manifest makes development mode watch
+/// the folder, so an installed copy of it is a development copy while it
+/// is developed. No file is saved, so no build runs.
+fn developed_package(sources: &Path) -> PathBuf {
+    let folder = local_package_as(
+        sources,
+        "developed",
+        "Developed settings",
+        "Developed greeting",
+    );
+    fs::write(folder.join("Cargo.toml"), "").unwrap();
+    folder
+}
+
+/// Activates the Greeting command of the package with the identity key
+/// `key`, among the other packages' commands of the same title.
+fn activate_greeting_of(launcher: &Launcher, key: &str) {
+    to_root(launcher);
+    let id = format!("{key}#greeting");
+    let index = launcher
+        .view()
+        .rows
+        .iter()
+        .position(|row| row.id == id)
+        .unwrap_or_else(|| panic!("no row {id}"));
+    launcher.select(index);
+    block_on(launcher.activate_selected());
+}
+
+#[test]
+fn the_root_search_row_and_the_public_call_start_a_pass_at_once() {
+    let dirs = Dirs::new();
+    let launcher = dirs.launcher();
+    dirs.install(&launcher, "0.1.0");
+    dirs.publish("0.2.0", "0.1");
+
+    // The row is listed among Pane's own rows; no check has run yet (the
+    // first automatic one comes a minute after Pane starts).
+    to_root(&launcher);
+    assert!(
+        titles(&launcher)
+            .iter()
+            .any(|title| title == "Check for Extension Updates")
+    );
+    assert_eq!(launcher.last_extension_check(), None);
+
+    // Activating the row starts the pass at once, whatever the cadence:
+    // the clock never moves, and the wait is for the pass itself.
+    activate(&launcher, "Check for Extension Updates");
+    assert_eq!(dirs.installed_version(), "0.2.0");
+    let recorded = launcher.update_results();
+    assert_eq!(recorded.updated.len(), 1);
+    assert_eq!(recorded.updated[0].detail, "0.1.0 → 0.2.0");
+    let toast = launcher.toast().expect("the ending toast");
+    assert_eq!(
+        (toast.toast.style, toast.toast.title.as_str()),
+        (ToastStyle::Success, "Updated 1 extension")
+    );
+    assert_eq!(
+        toast
+            .toast
+            .primary
+            .as_ref()
+            .map(|action| action.title.as_str()),
+        Some("View Details")
+    );
+    assert_eq!(launcher.last_extension_check(), Some(dirs.clock.now()));
+
+    // The public call both entry points run (root search's row through
+    // the same one, the Settings Extensions group's button by hand here):
+    // a pass over what is now up to date, which answers even so — the
+    // user asked — and says when it checked.
+    let asked = dirs.registry.requests().len();
+    block_on(launcher.check_extension_updates());
+    assert_eq!(dirs.registry.requests().len(), asked + 1);
+    assert_eq!(
+        launcher.toast().map(|toast| toast.toast.title),
+        Some("Extensions are up to date".into())
+    );
+    // A pass that found nothing new keeps the record.
+    assert_eq!(launcher.update_results(), recorded);
+    drop(launcher);
+
+    // When the check last ran survives a restart with the record.
+    let checked = dirs.clock.now();
+    let launcher = dirs.launcher();
+    assert_eq!(launcher.last_extension_check(), Some(checked));
+}
+
+#[test]
+fn a_pass_the_user_asked_for_includes_off_disabled_and_paused_extensions() {
+    let dirs = Dirs::new();
+    let launcher = dirs.developing_launcher();
+    dirs.install(&launcher, "0.1.0");
+    // Whose automatic updates are turned off.
+    dirs.publish_as(OFF, "Off settings", "0.1.0");
+    block_on(launcher.install_npm(OFF));
+    // Disabled.
+    dirs.publish_as(DISABLED, "Disabled settings", "0.1.0");
+    block_on(launcher.install_npm(DISABLED));
+    block_on(launcher.set_enabled(&PackageIdentity::npm(DISABLED), false));
+    // Paused: its command crashes until Pane pauses it after the third.
+    dirs.publish_as(PAUSED, "Paused settings", "0.1.0");
+    block_on(launcher.install_npm(PAUSED));
+    for _ in 0..3 {
+        activate_greeting_of(&launcher, &PackageIdentity::npm(PAUSED).key());
+        activate(&launcher, "Crash");
+    }
+    assert!(matches!(
+        launcher.extension_mark(&PackageIdentity::npm(PAUSED)),
+        Some(pane_core::ExtensionMark::Paused(_))
+    ));
+    // A pinned package, a local folder's copy and a development copy.
+    dirs.registry.publish(
+        PINNED,
+        "0.1.0",
+        pack(&files_as(
+            PINNED,
+            "Pinned settings",
+            "0.1.0",
+            sample_component(),
+        )),
+    );
+    block_on(launcher.install_npm(&format!("{PINNED}@0.1.0")));
+    let sources = tempfile::tempdir().unwrap();
+    let folder = local_package(sources.path());
+    block_on(launcher.install_package(&folder));
+    let developed = developed_package(sources.path());
+    block_on(launcher.install_package(&developed));
+    block_on(launcher.start_developing(&PackageIdentity::local(&developed).unwrap()));
+    to_root(&launcher);
+
+    // A newer version of every updatable one is published, and the OFF
+    // package's updates are turned off — the toggle checks at once, so
+    // the automatic pass that follows runs over everything as it stands:
+    // it updates none but the plain one, and skips the rest with their
+    // reasons.
+    dirs.publish("0.2.0", "0.1");
+    dirs.publish_as(OFF, "Off settings", "0.2.0");
+    dirs.publish_as(DISABLED, "Disabled settings", "0.2.0");
+    dirs.publish_as(PAUSED, "Paused settings", "0.2.0");
+    manage(&launcher);
+    activate(&launcher, "Update Off settings automatically");
+    to_root(&launcher);
+    assert!(
+        launcher.wait_for_updates(Duration::from_secs(30)),
+        "the toggle's check settled"
+    );
+    assert_eq!(dirs.installed_version(), "0.2.0");
+    for name in [OFF, DISABLED, PAUSED] {
+        assert_eq!(dirs.version_of(name), "0.1.0", "{name} not updated");
+    }
+
+    // The pass the user asks for: everything Pane could update is
+    // updated — turned off, disabled and paused ones too — and the
+    // pinned, local and development copies are skipped with their
+    // reasons.
+    dirs.publish("0.3.0", "0.1");
+    block_on(launcher.check_extension_updates());
+    assert_eq!(dirs.installed_version(), "0.3.0");
+    assert_eq!(dirs.version_of(OFF), "0.2.0");
+    // An update keeps a disabled package disabled.
+    assert_eq!(dirs.version_of(DISABLED), "0.2.0");
+    assert!(
+        !launcher
+            .packages()
+            .into_iter()
+            .any(|package| package.identity == PackageIdentity::npm(DISABLED) && package.enabled)
+    );
+    // An update of a paused one unpauses it, as the preview's Update row
+    // does: its code runs again.
+    assert_eq!(dirs.version_of(PAUSED), "0.2.0");
+    assert_eq!(launcher.extension_mark(&PackageIdentity::npm(PAUSED)), None);
+    activate_greeting_of(&launcher, &PackageIdentity::npm(PAUSED).key());
+    activate(&launcher, "Use a casual greeting");
+    assert_eq!(
+        shown(&launcher),
+        Status::Result("Saved the casual greeting".into())
+    );
+
+    // The record: every updatable one updated, the rest skipped with why.
+    let recorded = launcher.update_results();
+    assert_eq!(recorded.updated.len(), 4, "{recorded:#?}");
+    assert!(recorded.waiting.is_empty(), "{recorded:#?}");
+    let skipped = |key: String| {
+        recorded
+            .skipped
+            .iter()
+            .find(|row| row.identity.key() == key)
+            .unwrap_or_else(|| panic!("no row for {key}"))
+    };
+    assert_eq!(
+        skipped(PackageIdentity::npm(PINNED).key()).detail,
+        "Its version is pinned"
+    );
+    assert_eq!(
+        skipped(PackageIdentity::local(&folder).unwrap().key()).detail,
+        "It is a local copy, from a folder"
+    );
+    assert_eq!(
+        skipped(PackageIdentity::local(&developed).unwrap().key()).detail,
+        "It is a development copy"
+    );
+    // The rows keep the installed list's order, whatever order the pass's
+    // checks completed in (they run a few at a time).
+    assert_eq!(
+        recorded
+            .updated
+            .iter()
+            .map(|row| row.identity.key())
+            .collect::<Vec<_>>(),
+        vec![
+            PackageIdentity::npm(NAME).key(),
+            PackageIdentity::npm(OFF).key(),
+            PackageIdentity::npm(DISABLED).key(),
+            PackageIdentity::npm(PAUSED).key(),
+        ]
+    );
+}
+
+#[test]
+fn a_pass_the_user_asked_for_shows_its_progress_and_ends_with_its_summary() {
+    let dirs = Dirs::new();
+    let launcher = dirs.launcher();
+    dirs.install(&launcher, "0.1.0");
+    dirs.publish("0.2.0", "0.1");
+
+    // The registry holds the metadata answer back: the pass stays in its
+    // checking phase, its toast saying so.
+    let held = dirs.registry.hold(&metadata_path(NAME));
+    let _pass = launcher.check_extension_updates();
+    wait_until("the checking toast", Duration::from_secs(30), || {
+        feedback::toast_title(&launcher).as_deref() == Some("Checking for extension updates…")
+    });
+    drop(held);
+
+    // The applies are held: the toast says how far they have got.
+    let held = launcher.hold_update_applies();
+    wait_until("the updating toast", Duration::from_secs(30), || {
+        feedback::toast_title(&launcher).as_deref() == Some("Updating 1 of 1…")
+    });
+    let updating = launcher.toast().expect("the toast");
+    drop(held);
+    wait_until("the ending toast", Duration::from_secs(30), || {
+        feedback::toast_title(&launcher).as_deref() == Some("Updated 1 extension")
+    });
+
+    // One toast through the pass, updated by id: not replaced.
+    let ended = launcher.toast().expect("the ending toast");
+    assert_eq!(ended.id, updating.id);
+    assert!(ended.revision > updating.revision, "updated, not replaced");
+    assert_eq!(ended.toast.style, ToastStyle::Success);
+    assert_eq!(dirs.installed_version(), "0.2.0");
+
+    // The toast's View Details opens the results view.
+    block_on(launcher.run_toast_action(ended.id, pane_core::ToastSlot::Primary));
+    assert!(matches!(
+        launcher.view().screen,
+        Screen::UpdateResults { .. }
+    ));
+    assert_eq!(launcher.view().rows.len(), 1);
+}
+
+#[test]
+fn an_asked_pass_that_failed_something_ends_with_its_failures() {
+    let dirs = Dirs::new();
+    let launcher = dirs.launcher();
+    dirs.install(&launcher, "0.1.0");
+    dirs.publish_as(SECOND_NAME, "Second settings", "0.1.0");
+    block_on(launcher.install_npm(SECOND_NAME));
+    // A Git package whose tracked branch has moved to a revision holding
+    // only the source: the pass fails it, as a preview would refuse it.
+    let greeter = dirs.git_repository("greeter");
+    block_on(launcher.install_git(&format!("{}@release", greeter.url)));
+    to_root(&launcher);
+
+    dirs.publish("0.2.0", "0.1");
+    dirs.publish_as(SECOND_NAME, "Second settings", "0.2.0");
+    greeter.move_release_to_source();
+    block_on(launcher.check_extension_updates());
+
+    // The ending toast says what was updated and what failed, carrying
+    // View Details; the failures are not announced again on the next
+    // showing — this toast was the announcement.
+    let toast = launcher.toast().expect("the ending toast");
+    assert_eq!(
+        (toast.toast.style, toast.toast.title.as_str()),
+        (ToastStyle::Failure, "Updated 2 extensions, 1 failed")
+    );
+    launcher.toast_left(toast.id, toast.revision);
+    launcher.set_window_presence(WindowPresence::Hidden);
+    launcher.set_window_presence(WindowPresence::Shown);
+    assert_eq!(
+        launcher.toast().map(|toast| toast.toast.title),
+        None,
+        "the asked pass's ending toast was the announcement"
+    );
+    // What was updated and failed really was.
+    assert_eq!(dirs.installed_version(), "0.2.0");
+    assert_eq!(dirs.version_of(SECOND_NAME), "0.2.0");
+    assert_eq!(dirs.git_commit("greeter"), greeter.release);
+    let recorded = launcher.update_results();
+    assert_eq!(recorded.updated.len(), 2);
+    assert_eq!(recorded.failed.len(), 1);
+}
+
+#[test]
+fn a_package_in_use_waits_and_is_listed_until_it_is_quiet() {
+    let dirs = Dirs::new();
+    let launcher = dirs.launcher();
+    dirs.install(&launcher, "0.1.0");
+    dirs.publish("0.2.0", "0.1");
+
+    // "Save after waiting", run on another thread with the command's
+    // screen open: the package is in use (the deferral test's shape).
+    open_greeting(&launcher);
+    select_title(&launcher, "Save after waiting");
+    let saving = launcher.activate_selected();
+    let thread = thread::spawn(move || {
+        block_on(saving);
+    });
+    wait_until("the slow save started", Duration::from_secs(10), || {
+        dirs.slow_save() == Some("started")
+    });
+
+    // The pass the user asks for stages the update and defers it: the
+    // record lists it as waiting, and the toast ends — the pass has
+    // nothing more it can do now.
+    block_on(launcher.check_extension_updates());
+    assert_eq!(dirs.installed_version(), "0.1.0");
+    let recorded = launcher.update_results();
+    assert_eq!(recorded.waiting.len(), 1, "{recorded:#?}");
+    assert_eq!(
+        recorded.waiting[0].detail,
+        "Waiting until Settings from npm is not in use"
+    );
+    assert_eq!(
+        launcher.toast().map(|toast| toast.toast.title),
+        Some("Extensions are up to date".into())
+    );
+
+    // The command finishes and the user leaves: the update applies, and
+    // the waiting row becomes the updated one.
+    thread.join().unwrap();
+    to_root(&launcher);
+    wait_until(
+        "the deferred update applied",
+        Duration::from_secs(30),
+        || {
+            dirs.installed_version() == "0.2.0"
+                && launcher.update_results().updated.len() == 1
+                && launcher.update_results().waiting.is_empty()
+        },
+    );
+    assert_eq!(launcher.update_results().updated[0].detail, "0.1.0 → 0.2.0");
+}
+
+#[test]
+fn retry_checks_that_extension_alone() {
+    let dirs = Dirs::new();
+    let launcher = dirs.launcher();
+    dirs.install(&launcher, "0.1.0");
+    dirs.publish_as(SECOND_NAME, "Second settings", "0.1.0");
+    block_on(launcher.install_npm(SECOND_NAME));
+    drop(launcher);
+
+    // A new Pane on the same data whose registry is down: the pass it is
+    // asked for fails both, and its ending toast is their announcement.
+    let closed = unreachable::ClosedPort::new();
+    let url = format!("{}/", closed.url());
+    let launcher = Launcher::with_packages(Ok(dirs.runtime.clone()), vec![], dirs.packages_dir())
+        .with_npm_registry(NpmRegistry::local(&url).unwrap())
+        .with_clock(dirs.clock.clone());
+    block_on(launcher.check_extension_updates());
+    let recorded = launcher.update_results();
+    assert_eq!(recorded.failed.len(), 2, "{recorded:#?}");
+    assert_eq!(
+        launcher.toast().map(|toast| toast.toast.title),
+        Some("2 extension updates failed".into())
+    );
+    // Retry is offered on a failed row.
+    let retried = recorded.failed[1].identity.key();
+    assert_eq!(
+        launcher.update_results_row_actions(&retried),
+        vec![UpdateResultsAction::Retry]
+    );
+    drop(launcher);
+
+    // A Pane on the same data with its registry back: retrying the one
+    // row checks that extension alone — only its metadata is asked for,
+    // and it updates — while the other stays as it was, its failure gone
+    // from the record (the retry's pass replaced it).
+    dirs.publish("0.2.0", "0.1");
+    dirs.publish_as(SECOND_NAME, "Second settings", "0.2.0");
+    let launcher = dirs.launcher();
+    let asked = dirs.registry.requests().len();
+    block_on(launcher.check_extension_update_of(&retried));
+    // Only that extension was checked: its metadata — the check's own
+    // reading, and the staging's again as an install does — and the
+    // tarball of the update it found; nothing of the other's.
+    let made: Vec<String> = dirs.registry.requests()[asked..].to_vec();
+    assert_eq!(
+        made,
+        vec![
+            metadata_path(SECOND_NAME),
+            metadata_path(SECOND_NAME),
+            "/@pane-tests/second/-/second-0.2.0.tgz".to_owned(),
+        ],
+        "the retry's requests"
+    );
+    assert_eq!(dirs.version_of(SECOND_NAME), "0.2.0");
+    assert_eq!(dirs.installed_version(), "0.1.0", "only that one");
+    let recorded = launcher.update_results();
+    assert_eq!(recorded.updated.len(), 1, "{recorded:#?}");
+    assert_eq!(
+        recorded.updated[0].identity.key(),
+        PackageIdentity::npm(SECOND_NAME).key()
+    );
+    // Its ending toast is the retry's own summary.
+    assert_eq!(
+        launcher.toast().map(|toast| toast.toast.title),
+        Some("Updated 1 extension".into())
+    );
+}
+
+#[test]
+fn update_now_updates_an_extension_skipped_only_for_the_users_switch() {
+    let dirs = Dirs::new();
+    let launcher = dirs.launcher();
+    dirs.install(&launcher, "0.1.0");
+    dirs.publish_as(SECOND_NAME, "Second settings", "0.1.0");
+    block_on(launcher.install_npm(SECOND_NAME));
+
+    // A newer version of both is published, and the second package's
+    // automatic updates are turned off — the toggle checks at once, so
+    // the automatic pass that follows updates the first and records the
+    // second as skipped for the user's switch.
+    dirs.publish("0.2.0", "0.1");
+    dirs.publish_as(SECOND_NAME, "Second settings", "0.2.0");
+    manage(&launcher);
+    activate(&launcher, "Update Second settings automatically");
+    to_root(&launcher);
+    assert!(
+        launcher.wait_for_updates(Duration::from_secs(30)),
+        "the toggle's check settled"
+    );
+    assert_eq!(dirs.installed_version(), "0.2.0");
+    assert_eq!(dirs.version_of(SECOND_NAME), "0.1.0");
+    let recorded = launcher.update_results();
+    let second = PackageIdentity::npm(SECOND_NAME).key();
+    let skipped = recorded
+        .skipped
+        .iter()
+        .find(|row| row.identity.key() == second)
+        .expect("the skipped row");
+    assert_eq!(skipped.detail, "Automatic updates of it are off");
+
+    // Update Now is offered on that row, on no other: the updated row
+    // offers nothing, a row whose only reason is not the user's switch
+    // (say a pinned one) would not either.
+    assert_eq!(
+        launcher.update_results_row_actions(&second),
+        vec![UpdateResultsAction::UpdateNow]
+    );
+    assert_eq!(
+        launcher.update_results_row_actions(&PackageIdentity::npm(NAME).key()),
+        Vec::new()
+    );
+
+    // It updates the extension now: an asked pass whose scope is that
+    // one, its outcome landing in the record and its toast as any asked
+    // pass's.
+    block_on(launcher.check_extension_update_of(&second));
+    assert_eq!(dirs.version_of(SECOND_NAME), "0.2.0");
+    let recorded = launcher.update_results();
+    assert_eq!(recorded.updated.len(), 1, "{recorded:#?}");
+    assert_eq!(recorded.updated[0].identity.key(), second);
+    assert_eq!(
+        launcher.toast().map(|toast| toast.toast.title),
+        Some("Updated 1 extension".into())
+    );
 }

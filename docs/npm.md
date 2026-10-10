@@ -100,7 +100,19 @@ system's in release builds; tests move the clock). A check reads only the
 registry's metadata
 for each eligible package's name: nothing is downloaded while the latest
 version is the installed one. Both the cadence and the initial wait are
-provisional, as the spec leaves the delivery timing open.
+provisional, as the spec leaves the delivery timing open. The user can
+also ask for a check at once — root search's **Check for Extension
+Updates** command, or the **Check for updates** button on the Settings
+Extensions page, which says when Pane last checked under it — whatever
+the cadence (#267). A pass the user asked for looks wider than the
+automatic one: every installed package from a source Pane updates,
+whether or not its automatic updates are turned off, and disabled and
+paused ones too (the user asked; an update keeps a disabled one disabled,
+and unpauses a paused one, as the preview's Update row does). A toast
+follows it — "Checking for extension updates…", "Updating 2 of 3…" —
+ending as its summary ("Updated 3 extensions", "Extensions are up to
+date", "Updated 2, 1 failed") with View Details, and its checks run a
+few packages at a time, each bounded by Pane's HTTP limits as ever.
 
 **What a newer version goes through.** Exactly what an install does:
 downloading and checking the tarball (its integrity and everything the
@@ -121,7 +133,9 @@ with one open, and the user may be reading its answer), and no call of
 it the user asked for is still running (opening a command, running an
 item, a query sent from root, a command's search, a form submission).
 The running command always finishes first: while one is running, or its
-screen is open, the update waits and is tried again every second.
+screen is open, the update waits and is tried again every second, listed
+in the pass's update results as "Waiting until <title> is not in use"
+until it applies.
 Managed background work is not waited for: a replacement ends it with
 the package's generation and the new code starts it again, exactly as a
 reload does ([generations](generations.md)). In the moment between the
