@@ -225,7 +225,9 @@ fn offered_dynamic(state: &State) -> Vec<String> {
     super::dynamic::rows(state)
         .0
         .into_iter()
-        .filter(|result| matches!(result.entry, Entry::Open(_)))
+        // An item that runs an action is offered too: a hotkey for it
+        // runs the action, as activating its row does.
+        .filter(|result| matches!(result.entry, Entry::Open(_) | Entry::DynamicAction(_)))
         .map(|result| result.row.id)
         .collect()
 }

@@ -331,9 +331,16 @@ fn a_dynamic_root_item_appears_updates_and_disappears_in_root_search() {
         // as the item is registered, before the activation has come to the
         // timer, so the timer is waited for.
         assert!(launcher.undo_list(&identity).contains(&"dynamic root item"));
-        pane.until("the activation's timer", true, || {
-            launcher.undo_list(&identity).contains(&"timer")
-        });
+        let began = Instant::now();
+        while !launcher.undo_list(&identity).contains(&"timer") {
+            assert!(
+                began.elapsed() < PROMPTLY,
+                "the activation's timer: undo list {:?}, log {:?}",
+                launcher.undo_list(&identity),
+                launcher.extension_log(&identity)
+            );
+            thread::sleep(Duration::from_millis(20));
+        }
         // The timer fires and updates the row: the thread has begun the
         // timer's interval where the clock stands.
         pane.timers_settled(&launcher);
