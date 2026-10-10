@@ -157,7 +157,9 @@ export const command = {
 
 /** The state handoff's entry points, beside the command's own export: the
  * task's count of cycles this run is handed to the code that replaces
- * it, so its first cycle finds it. */
+ * it, so its first cycle finds it.
+ * @type {import("@pane-app/extension/state").Lifecycle}
+ */
 export const lifecycle = {
   // No activation entry point: the interface is exported for the state
   // handoff, so the task's own state survives a replacement of the code.
@@ -167,8 +169,11 @@ export const lifecycle = {
     return save({ thisRun });
   },
 
+  /**
+   * @param {Uint8Array} bytes
+   */
   async restore(bytes) {
-    thisRun = load(bytes).thisRun;
+    thisRun = /** @type {{ thisRun: number }} */ (load(bytes)).thisRun;
   },
 };
 

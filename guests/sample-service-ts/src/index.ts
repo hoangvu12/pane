@@ -29,6 +29,7 @@ import { get, set } from "pane:extension/settings@0.1.0";
 import * as content from "pane:extension/content@0.1.0";
 import { waitFor } from "wasi:clocks/monotonic-clock@0.3.0";
 import type { Cycle, Item, List, Service } from "@pane-app/extension";
+import type { Lifecycle } from "@pane-app/extension/state";
 import { showToast } from "@pane-app/extension/feedback";
 import { load, save } from "@pane-app/extension/state";
 
@@ -141,17 +142,17 @@ export const command = {
 
 /** The state handoff's entry points, beside the command's own export: the
  * task's count of cycles this run is handed to the code that replaces
- * it, so its first cycle finds it. */
-export const lifecycle = {
-  // No activation entry point: the interface is exported for the state
-  // handoff, so the task's own state survives a replacement of the code.
-  async activate(): Promise<void> {},
+ * it, so its first cycle finds it. No activation entry point: the
+ * interface is exported for the state handoff, so the task's own state
+ * survives a replacement of the code. */
+export const lifecycle: Lifecycle = {
+  async activate() {},
 
-  async snapshot(): Promise<Uint8Array> {
+  async snapshot() {
     return save({ thisRun });
   },
 
-  async restore(bytes: Uint8Array): Promise<void> {
+  async restore(bytes: Uint8Array) {
     thisRun = (load(bytes) as { thisRun: number }).thisRun;
   },
 };

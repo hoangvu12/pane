@@ -24,3 +24,22 @@ export function save(value: unknown): Uint8Array;
  * @returns {unknown}
  */
 export function load(state: Uint8Array): unknown;
+
+/**
+ * The lifecycle entry points of a command that opts in to the state
+ * handoff (ADR 0041): `activate`, beside which the package.json's
+ * `"pane": { "snapshot": true }` links `snapshot` and `restore`. An
+ * `activate` that does nothing and a `restore` that throws suit a command
+ * that hands nothing over.
+ */
+export interface Lifecycle {
+  /** The activation entry point, called only when the package's
+   * `pane.json` declares `"activate"` for this component. */
+  activate(): Promise<void>;
+  /** The state this instance hands to its replacement: `undefined` for
+   * nothing. */
+  snapshot(): Promise<Uint8Array | undefined>;
+  /** Restores the state a replaced instance handed over. Throwing
+   * discards the state and starts fresh, which is not a failure. */
+  restore(state: Uint8Array): Promise<void>;
+}

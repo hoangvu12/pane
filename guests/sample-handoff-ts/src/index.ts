@@ -11,6 +11,7 @@
 // `@pane-app/extension/state` serialises. Items, titles and answers match
 // the Rust and JavaScript handoff samples.
 import type { Command, Form } from "@pane-app/extension";
+import type { Lifecycle } from "@pane-app/extension/state";
 import { showToast } from "@pane-app/extension/feedback";
 import { load, save } from "@pane-app/extension/state";
 
@@ -19,8 +20,8 @@ import { load, save } from "@pane-app/extension/state";
  * handed to the new code on a replacement.
  */
 interface Kept {
-    counter: number;
-    draft: string;
+  counter: number;
+  draft: string;
 }
 
 /** The state, kept in this instance's memory: lost with it, except what the handoff carries. */
@@ -28,85 +29,87 @@ let kept: Kept | undefined;
 
 /** The state as it stands, handing nothing over until there is some. */
 function state(): Kept {
-    if (kept === undefined) {
-        kept = { counter: 0, draft: "" };
-    }
-    return kept;
+  if (kept === undefined) {
+    kept = { counter: 0, draft: "" };
+  }
+  return kept;
 }
 
 /** The draft's form: one text field. */
 const DRAFT_FORM: Form = {
-    title: "Edit the draft",
-    fields: [
-        {
-            id: "draft",
-            label: "Draft",
-            kind: { tag: "text", val: { placeholder: "What a replacement must keep" } },
-        },
-    ],
-    submitLabel: "Save",
+  title: "Edit the draft",
+  fields: [
+    {
+      id: "draft",
+      label: "Draft",
+      kind: { tag: "text", val: { placeholder: "What a replacement must keep" } },
+    },
+  ],
+  submitLabel: "Save",
 };
 
 /** `text` in quotes, or "nothing" for empty. */
 function quoted(text: string): string {
-    return text === "" ? "nothing" : `“${text}”`;
+  return text === "" ? "nothing" : `“${text}”`;
 }
 
-/** The state handoff's entry points, beside the command's own export. */
-export const lifecycle = {
-    // This sample declares no activation entry point, so Pane never calls
-    // this: exporting the lifecycle interface opts in to the state
-    // handoff, and `activate` is here because the interface has it.
-    async activate(): Promise<void> {},
+/**
+ * The state handoff's entry points, beside the command's own export. This
+ * sample declares no activation entry point, so Pane never calls
+ * `activate`: exporting the lifecycle interface opts in to the state
+ * handoff, and `activate` is here because the interface has it.
+ */
+export const lifecycle: Lifecycle = {
+  async activate() {},
 
-    // The state handed to the new code: the counter and the draft, as the
-    // SDK serialises them. Resolving with nothing hands nothing over.
-    async snapshot(): Promise<Uint8Array> {
-        return save(state());
-    },
+  // The state handed to the new code: the counter and the draft, as the
+  // SDK serialises them. Resolving with nothing hands nothing over.
+  async snapshot() {
+    return save(state());
+  },
 
-    // Restores what a replaced instance handed over. Throwing discards the
-    // state and starts fresh, which is not a failure: this throws when the
-    // bytes are not this version's state.
-    async restore(bytes: Uint8Array): Promise<void> {
-        kept = load(bytes) as Kept;
-    },
+  // Restores what a replaced instance handed over. Throwing discards the
+  // state and starts fresh, which is not a failure: this throws when the
+  // bytes are not this version's state.
+  async restore(bytes: Uint8Array) {
+    kept = load(bytes) as Kept;
+  },
 };
 
 /** The command's list: the counter and the draft as they stand, with the actions that change them. */
 export const command: Command = {
-    // Stable item ids, so a reopened screen keeps its selection.
-    async render() {
-        const { counter, draft } = state();
-        return {
-            title: `Handoff: ${counter} counted, draft ${quoted(draft)}`,
-            items: [
-                {
-                    id: "add",
-                    title: `Add one (${counter} so far)`,
-                    onAction: async () => {
-                        state().counter += 1;
-                        showToast({ title: "Counted one more" });
-                    },
-                },
-                {
-                    id: "draft",
-                    title: `Edit the draft (${draft.split(/\s+/).filter(Boolean).length} words)`,
-                    subtitle: `The draft is ${quoted(draft)}`,
-                    form: DRAFT_FORM,
-                },
-            ],
-        };
-    },
+  // Stable item ids, so a reopened screen keeps its selection.
+  async render() {
+    const { counter, draft } = state();
+    return {
+      title: `Handoff: ${counter} counted, draft ${quoted(draft)}`,
+      items: [
+        {
+          id: "add",
+          title: `Add one (${counter} so far)`,
+          onAction: async () => {
+            state().counter += 1;
+            showToast({ title: "Counted one more" });
+          },
+        },
+        {
+          id: "draft",
+          title: `Edit the draft (${draft.split(/\s+/).filter(Boolean).length} words)`,
+          subtitle: `The draft is ${quoted(draft)}`,
+          form: DRAFT_FORM,
+        },
+      ],
+    };
+  },
 
-    // The draft form's answer: the draft becomes the text typed, and the
-    // screen says so.
-    async submitForm(itemId: string, values: { id: string; value: string }[]) {
-        if (itemId !== "draft") {
-            throw { message: `unknown form: ${itemId}` };
-        }
-        const text = values.find((field) => field.id === "draft")?.value ?? "";
-        state().draft = text;
-        return `Saved the draft ${quoted(text)}`;
-    },
+  // The draft form's answer: the draft becomes the text typed, and the
+  // screen says so.
+  async submitForm(itemId: string, values: { id: string; value: string }[]) {
+    if (itemId !== "draft") {
+      throw { message: `unknown form: ${itemId}` };
+    }
+    const text = values.find((field) => field.id === "draft")?.value ?? "";
+    state().draft = text;
+    return `Saved the draft ${quoted(text)}`;
+  },
 };
