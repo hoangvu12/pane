@@ -206,7 +206,7 @@ impl Generation {
     ) -> Registration {
         let mut list = self.list();
         if list.done {
-                drop(list);
+            drop(list);
             undo_one(what, Box::new(undo));
             return Registration {
                 list: Weak::new(),
