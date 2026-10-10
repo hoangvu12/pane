@@ -3695,6 +3695,7 @@ impl Launcher {
                 .spawn(move || {
                     if let Ok(runtime) = launcher.runtime() {
                         let runtime = runtime.clone();
+                        eprintln!("pane-activate: begins {}", component.display());
                         // The runtime records the activation as the call
                         // begins, in the instance it runs in; a trap in it
                         // is a crash of the package like any call's,
@@ -3707,6 +3708,7 @@ impl Launcher {
                                 component.display()
                             );
                         }
+                        eprintln!("pane-activate: done {}", component.display());
                     }
                     launcher.lock().activating.remove(&in_flight);
                     launcher.changed();
