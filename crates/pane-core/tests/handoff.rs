@@ -425,7 +425,10 @@ fn a_crashed_instance_hands_nothing_over_when_it_is_replaced() {
         "{crashed:?}"
     );
     block_on(launcher.reload(&identity));
-    assert_eq!(open(&launcher, "Handoff fixture"), "Handoff fixture: 0 counted");
+    assert_eq!(
+        open(&launcher, "Handoff fixture"),
+        "Handoff fixture: 0 counted"
+    );
 }
 
 #[test]
@@ -484,9 +487,7 @@ fn a_busy_instance_gives_no_snapshot_and_is_stopped_as_today() {
     assert_eq!(title(&launcher), "Handoff fixture: 0 counted");
     until("the diagnostic", || {
         pane.reported(&launcher, &identity).iter().any(|line| {
-            line.contains(
-                "the state was not handed over to the new code: a call was still running",
-            )
+            line.contains("the state was not handed over to the new code: a call was still running")
         })
     });
 }
@@ -515,11 +516,16 @@ fn a_late_snapshot_is_dropped_and_the_reload_goes_ahead() {
 
     // The late snapshot was dropped: the new code starts fresh, and
     // development mode's diagnostics report it.
-    assert_eq!(open(&launcher, "Handoff fixture"), "Handoff fixture: 0 counted");
+    assert_eq!(
+        open(&launcher, "Handoff fixture"),
+        "Handoff fixture: 0 counted"
+    );
     until("the diagnostic", || {
         pane.reported(&launcher, &identity).iter().any(|line| {
-            line.contains("the state was not handed over to the new code: the old code did not \
-                 answer within 1 second")
+            line.contains(
+                "the state was not handed over to the new code: the old code did not \
+                 answer within 1 second",
+            )
         })
     });
 }
@@ -537,11 +543,14 @@ fn an_oversized_snapshot_is_dropped_and_the_reload_goes_ahead() {
         press(&launcher, "Reload Handoff fixture"),
         Status::Result("Reloaded Handoff fixture".into())
     );
-    assert_eq!(open(&launcher, "Handoff fixture"), "Handoff fixture: 0 counted");
+    assert_eq!(
+        open(&launcher, "Handoff fixture"),
+        "Handoff fixture: 0 counted"
+    );
     until("the diagnostic", || {
-        pane.reported(&launcher, &identity).iter().any(|line| {
-            line.contains("the old code answered 1048577 bytes")
-        })
+        pane.reported(&launcher, &identity)
+            .iter()
+            .any(|line| line.contains("the old code answered 1048577 bytes"))
     });
 }
 
@@ -563,7 +572,10 @@ fn a_restore_that_errs_starts_fresh_and_is_not_a_failure() {
         press(&launcher, "Reload Handoff fixture"),
         Status::Result("Reloaded Handoff fixture".into())
     );
-    assert_eq!(open(&launcher, "Handoff fixture"), "Handoff fixture: 0 counted");
+    assert_eq!(
+        open(&launcher, "Handoff fixture"),
+        "Handoff fixture: 0 counted"
+    );
     let rows = listed(&launcher);
     assert!(
         !rows.iter().any(|row| row.starts_with("Retry")),
@@ -610,7 +622,10 @@ fn a_restore_that_traps_during_a_reloads_start_pauses_the_package() {
         press(&launcher, "Retry starting Handoff fixture"),
         Status::Result("Started Handoff fixture".into())
     );
-    assert_eq!(open(&launcher, "Handoff fixture"), "Handoff fixture: 0 counted");
+    assert_eq!(
+        open(&launcher, "Handoff fixture"),
+        "Handoff fixture: 0 counted"
+    );
     let _ = identity;
 }
 
