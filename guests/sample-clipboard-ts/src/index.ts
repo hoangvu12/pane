@@ -207,11 +207,9 @@ async function render(): Promise<List> {
         ),
       );
     }
-    items.push({
-      ...item("delete-recent", "Delete recent items", "Deletes what you copied in the last 15 minutes, hour or day"), label]),
-        "Delete",
-      ),
-    });
+    items.push(
+      item("delete-recent", "Delete recent items", "Deletes what you copied in the last 15 minutes, hour or day"),
+    );
   }
   items.push(...entries.map(entryItem));
   if (entries.length === 0 && status.capture === "on") {
