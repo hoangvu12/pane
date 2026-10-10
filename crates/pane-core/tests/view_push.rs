@@ -385,18 +385,21 @@ impl SlowPane {
         let waiting = format!(
             r#"{PUBLISHED}, {{ "id": "wait", "version": 1, "component": "fixture.wasm" }}"#
         );
-        write_fixture(&sources.join("a"), COMMAND, PUBLISHED);
-        write_fixture(&sources.join("b"), "", &waiting);
-        let saved = ["a", "b"]
-            .into_iter()
-            .map(|name| {
-                (
-                    name.to_owned(),
-                    PackageIdentity::local(&sources.join(name)).unwrap().key(),
-                )
-            })
-            .collect::<serde_json::Map<String, serde_json::Value>>();
-        let a = PackageIdentity::local(&sources.join("a")).unwrap().key();
+        write_fixture(&sources.path().join("a"), COMMAND, PUBLISHED);
+        write_fixture(&sources.path().join("b"), "", &waiting);
+        let mut saved = serde_json::Map::new();
+        for name in ["a", "b"] {
+            saved.insert(
+                name.into(),
+                PackageIdentity::local(&sources.path().join(name))
+                    .unwrap()
+                    .key()
+                    .into(),
+            );
+        }
+        let a = PackageIdentity::local(&sources.path().join("a"))
+            .unwrap()
+            .key();
         let settings = serde_json::json!({
             "version": 1,
             "packages": {
@@ -415,7 +418,7 @@ impl SlowPane {
         };
         pane.install_assembled("designed");
         for name in ["a", "b"] {
-            block_on(pane.launcher.install_package(&sources.join(name)));
+            block_on(pane.launcher.install_package(&sources.path().join(name)));
         }
         SlowPane { pane, sources }
     }
@@ -423,7 +426,7 @@ impl SlowPane {
     /// The identity of the installed package `name`, for stopping its
     /// slow call.
     fn identity(&self, name: &str) -> PackageIdentity {
-        PackageIdentity::local(&self.sources.join(name)).unwrap()
+        PackageIdentity::local(&self.sources.path().join(name)).unwrap()
     }
 
     /// What `b`'s `wait` saved: "started", "finished" or nothing.
