@@ -19,7 +19,7 @@ mod settle;
 #[path = "support/a11y.rs"]
 mod a11y;
 
-use a11y::focused_label;
+use a11y::{a11y, focused_label};
 use settle::{settle, until};
 
 /// The launcher window with the designed fixture's package installed and
@@ -185,10 +185,16 @@ fn the_canvas_is_one_node_with_a_role_a_label_and_a_value(cx: &mut TestAppContex
     // The canvas has the keyboard, and assistive technology reads it as
     // the slider its tree named, by its label.
     assert_eq!(focused_label(cx).as_deref(), Some("Filler"));
-    let roles: Vec<String> = accessible_nodes(cx)
-        .iter()
-        .map(|node| node["role"].as_str().unwrap_or_default().to_owned())
-        .collect();
+    let nodes: serde_json::Value = serde_json::from_str(&a11y(cx)).unwrap();
+    let roles: Vec<String> = nodes["nodes"]
+        .as_object()
+        .map(|nodes| {
+            nodes
+                .values()
+                .map(|node| node["aria"]["role"].as_str().unwrap_or_default().to_owned())
+                .collect()
+        })
+        .unwrap_or_default();
     assert_eq!(
         roles.iter().filter(|role| *role == "Slider").count(),
         1,
@@ -197,8 +203,7 @@ fn the_canvas_is_one_node_with_a_role_a_label_and_a_value(cx: &mut TestAppContex
     // The canvas, the menu button, the status line, the announcer and the
     // window: the drawing adds no nodes of its own.
     assert_eq!(roles.len(), 5, "{roles:?}");
-    let value = cx.read_entity(&window, |window, _| {
-        canvas_value_of(&window.launcher().view().screen)
-    });
+    let value =
+        cx.update(|_, cx| window.read(cx, |window| canvas_value_of(&window.launcher().view().screen)));
     assert!(value.is_some(), "the canvas names its value");
 }

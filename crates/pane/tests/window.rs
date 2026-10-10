@@ -1026,10 +1026,10 @@ fn assistive_technology_sees_the_list_the_selection_and_the_result(cx: &mut Test
 /// Opens the sample's package and then its color picker ("Choose a color",
 /// the sixth item of its list, which launches the color command) with the
 /// keyboard. The window's data folder must outlive the window.
-fn open_color(
-    cx: &mut TestAppContext,
+fn open_color<'a>(
+    cx: &'a mut TestAppContext,
     sample: &Sample,
-) -> (Entity<LauncherWindow>, tempfile::TempDir, &mut VisualTestContext) {
+) -> (Entity<LauncherWindow>, tempfile::TempDir, &'a mut VisualTestContext) {
     let (window, data, cx) = open_installed(cx, &sample.component.replace('_', "-"));
     cx.simulate_keystrokes("enter");
     settle(&window, cx);
@@ -1048,7 +1048,7 @@ fn open_color(
 /// once the guest's answer to the last event has arrived.
 fn wait_for_color(window: &Entity<LauncherWindow>, cx: &mut VisualTestContext, expected: &str) {
     until(window, cx, |view| {
-        canvas_value_of(&view.screen) == Some(expected)
+        canvas_value_of(&view.screen).as_deref() == Some(expected)
     });
 }
 

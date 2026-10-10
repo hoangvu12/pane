@@ -488,13 +488,13 @@ fn send_key(launcher: &Launcher, key: &str) {
 fn send_right_like(launcher: &Launcher, key: &str) -> impl Future<Output = ()> {
     let (canvas, on_key, render) = canvas_of(launcher);
     let callback = on_key.expect("the canvas takes keys");
-    let key = (!canvas.is_empty()).then_some(canvas.as_str());
+    let named = (!canvas.is_empty()).then_some(canvas.as_str());
     launcher.send_designed_seen(
         pane_core::DesignedHandler::Key,
         callback,
-        key,
+        named,
         Some(render),
-        format!("{{\"key\":\"{}\"}}", key.unwrap_or_default()),
+        format!("{{\"key\":\"{}\"}}", named.unwrap_or_default()),
     )
 }
 

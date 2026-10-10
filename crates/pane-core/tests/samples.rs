@@ -482,6 +482,19 @@ fn key(key: &str) -> String {
     format!("{{\"key\":\"{key}\"}}")
 }
 
+/// The operation a swatch is: a square filled with `fill`.
+fn square(x: f32, y: f32, size: f32, fill: Option<Paint>) -> CanvasOp {
+    CanvasOp::Rect {
+        x,
+        y,
+        width: size,
+        height: size,
+        radius: None,
+        fill,
+        stroke: None,
+    }
+}
+
 /// A pointer event for the open color view's canvas, at `x`, `y`.
 fn pointer(event: &str, x: i32, y: i32) -> String {
     format!("{{\"event\":\"{event}\",\"x\":{x},\"y\":{y}}}")
@@ -504,18 +517,6 @@ fn opening_the_color_view_draws_the_picker(sample: &Sample) {
     // The frame around the chosen swatch, 8 x 3 swatches, the preview and
     // its hex code: 27 drawing operations, the hex one measured.
     assert_eq!(canvas.ops.len(), 1 + 24 + 2);
-    /// The operation a swatch is: a square filled with `fill`.
-    fn square(x: f32, y: f32, size: f32, fill: Option<Paint>) -> CanvasOp {
-        CanvasOp::Rect {
-            x,
-            y,
-            width: size,
-            height: size,
-            radius: None,
-            fill,
-            stroke: None,
-        }
-    }
     assert_eq!(
         canvas.ops[0],
         square(
