@@ -2,12 +2,14 @@
 //! 0037, ADR 0040): one for each session and power command the
 //! `system-commands` host functions offer — Lock Screen, Log Out,
 //! Restart, Shut Down, Sleep, Hibernate, Turn Off Displays and Start
-//! Screen Saver — all eight sharing this component. A command's hotkey
-//! runs it without showing Pane's window, and it answers with a HUD of
-//! the state the system ended in, or why nothing changed (1.2 seconds, or
-//! 3 for the failure style, ADR 0035): "Restarting", "Sleeping",
-//! "Hibernation is not available on this computer: there is no hibernation
-//! file".
+//! Screen Saver — and one for each audio command — Volume Up, Volume
+//! Down, Toggle Mute, Set Volume and Toggle Microphone Mute — all
+//! thirteen sharing this component. A command's hotkey runs it without
+//! showing Pane's window, and it answers with a HUD of the state the
+//! system ended in, or why nothing changed (1.2 seconds, or 3 for the
+//! failure style, ADR 0035): "Restarting", "Sleeping", "Volume 52%",
+//! "Muted", "Microphones muted", "Hibernation is not available on this
+//! computer: there is no hibernation file".
 //!
 //! Log Out, Restart and Shut Down ask first, with a destructive
 //! confirmation offering "Don't ask again" (ADR 0040): a mistyped query
@@ -15,7 +17,10 @@
 //! closed, so an application with unsaved work cannot hold one up, while
 //! Log Out leaves applications the chance to save — the host's decision,
 //! not this extension's; each command only calls the host function named
-//! for it. A background launch (a schedule) is answered with an error,
+//! for it. Set Volume takes its level through its `level` argument (0 to
+//! 100), which Pane's argument form asks for; anything else is explained
+//! in the HUD, as the audio commands are not destructive and ask nothing
+//! first. A background launch (a schedule) is answered with an error,
 //! since no confirmation is available there: nothing happens.
 //!
 //! The extension declares `windows` alone in its pane.json, and only the
@@ -40,6 +45,19 @@ const SLEEP: &str = "sleep";
 const HIBERNATE: &str = "hibernate";
 const DISPLAYS: &str = "turn-off-displays";
 const SCREEN_SAVER: &str = "start-screen-saver";
+const VOLUME_UP: &str = "volume-up";
+const VOLUME_DOWN: &str = "volume-down";
+const TOGGLE_MUTE: &str = "toggle-mute";
+const SET_VOLUME: &str = "set-volume";
+const TOGGLE_MICROPHONES: &str = "toggle-microphone-mute";
+
+/// The name of Set Volume's `level` argument, as `pane.json` declares it
+/// and the launch record carries it.
+const LEVEL: &str = "level";
+
+/// What Set Volume answers when its argument names no level from 0 to 100,
+/// as the host answers a level beyond it: the same sentence either way.
+const SET_VOLUME_RANGE: &str = "The volume can be set only from 0 to 100";
 
 /// The destructive set, which asks first (ADR 0040): logging out,
 /// restarting and shutting down. The host's `Command` holds the same
@@ -58,14 +76,14 @@ fn answer(outcome: Outcome) {
 impl Command for SystemCommands {
     type CustomView = NoCustomView;
 
-    async fn run(command: String, _launch: LaunchRecord) -> Result<(), String> {
+    async fn run(command: String, launch: LaunchRecord) -> Result<(), String> {
         // The destructive ones ask first, offering "Don't ask again"; a
         // background launch is answered that no confirmation is
         // available there, so nothing happens.
         if DESTRUCTIVE.contains(&command.as_str()) && !confirm(&command).await? {
             return Ok(());
         }
-        answer(match command.as_str() {
+        let outcome = match command.as_str() {
             LOCK_SCREEN => system_commands::lock_screen(),
             LOG_OUT => system_commands::log_out(),
             RESTART => system_commands::restart(),
@@ -74,9 +92,27 @@ impl Command for SystemCommands {
             HIBERNATE => system_commands::hibernate(),
             DISPLAYS => system_commands::turn_off_displays(),
             SCREEN_SAVER => system_commands::start_screen_saver(),
+            VOLUME_UP => system_commands::volume_up(),
+            VOLUME_DOWN => system_commands::volume_down(),
+            TOGGLE_MUTE => system_commands::toggle_mute(),
+            SET_VOLUME => set_volume(&launch),
+            TOGGLE_MICROPHONES => system_commands::toggle_microphone_mute(),
             other => return Err(format!("`{other}` is no system command")),
-        });
+        };
+        answer(outcome);
         Ok(())
+    }
+}
+
+/// What Set Volume asks the host for: the level its `level` argument
+/// names, from 0 to 100, with the mute left as it is. Anything else — no
+/// number, or a number beyond 100, which the host explains the same way
+/// — changes nothing and is explained.
+fn set_volume(launch: &LaunchRecord) -> Outcome {
+    let level = launch.argument(LEVEL).unwrap_or_default().trim();
+    match level.parse::<u8>() {
+        Ok(level) => system_commands::set_volume(level),
+        Err(_) => Outcome::Explained(SET_VOLUME_RANGE.into()),
     }
 }
 

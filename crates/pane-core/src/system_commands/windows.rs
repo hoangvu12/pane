@@ -12,6 +12,11 @@
 //! - **Sleep, Hibernate**: `SetSuspendState`, or the displays'
 //!   monitor-power message on a computer that enters Modern Standby when
 //!   they turn off.
+//! - **Volume Up, Volume Down, Toggle Mute, Set Volume**: Core Audio: the
+//!   default output endpoint's `IAudioEndpointVolume`, its level set as a
+//!   scalar of 100 and its mute set with it.
+//! - **Toggle Microphone Mute**: the active capture endpoints, each
+//!   reached through its own `IAudioEndpointVolume` to set its mute.
 //! - **Turn Off Displays, Start Screen Saver**: a `WM_SYSCOMMAND`
 //!   (`SC_MONITORPOWER` or `SC_SCREENSAVE`) sent with `SendMessageTimeoutW`
 //!   to a hidden window of Pane's own, never a broadcast that a hung
@@ -27,11 +32,17 @@ use std::mem::size_of;
 
 use ::windows::Win32::Foundation::{CloseHandle, HANDLE, HWND, LPARAM, LRESULT, LUID, WPARAM};
 use ::windows::Win32::Graphics::Gdi::SC_SCREENSAVE;
+use ::windows::Win32::Media::Audio::Endpoints::IAudioEndpointVolume;
+use ::windows::Win32::Media::Audio::{
+    DEVICE_STATE_ACTIVE, IMMDevice, IMMDeviceEnumerator, MMDeviceEnumerator, eCapture, eConsole,
+    eRender,
+};
 use ::windows::Win32::Security::{
     AdjustTokenPrivileges, LUID_AND_ATTRIBUTES, LookupPrivilegeValueW, SE_PRIVILEGE_ENABLED,
     SE_SHUTDOWN_NAME, TOKEN_ADJUST_PRIVILEGES, TOKEN_PRIVILEGES, TOKEN_PRIVILEGES_ATTRIBUTES,
     TOKEN_QUERY,
 };
+use ::windows::Win32::System::Com::{CLSCTX_ALL, CoCreateInstance, CoTaskMemFree};
 use ::windows::Win32::System::Power::{
     GetPwrCapabilities, SYSTEM_POWER_CAPABILITIES, SetSuspendState,
 };
@@ -45,10 +56,12 @@ use ::windows::Win32::UI::WindowsAndMessaging::{
     DefWindowProcW, SC_MONITORPOWER, SMTO_ABORTIFHUNG, SPI_GETSCREENSAVEACTIVE,
     SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, SendMessageTimeoutW, SystemParametersInfoW, WM_SYSCOMMAND,
 };
-use ::windows::core::BOOL;
+use ::windows::core::{BOOL, PCWSTR};
 
-use super::{Capabilities, PowerRequest, SystemCommands};
+use super::{Capabilities, Microphone, PowerRequest, SystemCommands, Volume};
 use crate::threads::windows::WindowClass;
+use crate::util::wide;
+use crate::windows_shell::Com;
 
 /// The class of the hidden windows the commands' messages are sent
 /// through: top-level windows of Pane's own, never shown, whose messages
@@ -153,6 +166,131 @@ impl SystemCommands for WindowsSystemCommands {
         // procedure runs the chosen screen saver for.
         command(SC_SCREENSAVE, 0, "start the screen saver")
     }
+
+    fn volume(&self) -> Result<Volume, String> {
+        let _com = Com::new()?;
+        let control = default_output()?;
+        // SAFETY: plain reads of the endpoint the enumerator answered: its
+        // level as a scalar, and its mute.
+        let scalar = unsafe { control.GetMasterVolumeLevelScalar() }
+            .map_err(|error| format!("Windows did not say the volume: {}", error.message()))?;
+        // SAFETY: as above, of its mute.
+        let muted = unsafe { control.GetMute() }
+            .map_err(|error| format!("Windows did not say the volume: {}", error.message()))?;
+        Ok(Volume {
+            level: (scalar * 100.0).round() as u8,
+            muted: muted.as_bool(),
+        })
+    }
+
+    fn set_volume(&self, volume: Volume) -> Result<Volume, String> {
+        let _com = Com::new()?;
+        let control = default_output()?;
+        // SAFETY: plain values: the level as a scalar of 100 and the mute,
+        // with no event context naming a caller.
+        unsafe {
+            control
+                .SetMasterVolumeLevelScalar(volume.level as f32 / 100.0, std::ptr::null())
+                .map_err(|error| format!("Windows did not set the volume: {}", error.message()))?;
+            control
+                .SetMute(volume.muted, std::ptr::null())
+                .map_err(|error| format!("Windows did not set the volume: {}", error.message()))?;
+        }
+        Ok(volume)
+    }
+
+    fn microphones(&self) -> Result<Vec<Microphone>, String> {
+        let _com = Com::new()?;
+        let enumerator = audio_enumerator()?;
+        let not_listed = |error: ::windows::core::Error| {
+            format!("Windows did not list the microphones: {}", error.message())
+        };
+        // SAFETY: the capture endpoints that are active, which are the
+        // microphones there are.
+        let devices = unsafe { enumerator.EnumAudioEndpoints(eCapture, DEVICE_STATE_ACTIVE) }
+            .map_err(not_listed)?;
+        // SAFETY: the collection's own count.
+        let count = unsafe { devices.GetCount() }.map_err(not_listed)?;
+        let mut microphones = Vec::with_capacity(count as usize);
+        for index in 0..count {
+            // SAFETY: an index within the count the collection answered.
+            let device = unsafe { devices.Item(index) }.map_err(not_listed)?;
+            // SAFETY: the id the enumerator itself answered for the device,
+            // copied out of the string it points to, which is freed here.
+            let id = unsafe { device.GetId() }.map_err(not_listed)?;
+            // SAFETY: the string the enumerator gave is valid UTF-16, read
+            // before the handle that owns it is freed below.
+            let text = unsafe { id.to_string() }.ok();
+            // SAFETY: the handle `GetId` answered, whose string was copied.
+            unsafe { CoTaskMemFree(Some(id.0 as *const _)) };
+            let Some(id) = text.filter(|id| !id.is_empty()) else {
+                return Err("Windows did not name a microphone".into());
+            };
+            let control = endpoint_volume(&device)?;
+            // SAFETY: a plain read of the endpoint's mute.
+            let muted = unsafe { control.GetMute() }.map_err(not_listed)?;
+            microphones.push(Microphone {
+                id,
+                muted: muted.as_bool(),
+            });
+        }
+        Ok(microphones)
+    }
+
+    fn set_microphone_mute(&self, id: &str, muted: bool) -> Result<(), String> {
+        let _com = Com::new()?;
+        let enumerator = audio_enumerator()?;
+        let wide_id = wide(id);
+        // SAFETY: an id the enumerator itself answered, as `GetId` gave it.
+        let device =
+            unsafe { enumerator.GetDevice(PCWSTR(wide_id.as_ptr())) }.map_err(|error| {
+                format!("Windows did not reach the microphone: {}", error.message())
+            })?;
+        let control = endpoint_volume(&device)?;
+        // SAFETY: a plain value, with no event context naming a caller.
+        unsafe { control.SetMute(muted, std::ptr::null()) }.map_err(|error| {
+            format!(
+                "Windows did not set the microphone's mute: {}",
+                error.message()
+            )
+        })
+    }
+}
+
+/// Core Audio's device enumerator. The calling thread must hold [`Com`]
+/// for as long as it uses the interfaces the enumerator answers.
+fn audio_enumerator() -> Result<IMMDeviceEnumerator, String> {
+    // SAFETY: plain COM creation: the class is the device enumerator, and
+    // the context any in-process server.
+    unsafe { CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL) }.map_err(|error| {
+        format!(
+            "Windows did not reach the audio devices: {}",
+            error.message()
+        )
+    })
+}
+
+/// The default output device's endpoint volume, which the volume commands
+/// read and set. The calling thread must hold [`Com`].
+fn default_output() -> Result<IAudioEndpointVolume, String> {
+    let enumerator = audio_enumerator()?;
+    // SAFETY: the default output endpoint, of the kind and the role
+    // Windows plays console sound through.
+    let device = unsafe { enumerator.GetDefaultAudioEndpoint(eRender, eConsole) }
+        .map_err(|error| format!("Windows did not say the volume: {}", error.message()))?;
+    endpoint_volume(&device)
+}
+
+/// The endpoint volume of `device`, which its volume and its mute are
+/// read and set through. The calling thread must hold [`Com`].
+fn endpoint_volume(device: &IMMDevice) -> Result<IAudioEndpointVolume, String> {
+    // SAFETY: plain COM activation of the device's own endpoint volume.
+    unsafe { device.Activate(CLSCTX_ALL, None) }.map_err(|error| {
+        format!(
+            "Windows did not reach an audio endpoint: {}",
+            error.message()
+        )
+    })
 }
 
 /// The shutdown reason every session-ending call carries: a planned one,

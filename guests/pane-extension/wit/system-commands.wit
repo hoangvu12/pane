@@ -33,8 +33,10 @@ package pane:extension@0.1.0;
 // the displays' monitor-power message on a computer that enters Modern
 // Standby when they turn off; a monitor-power or screen-saver message sent
 // with a timeout to a window of Pane's own, never a broadcast a hung
-// application could block. Other systems answer `explained` that the
-// commands are not available there yet.
+// application could block. The volume and microphone commands reach the
+// audio endpoints through Core Audio (`IMMDeviceEnumerator`, and each
+// endpoint's `IAudioEndpointVolume`). Other systems answer `explained`
+// that the commands are not available there yet.
 // The header follows `package`: comments above it would document the
 // package, which extension.wit already does.
 
@@ -86,6 +88,31 @@ interface system-commands {
   /// Starts the screen saver the user chose; when none is set, nothing
   /// changes and the answer says so.
   start-screen-saver: func() -> outcome;
+
+  /// Raises the volume of the default output device by the step Windows'
+  /// own volume keys take (2 of 100), never past 100. The answer says the
+  /// volume it ended at, such as "Volume 52%".
+  volume-up: func() -> outcome;
+
+  /// Lowers the volume of the default output device by the same step,
+  /// never below 0. The answer says the volume it ended at.
+  volume-down: func() -> outcome;
+
+  /// Mutes the default output device when it is not muted, unmutes it
+  /// when it is. The answer says which it did: "Muted", or the volume it
+  /// ended at, such as "Unmuted, Volume 52%".
+  toggle-mute: func() -> outcome;
+
+  /// Sets the volume of the default output device to `level`, 0 to 100;
+  /// any other level changes nothing and the answer says why. The answer
+  /// says the volume it ended at.
+  set-volume: func(level: u8) -> outcome;
+
+  /// Mutes every microphone when any of them is unmuted, and unmutes them
+  /// all otherwise. The answer says which it did ("Microphones muted",
+  /// "Microphones unmuted"); a microphone that has vanished since it was
+  /// listed is skipped, and no microphone at all is explained.
+  toggle-microphone-mute: func() -> outcome;
 }
 
 /// The system-commands import alone, for guest bindings.

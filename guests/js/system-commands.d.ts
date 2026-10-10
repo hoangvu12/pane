@@ -3,13 +3,14 @@
 // Declarations for `@pane-app/extension/system-commands`
 // (system-commands.js): the session and power commands — locking the
 // screen, logging out, restarting, shutting down, sleeping, hibernating,
-// turning the displays off and starting the screen saver — through
-// `pane:extension/system-commands@0.1.0` (system-commands-host.d.ts,
-// wit/system-commands.wit). Each function answers what it ended in,
-// never throwing for an operation that cannot happen on this system, or
-// failed: show the text in a HUD (`@pane-app/extension/feedback`), and
-// confirm the destructive ones first, as the System Commands default
-// extension does (ADR 0040).
+// turning the displays off and starting the screen saver — and the audio
+// commands, the volume of the default output device and the microphones'
+// mute, through `pane:extension/system-commands@0.1.0`
+// (system-commands-host.d.ts, wit/system-commands.wit). Each function
+// answers what it ended in, never throwing for an operation that cannot
+// happen on this system, or failed: show the text in a HUD
+// (`@pane-app/extension/feedback`), and confirm the destructive ones
+// first, as the System Commands default extension does (ADR 0040).
 
 /**
  * What a command ended in: the state the system is in now (`done`, with
@@ -69,3 +70,37 @@ export function turnOffDisplays(): Outcome;
  * changes and the answer says so. Answers "Starting the screen saver".
  */
 export function startScreenSaver(): Outcome;
+
+/**
+ * Raises the volume of the default output device by the step Windows'
+ * own volume keys take. Answers the volume it ended at, such as "Volume
+ * 52%", or why nothing changed.
+ */
+export function volumeUp(): Outcome;
+
+/**
+ * Lowers the volume of the default output device by the same step.
+ * Answers the volume it ended at, or why nothing changed.
+ */
+export function volumeDown(): Outcome;
+
+/**
+ * Mutes the default output device when it is not muted, unmutes it when
+ * it is. Answers "Muted", or the volume it ended at as "Unmuted,
+ * Volume 52%", or why nothing changed.
+ */
+export function toggleMute(): Outcome;
+
+/**
+ * Sets the volume of the default output device to `level`, 0 to 100; any
+ * other level changes nothing and the answer says why. Answers the
+ * volume it ended at.
+ */
+export function setVolume(level: number): Outcome;
+
+/**
+ * Mutes every microphone when any of them is unmuted, unmutes them all
+ * otherwise. Answers "Microphones muted" or "Microphones unmuted", or
+ * why nothing changed (no microphone is connected).
+ */
+export function toggleMicrophoneMute(): Outcome;

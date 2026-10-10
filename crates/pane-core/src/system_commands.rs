@@ -2,7 +2,9 @@
 //! through Pane (`wit/system-commands.wit`, the Windows power features'
 //! System Commands, #125, ADR 0040): locking the screen, logging out,
 //! restarting, shutting down, sleeping, hibernating, turning the displays
-//! off and starting the screen saver.
+//! off and starting the screen saver, and the audio commands: the volume
+//! of the default output device (raising, lowering, setting or muting it)
+//! and the microphones' mute.
 //!
 //! The decisions are here, as pure functions compiled on every system and
 //! tested there: which commands force applications closed (a restart and
@@ -10,9 +12,11 @@
 //! which the extension confirms first, how `sleep` sleeps (a computer
 //! that enters Modern Standby when its displays turn off is slept by
 //! turning them off, so Windows enters its standby as it does by itself;
-//! any other is suspended), and whether `hibernate` can happen at all
-//! (only with a hibernation file). [`run`] turns a decision into calls on
-//! the [`SystemCommands`] trait, so an extension cannot get one wrong;
+//! any other is suspended), whether `hibernate` can happen at all (only
+//! with a hibernation file), how far a volume step moves the level, and
+//! whether the microphone toggle mutes or unmutes (any microphone unmuted
+//! means mute). [`run`] turns a decision into calls on the
+//! [`SystemCommands`] trait, so an extension cannot get one wrong;
 //! each call answers what it ended in ([`Outcome`]) — the state the
 //! system is in now, or why nothing changed — never an error, and never a
 //! reason to pause the extension.
@@ -28,7 +32,9 @@
 //!   (`LockWorkStation`; `ExitWindowsEx` with a planned reason and the
 //!   shutdown privilege enabled for the call alone; `SetSuspendState`;
 //!   `GetPwrCapabilities`; monitor-power and screen-saver messages sent
-//!   with a timeout to a window of Pane's own, never a broadcast).
+//!   with a timeout to a window of Pane's own, never a broadcast; Core
+//!   Audio's device enumerator and endpoint volume for the volume and
+//!   microphone commands).
 //! - macOS and Linux: [`native`] answers that the commands are not
 //!   available there yet, which the System Commands default extension's
 //!   `pane.json` keeps out of those systems' default sets.
@@ -38,8 +44,8 @@ use std::sync::Arc;
 #[cfg(target_os = "windows")]
 mod windows;
 
-/// A session or power command, as the `system-commands` host functions
-/// name it.
+/// A session, power or audio command, as the `system-commands` host
+/// functions name it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Command {
     /// Locks the screen; the session stays.
@@ -58,6 +64,18 @@ pub enum Command {
     TurnOffDisplays,
     /// Starts the screen saver the user chose.
     StartScreenSaver,
+    /// Raises the volume of the default output device.
+    VolumeUp,
+    /// Lowers the volume of the default output device.
+    VolumeDown,
+    /// Mutes the default output device when it is not muted, and unmutes
+    /// it when it is.
+    ToggleMute,
+    /// Sets the volume of the default output device to a level, 0 to 100.
+    SetVolume(u8),
+    /// Mutes every microphone when any is unmuted, unmutes them all
+    /// otherwise.
+    ToggleMicrophoneMute,
 }
 
 impl Command {
@@ -110,6 +128,37 @@ pub enum HibernatePlan {
     Explain,
 }
 
+/// What `toggle-microphone-mute` does over the microphones there are.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MicrophonePlan {
+    /// Mutes every microphone: at least one is unmuted.
+    Mute,
+    /// Unmutes every microphone: none is unmuted.
+    Unmute,
+    /// Nothing changes: there is no microphone, and the answer says so.
+    Explain,
+}
+
+/// The volume of the default output device: its level, 0 to 100, and
+/// whether it is muted.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Volume {
+    /// The level, from silent (0) to full (100).
+    pub level: u8,
+    /// Whether the output is muted.
+    pub muted: bool,
+}
+
+/// A microphone (a capture device), as the microphone toggle sees it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Microphone {
+    /// Its id, as the adapter names it: the handle the toggle mutes or
+    /// unmutes it by, valid for the session.
+    pub id: String,
+    /// Whether it is muted.
+    pub muted: bool,
+}
+
 /// What a command ended in, as the command answers it: the state the
 /// system is in now, or why nothing changed (`outcome` in the WIT). The
 /// text is what the command shows the user.
@@ -132,8 +181,8 @@ pub enum PowerRequest {
     ShutDown,
 }
 
-/// The session and power commands of the system Pane runs on, as the
-/// `system-commands` host functions act on it. Each is called off the
+/// The session, power and audio commands of the system Pane runs on, as
+/// the `system-commands` host functions act on it. Each is called off the
 /// runtime's thread and may block; an error explains why nothing changed.
 /// The decisions are Pane's ([`run`]); the adapter only carries them out.
 pub trait SystemCommands: Send + Sync + 'static {
@@ -162,16 +211,50 @@ pub trait SystemCommands: Send + Sync + 'static {
     /// Starts the screen saver the user chose, or answers that none is
     /// set.
     fn screen_saver(&self) -> Result<(), String>;
+
+    /// The volume of the default output device: its level, 0 to 100, and
+    /// whether it is muted.
+    fn volume(&self) -> Result<Volume, String>;
+
+    /// Sets the default output device's volume to `volume`, its level and
+    /// its mute together, answering the volume it ended at.
+    fn set_volume(&self, volume: Volume) -> Result<Volume, String>;
+
+    /// The capture devices (microphones) there are, each with whether it
+    /// is muted.
+    fn microphones(&self) -> Result<Vec<Microphone>, String>;
+
+    /// Mutes or unmutes the microphone `id`, as the toggle decided over
+    /// the list it was given; a device that has vanished since it was
+    /// listed answers why, and the caller skips it.
+    fn set_microphone_mute(&self, id: &str, muted: bool) -> Result<(), String>;
 }
 
 /// Why `hibernate` answers when the computer has no hibernation file.
 pub const NO_HIBERNATION_FILE: &str =
     "Hibernation is not available on this computer: there is no hibernation file";
 
+/// Why `set-volume` answers when its level is not 0 to 100.
+pub const SET_VOLUME_RANGE: &str = "The volume can be set only from 0 to 100";
+
+/// Why `toggle-microphone-mute` answers when there is no microphone.
+pub const NO_MICROPHONE: &str = "No microphone is connected";
+
 /// What `sleep` says when it happened.
 const SLEEPING: &str = "Sleeping";
 /// What `hibernate` says when it happened.
 const HIBERNATING: &str = "Hibernating";
+/// What `toggle-mute` says when it muted the output.
+const MUTED: &str = "Muted";
+/// What the microphone toggle says when it muted every microphone.
+const MICROPHONES_MUTED: &str = "Microphones muted";
+/// What the microphone toggle says when it unmuted every microphone.
+const MICROPHONES_UNMUTED: &str = "Microphones unmuted";
+/// The level a volume can be set to at most.
+const FULL_VOLUME: u8 = 100;
+/// How far a volume step moves the level, of 100: the step Windows' own
+/// volume keys take.
+const VOLUME_STEP: u8 = 2;
 
 /// What `sleep` does on a computer with `capabilities`: one that enters
 /// Modern Standby when its displays turn off is slept by turning them off,
@@ -196,6 +279,47 @@ pub fn hibernate_plan(capabilities: &Capabilities) -> HibernatePlan {
     }
 }
 
+/// The volume `volume-up` ends at from `now`: one step up
+/// ([`VOLUME_STEP`], as Windows' own volume keys step), never past full,
+/// with the mute as it was.
+pub fn volume_up(now: Volume) -> Volume {
+    Volume {
+        level: now.level.saturating_add(VOLUME_STEP).min(FULL_VOLUME),
+        ..now
+    }
+}
+
+/// The volume `volume-down` ends at from `now`: one step down, never
+/// below silent, with the mute as it was.
+pub fn volume_down(now: Volume) -> Volume {
+    Volume {
+        level: now.level.saturating_sub(VOLUME_STEP),
+        ..now
+    }
+}
+
+/// The volume `toggle-mute` ends at from `now`: the device's mute,
+/// flipped, with the level as it was.
+pub fn toggled_mute(now: Volume) -> Volume {
+    Volume {
+        muted: !now.muted,
+        ..now
+    }
+}
+
+/// What `toggle-microphone-mute` does over `microphones`: mutes them all
+/// when any is unmuted, unmutes them all otherwise; none at all is
+/// explained.
+pub fn microphone_plan(microphones: &[Microphone]) -> MicrophonePlan {
+    if microphones.is_empty() {
+        MicrophonePlan::Explain
+    } else if microphones.iter().any(|device| !device.muted) {
+        MicrophonePlan::Mute
+    } else {
+        MicrophonePlan::Unmute
+    }
+}
+
 /// What `command` does through `commands`: the state it ended in, or why
 /// nothing changed. The decisions are Pane's — which commands force
 /// applications closed, how `sleep` sleeps, whether `hibernate` can
@@ -209,6 +333,11 @@ pub fn run(command: Command, commands: &dyn SystemCommands) -> Outcome {
         }
         Command::Sleep => return sleep(commands),
         Command::Hibernate => return hibernate(commands),
+        Command::VolumeUp => return changed(commands, volume_up, volume_text),
+        Command::VolumeDown => return changed(commands, volume_down, volume_text),
+        Command::ToggleMute => return changed(commands, toggled_mute, mute_text),
+        Command::SetVolume(level) => return set_level(level, commands),
+        Command::ToggleMicrophoneMute => return toggle_microphones(commands),
         Command::TurnOffDisplays => commands.displays_off(),
         Command::StartScreenSaver => commands.screen_saver(),
     };
@@ -235,6 +364,14 @@ fn done_text(command: Command) -> &'static str {
         Command::Hibernate => HIBERNATING,
         Command::TurnOffDisplays => "Turning off the displays",
         Command::StartScreenSaver => "Starting the screen saver",
+        // The volume and microphone commands answer with the state they
+        // ended in, which the adapter says ([`volume_text`],
+        // [`mute_text`]); they never reach a fixed text.
+        Command::VolumeUp
+        | Command::VolumeDown
+        | Command::ToggleMute
+        | Command::SetVolume(_)
+        | Command::ToggleMicrophoneMute => "",
     }
 }
 
@@ -271,6 +408,96 @@ fn hibernate(commands: &dyn SystemCommands) -> Outcome {
     match hibernate_plan(&capabilities) {
         HibernatePlan::Hibernate => ended(commands.suspend(true), HIBERNATING),
         HibernatePlan::Explain => Outcome::Explained(NO_HIBERNATION_FILE.into()),
+    }
+}
+
+/// What a volume command says when it happened: the volume it ended at.
+fn volume_text(volume: Volume) -> String {
+    format!("Volume {}%", volume.level)
+}
+
+/// What `toggle-mute` says when it happened: which it did, with the
+/// volume it ended at when it unmuted.
+fn mute_text(volume: Volume) -> String {
+    if volume.muted {
+        MUTED.into()
+    } else {
+        format!("Unmuted, {}", volume_text(volume))
+    }
+}
+
+/// What a volume command does through `commands`: reads the volume,
+/// changes it to what `change` says, and answers the volume it ended at
+/// as `text` says.
+fn changed(
+    commands: &dyn SystemCommands,
+    change: impl FnOnce(Volume) -> Volume,
+    text: fn(Volume) -> String,
+) -> Outcome {
+    let now = match commands.volume() {
+        Ok(now) => now,
+        Err(why) => return Outcome::Explained(why),
+    };
+    match commands.set_volume(change(now)) {
+        Ok(ended) => Outcome::Done(text(ended)),
+        Err(why) => Outcome::Explained(why),
+    }
+}
+
+/// What `set-volume` does through `commands`: sets the level it is given,
+/// keeping the mute as it is ([`at_level`]), and answers the volume it
+/// ended at. A level that is not 0 to 100 changes nothing and the answer
+/// says why.
+fn set_level(level: u8, commands: &dyn SystemCommands) -> Outcome {
+    if level > FULL_VOLUME {
+        return Outcome::Explained(SET_VOLUME_RANGE.into());
+    }
+    changed(commands, at_level(level), volume_text)
+}
+
+/// The change `set-volume` makes to the volume it finds: the level given,
+/// with the mute as it was.
+fn at_level(level: u8) -> impl Fn(Volume) -> Volume {
+    move |now| Volume { level, ..now }
+}
+
+/// What `toggle-microphone-mute` does through `commands`: mutes every
+/// microphone when any is unmuted and unmutes them all otherwise
+/// ([`microphone_plan`]), skipping devices that vanish meanwhile; no
+/// microphone at all is explained.
+fn toggle_microphones(commands: &dyn SystemCommands) -> Outcome {
+    let microphones = match commands.microphones() {
+        Ok(microphones) => microphones,
+        Err(why) => return Outcome::Explained(why),
+    };
+    match microphone_plan(&microphones) {
+        MicrophonePlan::Mute => set_each(&microphones, true, MICROPHONES_MUTED, commands),
+        MicrophonePlan::Unmute => set_each(&microphones, false, MICROPHONES_UNMUTED, commands),
+        MicrophonePlan::Explain => Outcome::Explained(NO_MICROPHONE.into()),
+    }
+}
+
+/// Sets every microphone in `devices` to `muted`, skipping one that has
+/// vanished meanwhile (its answer says why), and answers `text` when any
+/// was set; when none was, the last vanishing says why nothing changed.
+fn set_each(
+    devices: &[Microphone],
+    muted: bool,
+    text: &str,
+    commands: &dyn SystemCommands,
+) -> Outcome {
+    let mut set = 0;
+    let mut vanished: Option<String> = None;
+    for device in devices {
+        match commands.set_microphone_mute(&device.id, muted) {
+            Ok(()) => set += 1,
+            Err(why) => vanished = Some(why),
+        }
+    }
+    if set > 0 {
+        Outcome::Done(text.into())
+    } else {
+        Outcome::Explained(vanished.unwrap_or_else(|| NO_MICROPHONE.into()))
     }
 }
 
@@ -335,6 +562,22 @@ impl SystemCommands for Unavailable {
     }
 
     fn screen_saver(&self) -> Result<(), String> {
+        Err(self.0.clone())
+    }
+
+    fn volume(&self) -> Result<Volume, String> {
+        Err(self.0.clone())
+    }
+
+    fn set_volume(&self, _volume: Volume) -> Result<Volume, String> {
+        Err(self.0.clone())
+    }
+
+    fn microphones(&self) -> Result<Vec<Microphone>, String> {
+        Err(self.0.clone())
+    }
+
+    fn set_microphone_mute(&self, _id: &str, _muted: bool) -> Result<(), String> {
         Err(self.0.clone())
     }
 }

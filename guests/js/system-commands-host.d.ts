@@ -3,8 +3,10 @@
 // Declarations for `pane:extension/system-commands` in
 // wit/system-commands.wit: the session and power commands — locking the
 // screen, logging out, restarting, shutting down, sleeping, hibernating,
-// turning the displays off and starting the screen saver. Most commands
-// use them through `@pane-app/extension/system-commands`
+// turning the displays off and starting the screen saver — and the audio
+// commands, the volume of the default output device and the microphones'
+// mute. Most commands use them through
+// `@pane-app/extension/system-commands`
 // (system-commands.d.ts).
 
 /** `pane:extension/system-commands@0.1.0`. */
@@ -55,4 +57,29 @@ declare module "pane:extension/system-commands@0.1.0" {
    * changes and the answer says so.
    */
   export function startScreenSaver(): Outcome;
+
+  /**
+   * Raises the volume of the default output device by the step Windows'
+   * own volume keys take, never past 100.
+   */
+  export function volumeUp(): Outcome;
+
+  /** Lowers the volume of the default output device by the same step. */
+  export function volumeDown(): Outcome;
+
+  /** Mutes the default output device, or unmutes it. */
+  export function toggleMute(): Outcome;
+
+  /**
+   * Sets the volume of the default output device to `level`, 0 to 100;
+   * any other level changes nothing and the answer says why.
+   */
+  export function setVolume(level: number): Outcome;
+
+  /**
+   * Mutes every microphone when any of them is unmuted, unmutes them all
+   * otherwise; a microphone that vanished since it was listed is
+   * skipped.
+   */
+  export function toggleMicrophoneMute(): Outcome;
 }

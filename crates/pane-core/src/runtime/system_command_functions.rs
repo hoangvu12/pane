@@ -1,13 +1,16 @@
 //! The guest's side of the `system-commands` host functions
 //! (`wit/system-commands.wit`): locking the screen, logging out,
 //! restarting, shutting down, sleeping, hibernating, turning the displays
-//! off and starting the screen saver. Each takes the launcher's
+//! off and starting the screen saver, and the audio commands — raising,
+//! lowering, setting or muting the volume of the default output device,
+//! and muting or unmuting every microphone. Each takes the launcher's
 //! [`SystemCommands`] (through its `HostFunctions`), decides what the
 //! command does — which commands force applications closed, how `sleep`
-//! sleeps, whether `hibernate` can happen — and has the system do it on a
-//! thread of its own: the runtime thread awaits it, serving other
-//! packages' calls meanwhile, and the wait is Pane's time, never the
-//! guest's computing (#18, #136).
+//! sleeps, whether `hibernate` can happen, how far a volume step moves
+//! the level, whether the microphone toggle mutes or unmutes — and has
+//! the system do it on a thread of its own: the runtime thread awaits it,
+//! serving other packages' calls meanwhile, and the wait is Pane's time,
+//! never the guest's computing (#18, #136).
 //!
 //! Each command answers what it ended in — the state the system is in
 //! now, or why nothing changed — never an error and never a reason to
@@ -116,5 +119,25 @@ impl system_commands_host::Host for GuestState {
 
     async fn start_screen_saver(&mut self) -> system_commands_host::Outcome {
         self.system_command(Command::StartScreenSaver).await
+    }
+
+    async fn volume_up(&mut self) -> system_commands_host::Outcome {
+        self.system_command(Command::VolumeUp).await
+    }
+
+    async fn volume_down(&mut self) -> system_commands_host::Outcome {
+        self.system_command(Command::VolumeDown).await
+    }
+
+    async fn toggle_mute(&mut self) -> system_commands_host::Outcome {
+        self.system_command(Command::ToggleMute).await
+    }
+
+    async fn set_volume(&mut self, level: u8) -> system_commands_host::Outcome {
+        self.system_command(Command::SetVolume(level)).await
+    }
+
+    async fn toggle_microphone_mute(&mut self) -> system_commands_host::Outcome {
+        self.system_command(Command::ToggleMicrophoneMute).await
     }
 }

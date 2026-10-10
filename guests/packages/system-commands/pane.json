@@ -61,6 +61,49 @@
       "subtitle": "Starts the screen saver, or says that none is set",
       "component": "system_commands.wasm",
       "mode": "no-view"
+    },
+    {
+      "id": "volume-up",
+      "title": "Volume Up",
+      "subtitle": "Raises the volume by the step Windows' volume keys take",
+      "component": "system_commands.wasm",
+      "mode": "no-view"
+    },
+    {
+      "id": "volume-down",
+      "title": "Volume Down",
+      "subtitle": "Lowers the volume by the same step",
+      "component": "system_commands.wasm",
+      "mode": "no-view"
+    },
+    {
+      "id": "toggle-mute",
+      "title": "Toggle Mute",
+      "subtitle": "Mutes the sound, or unmutes it, saying the volume it ended at",
+      "component": "system_commands.wasm",
+      "mode": "no-view"
+    },
+    {
+      "id": "set-volume",
+      "title": "Set Volume",
+      "subtitle": "Sets the volume to a level from 0 to 100",
+      "component": "system_commands.wasm",
+      "mode": "no-view",
+      "arguments": [
+        {
+          "name": "level",
+          "type": "text",
+          "placeholder": "Volume level (0 to 100)",
+          "required": true
+        }
+      ]
+    },
+    {
+      "id": "toggle-microphone-mute",
+      "title": "Toggle Microphone Mute",
+      "subtitle": "Mutes every microphone when any is on, unmutes them all otherwise",
+      "component": "system_commands.wasm",
+      "mode": "no-view"
     }
   ]
 }

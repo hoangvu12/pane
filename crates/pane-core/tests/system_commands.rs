@@ -1,23 +1,26 @@
 //! The `system-commands` host functions (#255, the Windows power
 //! features' System Commands, ADR 0040): locking the screen, logging out,
 //! restarting, shutting down, sleeping, hibernating, turning the displays
-//! off and starting the screen saver. The decisions are pure functions,
-//! tested here on every system; the commands themselves are exercised
-//! through the launcher's public interface with a recording fake of the
-//! system (`support/system_commands.rs`), so no test ever locks, logs
-//! out, restarts, shuts down, sleeps, hibernates or turns off the
-//! displays of a real session: the samples in Rust, JavaScript and
-//! TypeScript call each host function and say what it answered, and the
-//! real System Commands default extension — the package `cargo xtask
-//! guests` assembles in `target/guests/packages/system-commands`,
-//! acquired as a Windows default extension from an artifact source on
-//! 127.0.0.1 (`support/artifacts.rs`) — answers with a HUD of the state
-//! it ended in, confirms the destructive ones first (with "Don't ask
-//! again" remembered), runs from a hotkey without showing the window, and
-//! is acquired enabled and disableable on its own. The extension's
-//! package declares `windows` alone, so those tests run on Windows only;
-//! on other systems acquiring it is refused with the platform's
-//! explanation.
+//! off and starting the screen saver, and the audio commands (#265): the
+//! volume of the default output device (Volume Up, Volume Down, Toggle
+//! Mute, Set Volume) and Toggle Microphone Mute. The decisions are pure
+//! functions, tested here on every system; the commands themselves are
+//! exercised through the launcher's public interface with a recording
+//! fake of the system (`support/system_commands.rs`), so no test ever
+//! locks, logs out, restarts, shuts down, sleeps, hibernates, turns off
+//! the displays of a real session, changes the volume or mutes a
+//! microphone: the samples in Rust, JavaScript and TypeScript call each
+//! host function and say what it answered, and the real System Commands
+//! default extension — the package `cargo xtask guests` assembles in
+//! `target/guests/packages/system-commands`, acquired as a Windows
+//! default extension from an artifact source on 127.0.0.1
+//! (`support/artifacts.rs`) — answers with a HUD of the state it ended
+//! in, confirms the destructive ones first (with "Don't ask again"
+//! remembered), takes Set Volume's level through its argument form, runs
+//! from a hotkey without showing the window, and is acquired enabled and
+//! disableable on its own. The extension's package declares `windows`
+//! alone, so those tests run on Windows only; on other systems acquiring
+//! it is refused with the platform's explanation.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -25,8 +28,9 @@ use std::sync::Arc;
 
 use futures::executor::block_on;
 use pane_core::system_commands::{
-    self, Capabilities, Command, HibernatePlan, Outcome, PowerRequest, SleepPlan, hibernate_plan,
-    run, sleep_plan,
+    self, Capabilities, Command, HibernatePlan, Microphone, MicrophonePlan, NO_MICROPHONE, Outcome,
+    PowerRequest, SET_VOLUME_RANGE, SleepPlan, Volume, hibernate_plan, microphone_plan, run,
+    sleep_plan, toggled_mute, volume_down, volume_up,
 };
 use pane_core::{Launcher, Runtime, Screen, Status};
 use tempfile::TempDir;
@@ -48,7 +52,7 @@ use recording::{Done, RecordingSystemCommands};
 use rows::select_title;
 
 /// Every command, as the extension's `pane.json` lists them.
-const COMMANDS: [Command; 8] = [
+const COMMANDS: [Command; 13] = [
     Command::LockScreen,
     Command::LogOut,
     Command::Restart,
@@ -57,6 +61,11 @@ const COMMANDS: [Command; 8] = [
     Command::Hibernate,
     Command::TurnOffDisplays,
     Command::StartScreenSaver,
+    Command::VolumeUp,
+    Command::VolumeDown,
+    Command::ToggleMute,
+    Command::SetVolume(40),
+    Command::ToggleMicrophoneMute,
 ];
 
 /// `capabilities` as a computer with `modern_standby` and
@@ -65,6 +74,19 @@ fn capabilities(modern_standby: bool, hibernation_file: bool) -> Capabilities {
     Capabilities {
         modern_standby,
         hibernation_file,
+    }
+}
+
+/// The volume of the fake at `level`, unmuted (or muted as `muted` says).
+fn volume(level: u8, muted: bool) -> Volume {
+    Volume { level, muted }
+}
+
+/// A microphone called `id`, muted as `muted` says.
+fn microphone(id: &str, muted: bool) -> Microphone {
+    Microphone {
+        id: id.into(),
+        muted,
     }
 }
 
@@ -93,6 +115,11 @@ fn restart_and_shut_down_force_applications_closed_and_log_out_does_not() {
         Command::Hibernate,
         Command::TurnOffDisplays,
         Command::StartScreenSaver,
+        Command::VolumeUp,
+        Command::VolumeDown,
+        Command::ToggleMute,
+        Command::SetVolume(40),
+        Command::ToggleMicrophoneMute,
     ] {
         assert!(!command.forces_applications_closed(), "{command:?}");
     }
@@ -117,6 +144,31 @@ fn hibernate_needs_a_hibernation_file() {
         hibernate_plan(&capabilities(false, false)),
         HibernatePlan::Explain
     );
+}
+
+#[test]
+fn volume_steps_follow_windows_own_volume_keys_and_neither_pass_the_ends() {
+    assert_eq!(volume_up(volume(50, false)), volume(52, false));
+    assert_eq!(volume_up(volume(99, true)), volume(100, true));
+    assert_eq!(volume_up(volume(100, false)), volume(100, false));
+    assert_eq!(volume_down(volume(50, false)), volume(48, false));
+    assert_eq!(volume_down(volume(1, true)), volume(0, true));
+    assert_eq!(volume_down(volume(0, false)), volume(0, false));
+    assert_eq!(toggled_mute(volume(50, false)), volume(50, true));
+    assert_eq!(toggled_mute(volume(50, true)), volume(50, false));
+}
+
+#[test]
+fn the_microphone_toggle_mutes_all_when_any_is_on_and_explains_none() {
+    assert_eq!(
+        microphone_plan(&[microphone("a", false), microphone("b", true)]),
+        MicrophonePlan::Mute
+    );
+    assert_eq!(
+        microphone_plan(&[microphone("a", true), microphone("b", true)]),
+        MicrophonePlan::Unmute
+    );
+    assert_eq!(microphone_plan(&[]), MicrophonePlan::Explain);
 }
 
 #[test]
@@ -163,6 +215,109 @@ fn each_command_says_what_it_ended_in_and_the_adapter_what_it_was_asked() {
 }
 
 #[test]
+fn each_volume_command_answers_the_volume_it_ended_at() {
+    let commands = RecordingSystemCommands::default();
+    // The fake starts at volume 50, unmuted.
+    assert_eq!(
+        run(Command::VolumeUp, &commands),
+        Outcome::Done("Volume 52%".into())
+    );
+    assert_eq!(commands.take(), [Done::SetVolume(volume(52, false))]);
+    // Volume Down steps back down from where Volume Up left the volume.
+    assert_eq!(
+        run(Command::VolumeDown, &commands),
+        Outcome::Done("Volume 50%".into())
+    );
+    assert_eq!(commands.take(), [Done::SetVolume(volume(50, false))]);
+    assert_eq!(
+        run(Command::SetVolume(40), &commands),
+        Outcome::Done("Volume 40%".into())
+    );
+    assert_eq!(commands.take(), [Done::SetVolume(volume(40, false))]);
+    // Toggle Mute says which it did, with the volume when it unmuted.
+    assert_eq!(
+        run(Command::ToggleMute, &commands),
+        Outcome::Done("Muted".into())
+    );
+    assert_eq!(commands.take(), [Done::SetVolume(volume(40, true))]);
+    assert_eq!(
+        run(Command::ToggleMute, &commands),
+        Outcome::Done("Unmuted, Volume 40%".into())
+    );
+    assert_eq!(commands.take(), [Done::SetVolume(volume(40, false))]);
+}
+
+#[test]
+fn a_level_not_from_0_to_100_changes_nothing_and_is_explained() {
+    let commands = RecordingSystemCommands::default();
+    assert_eq!(
+        run(Command::SetVolume(101), &commands),
+        Outcome::Explained(SET_VOLUME_RANGE.into())
+    );
+    assert!(commands.take().is_empty(), "nothing was asked");
+}
+
+#[test]
+fn the_microphone_toggle_mutes_or_unmutes_every_microphone_and_says_which() {
+    let commands = RecordingSystemCommands::default();
+    commands.set_microphones(vec![microphone("a", false), microphone("b", true)]);
+    // One microphone unmuted: every microphone is muted.
+    assert_eq!(
+        run(Command::ToggleMicrophoneMute, &commands),
+        Outcome::Done("Microphones muted".into())
+    );
+    assert_eq!(
+        commands.take(),
+        [
+            Done::SetMicrophoneMute("a".into(), true),
+            Done::SetMicrophoneMute("b".into(), true)
+        ]
+    );
+    // None unmuted any more: every microphone is unmuted.
+    assert_eq!(
+        run(Command::ToggleMicrophoneMute, &commands),
+        Outcome::Done("Microphones unmuted".into())
+    );
+    assert_eq!(
+        commands.take(),
+        [
+            Done::SetMicrophoneMute("a".into(), false),
+            Done::SetMicrophoneMute("b".into(), false)
+        ]
+    );
+}
+
+#[test]
+fn a_microphone_that_vanishes_mid_toggle_is_skipped() {
+    let commands = RecordingSystemCommands::default();
+    commands.set_microphones(vec![microphone("a", false), microphone("b", false)]);
+    commands.vanish("b");
+    // The vanished microphone is skipped: the rest are muted.
+    assert_eq!(
+        run(Command::ToggleMicrophoneMute, &commands),
+        Outcome::Done("Microphones muted".into())
+    );
+    assert_eq!(commands.take(), [Done::SetMicrophoneMute("a".into(), true)]);
+    // Every microphone vanishing: nothing changed, and the answer says why.
+    commands.vanish("a");
+    assert_eq!(
+        run(Command::ToggleMicrophoneMute, &commands),
+        Outcome::Explained("The microphone is gone".into())
+    );
+}
+
+#[test]
+fn no_microphone_at_all_is_explained() {
+    let commands = RecordingSystemCommands::default();
+    commands.set_microphones(vec![]);
+    assert_eq!(
+        run(Command::ToggleMicrophoneMute, &commands),
+        Outcome::Explained(NO_MICROPHONE.into())
+    );
+    assert!(commands.take().is_empty(), "nothing was asked");
+}
+
+#[test]
 fn sleep_follows_the_computers_modern_standby_signal_and_hibernate_its_file() {
     let commands = RecordingSystemCommands::default();
     commands.set_capabilities(capabilities(true, false));
@@ -187,13 +342,22 @@ fn a_failing_system_is_explained_and_nothing_happens() {
         run(Command::LockScreen, &commands),
         Outcome::Explained("Windows did not lock the screen".into())
     );
-    // Sleep and hibernate follow the capabilities' own failure.
+    // Sleep and hibernate follow the capabilities' own failure, and the
+    // volume and microphone commands the volume's and the list's.
     assert_eq!(
         run(Command::Sleep, &commands),
         Outcome::Explained("Windows did not lock the screen".into())
     );
     assert_eq!(
         run(Command::Hibernate, &commands),
+        Outcome::Explained("Windows did not lock the screen".into())
+    );
+    assert_eq!(
+        run(Command::VolumeUp, &commands),
+        Outcome::Explained("Windows did not lock the screen".into())
+    );
+    assert_eq!(
+        run(Command::ToggleMicrophoneMute, &commands),
         Outcome::Explained("Windows did not lock the screen".into())
     );
     assert!(commands.take().is_empty(), "nothing was asked");
@@ -235,6 +399,25 @@ fn windows_says_what_this_computer_can_do() {
         system_commands::native().capabilities().is_ok(),
         "GetPwrCapabilities answers"
     );
+}
+
+/// The Windows adapter's reversible audio reads: the volume of the
+/// default output device and the microphones there are. Nothing here
+/// changes the volume or mutes anything; a machine with no audio device
+/// is answered, never an error thrown.
+#[cfg(target_os = "windows")]
+#[test]
+fn windows_says_the_volume_and_the_microphones() {
+    if std::env::var("PANE_TEST_REAL_INPUT").as_deref() != Ok("1") {
+        eprintln!("skipped: set PANE_TEST_REAL_INPUT=1 to let it read the audio devices");
+        return;
+    }
+    let native = system_commands::native();
+    match native.volume() {
+        Ok(volume) => assert!(volume.level <= 100, "{:?}", volume),
+        Err(why) => assert!(!why.is_empty()),
+    }
+    assert!(native.microphones().is_ok(), "EnumAudioEndpoints answers");
 }
 
 /// One language's system commands sample package.
@@ -382,6 +565,100 @@ fn each_command_calls_the_capability_and_answers_its_state(fixture: &Fixture) {
     }
 }
 
+fn each_volume_item_answers_the_volume_it_ended_at(fixture: &Fixture) {
+    let pane = Pane::with(fixture);
+    pane.open(fixture);
+    // The fake starts at volume 50, unmuted, which each case resets to.
+    let cases: [(&str, Status, Done); 4] = [
+        (
+            "Volume Up",
+            Status::Result("Volume Up: Volume 52%".into()),
+            Done::SetVolume(volume(52, false)),
+        ),
+        (
+            "Volume Down",
+            Status::Result("Volume Down: Volume 48%".into()),
+            Done::SetVolume(volume(48, false)),
+        ),
+        (
+            "Toggle Mute",
+            Status::Result("Toggle Mute: Muted".into()),
+            Done::SetVolume(volume(50, true)),
+        ),
+        (
+            "Set Volume",
+            Status::Result("Set Volume: Volume 40%".into()),
+            Done::SetVolume(volume(40, false)),
+        ),
+    ];
+    for (item, expected, done) in cases {
+        pane.commands.set_volume_state(volume(50, false));
+        assert_eq!(pane.run(item), expected, "{item}: {}", fixture.title);
+        assert_eq!(pane.commands.take(), [done], "{item}: {}", fixture.title);
+    }
+    // Muting once, the next unmute says the volume it ended at.
+    assert_eq!(
+        pane.run("Toggle Mute"),
+        Status::Result("Toggle Mute: Muted".into()),
+        "{}",
+        fixture.title
+    );
+    assert_eq!(
+        pane.run("Toggle Mute"),
+        Status::Result("Toggle Mute: Unmuted, Volume 40%".into()),
+        "{}",
+        fixture.title
+    );
+}
+
+fn the_microphone_toggle_mutes_all_unmutes_all_and_explains_none(fixture: &Fixture) {
+    let pane = Pane::with(fixture);
+    pane.open(fixture);
+    // Two microphones, one muted: every microphone is muted.
+    pane.commands
+        .set_microphones(vec![microphone("a", false), microphone("b", true)]);
+    assert_eq!(
+        pane.run("Toggle Microphone Mute"),
+        Status::Result("Toggle Microphone Mute: Microphones muted".into()),
+        "{}",
+        fixture.title
+    );
+    assert_eq!(
+        pane.commands.take(),
+        [
+            Done::SetMicrophoneMute("a".into(), true),
+            Done::SetMicrophoneMute("b".into(), true)
+        ],
+        "{}",
+        fixture.title
+    );
+    // None unmuted any more: every microphone is unmuted.
+    assert_eq!(
+        pane.run("Toggle Microphone Mute"),
+        Status::Result("Toggle Microphone Mute: Microphones unmuted".into()),
+        "{}",
+        fixture.title
+    );
+    assert_eq!(
+        pane.commands.take(),
+        [
+            Done::SetMicrophoneMute("a".into(), false),
+            Done::SetMicrophoneMute("b".into(), false)
+        ],
+        "{}",
+        fixture.title
+    );
+    // No microphone at all: nothing happens and the answer says so.
+    pane.commands.set_microphones(vec![]);
+    assert_eq!(
+        pane.run("Toggle Microphone Mute"),
+        Status::Error(format!("Toggle Microphone Mute: {}", NO_MICROPHONE)),
+        "{}",
+        fixture.title
+    );
+    assert!(pane.commands.take().is_empty(), "nothing was asked");
+}
+
 fn sleep_follows_the_computers_modern_standby_signal(fixture: &Fixture) {
     let pane = Pane::with(fixture);
     pane.commands.set_capabilities(capabilities(true, true));
@@ -445,6 +722,8 @@ macro_rules! contract {
 
 contract!(
     each_command_calls_the_capability_and_answers_its_state,
+    each_volume_item_answers_the_volume_it_ended_at,
+    the_microphone_toggle_mutes_all_unmutes_all_and_explains_none,
     sleep_follows_the_computers_modern_standby_signal,
     hibernate_without_a_hibernation_file_is_explained,
     a_failing_system_answers_why_nothing_changed,
@@ -464,7 +743,9 @@ mod extension {
     use pane_core::defaults::ArtifactSource;
     use pane_core::feedback::WindowRequest;
     use pane_core::hotkeys::{HotkeyError, Hotkeys, Shortcut};
-    use pane_core::system_commands::{NO_HIBERNATION_FILE, PowerRequest};
+    use pane_core::system_commands::{
+        NO_HIBERNATION_FILE, NO_MICROPHONE, PowerRequest, SET_VOLUME_RANGE,
+    };
     use pane_core::{
         ConfirmAnswer, Confirmation, DefaultExtension, Hud, Launcher, PackageIdentity, Runtime,
         Screen, Status, ToastStyle,
@@ -474,7 +755,7 @@ mod extension {
     use super::feedback::RecordingWindow;
     use super::recording::{Done, RecordingSystemCommands};
     use super::rows::{manage, select_title, titles};
-    use super::{capabilities, guests};
+    use super::{capabilities, guests, microphone, volume};
 
     /// How long a launch or a guest call may take: compiling the guest
     /// once is included; a slow, busy machine is not.
@@ -618,6 +899,20 @@ mod extension {
             self.huds()
         }
 
+        /// Types `title` in root search, opens the command titled `title`'s
+        /// argument form and submits it with `values`; what the window was
+        /// asked to show.
+        fn submit(&self, title: &str, values: &[(&str, &str)]) -> Vec<Hud> {
+            self.search(title);
+            select_title(&self.launcher, title);
+            block_on(self.launcher.activate_selected());
+            for (field, value) in values {
+                self.launcher.set_field_value(field, value);
+            }
+            block_on(self.launcher.submit_form());
+            self.huds()
+        }
+
         /// Starts the command titled `title` from root search, on a thread
         /// of its own: the destructive ones wait on the user.
         fn start(&self, title: &str) -> Running {
@@ -694,7 +989,7 @@ mod extension {
         let pane = Pane::new();
 
         // Acquired with the default extension's identity, enabled, its
-        // eight commands root results the user can give an alias or a
+        // thirteen commands root results the user can give an alias or a
         // hotkey.
         let packages = pane.launcher.packages();
         let package = packages
@@ -711,6 +1006,11 @@ mod extension {
             "Hibernate",
             "Turn Off Displays",
             "Start Screen Saver",
+            "Volume Up",
+            "Volume Down",
+            "Toggle Mute",
+            "Set Volume",
+            "Toggle Microphone Mute",
         ] {
             pane.search(title);
             assert!(
@@ -729,7 +1029,11 @@ mod extension {
             titles(&pane.launcher)
         );
         assert!(titles(&pane.launcher).contains(&"Uninstall System Commands".to_owned()));
-        for title in ["Hotkey for Lock Screen", "Hotkey for Sleep"] {
+        for title in [
+            "Hotkey for Lock Screen",
+            "Hotkey for Sleep",
+            "Hotkey for Set Volume",
+        ] {
             assert!(
                 titles(&pane.launcher).contains(&title.to_owned()),
                 "{title} is not on the page: {:?}",
@@ -781,6 +1085,106 @@ mod extension {
             );
             assert_eq!(pane.commands.take(), [done], "{command}");
         }
+    }
+
+    #[test]
+    fn the_volume_commands_answer_the_hud_of_the_volume_they_ended_at() {
+        let pane = Pane::new();
+        // The fake starts at volume 50, unmuted; Volume Down steps back
+        // down from where Volume Up left the volume.
+        assert_eq!(
+            pane.run("Volume Up"),
+            [hud("Volume 52%", ToastStyle::Success)]
+        );
+        assert_eq!(pane.commands.take(), [Done::SetVolume(volume(52, false))]);
+        assert_eq!(
+            pane.run("Volume Down"),
+            [hud("Volume 50%", ToastStyle::Success)]
+        );
+        assert_eq!(pane.commands.take(), [Done::SetVolume(volume(50, false))]);
+        // Muting says which it did; unmuting says the volume it ended at.
+        assert_eq!(pane.run("Toggle Mute"), [hud("Muted", ToastStyle::Success)]);
+        assert_eq!(pane.commands.take(), [Done::SetVolume(volume(50, true))]);
+        assert_eq!(
+            pane.run("Toggle Mute"),
+            [hud("Unmuted, Volume 50%", ToastStyle::Success)]
+        );
+        assert_eq!(pane.commands.take(), [Done::SetVolume(volume(50, false))]);
+    }
+
+    #[test]
+    fn set_volume_takes_its_level_through_the_argument_form() {
+        let pane = Pane::new();
+        // Enter on Set Volume asks for its level first, as the command's
+        // one argument, required.
+        pane.search("Set Volume");
+        select_title(&pane.launcher, "Set Volume");
+        block_on(pane.launcher.activate_selected());
+        let view = pane.launcher.view();
+        assert_eq!(view.title, "Set Volume");
+        let form = view.form().expect("the argument form is shown");
+        assert_eq!(form.fields.len(), 1);
+        assert_eq!(form.fields[0].id, "level");
+        assert_eq!(form.fields[0].label, "Volume level (0 to 100)");
+        assert!(form.fields[0].required);
+        assert!(pane.launcher.back());
+
+        // Anything but a number from 0 to 100 changes nothing and is
+        // explained — "forty" by the command, 150 by the host, the same
+        // sentence either way.
+        for level in ["forty", "150"] {
+            assert_eq!(
+                pane.submit("Set Volume", &[("level", level)]),
+                [hud(SET_VOLUME_RANGE, ToastStyle::Failure)],
+                "{level}"
+            );
+            assert!(pane.commands.take().is_empty(), "{level} asked nothing");
+        }
+
+        // A level from 0 to 100 is the volume it ends at.
+        assert_eq!(
+            pane.submit("Set Volume", &[("level", "40")]),
+            [hud("Volume 40%", ToastStyle::Success)]
+        );
+        assert_eq!(pane.commands.take(), [Done::SetVolume(volume(40, false))]);
+    }
+
+    #[test]
+    fn the_microphone_toggle_mutes_all_unmutes_all_and_explains_none() {
+        let pane = Pane::new();
+        pane.commands
+            .set_microphones(vec![microphone("a", false), microphone("b", true)]);
+        // One microphone unmuted: every microphone is muted.
+        assert_eq!(
+            pane.run("Toggle Microphone Mute"),
+            [hud("Microphones muted", ToastStyle::Success)]
+        );
+        assert_eq!(
+            pane.commands.take(),
+            [
+                Done::SetMicrophoneMute("a".into(), true),
+                Done::SetMicrophoneMute("b".into(), true)
+            ]
+        );
+        // None unmuted any more: every microphone is unmuted.
+        assert_eq!(
+            pane.run("Toggle Microphone Mute"),
+            [hud("Microphones unmuted", ToastStyle::Success)]
+        );
+        assert_eq!(
+            pane.commands.take(),
+            [
+                Done::SetMicrophoneMute("a".into(), false),
+                Done::SetMicrophoneMute("b".into(), false)
+            ]
+        );
+        // No microphone at all: nothing happens and the answer says so.
+        pane.commands.set_microphones(vec![]);
+        assert_eq!(
+            pane.run("Toggle Microphone Mute"),
+            [hud(NO_MICROPHONE, ToastStyle::Failure)]
+        );
+        assert!(pane.commands.take().is_empty(), "nothing was asked");
     }
 
     #[test]

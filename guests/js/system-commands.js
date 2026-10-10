@@ -4,24 +4,30 @@
 // (`@pane-app/extension/system-commands`), through
 // `pane:extension/system-commands@0.1.0` (wit/system-commands.wit):
 // locking the screen, logging out, restarting, shutting down, sleeping,
-// hibernating, turning the displays off and starting the screen saver.
-// Bundled into the command that imports it, like any npm module; only a
-// command whose bundle uses it imports the interface. Each function
-// answers what it ended in — the state the system is in now, or why
-// nothing changed — never throwing for an operation that cannot happen on
-// this system, or failed: show the text in a HUD
-// (`@pane-app/extension/feedback`), and confirm the destructive ones
-// first, as the System Commands default extension does (ADR 0040).
+// hibernating, turning the displays off and starting the screen saver,
+// and the audio commands: the volume of the default output device and
+// the microphones' mute. Bundled into the command that imports it, like
+// any npm module; only a command whose bundle uses it imports the
+// interface. Each function answers what it ended in — the state the
+// system is in now, or why nothing changed — never throwing for an
+// operation that cannot happen on this system, or failed: show the text
+// in a HUD (`@pane-app/extension/feedback`), and confirm the destructive
+// ones first, as the System Commands default extension does (ADR 0040).
 
 import {
   hibernate as doHibernate,
   lockScreen as doLockScreen,
   logOut as doLogOut,
   restart as doRestart,
+  setVolume as doSetVolume,
   shutDown as doShutDown,
   sleep as doSleep,
   startScreenSaver as doStartScreenSaver,
+  toggleMicrophoneMute as doToggleMicrophoneMute,
+  toggleMute as doToggleMute,
   turnOffDisplays as doTurnOffDisplays,
+  volumeDown as doVolumeDown,
+  volumeUp as doVolumeUp,
 } from "pane:extension/system-commands@0.1.0";
 
 /**
@@ -106,4 +112,49 @@ export function turnOffDisplays() {
  */
 export function startScreenSaver() {
   return answer(doStartScreenSaver());
+}
+
+/**
+ * Raises the volume of the default output device by the step Windows'
+ * own volume keys take. Answers the volume it ended at, such as "Volume
+ * 52%", or why nothing changed.
+ */
+export function volumeUp() {
+  return answer(doVolumeUp());
+}
+
+/**
+ * Lowers the volume of the default output device by the same step.
+ * Answers the volume it ended at, or why nothing changed.
+ */
+export function volumeDown() {
+  return answer(doVolumeDown());
+}
+
+/**
+ * Mutes the default output device when it is not muted, unmutes it when
+ * it is. Answers "Muted", or the volume it ended at as "Unmuted,
+ * Volume 52%", or why nothing changed.
+ */
+export function toggleMute() {
+  return answer(doToggleMute());
+}
+
+/**
+ * Sets the volume of the default output device to `level`, 0 to 100; any
+ * other level changes nothing and the answer says why. Answers the
+ * volume it ended at.
+ * @param {number} level
+ */
+export function setVolume(level) {
+  return answer(doSetVolume(level));
+}
+
+/**
+ * Mutes every microphone when any of them is unmuted, unmutes them all
+ * otherwise. Answers "Microphones muted" or "Microphones unmuted", or
+ * why nothing changed (no microphone is connected).
+ */
+export function toggleMicrophoneMute() {
+  return answer(doToggleMicrophoneMute());
 }

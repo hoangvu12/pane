@@ -338,16 +338,18 @@ pub mod clipboard_history {
     };
 }
 
-/// The session and power commands (`pane:extension/system-commands`):
-/// locking the screen, logging out, restarting, shutting down, sleeping,
-/// hibernating, turning the displays off and starting the screen saver,
-/// which Pane asks the system for (a pure WASI guest cannot). Each answers
-/// what it ended in ([`system_commands::Outcome`]): the state the system
-/// is in now, or why nothing changed — an operation that cannot happen on
-/// this system, or failed, is an answer, never an error and never a reason
-/// to pause the extension. The System Commands default extension shows
-/// the text in a HUD ([`feedback::show_hud`]) and confirms the destructive
-/// ones first ([`feedback::confirm`]), as ADR 0040 records.
+/// The session, power and audio commands
+/// (`pane:extension/system-commands`): locking the screen, logging out,
+/// restarting, shutting down, sleeping, hibernating, turning the displays
+/// off, starting the screen saver, and the volume of the default output
+/// device and the microphones' mute, which Pane asks the system for (a
+/// pure WASI guest cannot). Each answers what it ended in
+/// ([`system_commands::Outcome`]): the state the system is in now, or why
+/// nothing changed — an operation that cannot happen on this system, or
+/// failed, is an answer, never an error and never a reason to pause the
+/// extension. The System Commands default extension shows the text in a
+/// HUD ([`feedback::show_hud`]) and confirms the destructive ones first
+/// ([`feedback::confirm`]), as ADR 0040 records.
 pub mod system_commands {
     wit_bindgen::generate!({
         path: "wit",
@@ -356,8 +358,9 @@ pub mod system_commands {
     });
 
     pub use pane::extension::system_commands::{
-        Outcome, hibernate, lock_screen, log_out, restart, shut_down, sleep, start_screen_saver,
-        turn_off_displays,
+        Outcome, hibernate, lock_screen, log_out, restart, set_volume, shut_down, sleep,
+        start_screen_saver, toggle_microphone_mute, toggle_mute, turn_off_displays, volume_down,
+        volume_up,
     };
 
     impl Outcome {
