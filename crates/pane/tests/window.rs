@@ -107,7 +107,7 @@ fn open<'a>(
 fn open_installed<'a>(
     cx: &'a mut TestAppContext,
     name: &str,
-) -> (Entity<LauncherWindow>, tempfile::TempDir, &mut VisualTestContext) {
+) -> (Entity<LauncherWindow>, tempfile::TempDir, &'a mut VisualTestContext) {
     let data = tempfile::tempdir().unwrap();
     let folder = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../target/guests/packages")
