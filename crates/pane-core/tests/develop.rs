@@ -388,10 +388,6 @@ fn a_successful_build_hands_the_state_over_and_reopens_the_screen() {
     // were, with what they had.
     save(&folder, "sample_handoff");
     dev.finished(&identity, 1);
-    assert_eq!(
-        dev.launcher.view().status,
-        Status::Result("Reloaded Dev".into())
-    );
     assert!(
         matches!(dev.launcher.view().screen, Screen::Command),
         "the screen that was open reopens: {:?}",
@@ -400,6 +396,13 @@ fn a_successful_build_hands_the_state_over_and_reopens_the_screen() {
     assert_eq!(
         dev.launcher.view().title,
         "Handoff: 2 counted, draft nothing"
+    );
+    // The reload's own outcome is kept while the reopened screen shows,
+    // and appears when the author leaves it.
+    to_root(&dev.launcher);
+    assert_eq!(
+        dev.launcher.view().status,
+        Status::Result("Reloaded Dev".into())
     );
 
     // The new code carries on from the handed-over state.

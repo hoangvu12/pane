@@ -196,10 +196,18 @@ fn the_screen_reopens_after_a_development_mode_reload(cx: &mut TestAppContext) {
     // opens the command again on the new code (ADR 0041), so the author
     // is back where they were, without navigating back.
     fs::write(folder.join("source.txt"), "sample_js").unwrap();
+    // The screen that was open opens again on the new code: the author is
+    // back where they were, without navigating back. The reload's own
+    // outcome is kept while the command's screen shows, and appears when
+    // the author leaves it.
     until(&window, cx, |view| {
-        view.status == Status::Result("Reloaded Hello".into())
+        matches!(view.screen, Screen::Command) && view.title == "JavaScript sample"
     });
     let view = settle(&window, cx);
     assert!(matches!(view.screen, Screen::Command));
     assert_eq!(view.title, "JavaScript sample");
+    cx.simulate_keystrokes("escape");
+    until(&window, cx, |view| {
+        view.status == Status::Result("Reloaded Hello".into())
+    });
 }
