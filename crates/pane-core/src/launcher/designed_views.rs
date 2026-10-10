@@ -284,7 +284,7 @@ impl Launcher {
 
     /// As [`Launcher::pop_designed_view`], for the back key's own path
     /// through the launcher, with the state already locked.
-    fn pop_designed_stack(&self, state: &mut State) -> bool {
+    pub(super) fn pop_designed_stack(&self, state: &mut State) -> bool {
         let Some(stack) = state.designed_view.as_mut() else {
             return false;
         };
