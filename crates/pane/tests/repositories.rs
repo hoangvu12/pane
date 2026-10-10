@@ -264,9 +264,7 @@ fn one_extension_of_a_collection_named_by_its_id_is_previewed_installed_and_run(
 /// Back returns to the choice), and the ticked ones installed through
 /// their own previews, each as its own package.
 #[gpui::test]
-fn a_collection_opens_the_choice_ticks_previews_and_installs_several(
-    cx: &mut TestAppContext,
-) {
+fn a_collection_opens_the_choice_ticks_previews_and_installs_several(cx: &mut TestAppContext) {
     let guests = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/guests");
     let server = Server::start();
     let repos = tempfile::tempdir().unwrap();
@@ -276,10 +274,8 @@ fn a_collection_opens_the_choice_ticks_previews_and_installs_several(
         { "id": "notes", "path": "extensions/notes" } ] }"#;
     let extensions = [("clock", true), ("timers", true), ("notes", true)];
     let repo = Repo::init(&repos.path().join("tools"), server.home());
-    let source_only: Vec<(&'static str, bool)> = extensions
-        .iter()
-        .map(|(id, _)| (*id, false))
-        .collect();
+    let source_only: Vec<(&'static str, bool)> =
+        extensions.iter().map(|(id, _)| (*id, false)).collect();
     let mut source_files = extension_collection_files(&guests, &source_only);
     source_files.push(("pane-collection.json", index.as_bytes().to_vec()));
     repo.commit(&source_files, "Collection 0.1.0 source");
@@ -309,7 +305,12 @@ fn a_collection_opens_the_choice_ticks_previews_and_installs_several(
     assert_eq!(view.title, "tools");
     assert_eq!(
         titles(&view),
-        ["Clock from Git", "Timers from Git", "Notes from Git", "Install"]
+        [
+            "Clock from Git",
+            "Timers from Git",
+            "Notes from Git",
+            "Install"
+        ]
     );
     let Screen::Choice(choice) = &view.screen else {
         unreachable!("checked above");
@@ -323,7 +324,8 @@ fn a_collection_opens_the_choice_ticks_previews_and_installs_several(
             "the row of {title} is rendered"
         );
         assert!(
-            cx.debug_bounds(format!("choice-tick-{title}").leak()).is_some(),
+            cx.debug_bounds(format!("choice-tick-{title}").leak())
+                .is_some(),
             "the check mark of {title} is rendered"
         );
     }
@@ -377,9 +379,8 @@ fn a_collection_opens_the_choice_ticks_previews_and_installs_several(
     assert!(matches!(view.screen, Screen::Package { .. }), "{view:#?}");
     assert_eq!(view.title, "Timers from Git");
     assert!(
-        view.details().contains(
-            &"Extension: timers, one of the extensions its collection lists".to_owned()
-        ),
+        view.details()
+            .contains(&"Extension: timers, one of the extensions its collection lists".to_owned()),
         "{:#?}",
         view.details()
     );
@@ -430,7 +431,8 @@ fn a_collection_opens_the_choice_ticks_previews_and_installs_several(
         ]
     );
     assert!(
-        view.details().contains(&"Commands: Timers from Git".to_owned()),
+        view.details()
+            .contains(&"Commands: Timers from Git".to_owned()),
         "{:#?}",
         view.details()
     );

@@ -1073,12 +1073,8 @@ fn choice_screen(
         }
         if let Some(version) = &extension.version {
             lines.push(
-                controls::field_description(
-                    format!("Version {version}"),
-                    theme.text_muted,
-                    theme,
-                )
-                .into_any_element(),
+                controls::field_description(format!("Version {version}"), theme.text_muted, theme)
+                    .into_any_element(),
             );
         }
         if let Some(word) = &outcome_word {
@@ -1142,9 +1138,11 @@ fn choice_screen(
                 ("extension-row", index),
                 None,
                 title.clone(),
-                vec![controls::field_description(subtitle, theme.text_muted, theme)
-                    .truncate()
-                    .into_any_element()],
+                vec![
+                    controls::field_description(subtitle, theme.text_muted, theme)
+                        .truncate()
+                        .into_any_element(),
+                ],
                 theme,
             )
             .debug_selector(move || selector)

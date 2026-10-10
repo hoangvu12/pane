@@ -2649,7 +2649,10 @@ fn a_collection_folder_chosen_from_the_plus_menu_opens_the_choice(cx: &mut TestA
         "extension-detail-Tick the extensions to install: each one installs on its own, with its \
          own preview and record",
     ] {
-        assert!(settings_cx.debug_bounds(drawn).is_some(), "{drawn} is drawn");
+        assert!(
+            settings_cx.debug_bounds(drawn).is_some(),
+            "{drawn} is drawn"
+        );
     }
     // Nothing is ticked: choosing Install is refused, and nothing runs.
     click_row(&mut settings_cx, "extension-row-Install");
@@ -2676,9 +2679,18 @@ fn a_collection_folder_chosen_from_the_plus_menu_opens_the_choice(cx: &mut TestA
     // Choosing Install installs each ticked extension as its own package,
     // and the choice lists what was installed.
     click_row(&mut settings_cx, "extension-row-Install");
-    until_text(&mut settings_cx, "Installed Clock from Git and Timers from Git");
-    for entry in ["extension-entry-Clock from Git", "extension-entry-Timers from Git"] {
-        assert!(settings_cx.debug_bounds(entry).is_some(), "{entry} is listed");
+    until_text(
+        &mut settings_cx,
+        "Installed Clock from Git and Timers from Git",
+    );
+    for entry in [
+        "extension-entry-Clock from Git",
+        "extension-entry-Timers from Git",
+    ] {
+        assert!(
+            settings_cx.debug_bounds(entry).is_some(),
+            "{entry} is listed"
+        );
     }
     open_page(&mut settings_cx, "Clock from Git");
 }

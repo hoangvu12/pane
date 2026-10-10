@@ -137,7 +137,10 @@ impl Listed {
         Listed {
             source: Source::Folder(root.to_path_buf()),
             title: crate::packages::folder_name(root),
-            details: vec![format!("Source: local folder {}", root.display()), HOW.into()],
+            details: vec![
+                format!("Source: local folder {}", root.display()),
+                HOW.into(),
+            ],
             extensions: extensions_of(root, collection),
         }
     }
@@ -155,6 +158,7 @@ impl Listed {
         let mut details = vec![format!("Source: Git repository {repository}")];
         details.extend(install::git_lines(origin, None));
         details.push(HOW.into());
+        let folder = download.folder().to_path_buf();
         Listed {
             source: Source::Fetched {
                 download,
@@ -162,7 +166,7 @@ impl Listed {
             },
             title: repository.to_owned(),
             details,
-            extensions: extensions_of(download.folder(), collection),
+            extensions: extensions_of(&folder, collection),
         }
     }
 }
@@ -290,9 +294,9 @@ impl Launcher {
             let subtitle = match ticked {
                 0 => "Tick the extensions to install".into(),
                 1 => "Copy the ticked extension into Pane and add its commands".into(),
-                ticked => format!(
-                    "Copy the {ticked} ticked extensions into Pane and add their commands"
-                ),
+                ticked => {
+                    format!("Copy the {ticked} ticked extensions into Pane and add their commands")
+                }
             };
             rows.push(Row {
                 id: INSTALL_ROW.into(),
@@ -385,8 +389,7 @@ impl Launcher {
         if choice.run.as_ref().is_some_and(|run| run.going) {
             // The ticked extensions are being installed; nothing else is
             // previewed meanwhile.
-            state.view.status =
-                Status::Error("The ticked extensions are being installed".into());
+            state.view.status = Status::Error("The ticked extensions are being installed".into());
             return Pending::Nothing;
         }
         let Some(request) = choice.request(id) else {
@@ -479,11 +482,7 @@ impl Launcher {
             {
                 run.going = false;
             }
-            state.view.status = state
-                .choice
-                .as_ref()
-                .map(ending)
-                .unwrap_or(Status::Idle);
+            state.view.status = state.choice.as_ref().map(ending).unwrap_or(Status::Idle);
             self.choice_view(&mut state);
         } else {
             self.refresh(&mut state);
@@ -636,9 +635,9 @@ fn ending(choice: &Choice) -> Status {
     match (installed.as_slice(), refused.as_slice()) {
         // None of the ticked extensions was installed; the choice's rows
         // say what came of each.
-        ([], _) => Status::Error(
-            "Nothing was installed: the choice lists what came of each".into(),
-        ),
+        ([], _) => {
+            Status::Error("Nothing was installed: the choice lists what came of each".into())
+        }
         (installed, []) => Status::Result(format!("Installed {}", platform::join(installed))),
         (installed, refused) => Status::Error(format!(
             "Installed {}, but not {}",

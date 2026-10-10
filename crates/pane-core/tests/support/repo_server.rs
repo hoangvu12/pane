@@ -264,9 +264,7 @@ pub fn extension_collection_files(
                 }
             })
             .collect();
-        let icon = (at == 0)
-            .then(|| r#", "icon": "icon.svg""#)
-            .unwrap_or("");
+        let icon = (at == 0).then(|| r#", "icon": "icon.svg""#).unwrap_or("");
         let manifest = format!(
             r#"{{ "manifestVersion": 1, "title": "{title} from Git",
                  "description": "The {id} extension of the tools collection",
@@ -276,8 +274,7 @@ pub fn extension_collection_files(
                  "operations": [{{ "id": "greet", "version": 1,
                                    "component": "dist/git_greeter.wasm" }}] }}"#
         );
-        let folder: &'static str =
-            Box::leak(format!("extensions/{id}").into_boxed_str());
+        let folder: &'static str = Box::leak(format!("extensions/{id}").into_boxed_str());
         files.push((
             Box::leak(format!("{folder}/pane.json").into_boxed_str()),
             manifest.into_bytes(),
@@ -295,8 +292,7 @@ pub fn extension_collection_files(
         if at == 0 {
             files.push((
                 Box::leak(format!("{folder}/icon.svg").into_boxed_str()),
-                br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"/>"#
-                    .to_vec(),
+                br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"/>"#.to_vec(),
             ));
         }
     }

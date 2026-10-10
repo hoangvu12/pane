@@ -33,7 +33,7 @@ use crate::dependencies::{self, Assumptions, Plan, RequiredState};
 use crate::git::{self as git_source, GitSpec};
 use crate::npm::{self, NpmSpec, Registry};
 use crate::packages::{
-    InstalledPackage, PackageError, PackageIdentity, SourcePackage, SourceSpec, MANIFEST_FILE,
+    InstalledPackage, MANIFEST_FILE, PackageError, PackageIdentity, SourcePackage, SourceSpec,
 };
 use crate::platform::{self, Platform};
 use crate::runtime::FieldKind;
@@ -179,7 +179,10 @@ impl Sources {
                                 root.display()
                             )));
                         }
-                        Ok(ChoiceRead::Choice(choice::Listed::folder(&root, &collection)))
+                        Ok(ChoiceRead::Choice(choice::Listed::folder(
+                            &root,
+                            &collection,
+                        )))
                     }
                     None => SourcePackage::read(folder).map(ChoiceRead::Package),
                 }

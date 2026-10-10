@@ -2098,10 +2098,9 @@ impl ListedExtension {
     /// manifest's title, description, version and icon, read leniently.
     pub(crate) fn of(root: &Path, entry: &crate::collections::Extension) -> ListedExtension {
         let subfolder = root.join(&entry.path);
-        let manifest: Option<serde_json::Value> =
-            fs::read_to_string(subfolder.join(MANIFEST_FILE))
-                .ok()
-                .and_then(|text| serde_json::from_str(&text).ok());
+        let manifest: Option<serde_json::Value> = fs::read_to_string(subfolder.join(MANIFEST_FILE))
+            .ok()
+            .and_then(|text| serde_json::from_str(&text).ok());
         let field = |name: &str| {
             manifest
                 .as_ref()

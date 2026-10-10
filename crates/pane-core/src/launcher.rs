@@ -42,10 +42,10 @@ mod application_changes;
 mod application_icons;
 mod application_update;
 mod argument_form;
+mod choice;
 mod choices;
 mod clipboard_settings;
 pub mod clipboard_view;
-mod choice;
 mod command_search;
 mod confirmations;
 mod crash_notice;
@@ -118,8 +118,8 @@ use aliases::AliasChoices;
 pub use aliases::AliasOutcome;
 pub use application_update::ApplicationUpdate;
 use application_update::{Application, Updates};
-use choices::Record;
 pub use choice::{ChoiceExtension, ChoiceOutcome, ChoiceView};
+use choices::Record;
 pub use crash_notice::{LogNotice, UNEXPECTED_QUIT};
 use developing::Developing;
 pub use developing::{BuildFailure, Development};
@@ -2713,9 +2713,9 @@ impl Launcher {
             Screen::CommandSearch { query } if !query.is_empty() => {
                 self.clear_search_in_command(&mut state);
             }
-            Screen::Command
-            | Screen::CommandSearch { .. }
-            | Screen::Extensions { .. } => self.show_root(&mut state, None),
+            Screen::Command | Screen::CommandSearch { .. } | Screen::Extensions { .. } => {
+                self.show_root(&mut state, None)
+            }
             // The choice of a collection's extensions (#308): leaving it
             // leaves for root search, as a package preview's Back does,
             // and the choice — with the revision it holds — goes with it.
