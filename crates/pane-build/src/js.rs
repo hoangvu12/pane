@@ -175,7 +175,9 @@ pub fn build_js_command(
         return failed(&format!("{} cannot be written: {error}", wit.display()));
     }
     let out = out.to_path_buf();
-    if let Some(parent) = out.parent() && let Err(error) = fs::create_dir_all(parent) {
+    if let Some(parent) = out.parent()
+        && let Err(error) = fs::create_dir_all(parent)
+    {
         return failed(&format!("{} cannot be created: {error}", parent.display()));
     }
     let world_file = wit.join("command.wit");
@@ -378,7 +380,9 @@ fn install(job: &BuildJob, staged: &Path) -> Option<BuildOutcome> {
     crate::build::without_pane_build_environment(&mut command);
     match job.run_command(command, "npm ci --ignore-scripts", None) {
         BuildOutcome::Built => {
-            if let Some(parent) = marker.parent() && let Err(error) = fs::create_dir_all(parent) {
+            if let Some(parent) = marker.parent()
+                && let Err(error) = fs::create_dir_all(parent)
+            {
                 return Some(failed(&format!(
                     "{} cannot be created: {error}",
                     parent.display()
