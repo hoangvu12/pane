@@ -708,7 +708,7 @@ export const command = {
     throw new Error(`The actions sample has no forms: ${itemId}`);
   },
 
-  async openCustomView(itemId) {
-    throw new Error(`The actions sample has no custom views: ${itemId}`);
+  async openView(commandId) {
+    throw new Error(`The actions sample opens no designed view: ${commandId}`);
   },
 };

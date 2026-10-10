@@ -311,7 +311,7 @@ export const command = {
     return `${GREETINGS[greeting]}, ${name}, from the JavaScript guest`;
   },
 
-  async openView(commandId) {
+  async openView(/** @type {string} */ commandId) {
     if (commandId !== "color") {
       throw new Error(`unknown designed view: ${commandId}`);
     }

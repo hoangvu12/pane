@@ -16,7 +16,7 @@ import { type FileEntry, search, status } from "pane:extension/file-index@0.1.0"
 import type {
   Command,
   CommandSearch,
-  CustomView,
+  DesignedView,
   List,
   RootResult,
   RootResults,
@@ -60,11 +60,12 @@ async function submitForm(itemId: string): Promise<string> {
   throw { message: `unknown form: ${itemId}` };
 }
 
-async function openCustomView(itemId: string): Promise<CustomView> {
-  throw new Error(`unknown view: ${itemId}`);
+async function openView(itemId: string): Promise<DesignedView> {
+  throw new Error(`unknown designed view: ${itemId;
+}`);
 }
 
-export const command: Command = { render, submitForm, openCustomView };
+export const command: Command = { render, submitForm, openView };
 
 export const commandSearch: CommandSearch = {
   async search(_command: string, query: string): Promise<SearchResult[]> {

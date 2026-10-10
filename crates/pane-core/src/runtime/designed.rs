@@ -2004,9 +2004,8 @@ fn coordinate(fields: &Map<String, Value>, name: &str) -> Result<f32, ReadError>
 
 /// One size an operation names, clamped to what a canvas draws.
 fn measure(fields: &Map<String, Value>, name: &str) -> Result<Finite, ReadError> {
-    optional_measure(fields, name)?.ok_or_else(|| unreadable(&format!(
-        "an operation of a canvas has no {name}"
-    )))
+    optional_measure(fields, name)?
+        .ok_or_else(|| unreadable(&format!("an operation of a canvas has no {name}")))
 }
 
 /// One size an operation may name, clamped to what a canvas draws.

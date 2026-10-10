@@ -15,7 +15,7 @@
 // deletes it.
 import * as history from "pane:extension/clipboard-history@0.1.0";
 import type { Capture, Entry, HistoryStatus } from "pane:extension/clipboard-history@0.1.0";
-import type { Command, CustomView, FieldValue, Form, Item, List } from "@pane-app/extension";
+import type { Command, DesignedView, FieldValue, Form, Item, List } from "@pane-app/extension";
 import { closeMainWindow, showHUD, showToast } from "@pane-app/extension/feedback";
 import { NotAvailableError, PASTE_FALLBACK, paste } from "@pane-app/extension/system";
 
@@ -319,8 +319,9 @@ async function submitForm(itemId: string, values: FieldValue[]): Promise<string>
   return `Text copied from ${program} is not kept`;
 }
 
-async function openCustomView(itemId: string): Promise<CustomView> {
-  throw new Error(`unknown view: ${itemId}`);
+async function openView(itemId: string): Promise<DesignedView> {
+  throw new Error(`unknown designed view: ${itemId;
+}`);
 }
 
 /**
@@ -331,4 +332,4 @@ async function runSearchResult(id: string): Promise<void> {
   await act(id);
 }
 
-export const command: Command = { render, runSearchResult, submitForm, openCustomView };
+export const command: Command = { render, runSearchResult, submitForm, openView };

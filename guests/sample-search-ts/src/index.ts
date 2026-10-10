@@ -11,7 +11,7 @@
 // stopped where it waits; an unreachable or failing service is an error
 // shown in place of results, not a crash. Items, toasts and errors match
 // the Rust sample (guests/sample-search) and the JavaScript one.
-import type { Command, CommandSearch, FieldValue, Form, SearchResult } from "@pane-app/extension";
+import type { Command, CommandSearch, DesignedView, FieldValue, Form, SearchResult } from "@pane-app/extension";
 import { showToast } from "@pane-app/extension/feedback";
 import { get as fetchUrl } from "@pane-app/extension/http";
 import { get, set } from "pane:extension/settings@0.1.0";
@@ -132,9 +132,8 @@ export const command: Command = {
     host(() => set(SERVICE, address));
     return `Searching ${address} from now on`;
   },
-  async openCustomView() {
-    throw new Error("Package search has no custom views");
-  },
+  async openView() {
+    throw new Error("Package search has opens no designed view"))},
 };
 
 export const commandSearch: CommandSearch = {

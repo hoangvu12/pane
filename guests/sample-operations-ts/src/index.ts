@@ -20,7 +20,6 @@
 // it; the "wait" item calls it.
 import type {
   Command,
-  CustomView,
   FieldValue,
   Form,
   FormError,
@@ -146,8 +145,9 @@ async function submitForm(itemId: string, values: FieldValue[]): Promise<string>
   }
 }
 
-async function openCustomView(itemId: string): Promise<CustomView> {
-  throw new Error(`unknown view: ${itemId}`);
+async function openView(itemId: string): Promise<DesignedView> {
+  throw new Error(`unknown designed view: ${itemId;
+}`);
 }
 
 async function runOperation(operation: string, input: string): Promise<string> {
@@ -169,6 +169,6 @@ async function runOperation(operation: string, input: string): Promise<string> {
   return JSON.stringify(result);
 }
 
-export const command: Command = { render, submitForm, openCustomView };
+export const command: Command = { render, submitForm, openView };
 
 export const publishedOperations: PublishedOperations = { runOperation };

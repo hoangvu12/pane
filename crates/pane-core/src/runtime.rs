@@ -78,8 +78,8 @@ pub use designed::{
     MAX_MARKDOWN_CHARS, MAX_NODES, MAX_PX, MAX_TREE_BYTES, Markdown, MetadataItem, MetadataList,
     Node, NodeKind, Offset, Orientation, Padding, Paint, Place, Progress, RadiusLength, RichRow,
     RowAccessory, SectionHeader, Segment, Segmented, Select, Sizing, Slider, Span, StrokeCap,
-    StrokeJoin, Style,
-    Surface, Tag, Text, TextContent, TextInput, Toggle, Tone as ButtonTone, key_problems,
+    StrokeJoin, Style, Surface, Tag, Text, TextContent, TextInput, Toggle, key_problems,
+    Tone as ButtonTone,
 };
 #[cfg(any(test, debug_assertions))]
 #[doc(hidden)]

@@ -70,8 +70,8 @@ export const command = {
     throw { message: "this sample has no forms" };
   },
 
-  async openCustomView() {
-    throw new Error("this sample has no custom views");
+  async openView() {
+    throw new Error("this sample opens no designed view");
   },
 };
 
