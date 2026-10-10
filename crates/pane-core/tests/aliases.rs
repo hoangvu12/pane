@@ -252,7 +252,7 @@ fn an_alias_finds_the_command_first_and_sends_the_text_after_it_only_when_invoke
     let dirs = Dirs::new();
     let (launcher, runtime) = dirs.launcher();
     let query = dirs.install(&launcher, fixture.package, "query");
-    dirs.install(&launcher, "calculator", "calculator");
+    dirs.install(&launcher, "sample-rust", "sample-rust");
     let echo = component_of(&launcher, &query, fixture.component);
 
     assert_eq!(
@@ -323,9 +323,9 @@ fn an_alias_finds_the_command_first_and_sends_the_text_after_it_only_when_invoke
     assert!(!titles(&launcher).contains(&"Echo".to_string()));
 
     // What the alias names comes before a computed result too.
-    set_alias(&launcher, "2+2");
-    search(&launcher, "2+2");
-    assert_eq!(titles(&launcher)[..2], ["Echo", "4"]);
+    set_alias(&launcher, "reverse");
+    search(&launcher, "reverse 21");
+    assert_eq!(titles(&launcher)[..2], ["Echo", "12"]);
 }
 
 fn a_fallback_is_listed_last_for_any_text_and_the_first_is_selected_when_nothing_else_matches(
@@ -432,10 +432,15 @@ fn disabling_the_target_removes_its_alias_and_fallback_without_enabling_it_again
 
     search(&launcher, "ec hello");
     assert_eq!(titles(&launcher), Vec::<String>::new());
+    // The alias's letters still find Pane's own Check for Extension
+    // Updates — a disabled package's update is the user's to ask (#267).
     search(&launcher, "ec");
-    // Pane's own rows match the two letters fuzzily (#193); the disabled
-    // command's alias and fallback rows are gone.
+    // The alias's letters still find Pane's own Check for Extension
+    // Updates — a disabled package's update is the user's to ask (#267) —
+    // and Pane's other own rows match the two letters fuzzily (#193); the
+    // disabled command's alias and fallback rows are gone.
     assert!(!titles(&launcher).contains(&"Echo".to_owned()));
+    assert!(titles(&launcher).contains(&"Check for Extension Updates".to_owned()));
     assert_eq!(running(&runtime), Vec::<PathBuf>::new());
 
     // Changing them does not enable it either.

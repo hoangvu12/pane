@@ -69,9 +69,12 @@ world typed-folder-user {
 /// The world Pane hosts: a command that may also use extension data, call
 /// operations, find and open installed applications, run its package's
 /// native helpers and system programs, list the folder granted to its
-/// package, keep clipboard history, search the file index and list the
+/// package, keep clipboard history, search the file index, run what the
+/// Run dialog runs, lock, log out, restart, shut down, sleep, hibernate
+/// or turn off the displays of the computer, list the open windows,
+/// bringing one of them to the front (wit/windows.wit), and list the
 /// entries of a folder the user typed.
 world extension-with-typed-folder {
-  include extension-with-file-index;
+  include extension-with-windows;
   import typed-folder;
 }

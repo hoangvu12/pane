@@ -17,7 +17,7 @@ use std::mem::{Discriminant, discriminant};
 use std::path::Path;
 
 use gpui::{
-    App, ClipboardItem, Context, Div, EntityInputHandler, FocusHandle, Focusable, Hsla,
+    App, ClipboardItem, Context, Div, Entity, EntityInputHandler, FocusHandle, Focusable, Hsla,
     KeyDownEvent, Keystroke, MouseMoveEvent, ObjectFit, PathPromptOptions, Pixels, Point, Role,
     SharedString, Size, Stateful, Window, div, img, prelude::*, px, relative,
 };
@@ -26,8 +26,9 @@ use pane_core::feedback::WindowRequest;
 use pane_core::hotkeys::Shortcut;
 use pane_core::tray::TrayAction;
 use pane_core::{
-    ComputedAnswer, KeyboardAction, Launcher, LauncherView, ListPresentation, NextShowing, Row,
-    RowPresentation, Screen, SelectedAction, SettingsTarget, Status, WindowPresence,
+    ComputedAnswer, FolderAsk, KeyboardAction, Launcher, LauncherView, ListPresentation,
+    NextShowing, Row, RowPresentation, Screen, SelectedAction, SettingsTarget, Status,
+    WindowPresence,
 };
 
 use crate::extension_views::{custom_view, form};
@@ -45,6 +46,7 @@ use crate::features::root_search;
 use crate::features::root_search::arguments as argument_fields;
 use crate::features::settings;
 use crate::features::toast;
+use crate::features::update_results;
 use crate::ui::footer;
 use crate::ui::icon::{Glyph, IconTone};
 use crate::ui::keycap::CapStyle;
@@ -92,6 +94,9 @@ pub struct LauncherWindow {
     /// A package's Logs screen, while the launcher shows it; see
     /// [`features::extension_log`].
     pub(crate) log: Option<crate::features::extension_log::ExtensionLogView>,
+    /// The update results view, while the launcher shows it; see
+    /// [`features::update_results`].
+    pub(crate) update_results: Option<update_results::UpdateResultsView>,
     /// The footer toast's focus and time; see [`features::toast`].
     pub(crate) toast: toast::ToastControls,
     /// What the window's live region says of the selection and the
@@ -126,10 +131,24 @@ pub struct LauncherWindow {
     /// of which navigation arrives and which lands at once; see
     /// [`FrameMotion`].
     pub(crate) motion: FrameMotion,
+    /// The hotkey screen's recording session, while the screen listens
+    /// (#260): the hook adapter holds the keys back from Windows and
+    /// reports what the user presses, so the kinds no registration can
+    /// express are recorded without the Start menu opening. `None` where
+    /// this system's adapter has no session (macOS, X11) — the screen's
+    /// own keystrokes record, as they do today — or while no session
+    /// listens.
+    hotkey_recording: Option<pane_core::hotkeys::RecordingStop>,
     /// Whether the window is shown, when it was hidden, the Open Pane
     /// hotkey's repeat guard and the compact window mode's sizes; see
     /// [`Presence`].
     presence: Presence,
+    /// The "Show the taskbar when Pane opens" choice as this window last
+    /// applied it (#268), so only a change acts: turned on while the
+    /// launcher is shown, the taskbar shows at once; turned off, it goes
+    /// back as the user had it. The show and hide transitions apply the
+    /// choice in between.
+    taskbar_followed: bool,
     /// The result list, drawn virtually: its scroll position, the heights
     /// it measured and the frame it lays out (#165; see
     /// [`result_list`]).
@@ -165,6 +184,10 @@ pub struct LauncherWindow {
     /// Test and debug builds only.
     #[cfg(any(test, debug_assertions))]
     drawn_over: bool,
+    /// Whether the tray entry's tooltip said Pane's hotkeys were paused
+    /// the last time the window looked (game mode, #125), so a change is
+    /// the only thing it tells the entry again.
+    tray_paused: bool,
 }
 
 /// What the list was last scrolled for. When any of it changes, the list
@@ -239,6 +262,7 @@ impl LauncherWindow {
             clipboard: None,
             files: None,
             log: None,
+            update_results: None,
             toast: toast::ToastControls::new(cx),
             announcer: announcer::Announcer::default(),
             held: held_keys::HeldKeys::default(),
@@ -249,7 +273,10 @@ impl LauncherWindow {
             confirmation: confirmation::ConfirmationControls::new(cx),
             home: quick_slots::Home::default(),
             motion: FrameMotion::new(),
+            hotkey_recording: None,
             presence: Presence::default(),
+            taskbar_followed: crate::settings::ensure(cx).read(cx).show_taskbar(),
+            tray_paused: false,
             #[cfg(any(test, debug_assertions))]
             drawn: None,
             #[cfg(any(test, debug_assertions))]
@@ -281,6 +308,18 @@ impl LauncherWindow {
         this.place(window, cx);
         // The home's slots resolve from the first visit.
         this.sync_home(cx);
+        // The taskbar follows the choice as it changes while the window
+        // lives (#268), and the launcher starts shown, so the choice
+        // applies at once: for a user whose taskbar hides itself, the
+        // Start button is one click away from the first frame.
+        let taskbar = crate::settings::ensure(cx);
+        cx.observe_in(&taskbar, window, |this, settings, _, cx| {
+            this.follow_taskbar(&settings, cx);
+        })
+        .detach();
+        if this.taskbar_followed {
+            taskbar.read(cx).taskbar_while_open();
+        }
         this
     }
 
@@ -361,6 +400,16 @@ impl LauncherWindow {
                         this.unhide(window, cx);
                         window.activate_window();
                         cx.activate(true);
+                    }
+                    // Game mode paused or resumed Pane's hotkeys for a
+                    // game in front (#125): the tray icon's tooltip
+                    // follows, on the window's thread as the entry's
+                    // changes are.
+                    let paused = this.launcher.hotkeys_paused();
+                    if paused != this.tray_paused {
+                        this.tray_paused = paused;
+                        crate::settings::shared(cx)
+                            .update(cx, |settings, _| settings.set_tray_paused(paused));
                     }
                     this.sync_screen(window, cx);
                     // A publication that arrived in the background applies
@@ -873,6 +922,66 @@ impl LauncherWindow {
         );
     }
 
+    /// Asks for the parent folder a new extension package is written into
+    /// with the platform's folder picker, then shows the Create Extension
+    /// form for it (#222). Cancelling leaves root search as it was. A debug
+    /// build run by the native smokes takes the folder
+    /// `PANE_TEST_CHOOSE_FOLDER` names instead of showing the picker.
+    fn choose_create_folder(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        #[cfg(debug_assertions)]
+        if let Some(parent) = std::env::var_os("PANE_TEST_CHOOSE_FOLDER") {
+            self.create_extension(Path::new(&parent), window, cx);
+            return;
+        }
+        self.choose_folder(
+            "Create",
+            |this, parent, window, cx| this.create_extension(parent, window, cx),
+            window,
+            cx,
+        );
+    }
+
+    /// Shows the Create Extension form for the parent folder `parent`,
+    /// which the picker chose: the name, language and template of the
+    /// package the form writes there. As [`LauncherWindow::import_extension`]
+    /// is Import Extension's pick, this is Create Extension's.
+    pub fn create_extension(&mut self, parent: &Path, window: &mut Window, cx: &mut Context<Self>) {
+        self.launcher.show_create_form(parent);
+        self.sync_screen(window, cx);
+        cx.notify();
+    }
+
+    /// Asks for the folder of an extension package that already exists
+    /// with the platform's folder picker, then previews it for installing,
+    /// which develops the package once the author installs it (#222). The
+    /// folder is checked as any install is, so one without `pane.json`, or
+    /// a source-only package, is explained by Pane's own messages. A debug
+    /// build run by the native smokes takes the folder
+    /// `PANE_TEST_CHOOSE_FOLDER` names instead of showing the picker.
+    fn choose_import_folder(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        #[cfg(debug_assertions)]
+        if let Some(folder) = std::env::var_os("PANE_TEST_CHOOSE_FOLDER") {
+            self.import_extension(Path::new(&folder), window, cx);
+            return;
+        }
+        self.choose_folder(
+            "Import",
+            |this, folder, window, cx| this.import_extension(folder, window, cx),
+            window,
+            cx,
+        );
+    }
+
+    /// Shows the install preview of the package in `folder`, which Pane
+    /// develops once it is installed: Import Extension's pick (#222), as
+    /// [`LauncherWindow::preview_package`] shows a folder an install
+    /// offers.
+    pub fn import_extension(&mut self, folder: &Path, window: &mut Window, cx: &mut Context<Self>) {
+        self.motion.pointer_open();
+        let pending = self.launcher.import_extension(folder);
+        self.show_until_done(pending, window, cx);
+    }
+
     /// Asks for a folder with the platform's folder picker, its button
     /// saying `prompt`, then hands the chosen one to `chosen`. Cancelling
     /// does nothing; a picker that cannot open is reported.
@@ -964,6 +1073,11 @@ impl LauncherWindow {
             // shares nothing of the launcher's lifecycle, stays where the
             // user put it.
             self.place(window, cx);
+            // The taskbar shows while the launcher is open, where the user
+            // chose that and this system has one to show (#268): a taskbar
+            // that hides itself is on screen now, so the Start button
+            // stays one click away.
+            crate::settings::shared(cx).read(cx).taskbar_while_open();
         }
     }
 
@@ -975,6 +1089,10 @@ impl LauncherWindow {
     fn hide(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         window.set_visible(false);
         self.presence.hide(cx.background_executor().now());
+        // The taskbar goes back as the user had it, where showing it while
+        // the launcher was open was chosen (#268): hidden, the launcher
+        // leaves the screen to what the user had there.
+        crate::settings::shared(cx).read(cx).restore_taskbar();
         // A toast shown from now on is a HUD (#141), and a confirmation
         // shown is answered as not confirmed (#146).
         self.launcher.set_window_presence(WindowPresence::Hidden);
@@ -984,6 +1102,35 @@ impl LauncherWindow {
         self.motion.land_at_once();
         self.end_numbers(cx);
         cx.notify();
+    }
+
+    /// Follows the "Show the taskbar when Pane opens" choice as it
+    /// changes while this window lives (#268): while the launcher is
+    /// shown, turning the choice on shows the taskbar at once, and
+    /// turning it off puts it back as the user had it; while the launcher
+    /// is hidden, the next showing applies the choice (see
+    /// [`LauncherWindow::unhide`]). Any other change of the settings
+    /// leaves the taskbar as it is.
+    fn follow_taskbar(
+        &mut self,
+        settings: &Entity<crate::settings::Settings>,
+        cx: &mut Context<Self>,
+    ) {
+        let chosen = settings.read(cx).show_taskbar();
+        if chosen == self.taskbar_followed {
+            return;
+        }
+        self.taskbar_followed = chosen;
+        if self.presence.hidden() {
+            // Hidden: nothing shows now; the next showing applies the
+            // choice.
+            return;
+        }
+        if chosen {
+            settings.read(cx).taskbar_while_open();
+        } else {
+            settings.read(cx).restore_taskbar();
+        }
     }
 
     /// Places the launcher window on the display the Launcher page's
@@ -1348,6 +1495,18 @@ impl LauncherWindow {
             self.choose_package_folder(window, cx);
             return;
         }
+        // Create Extension and Import Extension ask for a folder too: the
+        // parent folder a new package is written into, or the folder of one
+        // that already exists (#222). The launcher does nothing on their
+        // rows; the window asks, as it asks for the folder a package
+        // grants.
+        if let Some(ask) = self.launcher.selected_folder_ask() {
+            match ask {
+                FolderAsk::Create => self.choose_create_folder(window, cx),
+                FolderAsk::Import => self.choose_import_folder(window, cx),
+            }
+            return;
+        }
         if let Some(identity) = self.launcher.folder_to_choose() {
             self.choose_granted_folder(identity, window, cx);
             return;
@@ -1472,6 +1631,9 @@ impl LauncherWindow {
         if !self.actions_belong_to(&self.launcher.screen()) && self.actions.take().is_some() {
             self.launcher.close_submenus();
         }
+        // The hotkey screen's recording session starts when the screen
+        // listens and ends when it leaves (#260).
+        self.sync_hotkey_recording(window, cx);
         self.sync_form(window, cx);
         self.sync_custom_view(window, cx);
         // Root search's inline argument fields follow the selected row
@@ -1487,11 +1649,79 @@ impl LauncherWindow {
         // A package's Logs screen reads its lines again, and takes the
         // focus as it opens.
         self.sync_extension_log(window, cx);
+        // The update results view follows the screen the launcher shows.
+        self.sync_update_results(cx);
         self.sync_home(cx);
         // Last of all: a confirmation a command waits on keeps the focus
         // over whatever screen is shown (#146).
         self.sync_confirmation(window, cx);
         cx.refresh_windows();
+    }
+
+    /// Starts or ends the hotkey screen's recording session so it lasts
+    /// exactly while the screen listens (#260): while it does, the hook
+    /// adapter holds the keys back from Windows — the Start menu the
+    /// Windows key alone opens stays closed — and reports what the user
+    /// presses, including the kinds no registration can express and
+    /// modifiers' sides, which the screen's own keystrokes cannot name.
+    /// The reports end when the recorder stops listening, the window
+    /// loses focus, or Pane quits; on a system whose adapter has no
+    /// session the screen records through its own keystrokes, as it
+    /// always has. Idempotent, so every screen change can call it.
+    fn sync_hotkey_recording(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let listening = matches!(self.launcher.screen(), Screen::Hotkey { .. });
+        if listening == self.hotkey_recording.is_some() {
+            return;
+        }
+        if !listening {
+            // The screen left: the session ends with the stop it owns.
+            self.hotkey_recording = None;
+            return;
+        }
+        let Some(session) = self.launcher.recording() else {
+            // No adapter session here: the keystroke path records, as it
+            // does today (macOS, X11).
+            return;
+        };
+        let (reports, stop) = session.split();
+        self.hotkey_recording = Some(stop);
+        cx.spawn_in(window, async move |this, cx| {
+            let mut reports = reports;
+            while let Some(shortcut) = reports.next().await {
+                // Still listening: the task ends with the screen it
+                // records for, and the session's stop ends the reports
+                // when the recorder stops listening without a press.
+                let listening = this
+                    .update_in(cx, |window, w, cx| {
+                        window.hotkey_recording_reported(shortcut, w, cx)
+                    })
+                    .unwrap_or(false);
+                if !listening {
+                    break;
+                }
+            }
+        })
+        .detach();
+    }
+
+    /// One binding a recording session reported, pressed on the hotkey
+    /// screen (#260): recorded as the screen's own keystrokes are — the
+    /// same checks, the same flow, the same refusals — and whether the
+    /// screen still listens for another try (a refusal keeps it
+    /// listening, a change that lands leaves it).
+    fn hotkey_recording_reported(
+        &mut self,
+        shortcut: Shortcut,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if !matches!(self.launcher.screen(), Screen::Hotkey { .. }) {
+            return false;
+        }
+        let pending = self.launcher.record_hotkey(shortcut);
+        self.motion.land_at_once();
+        self.show_until_done(pending, window, cx);
+        matches!(self.launcher.screen(), Screen::Hotkey { .. })
     }
 
     /// Freezes root search's selection against the pointer, or lets it
@@ -1980,9 +2210,11 @@ impl Render for LauncherWindow {
             Screen::Package { .. } => "Nothing to install.",
             Screen::Form(_) => "",
             Screen::Extensions { .. } => "No extensions are installed.",
+            Screen::UpdateResults { .. } => "No update results yet.",
             Screen::CustomView(_)
             | Screen::NetworkDetails { .. }
-            | Screen::ProgramDetails { .. } => "",
+            | Screen::ProgramDetails { .. }
+            | Screen::Crash { .. } => "",
             Screen::Confirm { .. }
             | Screen::Hotkey { .. }
             | Screen::PauseDetails { .. }
@@ -1997,7 +2229,11 @@ impl Render for LauncherWindow {
         // (an npm or Git package's has several more lines), keep their choices in
         // view.
         let preview = matches!(view.screen, Screen::Package { .. }) && !view.rows.is_empty();
-        let confirm = matches!(view.screen, Screen::Confirm { .. }) || preview;
+        // A confirmation, a preview and the error overlay keep their rows in
+        // view while their long lines of information scroll: the overlay's
+        // stack trace can be longer than the window.
+        let confirm =
+            matches!(view.screen, Screen::Confirm { .. } | Screen::Crash { .. }) || preview;
         // A preview has one or two rows (Install or Update) and more lines
         // to read, which may take more of the window than a confirmation's.
         let details_share = if preview { 0.62 } else { 0.4 };
@@ -2212,6 +2448,17 @@ impl Render for LauncherWindow {
                 Some(log) => motion::arriving(log, arriving).into_any_element(),
                 None => div().into_any_element(),
             },
+            // The update results view: the search field above, its rows
+            // under it, drawn by the view.
+            Screen::UpdateResults { query } => {
+                let results = self.render_update_results(cx);
+                self.render_search(
+                    query,
+                    update_results::PLACEHOLDER,
+                    motion::arriving(results, arriving),
+                    cx,
+                )
+            }
             // The list holds keyboard focus, and is what assistive
             // technology reports as focused: the announcer says the
             // selected row (#132). Key actions bubble to the root. A
@@ -2272,9 +2519,9 @@ impl Render for LauncherWindow {
             .font_features(theme.typography.features.clone())
             .text_color(theme.text_title)
             .when_some(heading, |content, heading| content.child(heading))
-            // A confirmation's or preview's long details scroll within 40%
-            // (a preview's 62%) of the window, leaving the rest to its
-            // choices, which stay visible.
+            // A confirmation's, preview's or error overlay's long details
+            // scroll within 40% (a preview's 62%) of the window, leaving the
+            // rest to its choices, which stay visible.
             .when(!details.is_empty(), |content| {
                 content.child(
                     div()
@@ -2447,18 +2694,21 @@ const HERO_GLASS_OPACITY: f32 = 0.84;
 /// install flow from a folder, npm or Git.
 pub(crate) fn open_settings_at(launcher: &Launcher, target: SettingsTarget, cx: &mut App) {
     use crate::features::settings::extensions::{InstallSource, TITLE};
-    let install = |source: InstallSource| source.target();
+    let install = |source: InstallSource| source.target().to_owned();
     let place = match target {
         SettingsTarget::Settings => {
             settings::open(launcher, cx);
             return;
         }
-        SettingsTarget::Extensions => "",
+        SettingsTarget::Extensions => String::new(),
+        // The extension's page; where it is not installed anymore, the
+        // group's own page, as `extension_of` resolves nothing.
+        SettingsTarget::Extension(identity) => identity.key(),
         SettingsTarget::InstallFromFolder => install(InstallSource::Folder),
         SettingsTarget::InstallFromNpm => install(InstallSource::Npm),
         SettingsTarget::InstallFromGit => install(InstallSource::Git),
     };
-    settings::open_at(launcher, TITLE, place, cx);
+    settings::open_at(launcher, TITLE, &place, cx);
 }
 
 pub(crate) fn launcher_changed_outside(cx: &mut App) {
@@ -2522,7 +2772,7 @@ fn window_size(size: Size<Pixels>) -> WindowSize {
 
 /// The launcher presentation's section labels, as the shared list draws
 /// them.
-fn section_labels(listing: &ListPresentation) -> Vec<shell::SectionLabel> {
+pub(crate) fn section_labels(listing: &ListPresentation) -> Vec<shell::SectionLabel> {
     listing.sections.iter().map(section_label).collect()
 }
 
@@ -2551,6 +2801,7 @@ pub(crate) fn row_icon(id: &str) -> (IconTone, Glyph) {
         "pane.install-from-folder" => (IconTone::Folder, Glyph::Folder),
         "pane.install-from-npm" => (IconTone::Web, Glyph::Blocks),
         "pane.install-from-git" => (IconTone::Term, Glyph::Terminal),
+        "pane.check-extensions" => (IconTone::Command, Glyph::Blocks),
         pane_core::MANAGE_EXTENSIONS => (IconTone::Command, Glyph::Blocks),
         "pane.settings" => (IconTone::Command, Glyph::Gear),
         pane_core::UNEXPECTED_QUIT => (IconTone::Folder, Glyph::Folder),

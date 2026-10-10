@@ -83,9 +83,14 @@ impl Dirs {
     }
 }
 
+const CREATE_ROW: &str = "Create Extension…";
+const IMPORT_ROW: &str = "Import Extension…";
 const INSTALL_ROW: &str = "Install extension from folder…";
 const NPM_ROW: &str = "Install extension from npm…";
 const GIT_ROW: &str = "Install extension from Git…";
+/// Root search's row for the pass the user asks for, listed once an
+/// extension is installed (#267).
+const CHECK_ROW: &str = "Check for Extension Updates";
 const MANAGE_ROW: &str = "Manage Extensions";
 const SETTINGS_ROW: &str = "Settings…";
 
@@ -96,7 +101,7 @@ fn a_previewed_local_package_installs_and_its_command_runs() {
     let launcher = dirs.launcher();
     assert_eq!(
         titles(&launcher),
-        [INSTALL_ROW, GIT_ROW, NPM_ROW, SETTINGS_ROW]
+        [CREATE_ROW, IMPORT_ROW, INSTALL_ROW, GIT_ROW, NPM_ROW, SETTINGS_ROW]
     );
     assert!(launcher.selected_asks_for_folder());
 
@@ -141,6 +146,9 @@ fn a_previewed_local_package_installs_and_its_command_runs() {
     assert_eq!(
         titles(&launcher),
         [
+            CHECK_ROW,
+            CREATE_ROW,
+            IMPORT_ROW,
             INSTALL_ROW,
             GIT_ROW,
             NPM_ROW,
@@ -180,6 +188,48 @@ fn error(launcher: &Launcher) -> String {
     }
 }
 
+#[test]
+fn a_package_that_describes_itself_shows_it_in_the_install_preview() {
+    let dirs = Dirs::new();
+    let folder = package(&dirs.source("hello"), "Hello", "1.0.0", "sample_rust");
+    // The metadata a published package carries (#224): what it does, who
+    // wrote it, where it lives, where its problems go, under which
+    // license, and the words a person would search for it by.
+    let manifest = manifest("Hello", "1.0.0", "hello.wasm").replace(
+        "\"title\": \"Hello\",",
+        "\"title\": \"Hello\",\n  \"description\": \"Greets you warmly\",\n  \"author\": \"Ada Lovelace\",\n  \"homepage\": \"https://example.com/hello\",\n  \"repository\": \"https://github.com/example/hello\",\n  \"issues\": \"https://github.com/example/hello/issues\",\n  \"license\": \"MIT\",\n  \"keywords\": [\"greeting\", \" hello \"],",
+    );
+    with_manifest(&folder, &manifest);
+    let launcher = dirs.launcher();
+
+    block_on(launcher.preview_package(&folder));
+
+    // The description is a line of the preview's details, under the
+    // source and version (#224); the rest of the metadata is held for the
+    // authoring tooling and reporting.
+    let details = launcher.view().details().to_vec();
+    let source = details
+        .iter()
+        .position(|line| line.starts_with("Source:"))
+        .expect("the source line");
+    let version = details
+        .iter()
+        .position(|line| line.starts_with("Version:"))
+        .expect("the version line");
+    let described = details
+        .iter()
+        .position(|line| line == "Greets you warmly")
+        .expect("the description line");
+    assert!(source < described && described < version, "{details:?}");
+
+    block_on(launcher.install_package(&folder));
+    // A keyword of only spaces reads as its absence, like an empty
+    // description; the description itself round-trips into the installed
+    // copy, which the Extensions group in Settings shows.
+    let packages = launcher.packages();
+    assert_eq!(packages[0].description(), Some("Greets you warmly"));
+}
+
 /// (identity, title, version) of every installed package.
 fn installed(launcher: &Launcher) -> Vec<(PackageIdentity, String, Option<String>)> {
     launcher
@@ -211,6 +261,9 @@ fn a_second_explicit_install_of_the_same_folder_is_rejected() {
     assert_eq!(
         titles(&launcher),
         [
+            CHECK_ROW,
+            CREATE_ROW,
+            IMPORT_ROW,
             INSTALL_ROW,
             GIT_ROW,
             NPM_ROW,
@@ -283,6 +336,9 @@ fn copies_in_different_folders_are_distinct_packages_despite_the_same_title() {
     assert_eq!(
         titles(&launcher),
         [
+            CHECK_ROW,
+            CREATE_ROW,
+            IMPORT_ROW,
             INSTALL_ROW,
             GIT_ROW,
             NPM_ROW,
@@ -293,7 +349,7 @@ fn copies_in_different_folders_are_distinct_packages_despite_the_same_title() {
         ]
     );
     // Each runs its own copy.
-    for (index, answer) in [(4, "Rust"), (5, "JavaScript")] {
+    for (index, answer) in [(7, "Rust"), (8, "JavaScript")] {
         launcher.back();
         launcher.select(index);
         block_on(launcher.activate_selected());
@@ -370,6 +426,9 @@ fn installed_commands_are_listed_after_a_restart_without_running_any_guest() {
     assert_eq!(
         titles(&restarted),
         [
+            CHECK_ROW,
+            CREATE_ROW,
+            IMPORT_ROW,
             INSTALL_ROW,
             GIT_ROW,
             NPM_ROW,
@@ -497,7 +556,7 @@ fn unsupported_packages_are_explained_and_not_installed() {
         launcher.back();
         assert_eq!(
             titles(&launcher),
-            [INSTALL_ROW, GIT_ROW, NPM_ROW, SETTINGS_ROW],
+            [CREATE_ROW, IMPORT_ROW, INSTALL_ROW, GIT_ROW, NPM_ROW, SETTINGS_ROW],
             "{case}"
         );
     }
@@ -610,6 +669,9 @@ fn a_damaged_installed_copy_is_listed_with_its_problem_and_others_still_run() {
     assert_eq!(
         titles(&restarted),
         [
+            CHECK_ROW,
+            CREATE_ROW,
+            IMPORT_ROW,
             INSTALL_ROW,
             GIT_ROW,
             NPM_ROW,
@@ -726,6 +788,9 @@ fn an_install_finishing_in_the_background_keeps_the_selected_row() {
     assert_eq!(
         titles(&launcher),
         [
+            CHECK_ROW,
+            CREATE_ROW,
+            IMPORT_ROW,
             INSTALL_ROW,
             GIT_ROW,
             NPM_ROW,
@@ -972,6 +1037,9 @@ fn a_package_for_this_system_shows_its_systems_and_installs() {
     assert_eq!(
         titles(&launcher),
         [
+            CHECK_ROW,
+            CREATE_ROW,
+            IMPORT_ROW,
             INSTALL_ROW,
             GIT_ROW,
             NPM_ROW,
@@ -1001,6 +1069,9 @@ fn an_installed_copy_for_other_systems_lists_its_commands_as_unavailable() {
     assert_eq!(
         titles(&restarted),
         [
+            CHECK_ROW,
+            CREATE_ROW,
+            IMPORT_ROW,
             INSTALL_ROW,
             GIT_ROW,
             NPM_ROW,
@@ -1077,8 +1148,11 @@ fn a_command_for_other_systems_is_listed_with_its_reason_and_others_still_open()
         assert_eq!(
             reasons,
             [
+                (CHECK_ROW.into(), None),
+                (CREATE_ROW.into(), None),
                 ("Elsewhere".into(), Some(elsewhere.clone())),
                 ("Here".into(), None),
+                (IMPORT_ROW.into(), None),
                 (INSTALL_ROW.into(), None),
                 (GIT_ROW.into(), None),
                 (NPM_ROW.into(), None),
@@ -1088,7 +1162,7 @@ fn a_command_for_other_systems_is_listed_with_its_reason_and_others_still_open()
             ]
         );
 
-        for (index, reason) in [(0, &elsewhere), (6, &nowhere)] {
+        for (index, reason) in [(2, &elsewhere), (9, &nowhere)] {
             launcher.select(index);
             block_on(launcher.activate_selected());
             let view = launcher.view();
@@ -1097,7 +1171,7 @@ fn a_command_for_other_systems_is_listed_with_its_reason_and_others_still_open()
                 (Some(""), &Status::Error(reason.clone()))
             );
         }
-        launcher.select(1);
+        launcher.select(3);
         block_on(launcher.activate_selected());
         assert_eq!(launcher.view().screen, Screen::Command);
     }

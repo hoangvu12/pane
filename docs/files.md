@@ -71,17 +71,21 @@ and one index serves every package that uses it:
 - **The host interface**, `pane:extension/file-index`
   ([`wit/file-index.wit`](../wit/file-index.wit)): `search` and `status`,
   for any package that declares `"fileIndex": true` ([For authors](#for-authors)).
-- **The default extension**, [`guests/files`](../guests/files) (Rust),
-  package [`guests/packages/files`](../guests/packages/files) (0.9.0,
-  `"fileIndex": true`): its command Search Files (id `files`, `"search":
-  true` and `"rootResults": true`) answers root search from the index with
-  the entries' ids, and its two commands declared `"matches":
-  "file-path"` (#195), Open and Reveal in File Explorer, act on a path
-  typed into root search (below). Installed as Pane's default extension, its
+- **The default extension**, the
+  [Files repository](https://github.com/pane-app/files) (Rust; a Pane
+  release pinning its release commits,
+  [`crates/pane/defaults.json`](../crates/pane/defaults.json)), its
+  package declaring `"fileIndex": true`: its command Search Files (id
+  `files`, `"search": true` and `"rootResults": true`) answers root
+  search from the index with the entries' ids, and its two commands
+  declared `"matches": "file-path"` (#195), Open and Reveal in File
+  Explorer, act on a path typed into root search (below). Installed as
+  Pane's default extension, its
   screen is Pane's own Search Files view; a copy installed from a folder
   lists what is searched and answers its own field (the best 50). It is not a
   [root provider](root-search.md#root-providers): it has a row and a
-  screen of its own.
+  screen of its own. The [files samples](../guests/packages) hold the same
+  contract in this repository's tree.
 - **The window**, [`crates/pane/src/main.rs`](../crates/pane/src/main.rs):
   `Launcher::with_file_index(IndexerConfig::native(cache, home, own))`
   with Pane's cache folder, the home folder (`USERPROFILE` on Windows,
@@ -89,11 +93,11 @@ and one index serves every package that uses it:
   File Search page,
   [`features/settings/file_search.rs`](../crates/pane/src/features/settings/file_search.rs).
 
-Acquiring the package automatically at setup is
-[#51](https://github.com/pane-app/pane/issues/51) to
-[#53](https://github.com/pane-app/pane/issues/53); until then it is
-installed from its folder like the other default extensions
-(`pane --install target/guests/packages/files`).
+First setup acquires the extension from the commit this Pane release pins
+([#278](https://github.com/pane-app/pane/issues/278),
+[#53](https://github.com/pane-app/pane/issues/53)); a user can also install
+it by hand from its repository
+(`pane --install git:https://github.com/pane-app/files`).
 
 ## The file index
 
@@ -1362,8 +1366,10 @@ revealing it.
   showing it and running nothing.
 - **Search Files like Raycast's** (#177;
   [`crates/pane-core/tests/search_files.rs`](../crates/pane-core/tests/search_files.rs)),
-  with Files acquired as Pane's default extension from a local artifact
-  source, over the real index of a fixture home: it opens with no folder
+  with Files acquired as Pane's default extension from its pinned commit
+  in a repository served on this computer (the Rust files sample's
+  component standing in for the extension's own, which lives in its
+  repository), over the real index of a fixture home: it opens with no folder
   to choose on Recently Used, newest first, each row with an icon; typing
   ranks by the index; each type of the dropdown keeps only its files (and
   Folder only folders), with a query too; the detail's Name, Where, Type,

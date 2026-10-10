@@ -9,37 +9,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 
 [[package]]
-name = "applications"
-version = "0.1.0"
-dependencies = [
- "pane-extension",
-]
-
-[[package]]
 name = "bitflags"
 version = "2.13.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3ded4057c258ba199e2d26386d3af3780957ecaee6c4ef4041c6b4b8b97c0b06"
 
 [[package]]
-name = "calculator"
-version = "0.1.0"
-dependencies = [
- "pane-extension",
-]
-
-[[package]]
 name = "cfg-if"
 version = "1.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4e7648175b45a9a48536d676f68d918270699102aa8dab5496df06904c914600"
-
-[[package]]
-name = "clipboard_history"
-version = "0.1.0"
-dependencies = [
- "pane-extension",
-]
 
 [[package]]
 name = "dlmalloc"
@@ -71,13 +50,6 @@ version = "0.1.0"
 dependencies = [
  "pane-extension",
  "wasip3",
-]
-
-[[package]]
-name = "files"
-version = "0.1.0"
-dependencies = [
- "pane-extension",
 ]
 
 [[package]]
@@ -298,14 +270,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "quicklinks"
-version = "0.1.0"
-dependencies = [
- "pane-extension",
- "serde_json",
-]
-
-[[package]]
 name = "quote"
 version = "1.0.47"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -319,6 +283,14 @@ name = "refusing-view"
 version = "0.1.0"
 dependencies = [
  "pane-extension",
+]
+
+[[package]]
+name = "run"
+version = "0.1.0"
+dependencies = [
+ "pane-extension",
+ "serde",
 ]
 
 [[package]]
@@ -420,6 +392,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "sample-run"
+version = "0.1.0"
+dependencies = [
+ "pane-extension",
+ "serde",
+]
+
+[[package]]
 name = "sample-rust"
 version = "0.1.0"
 dependencies = [
@@ -458,6 +438,20 @@ version = "0.1.0"
 dependencies = [
  "pane-extension",
  "wasip3",
+]
+
+[[package]]
+name = "sample-system-commands"
+version = "0.1.0"
+dependencies = [
+ "pane-extension",
+]
+
+[[package]]
+name = "sample_switch_windows"
+version = "0.1.0"
+dependencies = [
+ "pane-extension",
 ]
 
 [[package]]
@@ -510,6 +504,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "switch_windows"
+version = "0.1.0"
+dependencies = [
+ "pane-extension",
+]
+
+[[package]]
 name = "syn"
 version = "3.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -518,6 +519,13 @@ dependencies = [
  "proc-macro2",
  "quote",
  "unicode-ident",
+]
+
+[[package]]
+name = "system_commands"
+version = "0.1.0"
+dependencies = [
+ "pane-extension",
 ]
 
 [[package]]

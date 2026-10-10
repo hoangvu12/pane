@@ -12,6 +12,7 @@
 /// <reference path="./commands.d.ts" />
 /// <reference path="./feedback-host.d.ts" />
 /// <reference path="./system-host.d.ts" />
+/// <reference path="./system-commands-host.d.ts" />
 /// <reference path="./data.d.ts" />
 /// <reference path="./operations.d.ts" />
 /// <reference path="./applications.d.ts" />
@@ -21,6 +22,8 @@
 /// <reference path="./file-index.d.ts" />
 /// <reference path="./typed-folder.d.ts" />
 /// <reference path="./clipboard.d.ts" />
+/// <reference path="./run.d.ts" />
+/// <reference path="./windows.d.ts" />
 
 import type { LaunchRecord } from "pane:extension/commands@0.1.0";
 

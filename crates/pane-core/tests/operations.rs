@@ -781,6 +781,9 @@ fn a_package_that_only_publishes_operations_adds_no_command() {
     assert_eq!(
         titles(&launcher),
         [
+            "Check for Extension Updates",
+            "Create Extension…",
+            "Import Extension…",
             "Install extension from folder…",
             "Install extension from Git…",
             "Install extension from npm…",

@@ -55,9 +55,12 @@ pub(crate) mod deadlines;
 mod faults;
 mod host_functions;
 mod memory;
+mod run_functions;
 mod supervisor;
+mod system_command_functions;
 mod system_functions;
 mod tree;
+mod windows_functions;
 
 use deadlines::Doing;
 #[doc(hidden)]
@@ -110,6 +113,16 @@ pub(crate) mod bindings {
             // Listing the folder the user typed reads the file system,
             // which may block, off the runtime thread, which awaits it.
             "pane:extension/typed-folder": async,
+            // What the Run dialog runs waits for the shell and Windows'
+            // elevation prompt, off the runtime thread, which awaits it.
+            "pane:extension/run": async,
+            // The session and power commands likewise wait for the system
+            // (the displays' power message, the session ending), off the
+            // runtime thread, which awaits them.
+            "pane:extension/system-commands": async,
+            // The open windows wait for their processes and the
+            // foreground, off the runtime thread, which awaits them.
+            "pane:extension/windows": async,
         },
         exports: { default: async | store },
     });
@@ -169,8 +182,9 @@ use bindings::pane::extension::{
     applications, cache, clipboard_history, content, credentials, settings,
 };
 use bindings::pane::extension::{
-    feedback as feedback_host, system as system_host, typed_folder as typed_folder_host,
-    window as window_host,
+    feedback as feedback_host, run as run_host, system as system_host,
+    system_commands as system_commands_host, typed_folder as typed_folder_host,
+    window as window_host, windows as windows_host,
 };
 use indexed_bindings::exports::pane::extension::indexed_results;
 use root_bindings::exports::pane::extension::root_results;
@@ -2858,6 +2872,17 @@ impl Code {
             state
         })
         .expect("registering the system functions in a fresh linker cannot conflict");
+        run_host::add_to_linker::<_, wasmtime::component::HasSelf<_>>(&mut linker, |state| state)
+            .expect("registering the Run dialog's work in a fresh linker cannot conflict");
+        system_commands_host::add_to_linker::<_, wasmtime::component::HasSelf<_>>(
+            &mut linker,
+            |state| state,
+        )
+        .expect("registering the system commands in a fresh linker cannot conflict");
+        windows_host::add_to_linker::<_, wasmtime::component::HasSelf<_>>(&mut linker, |state| {
+            state
+        })
+        .expect("registering the open windows in a fresh linker cannot conflict");
         preference_values::add_to_linker::<_, wasmtime::component::HasSelf<_>>(
             &mut linker,
             |state| state,
@@ -4498,9 +4523,21 @@ impl Host {
         let mut wasi = WasiCtx::builder();
         if let Some(data) = &data {
             let generation = data.generation().number();
+            // A development build of JavaScript or TypeScript keeps a
+            // source map beside its component: what the package writes has
+            // the frames of its stacks mapped back to the sources its
+            // bundle was built from as the lines are captured. Read once
+            // here, per instance, rather than per line: the file is small,
+            // and the instance runs beside it for its whole life.
+            let map = crate::source_map::SourceMap::beside(path).map(Arc::new);
             let output = |stream| {
-                self.logs
-                    .output(data.owner(), generation, stream, log_command.clone())
+                self.logs.output(
+                    data.owner(),
+                    generation,
+                    stream,
+                    log_command.clone(),
+                    map.clone(),
+                )
             };
             wasi.stdout(output(LogStream::Stdout))
                 .stderr(output(LogStream::Stderr));
@@ -5080,12 +5117,15 @@ mod tests {
     /// Clipboard history's host calls (#35) are marked like every other
     /// host call: the slow host call computes inside the view's first one,
     /// so the view takes at least that long, yet the guest is never stopped
-    /// or blamed and the thread is never given up on.
+    /// or blamed and the thread is never given up on. The JavaScript
+    /// clipboard sample's view is the component: its render asks the
+    /// clipboard history's status first (the default extension's own
+    /// component lives in its repository, #285).
     #[test]
     fn a_guest_whose_clipboard_host_calls_are_slow_is_never_stopped_or_blamed() {
         let data = tempfile::tempdir().unwrap();
         let (packages, identity) = settings_package(&data);
-        let component = guest("clipboard_history.wasm");
+        let component = guest("sample_clipboard_js.wasm");
         let (runtime, reported) = watched_runtime();
         let slow = short_limits().compute * 3;
         assert!(slow > short_limits().unresponsive);
@@ -5094,7 +5134,10 @@ mod tests {
         let started = std::time::Instant::now();
         let view = block_on(runtime.render_with(&component, Some(packages.owned_by(&identity))));
 
-        assert_eq!(view.expect("the view is shown").title, "Clipboard History");
+        assert_eq!(
+            view.expect("the view is shown").title,
+            "Clipboard history (JavaScript)"
+        );
         assert!(
             started.elapsed() >= slow,
             "the slow host call was not one of clipboard history's: {:?}",
