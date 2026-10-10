@@ -33,6 +33,7 @@ mod launch;
 mod launcher;
 mod links;
 pub mod local_channel;
+pub mod markdown;
 pub mod npm;
 mod operations;
 mod packages;
@@ -47,6 +48,7 @@ mod runtime;
 mod search;
 pub mod system;
 pub mod system_icons;
+pub mod tokens;
 mod threads;
 pub mod tray;
 mod util;
@@ -119,5 +121,6 @@ pub use runtime::{
 pub use search::{SettingsEntry, settings_matches, title_matches};
 // Icons, accessories and tooltips (#139).
 pub use icons::{Color, Icon, IconSource, Mask, Tint, Tone};
+pub use tokens::{IconSize, Radius};
 pub use launcher::{AccessoryKind, ShownAccessory, absolute_date, relative_date};
 pub use runtime::{Accessory, AccessoryContent, ItemLook, MAX_ACCESSORIES};

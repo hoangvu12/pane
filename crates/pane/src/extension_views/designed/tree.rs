@@ -1,0 +1,609 @@
+//! The tree's layout: how the walk draws each node, the layout
+//! primitives (`column`, `row`, `stack`, `scroll`, `spacer`, `divider`)
+//! and the [`Style`] every node carries — its sizing and its surface,
+//! with the `hover` and `pressed` variants Pane applies itself. Layout is
+//! computed by GPUI's flex layout; nothing is laid out by the extension.
+
+use std::collections::HashMap;
+
+use gpui::prelude::*;
+use gpui::{
+    AnyElement, Context, Div, FocusHandle, Hsla, Length as GpuiLength, Pixels, Role, Stateful,
+    relative, px,
+};
+
+use pane_core::{
+    Align, Finite, Justify, Layout as NodeLayout, Length as NodeLength, Node, NodeKind,
+    Orientation, Paint, Place, RadiusLength, Sizing, Style, Surface,
+};
+
+use crate::app::LauncherWindow;
+use crate::ui::theme::Theme;
+use crate::ui::tokens;
+
+use super::components;
+
+/// What one node's drawing carries with it down the tree.
+#[derive(Clone, Copy)]
+pub(super) struct Draw<'a> {
+    pub theme: &'a Theme,
+    /// The focus handles of the tree's focusable controls, by their paths.
+    pub focus: &'a HashMap<String, FocusHandle>,
+    /// The surface under the node: the panel, or the background the node
+    /// it sits in drew, composited over it — what a raw text or icon
+    /// colour is corrected against.
+    pub surface: Hsla,
+}
+
+/// Appends the place of the child at `index` with `key` to `path`.
+pub(super) fn push(path: &mut String, key: Option<&str>, index: usize) {
+    path.push('/');
+    match key {
+        Some(key) => path.push_str(key),
+        None => path.push_str(&index.to_string()),
+    }
+}
+
+/// One node of the tree, drawn: `path` is the node's place in the tree
+/// (its key, else its index among its siblings), already ending with its
+/// own segment, which keeps the focus of the controls Pane drew before.
+pub(super) fn node(
+    node: &Node,
+    path: &mut String,
+    draw: Draw,
+    cx: &mut Context<LauncherWindow>,
+) -> AnyElement {
+    let start = path.len();
+    let name = node.name.clone();
+    // The surface the node's children draw on: its own background, over
+    // the one it draws on.
+    let inner = with_surface(draw, node.style.surface.background.as_ref(), draw.theme);
+    let drawn = match &node.kind {
+        // A node Pane does not know: the `fallback` the tree gave, drawn
+        // in its place, else its children, drawn as they are.
+        NodeKind::Unknown(_) => match &node.fallback {
+            Some(fallback) => {
+                let element = node(fallback, path, inner, cx);
+                styled(node, path, draw, element)
+            }
+            None => {
+                let children = children(node, path, inner, cx);
+                let group = div()
+                    .id(path.clone())
+                    .flex()
+                    .flex_col()
+                    .map(|group| named(group, name.as_deref()))
+                    .children(children);
+                styled(node, path, draw, group.into_any_element())
+            }
+        },
+        NodeKind::Column(layout) => {
+            let own = path.clone();
+            let children = children(node, path, inner, cx);
+            let div = apply(container(true, layout, children).id(own), node, &draw);
+            named(div, name.as_deref()).into_any_element()
+        }
+        NodeKind::Card(layout) => {
+            let own = path.clone();
+            let children = children(node, path, inner, cx);
+            let div = apply(card(layout, children, draw.theme).id(own), node, &draw);
+            named(div, name.as_deref()).into_any_element()
+        }
+        NodeKind::Row(layout) => {
+            let own = path.clone();
+            let children = children(node, path, inner, cx);
+            let div = apply(container(false, layout, children).id(own), node, &draw);
+            named(div, name.as_deref()).into_any_element()
+        }
+        NodeKind::Stack(align) => {
+            let own = path.clone();
+            let children = stack_children(node, path, inner, cx, *align);
+            let div = apply(stack(children).id(own), node, &draw);
+            named(div, name.as_deref()).into_any_element()
+        }
+        NodeKind::Scroll { orientation } => {
+            let own = path.clone();
+            let children = children(node, path, inner, cx);
+            let div = apply(scroll(*orientation, children).id(own), node, &draw);
+            named(div, name.as_deref()).into_any_element()
+        }
+        NodeKind::Spacer => {
+            let own = path.clone();
+            apply(div().id(own).flex_grow(), node, &draw).into_any_element()
+        }
+        NodeKind::Divider { orientation } => {
+            let own = path.clone();
+            apply(divider(*orientation, draw.theme).id(own), node, &draw).into_any_element()
+        }
+        NodeKind::Text(text) => {
+            let element = components::text(text, path, &draw);
+            let element = match name.as_deref() {
+                Some(name) => element.aria_label(name),
+                None => element,
+            };
+            styled(node, path, draw, element.into_any_element())
+        }
+        NodeKind::Button(button) => styled(
+            node,
+            path,
+            draw,
+            components::button(node, button, path, &draw, cx).into_any_element(),
+        ),
+        NodeKind::Link(link) => {
+            styled(node, path, draw, components::link(link, path, &draw, cx).into_any_element())
+        }
+        NodeKind::Icon(icon) => {
+            styled(node, path, draw, components::icon(icon, path, &draw).into_any_element())
+        }
+        NodeKind::IconTile(icon) => styled(
+            node,
+            path,
+            draw,
+            components::icon_tile(icon, path, &draw).into_any_element(),
+        ),
+        NodeKind::Image(image) => styled(
+            node,
+            path,
+            draw,
+            components::image(node, image, path, &draw).into_any_element(),
+        ),
+        NodeKind::RichRow(row) => styled(
+            node,
+            path,
+            draw,
+            components::rich_row(node, row, path, &draw, cx).into_any_element(),
+        ),
+        NodeKind::Keycap(keycap) => styled(
+            node,
+            path,
+            draw,
+            components::keycap(keycap, path, draw.theme).into_any_element(),
+        ),
+        NodeKind::KeySequence(keys) => styled(
+            node,
+            path,
+            draw,
+            components::key_sequence(keys, path, draw.theme).into_any_element(),
+        ),
+        NodeKind::Tag(tag) => styled(
+            node,
+            path,
+            draw,
+            components::tag(tag, path, &draw).into_any_element(),
+        ),
+        NodeKind::Badge(badge) => styled(
+            node,
+            path,
+            draw,
+            components::badge(badge, path, &draw).into_any_element(),
+        ),
+        NodeKind::Toggle(toggle) => styled(
+            node,
+            path,
+            draw,
+            components::toggle(toggle, path, &draw, cx).into_any_element(),
+        ),
+        NodeKind::Checkbox(checkbox) => styled(
+            node,
+            path,
+            draw,
+            components::checkbox(checkbox, path, &draw, cx).into_any_element(),
+        ),
+        NodeKind::Segmented(segmented) => styled(
+            node,
+            path,
+            draw,
+            components::segmented(segmented, path, &draw, cx).into_any_element(),
+        ),
+        NodeKind::Slider(slider) => styled(
+            node,
+            path,
+            draw,
+            components::slider(slider, path, &draw, cx).into_any_element(),
+        ),
+        NodeKind::Progress(progress) => styled(
+            node,
+            path,
+            draw,
+            components::progress(progress, path, draw.theme).into_any_element(),
+        ),
+        NodeKind::Loading(loading) => styled(
+            node,
+            path,
+            draw,
+            components::loading(loading, path, draw.theme).into_any_element(),
+        ),
+        NodeKind::Markdown(markdown) => styled(
+            node,
+            path,
+            draw,
+            components::markdown(markdown, path, &draw).into_any_element(),
+        ),
+        NodeKind::SectionHeader(header) => styled(
+            node,
+            path,
+            draw,
+            components::section_header(header, path, draw.theme).into_any_element(),
+        ),
+        NodeKind::MetadataList(list) => styled(
+            node,
+            path,
+            draw,
+            components::metadata_list(list, path, &draw, cx).into_any_element(),
+        ),
+        NodeKind::EmptyState(empty) => styled(
+            node,
+            path,
+            draw,
+            components::empty_state(node, empty, path, &draw).into_any_element(),
+        ),
+        NodeKind::TextInput(input) => styled(
+            node,
+            path,
+            draw,
+            components::text_input(input, path, &draw, false, cx).into_any_element(),
+        ),
+        NodeKind::PasswordInput(input) => styled(
+            node,
+            path,
+            draw,
+            components::text_input(input, path, &draw, true, cx).into_any_element(),
+        ),
+        NodeKind::TextArea(input) => styled(
+            node,
+            path,
+            draw,
+            components::text_area(input, path, &draw, cx).into_any_element(),
+        ),
+        NodeKind::Select(select) => styled(
+            node,
+            path,
+            draw,
+            components::select(select, path, &draw, cx).into_any_element(),
+        ),
+    };
+    path.truncate(start);
+    drawn
+}
+
+/// `draw`, carrying the surface `background` draws over the one it draws
+/// on.
+pub(super) fn with_surface(draw: Draw, background: Option<&Paint>, theme: &Theme) -> Draw {
+    let surface = match background {
+        Some(paint) => {
+            let background = tokens::paint_color(paint, theme);
+            use gpui::ColorExt as _;
+            background.blend(draw.surface)
+        }
+        None => draw.surface,
+    };
+    Draw { surface, ..draw }
+}
+
+/// Gives `node` the group role and name assistive technology reads it by:
+/// every node is reported, with its own name when the tree gave one.
+fn named(node: Stateful<Div>, name: Option<&str>) -> Stateful<Div> {
+    node.role(Role::Group)
+        .when_some(name, |node, name| node.aria_label(name))
+}
+
+/// The children of a container, each drawn with its place in `path`.
+fn children(
+    parent: &Node,
+    path: &mut String,
+    draw: Draw,
+    cx: &mut Context<LauncherWindow>,
+) -> Vec<AnyElement> {
+    parent
+        .children
+        .iter()
+        .enumerate()
+        .map(|(index, child)| {
+            let start = path.len();
+            push(path, child.key.as_deref(), index);
+            let drawn = node(child, path, draw, cx);
+            path.truncate(start);
+            drawn
+        })
+        .collect()
+}
+
+/// The children of a `stack`, each wrapped in the full-size layer its
+/// place puts it in.
+fn stack_children(
+    parent: &Node,
+    path: &mut String,
+    draw: Draw,
+    cx: &mut Context<LauncherWindow>,
+    default: Place,
+) -> Vec<AnyElement> {
+    parent
+        .children
+        .iter()
+        .enumerate()
+        .map(|(index, child)| {
+            let start = path.len();
+            push(path, child.key.as_deref(), index);
+            let drawn = node(child, path, draw, cx);
+            path.truncate(start);
+            layer(child, drawn, default, draw.theme)
+        })
+        .collect()
+}
+
+/// `element` in the layer a `stack`'s child is placed in: full-size and
+/// absolutely positioned, aligning the child by its `place` (the stack's
+/// own, `align`, when the child says none) and offset from it in its
+/// placement's directions.
+fn layer(child: &Node, element: AnyElement, default: Place, theme: &Theme) -> AnyElement {
+    let place = child.place.unwrap_or(default);
+    let layer = div()
+        .absolute()
+        .size_full()
+        .flex()
+        .map(|layer| match place {
+            Place::TopStart | Place::Start | Place::BottomStart => layer.items_start(),
+            Place::Top | Place::Center | Place::Bottom => layer.items_center(),
+            Place::TopEnd | Place::End | Place::BottomEnd => layer.items_end(),
+        })
+        .map(|layer| match place {
+            Place::TopStart | Place::Top | Place::TopEnd => layer.justify_start(),
+            Place::Start | Place::Center | Place::End => layer.justify_center(),
+            Place::BottomStart | Place::Bottom | Place::BottomEnd => layer.justify_end(),
+        })
+        .child(element);
+    // An offset moves the child away from its place, in the direction
+    // that place reads: down and right from a top-start place, up and
+    // left from a bottom-end one.
+    let layer = match (place, child.offset) {
+        (
+            Place::TopStart
+            | Place::Top
+            | Place::TopEnd
+            | Place::Start
+            | Place::Center
+            | Place::End,
+            Some(offset),
+        ) => layer
+            .mt(length_pixels(offset.y, Some(theme)))
+            .ml(length_pixels(offset.x, Some(theme))),
+        (Place::BottomStart | Place::Bottom | Place::BottomEnd, Some(offset)) => layer
+            .mb(length_pixels(offset.y, Some(theme)))
+            .mr(length_pixels(offset.x, Some(theme))),
+        (_, None) => layer,
+    };
+    layer.into_any_element()
+}
+
+/// A container of children: a `column` when `column`, else a `row`, with
+/// the layout its properties give it.
+fn container(column: bool, layout: &NodeLayout, children: Vec<AnyElement>) -> Div {
+    let div = div()
+        .flex()
+        .when(column, |div| div.flex_col())
+        .min_w(px(0.))
+        .when_some(layout.gap, |div, gap| div.gap(tokens::space(gap)));
+    let padding = layout.padding;
+    let div = div
+        .when_some(padding.top, |div, top| div.pt(tokens::space(top)))
+        .when_some(padding.right, |div, right| div.pr(tokens::space(right)))
+        .when_some(padding.bottom, |div, bottom| {
+            div.pb(tokens::space(bottom))
+        })
+        .when_some(padding.left, |div, left| div.pl(tokens::space(left)))
+        .map(|div| match layout.align {
+            Some(Align::Start) | None => div.items_start(),
+            Some(Align::Center) => div.items_center(),
+            Some(Align::End) => div.items_end(),
+            Some(Align::Stretch) => div.items_stretch(),
+            Some(Align::Baseline) => div.items_baseline(),
+        })
+        .map(|div| match layout.justify {
+            Some(Justify::Start) | None => div.justify_start(),
+            Some(Justify::Center) => div.justify_center(),
+            Some(Justify::End) => div.justify_end(),
+            Some(Justify::SpaceBetween) => div.justify_between(),
+            Some(Justify::SpaceAround) => div.justify_around(),
+        })
+        .when(layout.wrap, |div| div.flex_wrap());
+    div.children(children)
+}
+
+/// A card of children, on Pane's own card surface: a column on the
+/// Settings card's fill, with its ring, its radius and its padding.
+fn card(layout: &NodeLayout, children: Vec<AnyElement>, theme: &Theme) -> Div {
+    let padding = layout.padding;
+    let div = div()
+        .flex()
+        .flex_col()
+        .min_w(px(0.))
+        .p(theme.geometry.settings.card_padding_x)
+        .when_some(layout.gap, |div, gap| div.gap(tokens::space(gap)))
+        .when_some(padding.top, |div, top| div.pt(tokens::space(top)))
+        .when_some(padding.right, |div, right| div.pr(tokens::space(right)))
+        .when_some(padding.bottom, |div, bottom| {
+            div.pb(tokens::space(bottom))
+        })
+        .when_some(padding.left, |div, left| div.pl(tokens::space(left)))
+        .map(|div| match layout.align {
+            Some(Align::Start) | None => div.items_start(),
+            Some(Align::Center) => div.items_center(),
+            Some(Align::End) => div.items_end(),
+            Some(Align::Stretch) => div.items_stretch(),
+            Some(Align::Baseline) => div.items_baseline(),
+        })
+        .map(|div| match layout.justify {
+            Some(Justify::Start) | None => div.justify_start(),
+            Some(Justify::Center) => div.justify_center(),
+            Some(Justify::End) => div.justify_end(),
+            Some(Justify::SpaceBetween) => div.justify_between(),
+            Some(Justify::SpaceAround) => div.justify_around(),
+        })
+        .when(layout.wrap, |div| div.flex_wrap());
+    container_chrome(div, children, theme)
+}
+
+/// The card's own chrome: the fill, ring and radius of the Settings card.
+fn container_chrome(div: Div, children: Vec<AnyElement>, theme: &Theme) -> Div {
+    let ring = crate::ui::controls::inset_ring(theme.card_edge, px(1.));
+    div.bg(theme.card_fill)
+        .rounded(theme.geometry.settings.card_radius)
+        .shadow(vec![ring])
+        .children(children)
+}
+
+/// A stack of children drawn over each other, each in the layer its
+/// place puts it in.
+fn stack(children: Vec<AnyElement>) -> Div {
+    div()
+        .relative()
+        .flex()
+        .children(children)
+}
+
+/// A scrolling region, whose position Pane keeps by key: the element's
+/// id is the node's path, so a re-render that still draws the region
+/// keeps where it was scrolled to.
+fn scroll(orientation: Orientation, children: Vec<AnyElement>) -> Div {
+    div()
+        .flex()
+        .min_w(px(0.))
+        .min_h(px(0.))
+        .when(orientation == Orientation::Vertical, |div| {
+            div.flex_col().overflow_y_scroll()
+        })
+        .when(orientation == Orientation::Horizontal, |div| {
+            div.flex_row().overflow_x_scroll()
+        })
+        .children(children)
+}
+
+/// A divider: a hairline rule, horizontal in a column and vertical in a
+/// row.
+fn divider(orientation: Orientation, theme: &Theme) -> Div {
+    div()
+        .flex_none()
+        .when(orientation == Orientation::Horizontal, |div| {
+            div.w_full().h(px(1.))
+        })
+        .when(orientation == Orientation::Vertical, |div| {
+            div.h_full().w(px(1.))
+        })
+        .bg(theme.hairline_soft)
+}
+
+/// `element` wrapped in the node's own [`Style`]: its sizing, its
+/// surface, and the `hover` and `pressed` variants of that surface Pane
+/// applies without calling the extension. A node whose style says nothing
+/// is drawn as it is; a container wears its style directly instead.
+fn styled(node: &Node, path: &mut String, draw: Draw, element: AnyElement) -> AnyElement {
+    if node.style.is_empty() {
+        return element;
+    }
+    // The wrapper holds the node in its parent's flex flow (the sizing is
+    // the wrapper's) and draws its surface around whatever the node is,
+    // its child filling it.
+    let id = format!("{path}/surface");
+    let div = apply(div().id(id).flex().flex_col().min_w(px(0.)), node, &draw);
+    div.child(div().flex_1().min_w(px(0.)).min_h(px(0.)).child(element))
+        .into_any_element()
+}
+
+/// `div` wearing the node's own [`Style`]: its sizing, its surface, and
+/// the `hover` and `pressed` variants of that surface Pane applies
+/// without calling the extension.
+fn apply(div: Stateful<Div>, node: &Node, draw: &Draw) -> Stateful<Div> {
+    let div = div
+        .map(|div| sized(div, &node.style.sizing))
+        .map(|div| surface(div, &node.style.surface, draw.theme))
+        .map(|div| {
+            let variant = node.style.hover.clone();
+            let theme = draw.theme;
+            div.when_some(variant, move |div, variant| {
+                div.hover(move |div| surface(div, &variant, theme))
+            })
+        })
+        .map(|div| {
+            let variant = node.style.pressed.clone();
+            let theme = draw.theme;
+            div.when_some(variant, move |div, variant| {
+                div.active(move |div| surface(div, &variant, theme))
+            })
+        });
+    div
+}
+
+/// The sizing a node asks for: how it takes space in its parent, and how
+/// big it is.
+fn sized<D: Styled>(div: D, sizing: &Sizing) -> D {
+    div.when_some(sizing.grow, |div, Finite(grow)| {
+        div.flex_grow(grow)
+    })
+    .when_some(sizing.shrink, |div, Finite(shrink)| {
+        div.flex_shrink(shrink)
+    })
+    .when_some(sizing.basis, |div, basis| {
+        div.flex_basis(length(basis))
+    })
+    .when_some(sizing.width, |div, width| div.w(length(width)))
+    .when_some(sizing.height, |div, height| div.h(length(height)))
+    .when_some(sizing.min_width, |div, width| div.min_w(length(width)))
+    .when_some(sizing.max_width, |div, width| div.max_w(length(width)))
+    .when_some(sizing.min_height, |div, height| div.min_h(length(height)))
+    .when_some(sizing.max_height, |div, height| div.max_h(length(height)))
+    .when_some(sizing.aspect_ratio, |div, Finite(ratio)| {
+        div.aspect_ratio(ratio)
+    })
+}
+
+/// One length, as GPUI takes it.
+fn length(value: NodeLength) -> GpuiLength {
+    match value {
+        // A space token in a length: the pixels it names.
+        NodeLength::Space(token) => tokens::space(token).into(),
+        NodeLength::Px(Finite(pixels)) => px(pixels).into(),
+        NodeLength::Fraction(Finite(fraction)) => relative(fraction),
+    }
+}
+
+/// One length, as the pixels it names (a fraction of no parent is its
+/// parent's whole size).
+fn length_pixels(value: NodeLength, theme: Option<&Theme>) -> Pixels {
+    match value {
+        NodeLength::Space(token) => theme.map_or(px(0.), |theme| tokens::space(token)),
+        NodeLength::Px(Finite(pixels)) => px(pixels),
+        NodeLength::Fraction(Finite(fraction)) => px(fraction * 4096.),
+    }
+}
+
+/// The surface a node draws: its background, border, corner radius and
+/// opacity.
+fn surface<D: Styled>(div: D, surface: &Surface, theme: &Theme) -> D {
+    let border = surface.border.as_ref();
+    div.when_some(surface.background, |div, background| {
+        div.bg(tokens::paint_color(&background, theme))
+    })
+    .when_some(border, |div, border| {
+        let width = border
+            .width
+            .map_or(px(1.), |width| length_pixels(width, Some(theme)));
+        let color = border
+            .color
+            .map_or(theme.hairline, |color| tokens::paint_color(&color, theme));
+        div.border(width).border_color(color)
+    })
+    .when_some(surface.radius, |div, radius| {
+        div.rounded(radius_pixels(radius, theme))
+    })
+    .when_some(surface.opacity, |div, Finite(opacity)| {
+        div.opacity(opacity)
+    })
+}
+
+/// A corner radius, as GPUI takes it.
+fn radius_pixels(radius: RadiusLength, theme: &Theme) -> Pixels {
+    match radius {
+        RadiusLength::Token(token) => tokens::radius(token),
+        RadiusLength::Px(Finite(pixels)) => px(pixels),
+    }
+}

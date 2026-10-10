@@ -17,7 +17,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use futures::executor::block_on;
-use pane_core::{DesignedTree, Launcher, Node, NodeKind, Runtime, Screen, Status};
+use pane_core::{DesignedTree, Launcher, Node, NodeKind, Runtime, Screen, Status, TextContent};
 
 use tempfile::TempDir;
 
@@ -155,8 +155,13 @@ impl Pane {
 
 /// The first text node of `node`'s tree, in order.
 fn text_of(node: &Node) -> Option<String> {
+    let plain = |text: &pane_core::Text| match &text.content {
+        TextContent::Plain(content) => Some(content.clone()),
+        TextContent::Spans(spans) => (!spans.is_empty())
+            .then(|| spans.iter().map(|span| span.text.clone()).collect::<String>()),
+    };
     match &node.kind {
-        NodeKind::Text(text) => Some(text.content.clone()),
+        NodeKind::Text(text) => plain(text),
         // An unknown node draws its fallback, else its children.
         NodeKind::Unknown(_) => node
             .fallback

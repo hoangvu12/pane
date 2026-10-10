@@ -19,16 +19,25 @@
 //! component set — is shown on the screen while the view stays open with
 //! its last good tree. A crash closes it, as it closes a custom view.
 
+use std::path::Path;
 use std::pin::Pin;
 
 use super::{Launcher, Opening, State, Status, stopped};
 use crate::extension_data::PackageData;
-use crate::runtime::{CallError, DesignedEvent, DesignedRendered, Runtime, ViewId};
+use crate::icons::{Icon, IconSource, is_web_url};
+use crate::packages::{InstalledPackage, PackageIdentity};
+use crate::runtime::{
+    CallError, DesignedEvent, DesignedRendered, DesignedTree, Node, NodeKind, Runtime, ViewId,
+};
 
 /// The designed view on screen, if one is open: the command's own screen.
 pub(super) struct OpenDesignedView {
     /// The view in the runtime; closed when the view leaves the screen.
     id: ViewId,
+    /// The package the view's command belongs to: whose identity its
+    /// web images and system icons load under, and whose folder its
+    /// packaged images resolved in.
+    owner: Option<PackageIdentity>,
     /// The sequence number of the render whose tree is on screen, which the
     /// events Pane sends carry back so the view can drop those older than
     /// it drew.
@@ -38,6 +47,9 @@ pub(super) struct OpenDesignedView {
     /// The number of the event whose answer is on screen, so an older
     /// answer arriving late does not replace a newer one.
     shown: u64,
+    /// Whether the tree on screen holds an icon Pane loads (a web image,
+    /// a system icon, an application's), whose arrivals redraw it.
+    loading: bool,
     /// The `refresh-after-ms` the last render answered: carried and ignored
     /// until timers land (#236), which reschedules the view through it.
     refresh_after_ms: Option<u32>,
@@ -120,11 +132,12 @@ impl Launcher {
         };
         match result {
             Ok((id, rendered)) => {
+                let owner = super::owner(&state.packages, &component)
+                    .map(|package| package.identity.clone());
+                let mut tree = rendered.tree;
+                let loading = landed(&mut state, &component, owner.as_ref(), &mut tree);
                 let view = super::LauncherView::new(
-                    super::Screen::DesignedView(super::DesignedViewSnapshot {
-                        id,
-                        tree: rendered.tree,
-                    }),
+                    super::Screen::DesignedView(super::DesignedViewSnapshot { id, tree }),
                     // The view's own content is its title, as a command's
                     // list is; the footer names the open command.
                     "",
@@ -135,9 +148,11 @@ impl Launcher {
                 state.searching = None;
                 state.designed_view = Some(OpenDesignedView {
                     id,
+                    owner,
                     rendered: rendered.render,
                     sent: 0,
                     shown: 0,
+                    loading,
                     refresh_after_ms: rendered.refresh_after_ms,
                 });
                 state.next_screen();
@@ -162,6 +177,29 @@ impl Launcher {
         callback: u32,
         key: Option<&str>,
     ) -> impl Future<Output = ()> + Send + 'static {
+        self.send_designed_payload(callback, key, "{}".to_owned())
+    }
+
+    /// Sends a change of the node the open designed view's tree named with
+    /// callback id `callback` to the view, its `payload` naming what
+    /// changed (a toggle's state, a slider's value, a field's commit), and
+    /// shows its answer; as [`Launcher::send_designed_event`] does.
+    pub fn send_designed_change(
+        &self,
+        callback: u32,
+        key: Option<&str>,
+        payload: String,
+    ) -> impl Future<Output = ()> + Send + 'static {
+        self.send_designed_payload(callback, key, payload)
+    }
+
+    /// Sends one event to the open designed view, whatever changed.
+    fn send_designed_payload(
+        &self,
+        callback: u32,
+        key: Option<&str>,
+        payload: String,
+    ) -> impl Future<Output = ()> + Send + 'static {
         let mut state = self.lock();
         let epoch = state.screen_epoch;
         // The view as it is now: the event says which render's tree the
@@ -172,7 +210,7 @@ impl Launcher {
                 render: open.rendered,
                 key,
                 callback,
-                payload: "{}".to_owned(),
+                payload,
             }
         });
         let sent = match (event, self.runtime()) {
@@ -217,10 +255,20 @@ impl Launcher {
                 open.shown = number;
                 open.rendered = rendered.render;
                 open.refresh_after_ms = rendered.refresh_after_ms;
+                let owner = open.owner.clone();
                 let super::Screen::DesignedView(snapshot) = &mut state.view.screen else {
                     unreachable!("a designed view is open");
                 };
                 snapshot.tree = rendered.tree;
+                let component = state.open.clone().unwrap_or_default();
+                let loading = landed(
+                    &state.packages,
+                    &state.icon_loads,
+                    &component,
+                    owner.as_ref(),
+                    &mut snapshot.tree,
+                );
+                state.designed_view.as_mut().expect("a view is open").loading = loading;
                 state.view.status = Status::Idle;
             }
             // The view refused the event, or answered a tree Pane cannot
@@ -251,6 +299,26 @@ impl Launcher {
         }
     }
 
+    /// Draws the loaded icons of the open designed view's tree, as a list
+    /// draws the rows whose loads arrived (#142): a web image, a system
+    /// icon or an application's own icon that is ready takes the place of
+    /// the fallback shown for it until then. Whether any icon changed; a
+    /// window that sees one draws again.
+    pub fn refresh_designed_view(&self) -> bool {
+        let mut state = self.lock();
+        let Some(open) = state.designed_view.as_ref() else {
+            return false;
+        };
+        if !open.loading {
+            return false;
+        }
+        let owner = open.owner.as_ref().map(|identity| identity.key());
+        let Some(super::Screen::DesignedView(snapshot)) = &mut state.view.screen else {
+            return false;
+        };
+        shown(&mut snapshot.tree, owner.as_deref(), &state.icon_loads)
+    }
+
     /// Closes the open designed view, if one is open: the view is dropped
     /// in the runtime, and its screen leaves with it (the caller shows
     /// what replaces it).
@@ -262,4 +330,131 @@ impl Launcher {
             runtime.close_designed_view(open.id);
         }
     }
+}
+
+/// A designed view's tree landing on screen: its icons resolved in the
+/// open command's package folder (or, for a command built into Pane, beside
+/// its component), exactly as a list's looks are, and what they need of
+/// the host's loads started (web images, system icons, applications' own
+/// icons, #142) — the view never waits for them. Whether the tree holds
+/// an icon Pane loads.
+fn landed(
+    packages: &[InstalledPackage],
+    loads: &super::icon_loads::IconLoads,
+    component: &Path,
+    owner: Option<&PackageIdentity>,
+    tree: &mut DesignedTree,
+) -> bool {
+    let package = super::owner(packages, component);
+    let folder = package
+        .map(|package| package.location.clone())
+        .or_else(|| component.parent().map(Path::to_path_buf))
+        .unwrap_or_default();
+    resolve_node(&mut tree.root, &folder);
+    let identity = owner.or_else(|| package.map(|package| &package.identity));
+    want_node(&tree.root, identity, loads)
+}
+
+/// Every icon `node` holds, resolved in `folder` (see [`Icon::resolved`]),
+/// and its children's and its `fallback`'s with it.
+fn resolve_node(node: &mut Node, folder: &Path) {
+    let of = |icon: &mut Option<Icon>| {
+        *icon = icon.take().and_then(|icon| icon.resolved(folder));
+    };
+    match &mut node.kind {
+        NodeKind::Button(button) => of(&mut button.icon),
+        NodeKind::Icon(icon) | NodeKind::IconTile(icon) => of(&mut icon.icon),
+        NodeKind::Image(image) => of(&mut image.image),
+        NodeKind::RichRow(row) => of(&mut row.icon),
+        NodeKind::EmptyState(empty) => of(&mut empty.icon),
+        _ => {}
+    }
+    if let Some(fallback) = &mut node.fallback {
+        resolve_node(fallback, folder);
+    }
+    for child in &mut node.children {
+        resolve_node(child, folder);
+    }
+}
+
+/// Whether any icon `node` or its descendants hold needs the host's loads,
+/// starting them for `identity`'s package as a list does.
+fn want_node(
+    node: &Node,
+    identity: Option<&PackageIdentity>,
+    loads: &super::icon_loads::IconLoads,
+) -> bool {
+    let mut wanted = false;
+    let want = |icon: Option<&Icon>, wanted: &mut bool| {
+        if let Some(icon) = icon {
+            loads.want(identity, icon);
+            *wanted |= loads_icon(icon);
+        }
+    };
+    match &node.kind {
+        NodeKind::Button(button) => want(button.icon.as_ref(), &mut wanted),
+        NodeKind::Icon(icon) | NodeKind::IconTile(icon) => want(icon.icon.as_ref(), &mut wanted),
+        NodeKind::Image(image) => want(image.image.as_ref(), &mut wanted),
+        NodeKind::RichRow(row) => want(row.icon.as_ref(), &mut wanted),
+        NodeKind::EmptyState(empty) => want(empty.icon.as_ref(), &mut wanted),
+        _ => {}
+    }
+    if let Some(fallback) = node.fallback.as_deref() {
+        wanted |= want_node(fallback, identity, loads);
+    }
+    for child in &node.children {
+        wanted |= want_node(child, identity, loads);
+    }
+    wanted
+}
+
+/// Whether `icon` is one Pane loads: a web image, a system icon or an
+/// application's own.
+fn loads_icon(icon: &Icon) -> bool {
+    match &icon.source {
+        IconSource::Url(url) => is_web_url(url),
+        IconSource::File(_) | IconSource::Application(_) => true,
+        IconSource::Builtin { .. } | IconSource::Image { .. } | IconSource::Letter(_) => false,
+    }
+}
+
+/// The icons of the tree on screen replaced by what arrived of their loads
+/// (see [`IconLoads::shown`]): whether any of them changed.
+fn shown(
+    tree: &mut DesignedTree,
+    owner: Option<&str>,
+    loads: &super::icon_loads::IconLoads,
+) -> bool {
+    shown_node(&mut tree.root, owner, loads)
+}
+
+/// The icons `node` holds, shown as their loads allow, and its
+/// descendants'.
+fn shown_node(
+    node: &mut Node,
+    owner: Option<&str>,
+    loads: &super::icon_loads::IconLoads,
+) -> bool {
+    let mut changed = false;
+    let show = |icon: &mut Option<Icon>, changed: &mut bool| {
+        if let Some(held) = icon.as_ref() {
+            *icon = Some(loads.shown(owner, held));
+            *changed |= held != icon.as_ref().expect("an icon");
+        }
+    };
+    match &mut node.kind {
+        NodeKind::Button(button) => show(&mut button.icon, &mut changed),
+        NodeKind::Icon(icon) | NodeKind::IconTile(icon) => show(&mut icon.icon, &mut changed),
+        NodeKind::Image(image) => show(&mut image.image, &mut changed),
+        NodeKind::RichRow(row) => show(&mut row.icon, &mut changed),
+        NodeKind::EmptyState(empty) => show(&mut empty.icon, &mut changed),
+        _ => {}
+    }
+    if let Some(fallback) = &mut node.fallback {
+        changed |= shown_node(fallback, owner, loads);
+    }
+    for child in &mut node.children {
+        changed |= shown_node(child, owner, loads);
+    }
+    changed
 }

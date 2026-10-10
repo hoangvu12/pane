@@ -68,9 +68,15 @@ pub use deadlines::Limits;
 pub use deadlines::Timers;
 pub use deadlines::{COMPUTE_LIMIT, UNRESPONSIVE_LIMIT, WARN_AFTER};
 pub(crate) use deadlines::{HostCall, Hosted, Watch};
+pub use crate::tokens::{Space, TextLevel, TextStyle};
 pub use designed::{
-    Align, Button, COMPONENT_SET, DesignedTree, Justify, Layout, MAX_DEPTH, MAX_NODES,
-    MAX_TREE_BYTES, Node, NodeKind, Padding, Space, Text, TextLevel, TextStyle, Tone as ButtonTone,
+    Align, Badge, Border, Button, COMPONENT_SET, Card, Checkbox, DesignedTree, EmptyState,
+    Finite, Fit, IconExtent, IconNode, Image, Justify, Keycap, KeySequence, Layout, Length, Link,
+    Loading, MAX_DEPTH, MAX_INLINE_IMAGE, MAX_MARKDOWN_CHARS, MAX_NODES, MAX_PX,
+    MAX_TEXT_CHARS, MAX_TREE_BYTES, Markdown, MetadataItem, MetadataList, Node, NodeKind, Offset, Orientation,
+    Paint, Padding, Place, Progress, RadiusLength, RichRow, RowAccessory, Segment, Segmented,
+    Select, Sizing, Slider, Span, Style, Surface, Tag, Text, TextInput, TextContent, Toggle,
+    Tone as ButtonTone,
 };
 #[cfg(any(test, debug_assertions))]
 #[doc(hidden)]

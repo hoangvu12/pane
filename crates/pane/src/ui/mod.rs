@@ -5,9 +5,11 @@
 //! plus the motion policy (see [`motion`]) that the launcher's subtle
 //! transitions share.
 //!
-//! This layer owns presentation only. It imports no `pane-core` types, so
+//! This layer owns presentation only. It imports no `pane-core` state, so
 //! the visual system is usable and reviewable without launcher state, and
-//! screens translate launcher data into these calls.
+//! screens translate launcher data into these calls. The one vocabulary it
+//! does take from pane-core is the UI component set's token names
+//! ([`tokens`]): names, never launcher types.
 //!
 //! ## Where the visuals come from
 //!
@@ -48,6 +50,7 @@ pub(crate) mod material;
 pub(crate) mod motion;
 pub(crate) mod pinned;
 pub(crate) mod result_layouts;
+pub(crate) mod tokens;
 pub(crate) mod result_row;
 pub(crate) mod select;
 pub(crate) mod settings_shell;
