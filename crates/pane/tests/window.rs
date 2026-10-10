@@ -454,7 +454,16 @@ fn tab_and_shift_tab_visit_each_control_once_in_order(cx: &mut TestAppContext) {
     // toggle name no change of their own, so they take no focus. The
     // cycle repeats from the name.
     let stops = [
-        "Name", "Secret", "Notes", "Day", "At", "Hello", "Tags", "File", "Folder", "Greet",
+        "Name",
+        "Secret",
+        "Notes",
+        "Day",
+        "At",
+        "Hello",
+        "Tags",
+        "File",
+        "Folder",
+        "Greet",
         "Pane menu",
     ];
     let mut forward = Vec::new();
@@ -468,8 +477,12 @@ fn tab_and_shift_tab_visit_each_control_once_in_order(cx: &mut TestAppContext) {
         backward.push(focused_label(cx));
     }
 
-    let labels =
-        |order: &[&str]| order.iter().map(|label| Some(label.to_string())).collect::<Vec<_>>();
+    let labels = |order: &[&str]| {
+        order
+            .iter()
+            .map(|label| Some(label.to_string()))
+            .collect::<Vec<_>>()
+    };
     let mut expected = labels(&stops[1..]);
     expected.push(Some("Name".into()));
     assert_eq!(forward, expected);
@@ -539,7 +552,11 @@ fn input_method_composition_commits_into_the_text_field(cx: &mut TestAppContext)
     settle(&window, cx);
     let (nodes, _) = accessibility_tree(cx);
     assert!(
-        nodes.contains(&("Label".into(), "Hello, 日本, from the Rust guest".into(), "".into())),
+        nodes.contains(&(
+            "Label".into(),
+            "Hello, 日本, from the Rust guest".into(),
+            "".into()
+        )),
         "{nodes:?}"
     );
 }
@@ -571,7 +588,11 @@ fn clicking_a_choice_and_the_submit_button_submits_the_form(cx: &mut TestAppCont
     settle(&window, cx);
     let (nodes, _) = accessibility_tree(cx);
     assert!(
-        nodes.contains(&("Label".into(), "Welcome, Ada, from the Rust guest".into(), "".into())),
+        nodes.contains(&(
+            "Label".into(),
+            "Welcome, Ada, from the Rust guest".into(),
+            "".into()
+        )),
         "{nodes:?}"
     );
 }
@@ -646,7 +667,11 @@ fn the_focused_submit_button_submits_with_space(cx: &mut TestAppContext) {
     settle(&window, cx);
     let (nodes, _) = accessibility_tree(cx);
     assert!(
-        nodes.contains(&("Label".into(), "Hello, Ada, from the Rust guest".into(), "".into())),
+        nodes.contains(&(
+            "Label".into(),
+            "Hello, Ada, from the Rust guest".into(),
+            "".into()
+        )),
         "{nodes:?}"
     );
 }
@@ -2074,7 +2099,11 @@ fn the_footer_button_submits_the_form_like_enter(cx: &mut TestAppContext) {
     settle(&window, cx);
     let (nodes, _) = accessibility_tree(cx);
     assert!(
-        nodes.contains(&("Label".into(), "Hello, Ada, from the Rust guest".into(), "".into())),
+        nodes.contains(&(
+            "Label".into(),
+            "Hello, Ada, from the Rust guest".into(),
+            "".into()
+        )),
         "{nodes:?}"
     );
 }

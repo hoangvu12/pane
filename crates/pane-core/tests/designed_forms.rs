@@ -58,10 +58,7 @@ fn every_kind() -> Vec<(String, FormValue)> {
         ("notes".to_owned(), FormValue::Text("two lines".into())),
         ("day".to_owned(), FormValue::Text("2026-01-31".into())),
         ("at".to_owned(), FormValue::Text("2026-01-31 14:05".into())),
-        (
-            "greeting".to_owned(),
-            FormValue::Text("morning".into()),
-        ),
+        ("greeting".to_owned(), FormValue::Text("morning".into())),
         (
             "tags".to_owned(),
             FormValue::List(vec!["friend".into(), "colleague".into()]),
@@ -113,7 +110,10 @@ impl Pane {
             fs::copy(entry.path(), source.join(entry.file_name())).unwrap();
         }
         block_on(launcher.install_package(&source));
-        assert!(matches!(launcher.view().status, pane_core::Status::Result(_)));
+        assert!(matches!(
+            launcher.view().status,
+            pane_core::Status::Result(_)
+        ));
         Pane {
             _data: data,
             launcher,

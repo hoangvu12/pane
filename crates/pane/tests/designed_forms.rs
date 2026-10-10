@@ -49,10 +49,10 @@ const TYPESCRIPT: Sample = Sample {
 
 /// The launcher window with the sample's assembled package installed,
 /// the data folder held for the window's life.
-fn open_installed(
-    cx: &mut TestAppContext,
+fn open_installed<'a>(
+    cx: &'a mut TestAppContext,
     name: &str,
-) -> (Entity<LauncherWindow>, TempDir, &mut VisualTestContext) {
+) -> (Entity<LauncherWindow>, TempDir, &'a mut VisualTestContext) {
     let data = tempfile::tempdir().unwrap();
     let folder = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../target/guests/packages")
@@ -112,9 +112,7 @@ fn a11y_nodes(cx: &mut VisualTestContext) -> Vec<(String, String, String)> {
     nodes
         .values()
         .map(|node| {
-            let field = |key: &str| {
-                node["aria"][key].as_str().unwrap_or_default().to_owned()
-            };
+            let field = |key: &str| node["aria"][key].as_str().unwrap_or_default().to_owned();
             (field("role"), field("label"), field("description"))
         })
         .collect()
@@ -151,7 +149,10 @@ fn enter_in_a_single_line_field_submits_the_form(cx: &mut TestAppContext, sample
 
     settle(&window, cx);
     assert!(
-        answer_is(cx, &format!("Hello, Ada, from the {} guest", sample.language)),
+        answer_is(
+            cx,
+            &format!("Hello, Ada, from the {} guest", sample.language)
+        ),
         "the answer draws over the form"
     );
     assert!(
