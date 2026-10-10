@@ -1803,7 +1803,11 @@ impl SourcePackage {
             // id installs the extension under its current one. An id the
             // map maps to `null`, or names no entry at all, is one the
             // revision no longer offers.
-            let Some(Resolved { extension: entry, id }) = collection.resolve(id) else {
+            let Some(Resolved {
+                extension: entry,
+                id,
+            }) = collection.resolve(id)
+            else {
                 let why = if matches!(collection.renamed().get(id), Some(None)) {
                     format!(
                         "{revision} no longer offers the extension `{id}`: its {} maps it to \
@@ -2217,7 +2221,11 @@ pub(crate) fn collection_extension(
     // `renamed` map names resolves to the extension's current one,
     // which the identity takes; one mapped to `null`, or named by no
     // entry at all, the collection no longer offers.
-    let Some(Resolved { extension: entry, id }) = collection.resolve(id) else {
+    let Some(Resolved {
+        extension: entry,
+        id,
+    }) = collection.resolve(id)
+    else {
         let why = if matches!(collection.renamed().get(id), Some(None)) {
             format!(
                 "The collection at {} no longer offers the extension `{id}`: its {file} \

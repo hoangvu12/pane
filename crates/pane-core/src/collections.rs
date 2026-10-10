@@ -215,7 +215,10 @@ pub(crate) fn read(folder: &Path) -> Result<Option<Collection>, String> {
             current = next.to_owned();
         }
     }
-    Ok(Some(Collection { extensions, renamed }))
+    Ok(Some(Collection {
+        extensions,
+        renamed,
+    }))
 }
 
 /// The index as `pane-collection.json` writes it. A field it does not know

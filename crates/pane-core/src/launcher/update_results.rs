@@ -98,10 +98,7 @@ fn ending_toast(updated: usize, failed: usize, removed: usize) -> Toast {
         (0, failed, 0) => (ToastStyle::Failure, failure_title(failed)),
         (0, 0, removed) => (
             ToastStyle::Success,
-            format!(
-                "{removed} {} no longer offered",
-                extensions(removed)
-            ),
+            format!("{removed} {} no longer offered", extensions(removed)),
         ),
         (updated, 0, removed) => (
             ToastStyle::Success,
@@ -112,10 +109,7 @@ fn ending_toast(updated: usize, failed: usize, removed: usize) -> Toast {
         ),
         (0, failed, removed) => (
             ToastStyle::Failure,
-            format!(
-                "{}, {removed} no longer offered",
-                failure_title(failed)
-            ),
+            format!("{}, {removed} no longer offered", failure_title(failed)),
         ),
         (updated, failed, removed) => (
             ToastStyle::Failure,
@@ -1261,7 +1255,10 @@ mod tests {
         );
         assert_eq!(
             shown(1, 0, 1),
-            (ToastStyle::Success, "Updated 1 extension, 1 no longer offered".into())
+            (
+                ToastStyle::Success,
+                "Updated 1 extension, 1 no longer offered".into()
+            )
         );
         assert_eq!(
             shown(2, 1, 1),
@@ -1270,7 +1267,11 @@ mod tests {
                 "Updated 2 extensions, 1 failed, 1 no longer offered".into()
             )
         );
-        for toast in [ending_toast(0, 0, 0), ending_toast(2, 1, 0), ending_toast(0, 0, 1)] {
+        for toast in [
+            ending_toast(0, 0, 0),
+            ending_toast(2, 1, 0),
+            ending_toast(0, 0, 1),
+        ] {
             assert_eq!(
                 toast.primary.as_ref().map(|action| action.title.as_str()),
                 Some(VIEW_DETAILS)

@@ -1876,7 +1876,9 @@ fn a_renamed_id_is_followed_on_update_keeping_the_installed_identity() {
         ],
         "0.1",
     );
-    let moved = branch.repo.commit(&borrowed(&files), "Rename clock to time");
+    let moved = branch
+        .repo
+        .commit(&borrowed(&files), "Rename clock to time");
     dirs.check(&launcher);
     let record = dirs.extension_record("branch", "clock");
     assert_eq!(
