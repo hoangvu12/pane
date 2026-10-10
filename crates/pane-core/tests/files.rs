@@ -35,6 +35,8 @@ mod rows;
 mod system;
 
 use feedback::RecordingWindow;
+#[cfg(unix)]
+use rows::select_title;
 use rows::titles;
 use system::{Done, RecordingSystem};
 
@@ -716,6 +718,9 @@ fn a_file_is_checked_again_when_it_is_opened() {
         search(&launcher, "index");
         fs::remove_file(fixture.file("files index.txt")).unwrap();
         std::os::unix::fs::symlink(&outside, fixture.file("files index.txt")).unwrap();
+        // Pane's install row matches "index" fuzzily above the file rows
+        // (#193); the file row is what is opened.
+        select_title(&launcher, "files index.txt");
         block_on(launcher.activate_selected());
         assert_eq!(
             launcher.view().status,

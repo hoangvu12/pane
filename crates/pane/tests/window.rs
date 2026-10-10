@@ -1272,7 +1272,7 @@ fn typing_in_root_search_narrows_the_results_and_enter_opens_the_best_match(
 #[gpui::test]
 fn arrow_keys_move_through_the_matches_while_the_query_keeps_focus(cx: &mut TestAppContext) {
     let (window, cx) = open_with(cx, samples::sample_commands());
-    cx.simulate_input("script");
+    cx.simulate_input("script sample");
     assert_eq!(
         row_titles(&window, cx),
         ["JavaScript sample", "TypeScript sample"]
@@ -1285,7 +1285,7 @@ fn arrow_keys_move_through_the_matches_while_the_query_keeps_focus(cx: &mut Test
     assert!(query_has_focus(&window, cx));
     // Editing keys still edit the query.
     cx.simulate_keystrokes("backspace backspace backspace");
-    assert_eq!(settle(&window, cx).query(), Some("scr"));
+    assert_eq!(settle(&window, cx).query(), Some("script sam"));
 
     cx.simulate_keystrokes("down enter");
     assert_eq!(settle(&window, cx).title, "TypeScript sample");
@@ -1306,9 +1306,9 @@ fn the_production_scenario_edits_searches_selects_opens_and_back_navigates(
     );
 
     // Edits: typing reaches the query field the launcher owns.
-    cx.simulate_input("script");
+    cx.simulate_input("script sample");
     let view = settle(&window, cx);
-    assert_eq!(view.query(), Some("script"));
+    assert_eq!(view.query(), Some("script sample"));
     // Searches: the real root adapter narrows the real commands.
     assert_eq!(
         row_titles(&window, cx),
@@ -1428,14 +1428,14 @@ fn input_method_composition_searches_root(cx: &mut TestAppContext) {
 #[gpui::test]
 fn assistive_technology_sees_the_search_field_and_the_selected_result(cx: &mut TestAppContext) {
     let (window, cx) = open_with(cx, samples::sample_commands());
-    cx.simulate_input("script");
+    cx.simulate_input("script sample");
     settle(&window, cx);
 
     let nodes = accessible_nodes(cx);
     let search = node(&nodes, "EditableComboBox", "Search");
     assert_eq!(
         (&search["value"], &search["placeholder"]),
-        (&"script".into(), &"Search apps and commands…".into())
+        (&"script sample".into(), &"Search apps and commands…".into())
     );
     node(&nodes, "ListBox", "Results");
     node(&nodes, "ListBoxOption", "TypeScript sample");
@@ -1628,7 +1628,9 @@ fn typing_an_applications_name_shows_it_and_enter_opens_it(cx: &mut TestAppConte
     let (window, cx) = open_launcher(cx, launcher);
 
     cx.simulate_input("fire");
-    wait_for_rows(&window, cx, &["Firefox"]);
+    // Pane's install row matches the four letters fuzzily below the
+    // application's prefix match (#193).
+    wait_for_rows(&window, cx, &["Firefox", "Install extension from Git…"]);
     assert!(
         cx.debug_bounds("row-Firefox").is_some(),
         "the application is rendered"
@@ -1640,7 +1642,9 @@ fn typing_an_applications_name_shows_it_and_enter_opens_it(cx: &mut TestAppConte
     // (#132).
     assert_eq!(focused.as_deref(), Some("Search"), "the field");
     typing_settles(cx);
-    until_announced(cx, "Firefox, 1 of 1");
+    // Two rows: the application's prefix match and Pane's install row
+    // (#193).
+    until_announced(cx, "Firefox, 1 of 2");
 
     cx.simulate_keystrokes("enter");
     let view = settle(&window, cx);
@@ -2069,7 +2073,9 @@ fn a_running_action_cannot_be_dispatched_again_through_the_footer_button(cx: &mu
     let (window, cx) = open_launcher(cx, launcher);
 
     cx.simulate_input("fire");
-    wait_for_rows(&window, cx, &["Firefox"]);
+    // Pane's install row matches the four letters fuzzily below the
+    // application's prefix match (#193).
+    wait_for_rows(&window, cx, &["Firefox", "Install extension from Git…"]);
     let nodes = accessible_nodes(cx);
     node(&nodes, "Button", "Open application");
     let button = cx
@@ -2650,6 +2656,55 @@ fn root_rows_sit_under_their_section_labels(cx: &mut TestAppContext) {
     let first = cx.debug_bounds("row-Charlie").expect("the match");
     assert_eq!(first.top(), label.bottom() + px(2.));
     assert!(cx.debug_bounds("section-Commands").is_none());
+}
+
+/// The title characters of the best placement, highlighted in the accent
+/// (#193): scattered letters one run each, in the byte ranges the row's
+/// title draws them by, and nothing for a row whose match sits in its
+/// subtitle.
+#[gpui::test]
+fn the_matched_characters_of_the_best_placement_are_highlighted(cx: &mut TestAppContext) {
+    let mut clearing = command("Clear cache", JAVASCRIPT.component);
+    clearing.subtitle = Some("Delete downloaded files".into());
+    let (window, cx) = open_with(
+        cx,
+        vec![command("Clipboard History", RUST.component), clearing],
+    );
+    settle(&window, cx);
+
+    // "clhis" places c, l at the start of the title and h, i, s in
+    // "History".
+    cx.simulate_input("clhis");
+    let view = settle(&window, cx);
+    assert_eq!(
+        view.rows
+            .iter()
+            .map(|row| row.title.as_str())
+            .collect::<Vec<_>>(),
+        ["Clipboard History"]
+    );
+    assert!(cx.debug_bounds("row-Clipboard History").is_some());
+    let matched = cx.read_entity(&window, |window, _| {
+        window.launcher().presentation().rows[0].matched.clone()
+    });
+    assert_eq!(matched, [0..2, 10..13], "cl and his, the title's own bytes");
+
+    // A row found by its subtitle alone highlights nothing in its title.
+    cx.simulate_keystrokes("escape");
+    settle(&window, cx);
+    cx.simulate_input("del files");
+    let view = settle(&window, cx);
+    assert_eq!(
+        view.rows
+            .iter()
+            .map(|row| row.title.as_str())
+            .collect::<Vec<_>>(),
+        ["Clear cache"]
+    );
+    let matched = cx.read_entity(&window, |window, _| {
+        window.launcher().presentation().rows[0].matched.clone()
+    });
+    assert!(matched.is_empty(), "the match sits in the subtitle");
 }
 
 /// Three root rows — Alpha, Bravo and Charlie, which open the Rust,
