@@ -23,9 +23,7 @@ use std::time::Duration;
 
 use futures::executor::block_on;
 use pane_core::clipboard::{Clock, ManualClock, SystemClock};
-use pane_core::{
-    Launcher, Node, NodeKind, Runtime, Screen, Status, TextContent, WindowPresence,
-};
+use pane_core::{Launcher, Node, NodeKind, Runtime, Screen, Status, TextContent, WindowPresence};
 
 use tempfile::TempDir;
 
