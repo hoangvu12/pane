@@ -201,9 +201,9 @@ fn click_row(settings_cx: &mut VisualTestContext, row: &'static str) {
 /// connections. The window is hidden while the pass runs: the record
 /// holds the two failures and nothing is announced yet, so the test can
 /// show the launcher when it wants the announcement.
-fn hidden_behind_a_failed_check<'a>(
-    cx: &'a mut TestAppContext,
-) -> (gpui::Entity<LauncherWindow>, &'a mut VisualTestContext) {
+fn hidden_behind_a_failed_check(
+    cx: &mut TestAppContext,
+) -> (gpui::Entity<LauncherWindow>, &mut VisualTestContext) {
     let guests = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/guests");
     let registry = Registry::start();
     registry.publish(NAME, "0.1.0", pack(&greeter_files(&guests, "0.1.0")));
@@ -498,12 +498,12 @@ fn failing_files(guests: &Path, version: &str) -> Vec<(&'static str, Vec<u8>)> {
 /// the launcher is shown and the record holds both rows. The registry is
 /// returned with the window: it must outlive the fixture, whose passes
 /// and the test's own read from it.
-fn skipped_and_failed<'a>(
-    cx: &'a mut TestAppContext,
+fn skipped_and_failed(
+    cx: &mut TestAppContext,
 ) -> (
     gpui::Entity<LauncherWindow>,
     Registry,
-    &'a mut VisualTestContext,
+    &mut VisualTestContext,
 ) {
     let guests = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/guests");
     let registry = Registry::start();
