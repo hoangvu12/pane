@@ -48,10 +48,10 @@ fn previous_result_keys(cx: &App) -> Vec<Keystroke> {
     if let Ok(key) = Keystroke::parse(&binding) {
         keys.push(key);
     }
-    if let Some((previous, _)) = crate::settings::navigation_of(cx).bindings() {
-        if let Ok(key) = Keystroke::parse(previous) {
-            keys.push(key);
-        }
+    if let Some((previous, _)) = crate::settings::navigation_of(cx).bindings()
+        && let Ok(key) = Keystroke::parse(previous)
+    {
+        keys.push(key);
     }
     keys
 }

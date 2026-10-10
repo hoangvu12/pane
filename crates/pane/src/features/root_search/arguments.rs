@@ -266,10 +266,9 @@ impl ArgumentControls {
     fn typed(&mut self, name: &str, caret: usize) {
         if let Some(index) = self.at(name)
             && let Some(control) = self.fields.get_mut(index)
+            && let Control::Text { caret: known, .. } = control
         {
-            if let Control::Text { caret: known, .. } = control {
-                *known = caret;
-            }
+            *known = caret;
         }
     }
 
@@ -409,7 +408,7 @@ impl LauncherWindow {
             .fields
             .into_iter()
             .nth(index)?;
-        (field.required && field.value.trim().is_empty()).then(|| field.id)
+        (field.required && field.value.trim().is_empty()).then_some(field.id)
     }
 
     /// The first argument field of the selected row's command that is
@@ -554,11 +553,13 @@ impl LauncherWindow {
         };
         // The empty choice the list leads with, then the options.
         let count = 1 + choices.len();
-        if let Some(controls) = self.arguments.as_mut() {
-            if let Some((_, highlighted)) = controls.open.as_mut() {
-                *highlighted = (*highlighted).saturating_add_signed(step).min(count - 1);
-                cx.notify();
-            }
+        if let Some((_, highlighted)) = self
+            .arguments
+            .as_mut()
+            .and_then(|controls| controls.open.as_mut())
+        {
+            *highlighted = (*highlighted).saturating_add_signed(step).min(count - 1);
+            cx.notify();
         }
     }
 
@@ -615,10 +616,12 @@ impl LauncherWindow {
                 input.update(cx, |input, cx| {
                     input.nav_linear(NavigationDirection::Back, TextBoundary::Graphmeme, cx)
                 });
-                if let Some(controls) = self.arguments.as_mut() {
-                    if let Some(Control::Text { caret, .. }) = controls.fields.get_mut(index) {
-                        *caret = caret.saturating_sub(1);
-                    }
+                if let Some(Control::Text { caret, .. }) = self
+                    .arguments
+                    .as_mut()
+                    .and_then(|controls| controls.fields.get_mut(index))
+                {
+                    *caret = caret.saturating_sub(1);
                 }
             }
         } else {
@@ -657,10 +660,12 @@ impl LauncherWindow {
                 input.update(cx, |input, cx| {
                     input.nav_linear(NavigationDirection::Forward, TextBoundary::Graphmeme, cx)
                 });
-                if let Some(controls) = self.arguments.as_mut() {
-                    if let Some(Control::Text { caret, .. }) = controls.fields.get_mut(index) {
-                        *caret = *caret + 1;
-                    }
+                if let Some(Control::Text { caret, .. }) = self
+                    .arguments
+                    .as_mut()
+                    .and_then(|controls| controls.fields.get_mut(index))
+                {
+                    *caret += 1;
                 }
             }
         } else {
@@ -687,10 +692,12 @@ impl LauncherWindow {
     ) {
         if let Some((index, input)) = self.focused_argument_text(window, cx) {
             input.update(cx, |input, cx| input.move_to(0, cx));
-            if let Some(controls) = self.arguments.as_mut() {
-                if let Some(Control::Text { caret, .. }) = controls.fields.get_mut(index) {
-                    *caret = 0;
-                }
+            if let Some(Control::Text { caret, .. }) = self
+                .arguments
+                .as_mut()
+                .and_then(|controls| controls.fields.get_mut(index))
+            {
+                *caret = 0;
             }
         } else {
             self.query_field()
@@ -705,10 +712,12 @@ impl LauncherWindow {
         if let Some((index, input)) = self.focused_argument_text(window, cx) {
             let end = input.read(cx).as_str().chars().count();
             input.update(cx, |input, cx| input.move_to(end, cx));
-            if let Some(controls) = self.arguments.as_mut() {
-                if let Some(Control::Text { caret, .. }) = controls.fields.get_mut(index) {
-                    *caret = end;
-                }
+            if let Some(Control::Text { caret, .. }) = self
+                .arguments
+                .as_mut()
+                .and_then(|controls| controls.fields.get_mut(index))
+            {
+                *caret = end;
             }
         } else {
             let end = self.query_field().read(cx).as_str().chars().count();
@@ -921,6 +930,7 @@ impl LauncherWindow {
     /// placeholder with a chevron, Enter, Space or Down (or a click)
     /// opening its choices below it — a leading empty choice, then the
     /// options — on the anchored, deferred popover a select's popup is.
+    #[allow(clippy::too_many_arguments)]
     fn argument_choice(
         &self,
         index: usize,

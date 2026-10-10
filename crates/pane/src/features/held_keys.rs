@@ -139,7 +139,7 @@ impl LauncherWindow {
         // the platform's own would be, in press order.
         let entity = cx.entity();
         window.defer(cx, move |window, cx| {
-            entity.update(cx, |this, cx| {
+            entity.update(cx, |this, _cx| {
                 this.held.replaying = true;
             });
             for keystroke in keys {
