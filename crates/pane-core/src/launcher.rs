@@ -50,7 +50,9 @@ mod crash_notice;
 mod designed_list;
 mod designed_views;
 
-pub use designed_list::{DesignedDropdown, DesignedList, DesignedRow, GridShape};
+pub use designed_list::{
+    DesignedDropdown, DesignedList, DesignedRow, GridShape, LOADING_MS,
+};
 mod feedback;
 mod hotkeys;
 mod icon_loads;

@@ -99,7 +99,8 @@ impl QueryField {
             // flight, so fast typing asks only for the text the user
             // stops at.
             if this.designed_list_searches() {
-                this.designed_search_typed(input.read(cx).as_str(), cx);
+                let typed = input.read(cx).as_str().to_owned();
+                this.designed_search_typed(&typed, cx);
                 cx.notify();
                 return;
             }

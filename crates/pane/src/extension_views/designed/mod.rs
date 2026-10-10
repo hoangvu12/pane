@@ -50,7 +50,7 @@ mod tree;
 use std::time::{Duration, Instant};
 
 use gpui::prelude::*;
-use gpui::{App, Context, KeyBinding, actions, div, px};
+use gpui::{AnyElement, App, Context, KeyBinding, actions, div, px};
 
 use gpui_elements::editable_text::EditableTextState;
 use pane_core::{DesignedHandler, DesignedViewSnapshot};

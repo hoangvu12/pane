@@ -94,6 +94,24 @@ pub(super) fn place_child(
     index: usize,
     duplicates: &HashSet<&str>,
 ) {
+    let held = child.key.as_deref().filter(|key| !duplicates.contains(key));
+    push(path, held, index);
+}
+
+/// As [`place_child`], for a set of owned keys (the designed list's
+/// presentation holds its own).
+pub(super) fn place_child_owned(
+    path: &mut String,
+    child: &Node,
+    index: usize,
+    duplicates: &std::collections::HashSet<String>,
+) {
+    let held = child
+        .key
+        .as_deref()
+        .filter(|key| !duplicates.contains(*key));
+    push(path, held, index);
+}
     let key = child.key.as_deref().filter(|key| !duplicates.contains(key));
     push(path, key, index);
 }
@@ -119,7 +137,7 @@ pub(super) fn duplicate_keys(parent: &Node) -> HashSet<&str> {
 /// search field, selection, rows, dropdown, empty view and detail pane the
 /// window draws (#240). `None` on a tree that names none.
 pub(super) fn find_list(tree: &DesignedTree) -> Option<(String, &Node)> {
-    fn held(node: &Node, path: &mut String) -> Option<(String, &Node)> {
+    fn held<'a>(node: &'a Node, path: &mut String) -> Option<(String, &'a Node)> {
         let start = path.len();
         let found = match &node.kind {
             NodeKind::List(_) | NodeKind::Grid(_) => Some(node),

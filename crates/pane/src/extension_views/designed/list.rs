@@ -187,11 +187,11 @@ impl LauncherWindow {
             .find(|(held, _)| held == key)
             .map(|(_, path)| format!("{path}/row"))
             .unwrap_or_else(|| format!("/{key}/row"));
-        let duplicates = tree::duplicate_keys(content);
+        let duplicates = duplicate_keys_of(content);
         let mut drawn = Vec::new();
         for (index, child) in content.iter().enumerate() {
             let start = path.len();
-            tree::place_child(&mut path, child, index, &duplicates);
+            tree::place_child_owned(&mut path, child, index, &duplicates);
             drawn.push(tree::draw_node(child, &mut path, draw, cx));
             path.truncate(start);
         }
@@ -221,6 +221,15 @@ impl LauncherWindow {
         let visuals = crate::settings::launcher_visuals(cx);
         let theme = visuals.theme;
         let geometry = &theme.geometry;
+        // The cells' titles and subtitles are the launcher's rows', which
+        // the designed rows sit beside.
+        let titles: Vec<(String, Option<String>)> = self
+            .launcher
+            .view()
+            .rows
+            .iter()
+            .map(|row| (row.title.clone(), row.subtitle.clone()))
+            .collect();
         let mut sections = Vec::new();
         let mut at = 0;
         let mut rest = list.rows.len();
@@ -365,9 +374,13 @@ impl LauncherWindow {
             None => self.render_designed_row(view, &row.key, selected, cx),
         };
         let key = row.key.clone();
-        let title: Option<SharedString> =
-            row.title.clone().filter(|title| !title.is_empty()).map(SharedString::from);
-        let subtitle = row.subtitle.clone();
+        let title: Option<SharedString> = titles
+            .get(index)
+            .map(|(title, _)| title.clone())
+            .filter(|title| !title.is_empty())
+            .map(SharedString::from);
+        let subtitle: Option<String> =
+            titles.get(index).and_then(|(_, subtitle)| subtitle.clone());
         let aspect = shape.aspect_ratio;
         let cell = div()
             .id(format!("designed-cell-{}", row.key))
@@ -441,8 +454,9 @@ impl LauncherWindow {
             .role(Role::ListBoxOption)
             .map(|cell| {
                 cell.aria_label(
-                    row.title
-                        .clone()
+                    titles
+                        .get(index)
+                        .map(|(title, _)| title.clone())
                         .filter(|title| !title.is_empty())
                         .unwrap_or_else(|| SharedString::from("cell")),
                 )
@@ -526,4 +540,20 @@ pub(super) fn screen_list_of(window: &LauncherWindow) -> Option<ScreenList> {
     };
     let list = view.list.clone()?;
     Some(ScreenList { view, list })
+}
+
+/// The keys the children share with a sibling, as `tree::duplicate_keys`
+/// reads a parent's: matched by position instead.
+fn duplicate_keys_of(children: &[Node]) -> std::collections::HashSet<String> {
+    let mut counts: std::collections::HashMap<&str, u32> = std::collections::HashMap::new();
+    for child in children {
+        if let Some(key) = child.key.as_deref() {
+            *counts.entry(key).or_default() += 1;
+        }
+    }
+    counts
+        .into_iter()
+        .filter(|(_, count)| *count > 1)
+        .map(|(key, _)| key.to_owned())
+        .collect()
 }

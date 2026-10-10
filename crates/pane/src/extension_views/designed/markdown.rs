@@ -245,7 +245,14 @@ fn table(
                         .zip(aligns.iter().chain(std::iter::repeat(&no_align)))
                         .enumerate()
                         .map(|(at, (cell, align))| {
-                            cell_element(cell, *align, false, &format!("{path}/{index}/{at}"), draw)
+                            cell_element(
+                                cell,
+                                *align,
+                                false,
+                                &format!("{path}/{index}/{at}"),
+                                draw,
+                                cx,
+                            )
                         })
                         .collect::<Vec<AnyElement>>(),
                 ),
@@ -377,7 +384,7 @@ fn inlines_element(
                     .flex_none()
                     .min_w(px(0.))
                     .italic()
-                    .child(inlines_element(inner, draw)),
+                    .child(inlines_element(inner, draw, cx)),
             ),
             Inline::Strong(inner) => element.child(
                 div()
@@ -385,7 +392,7 @@ fn inlines_element(
                     .min_w(px(0.))
                     .font_weight(theme.typography.medium)
                     .text_color(theme.text_title)
-                    .child(inlines_element(inner, draw)),
+                    .child(inlines_element(inner, draw, cx)),
             ),
             Inline::Link { text, href } => {
                 let label = plain(text);

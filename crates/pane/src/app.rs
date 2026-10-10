@@ -1905,9 +1905,10 @@ impl Render for LauncherWindow {
         let material = visuals.material;
         let empty = match &view.screen {
             Screen::Root { .. } => "No commands are installed.",
-            Screen::Command
-            | Screen::CommandSearch { .. }
-            | Screen::DesignedView(view) if view.list.is_some() => "This command has no items.",
+            Screen::Command | Screen::CommandSearch { .. } => "This command has no items.",
+            // A designed view whose tree names a List: its items are the
+            // rows; one that names none keeps its content-only note.
+            Screen::DesignedView(view) if view.list.is_some() => "This command has no items.",
             Screen::Package { .. } => "Nothing to install.",
             Screen::Form(_) => "",
             Screen::Extensions { .. } => "No extensions are installed.",
@@ -2134,16 +2135,16 @@ impl Render for LauncherWindow {
             // the Grid's cells, or the empty view), the detail pane beside
             // the rows (#240). The tree alone otherwise.
             Screen::DesignedView(designed) => match designed.list.as_ref() {
-                Some(list) => {
+                Some(shown) => {
                     let results = actions_panel::dimmed(
                         motion::arriving(list, arriving).into_any_element(),
                         self.actions.is_some(),
                         &theme,
                     );
-                    let body = self.render_designed_list_body(&designed, list, results, cx);
+                    let body = self.render_designed_list_body(&designed, shown, results, cx);
                     let title = view.title.clone();
                     motion::arriving(
-                        self.render_designed_search(&designed, list, title, body, cx),
+                        self.render_designed_search(&designed, shown, title, body, cx),
                         arriving,
                     )
                     .into_any_element()
