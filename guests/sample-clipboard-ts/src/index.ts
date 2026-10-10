@@ -173,24 +173,17 @@ async function render(): Promise<List> {
       ),
     );
   }
-  items.push({
-    ...item(
+  items.push(
+    item(
       "retention",
       `Keep items for ${span(status.retentionSeconds)}`,
       "Older items are deleted, also while Pane is stopped or the extension is disabled · Enter changes it",
-    ), span(seconds)],
-      ),
-      "Keep",
     ),
-  });
+  );
   const excluded = status.excluded.length === 0 ? "None excluded" : `${status.excluded.length} excluded`;
-  items.push({
-    ...item("exclude", "Exclude a program", `Text copied from it is never kept · ${excluded}`)
-        },
-      ],
-      submitLabel: "Exclude",
-    },
-  });
+  items.push(
+    item("exclude", "Exclude a program", `Text copied from it is never kept · ${excluded}`),
+  );
   for (const program of status.excluded) {
     items.push(
       action(`${INCLUDE}${program}`, `Stop excluding ${program}`, `Text copied from ${program} is not kept`),

@@ -104,16 +104,6 @@ function span(seconds) {
   return plural(count, one, many);
 }
 
-/**
- * A form with one choice field.
- * @param {string} title
- * @param {string} id
- * @param {string} label
- * @param {[string, string][]} choices
- * @param {string} submitLabel
- * @returns {import("@pane-app/extension").Form}
- */
-
 /** @param {history.HistoryStatus} status */
 function toggle(status) {
   const kept = plural(status.items, "item", "items");
@@ -270,16 +260,13 @@ export const command = {
         ),
       );
     }
-    items.push({
-      ...item(
+    items.push(
+      item(
         "retention",
         `Keep items for ${span(status.retentionSeconds)}`,
         "Older items are deleted, also while Pane is stopped or the extension is disabled · Enter changes it",
-      ), span(seconds)],
-        ),
-        "Keep",
       ),
-    });
+    );
     const excluded = status.excluded.length === 0 ? "None excluded" : `${status.excluded.length} excluded`;
     items.push({
       ...item("exclude", "Exclude a program", `Text copied from it is never kept · ${excluded}`),
@@ -307,11 +294,9 @@ export const command = {
           ),
         );
       }
-      items.push({
-        ...item("delete-recent", "Delete recent items", "Deletes what you copied in the last 15 minutes, hour or day"), label]),
-          "Delete",
-        ),
-      });
+      items.push(
+        item("delete-recent", "Delete recent items", "Deletes what you copied in the last 15 minutes, hour or day"),
+      );
     }
     items.push(...entries.map(entryItem));
     if (entries.length === 0 && status.capture === "on") {
