@@ -1763,7 +1763,11 @@ fn typing_an_applications_name_shows_it_and_enter_opens_it(cx: &mut TestAppConte
     cx.simulate_input("fire");
     // Pane's install row matches the four letters fuzzily below the
     // application's prefix match (#193).
-    wait_for_rows(&window, cx, &["Launch Firefox", "Install extension from Git…"]);
+    wait_for_rows(
+        &window,
+        cx,
+        &["Launch Firefox", "Install extension from Git…"],
+    );
     assert!(
         cx.debug_bounds("row-Launch Firefox").is_some(),
         "the application is rendered"
@@ -2345,7 +2349,11 @@ fn a_running_action_cannot_be_dispatched_again_through_the_footer_button(cx: &mu
     cx.simulate_input("fire");
     // Pane's install row matches the four letters fuzzily below the
     // application's prefix match (#193).
-    wait_for_rows(&window, cx, &["Launch Firefox", "Install extension from Git…"]);
+    wait_for_rows(
+        &window,
+        cx,
+        &["Launch Firefox", "Install extension from Git…"],
+    );
     let nodes = accessible_nodes(cx);
     node(&nodes, "Button", "Open application");
     let button = cx

@@ -101,7 +101,14 @@ fn a_previewed_local_package_installs_and_its_command_runs() {
     let launcher = dirs.launcher();
     assert_eq!(
         titles(&launcher),
-        [CREATE_ROW, IMPORT_ROW, INSTALL_ROW, GIT_ROW, NPM_ROW, SETTINGS_ROW]
+        [
+            CREATE_ROW,
+            IMPORT_ROW,
+            INSTALL_ROW,
+            GIT_ROW,
+            NPM_ROW,
+            SETTINGS_ROW
+        ]
     );
     assert!(launcher.selected_asks_for_folder());
 
@@ -556,7 +563,14 @@ fn unsupported_packages_are_explained_and_not_installed() {
         launcher.back();
         assert_eq!(
             titles(&launcher),
-            [CREATE_ROW, IMPORT_ROW, INSTALL_ROW, GIT_ROW, NPM_ROW, SETTINGS_ROW],
+            [
+                CREATE_ROW,
+                IMPORT_ROW,
+                INSTALL_ROW,
+                GIT_ROW,
+                NPM_ROW,
+                SETTINGS_ROW
+            ],
             "{case}"
         );
     }
