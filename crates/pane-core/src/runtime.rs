@@ -427,7 +427,7 @@ impl CallFor {
 /// sequence number, and how long the view asked Pane to wait before
 /// rendering it again (`refresh-after-ms`, #236: the launcher schedules
 /// the refresh through it).
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct DesignedRendered {
     pub tree: DesignedTree,
     /// The sequence number the render was asked with: the context's
@@ -460,7 +460,7 @@ pub const MAX_NAVIGATION_DEPTH: usize = 32;
 /// view does), a view the answer pushed above it or replaced it with (now
 /// the top of the stack, its first tree drawn), or a pop of the view
 /// itself — dropped in the runtime, its result answered to the view below.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum DesignedNext {
     /// The view answered nothing next: its tree, as re-rendered.
     Tree(DesignedRendered),
