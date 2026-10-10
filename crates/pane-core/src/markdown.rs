@@ -195,10 +195,10 @@ fn blocks(lines: &mut Lines) -> Vec<Block> {
 /// language after it. The bool says the fence is a tilde one.
 fn fence(line: &str) -> Option<(bool, Option<String>)> {
     let tilde = line.starts_with("~~~");
-    let (mark, rest) = if tilde {
-        ("~~~", &line[3..])
+    let rest = if tilde {
+        &line[3..]
     } else {
-        ("```", line.strip_prefix("```")?)
+        line.strip_prefix("```")?
     };
     if rest.is_empty() {
         return Some((tilde, None));

@@ -933,6 +933,7 @@ fn span_of(value: &Value) -> Result<Span, ReadError> {
         kind: "text".into(),
         key: None,
         name: None,
+        navigation_title: None,
         requires: None,
         fallback: None,
         children: None,
@@ -1256,6 +1257,7 @@ fn metadata_list(wire: &WireNode) -> Result<MetadataList, ReadError> {
                     kind: "item".into(),
                     key: None,
                     name: None,
+                    navigation_title: None,
                     requires: None,
                     fallback: None,
                     children: None,
@@ -1363,6 +1365,7 @@ fn variant(value: Option<&Value>) -> Result<Option<Surface>, ReadError> {
         kind: "node".into(),
         key: None,
         name: None,
+        navigation_title: None,
         requires: None,
         fallback: None,
         children: None,
@@ -1636,7 +1639,7 @@ fn paint_of(value: &Value, name: &str, exact: bool) -> Result<Paint, ReadError> 
 /// An icon property, read leniently as the list tree reads one: an icon
 /// Pane cannot read is `None` and is not drawn. An inline `data:` URL over
 /// the bound is the extension's error.
-fn icon_of(value: Option<&Value>, name: &str) -> Result<Option<Icon>, ReadError> {
+fn icon_of(value: Option<&Value>, _name: &str) -> Result<Option<Icon>, ReadError> {
     let Some(value) = value else {
         return Ok(None);
     };
