@@ -10,6 +10,13 @@
       "subtitle": "A sample command implemented by a Rust extension",
       "component": "sample_rust.wasm",
       "rootResults": true
+    },
+    {
+      "id": "form",
+      "title": "Greet someone",
+      "subtitle": "A form the guest checks, on the designed tree",
+      "component": "sample_rust.wasm",
+      "mode": "designed"
     }
   ]
 }

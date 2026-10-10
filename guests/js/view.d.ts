@@ -317,10 +317,13 @@ export interface CheckboxProps extends NodeProps {
   onChange?: () => unknown;
 }
 
-/** One option of a segmented control or a select. */
+/** One option of a segmented control, a select or a tag picker. */
 export interface Option {
   value: string;
   label?: string;
+  /** The section the option belongs to, drawn as a group's header
+   * (#241). */
+  section?: string;
 }
 
 /** A segmented control's properties. */
@@ -335,8 +338,42 @@ export interface SegmentedProps extends NodeProps {
 export interface SelectProps extends NodeProps {
   options: Option[];
   value?: string;
+  placeholder?: string;
   label?: string;
   onChange?: () => unknown;
+}
+
+/** What every field of a form carries around its control (#241): its
+ * title over it, the note under it, the error the view's last answer
+ * set, the value it starts from, the keyboard when the form opens, and
+ * whether its last submitted value is kept as the package's settings and
+ * prefilled the next time the field appears. */
+export interface FieldProps extends NodeProps {
+  id?: string;
+  title?: string;
+  info?: string;
+  error?: string;
+  defaultValue?: unknown;
+  autoFocus?: boolean;
+  remember?: boolean;
+}
+
+/** A form's properties (#241): its children the author's own layout, the
+ * fields anywhere in it, its submission an action. */
+export interface FormProps extends NodeProps {
+  /** What the submit button says; "Submit" by default. */
+  submitTitle?: string;
+  /** Runs with the form's values when it is submitted, keyed by the
+   * fields' `id`s. */
+  onSubmit?: (values: FormSubmittedValues) => unknown;
+}
+
+/** The values a form was submitted with (#241), keyed by the fields'
+ * `id`s: a text field's, password field's, text area's, date field's,
+ * dropdown's or single-path picker's text; a checkbox's or toggle's
+ * state; a tag picker's or picker-of-many's chosen list. */
+export interface FormSubmittedValues {
+  [id: string]: string | boolean | string[] | undefined;
 }
 
 /** A slider's properties. */
@@ -518,6 +555,29 @@ export declare const TextArea: (props: TextInputProps) => Element;
 
 /** A select, its choice changed by its `onChange`. */
 export declare const Select: (props: SelectProps) => Element;
+
+/**
+ * A form (#241): its children the author's own layout, the fields
+ * anywhere in it, and its submission an action. `onSubmit` runs with the
+ * values the form was submitted with; Enter in a single-line field
+ * submits, as Ctrl+Enter does in a text area and the submit button does.
+ */
+export declare const Form: (props: FormProps) => Element & {
+  TextField: (props: FieldProps & { placeholder?: string; onInput?: (value: string) => unknown; onChange?: (value: string) => unknown; throttleMs?: number }) => Element;
+  PasswordField: (props: FieldProps & { placeholder?: string; onInput?: (value: string) => unknown; onChange?: (value: string) => unknown }) => Element;
+  TextArea: (props: FieldProps & { placeholder?: string; onInput?: (value: string) => unknown; onChange?: (value: string) => unknown }) => Element;
+  Checkbox: (props: FieldProps & { label?: string; onChange?: (on: boolean) => unknown }) => Element;
+  Toggle: (props: FieldProps & { label?: string; onChange?: (on: boolean) => unknown }) => Element;
+  DatePicker: (props: FieldProps & { placeholder?: string; onChange?: (value: string) => unknown }) => Element;
+  DateTimePicker: (props: FieldProps & { placeholder?: string; onChange?: (value: string) => unknown }) => Element;
+  Dropdown: (props: FieldProps & { options: Option[]; placeholder?: string; onChange?: (value: string) => unknown; onSearchText?: (query: string) => unknown }) => Element;
+  TagPicker: (props: FieldProps & { options: Option[]; onChange?: (tags: string[]) => unknown }) => Element;
+  FilePicker: (props: FieldProps & { allowMultiple?: boolean; onChange?: (value: string) => unknown }) => Element;
+  FolderPicker: (props: FieldProps & { allowMultiple?: boolean; onChange?: (value: string) => unknown }) => Element;
+  Description: (props: NodeProps) => Element;
+  Separator: (props: NodeProps) => Element;
+  Link: (props: NodeProps & { label?: string; onClick?: () => unknown }) => Element;
+};
 
 /** A fragment: its children are drawn where it sits, unwrapped. */
 export declare const Fragment: unique symbol;

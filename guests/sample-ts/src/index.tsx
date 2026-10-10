@@ -1,18 +1,18 @@
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 //
 // Pane's sample command in TypeScript: a list with one action per item, a
-// form, a color picker the command draws itself and a root result computed
-// from the query ("reverse <text>"). Items, titles, results,
+// form the "Greet someone" command of the same package answers on the
+// designed tree, a color picker the command draws itself and a root result
+// computed from the query ("reverse <text>"). Items, titles, results,
 // errors and drawings match the Rust sample (guests/sample-rust) and the
 // JavaScript sample.
 import type {
   Command,
   CustomView,
-  FieldValue,
-  Form,
-  FormError,
+  DesignedView,
   Frame,
   Key,
+  LaunchRecord,
   List,
   RootResult,
   RootResults,
@@ -20,6 +20,8 @@ import type {
   ViewEvent,
 } from "@pane-app/extension";
 import { showToast } from "@pane-app/extension/feedback";
+import { Column, Form, Text, createView, useState } from "@pane-app/extension/view";
+import type { Element, FormSubmittedValues } from "@pane-app/extension/view";
 import { waitFor }from "wasi:clocks/monotonic-clock@0.3.0";
 import * as z from "zod/mini";
 
@@ -34,23 +36,6 @@ const Settings = z.object({
 
 /** The greeting form's options, by id. */
 const GREETINGS = { hello: "Hello", morning: "Good morning", welcome: "Welcome" };
-
-/** The "form" item's form: a name to greet and a greeting to choose. */
-const GREETING_FORM: Form = {
-  title: "Greet someone",
-  fields: [
-    { id: "name", label: "Name", kind: { tag: "text", val: { placeholder: "Ada Lovelace" } } },
-    {
-      id: "greeting",
-      label: "Greeting",
-      kind: {
-        tag: "choice",
-        val: Object.entries(GREETINGS).map(([id, label]) => ({ id, label })),
-      },
-    },
-  ],
-  submitLabel: "Greet",
-};
 
 // Checks the submitted values in field order; the first problem is reported.
 // Lengths count characters (code points), like the Rust sample.
@@ -218,7 +203,6 @@ async function render(): Promise<List> {
       { id: "wait", title: "Wait briefly", subtitle: "Await a WASI 0.3 clock, then answer", onAction: () => act("wait") },
       { id: "validate", title: "Validate settings", subtitle: "Reject settings with an out-of-range port", onAction: () => act("validate") },
       { id: "random", title: "Roll a number", subtitle: "A random number from this instance", onAction: () => act("random") },
-      { id: "form", title: "Greet someone", subtitle: "Fill in a form the guest checks", form: GREETING_FORM },
       {
         id: "color",
         title: "Choose a color",
@@ -245,19 +229,14 @@ async function render(): Promise<List> {
   };
 }
 
-async function submitForm(itemId: string, values: FieldValue[]): Promise<string> {
-  if (itemId !== "form") {
-    throw { message: `unknown form: ${itemId}` } satisfies FormError;
+async function openView(
+  commandId: string,
+  _launch: LaunchRecord,
+): Promise<DesignedView> {
+  if (commandId !== "form") {
+    throw new Error("this command opens no designed view");
   }
-  const submitted = Object.fromEntries(values.map(({ id, value }) => [id, value]));
-  const parsed = z.safeParse(Greeting, submitted);
-  if (!parsed.success) {
-    // A thrown FormError is shown next to its field.
-    const issue = parsed.error.issues[0];
-    throw { field: String(issue.path[0]), message: issue.message } satisfies FormError;
-  }
-  const { name, greeting } = parsed.data;
-  return `${GREETINGS[greeting]}, ${name}, from the TypeScript guest`;
+  return createView(GreetingForm);
 }
 
 async function openCustomView(itemId: string): Promise<CustomView> {
@@ -267,7 +246,7 @@ async function openCustomView(itemId: string): Promise<CustomView> {
   return new ColorPicker();
 }
 
-export const command: Command = { render, submitForm, openCustomView };
+export const command: Command = { render, openView, openCustomView };
 
 /**
  * "reverse <text>" typed into root search lists the text reversed, which
@@ -301,3 +280,79 @@ async function resultsFor(query: string): Promise<RootResult[]> {
 }
 
 export const rootResults: RootResults = { resultsFor };
+
+/**
+ * The "Greet someone" command's view (#241): the greeting form — every
+ * field the designed tree's forms offer, so the sample shows each kind.
+ * A submission validates the name and answers with the greeting; the
+ * fields' values arrive with the submission, keyed by their `id`s, and
+ * the name's is remembered: Pane keeps it as the package's settings and
+ * prefills it the next time the form opens.
+ */
+function GreetingForm(): Element {
+  const [answer, setAnswer] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const submit = (values: FormSubmittedValues) => {
+    const submitted = z.safeParse(Greeting, values);
+    if (!submitted.success) {
+      // The first problem marks its field in the tree the view answers
+      // with, as its validation error.
+      setError(submitted.error.issues[0].message);
+      return;
+    }
+    setError(null);
+    const { name, greeting } = submitted.data;
+    setAnswer(`${GREETINGS[greeting]}, ${name}, from the TypeScript guest`);
+  };
+  const form = (
+    <Form key="form" submitTitle="Greet" onSubmit={submit}>
+      <Form.TextField
+        key="name"
+        id="name"
+        title="Name"
+        placeholder="Ada Lovelace"
+        remember
+        autoFocus
+        error={error ?? undefined}
+      />
+      <Form.PasswordField key="secret" id="secret" title="Secret" />
+      <Form.TextArea key="notes" id="notes" title="Notes" />
+      <Form.DatePicker key="day" id="day" title="Day" />
+      <Form.DateTimePicker key="at" id="at" title="At" />
+      <Form.Dropdown
+        key="greeting"
+        id="greeting"
+        title="Greeting"
+        options={[
+          { value: "hello", label: "Hello", section: "Plain" },
+          { value: "morning", label: "Good morning", section: "Warm" },
+          { value: "welcome", label: "Welcome", section: "Warm" },
+        ]}
+        defaultValue="hello"
+      />
+      <Form.TagPicker
+        key="tags"
+        id="tags"
+        title="Tags"
+        options={[
+          { value: "friend", label: "Friend" },
+          { value: "colleague", label: "Colleague" },
+          { value: "family", label: "Family" },
+        ]}
+      />
+      <Form.FilePicker key="file" id="file" title="File" />
+      <Form.FolderPicker key="folder" id="folder" title="Folder" allowMultiple />
+      <Form.Checkbox key="updates" id="updates" label="Send updates" />
+      <Form.Toggle key="quiet" id="quiet" label="Quiet mode" />
+    </Form>
+  );
+  if (answer === "") {
+    return form;
+  }
+  return (
+    <Column gap="m">
+      <Text style="title">{answer}</Text>
+      {form}
+    </Column>
+  );
+}

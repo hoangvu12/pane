@@ -33,10 +33,7 @@
 // It also makes whatever a handler throws an error it answers with, never a
 // crash:
 //
-// - from `submitForm`, a `FormError`-like object (`{ field?, message }`) as
-//   it is, and anything else (an `Error`, a string) as a message about the
-//   whole form;
-// - from every other handler that answers with an error (`render`, an
+// - from every handler that answers with an error (`render`, an
 //   item's `onAction`, a submenu's `onOpen`, `runSearchResult`, `run`,
 //   `openCustomView`, a custom view's `handleEvent`, `openView`, a designed
 //   view's `handleEvent`, `resultsFor`, `results`, `runOperation`,
@@ -68,19 +65,6 @@ function message(thrown) {
     return thrown.message;
   }
   return String(thrown);
-}
-
-/** The form error for what `submitForm` threw. */
-function formError(thrown) {
-  const plain =
-    thrown !== null &&
-    typeof thrown === "object" &&
-    !(thrown instanceof Error) &&
-    typeof thrown.message === "string";
-  if (plain && typeof thrown.field === "string") {
-    return { field: thrown.field, message: thrown.message };
-  }
-  return { message: message(thrown) };
 }
 
 /**
@@ -121,22 +105,6 @@ function adaptView(view) {
  * (the tree it answers is checked host-side).
  */
 const adaptDesignedView = adaptView;
-
-/** A form as the tree carries it, from the `Form` the command gives. */
-function treeForm(form) {
-  if (form === null || typeof form !== "object" || !Array.isArray(form.fields)) return form;
-  return {
-    title: form.title,
-    submitLabel: form.submitLabel,
-    fields: form.fields.map((field) => {
-      const kind = field?.kind;
-      const node = { id: field?.id, label: field?.label, kind: kind?.tag };
-      if (kind?.tag === "choice") node.choices = kind.val;
-      else if (kind?.val?.placeholder != null) node.placeholder = kind.val.placeholder;
-      return node;
-    }),
-  };
-}
 
 /**
  * `given`, an item's actions or a submenu's entries, as the tree writes
@@ -198,7 +166,6 @@ function tree(list, actions) {
             actions,
           );
         }
-        if (item?.form != null) node.form = treeForm(item.form);
         if (item?.platforms != null) node.platforms = item.platforms;
         if (item?.customView != null) node.customView = item.customView;
         // Its icon, tooltips and accessories (#139).
@@ -209,13 +176,10 @@ function tree(list, actions) {
   return JSON.stringify({ version: TREE_VERSION, view: { type: "list", title: list?.title, items } });
 }
 
-/** What a command without `render`, `submitForm` or a view answers. */
+/** What a command without `render` or a view answers. */
 const missing = {
   async render() {
     throw new Error("this command opens no screen");
-  },
-  async submitForm() {
-    throw new Error("this command has no forms");
   },
   async openCustomView() {
     throw new Error("this command has no custom views");
@@ -334,7 +298,6 @@ export function adaptCommand(command) {
       }
       return answer(value);
     },
-    submitForm: adapted(own, "submitForm", formError),
     openCustomView: adapted(own, "openCustomView", message, adaptView),
     openView: adapted(own, "openView", message, adaptDesignedView),
   };

@@ -10,6 +10,13 @@
       "subtitle": "The same command implemented by a JavaScript extension",
       "component": "sample_js.wasm",
       "rootResults": true
+    },
+    {
+      "id": "form",
+      "title": "Greet someone",
+      "subtitle": "A form the guest checks, on the designed tree",
+      "component": "sample_js.wasm",
+      "mode": "designed"
     }
   ]
 }

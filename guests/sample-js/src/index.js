@@ -1,12 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 //
 // Pane's sample command in JavaScript: a list with one action per item, a
-// form, a color picker the command draws itself and a root result computed
-// from the query ("reverse <text>"). Items, titles, results and errors match the Rust sample
-// (guests/sample-rust) and the TypeScript sample. The JSDoc types let
-// TypeScript check this file against Pane's contract; they are optional.
+// a form the "Greet someone" command of the same package answers on the
+// designed tree, a color picker the command draws itself and a root result
+// computed from the query ("reverse <text>"). Items, titles, results and
+// errors match the Rust sample (guests/sample-rust) and the TypeScript
+// sample. The JSDoc types let TypeScript check this file against Pane's
+// contract; they are optional.
 // @ts-check
 import { showToast } from "@pane-app/extension/feedback";
+import { jsxs } from "@pane-app/extension/jsx-runtime";
+import { Column, Form, Text, createView, useState } from "@pane-app/extension/view";
 import { waitFor } from "wasi:clocks/monotonic-clock@0.3.0";
 import * as z from "zod/mini";
 
@@ -21,26 +25,6 @@ const Settings = z.object({
 
 /** The greeting form's options, by id. */
 const GREETINGS = { hello: "Hello", morning: "Good morning", welcome: "Welcome" };
-
-/**
- * The "form" item's form: a name to greet and a greeting to choose.
- * @type {import("@pane-app/extension").Form}
- */
-const GREETING_FORM = {
-  title: "Greet someone",
-  fields: [
-    { id: "name", label: "Name", kind: { tag: "text", val: { placeholder: "Ada Lovelace" } } },
-    {
-      id: "greeting",
-      label: "Greeting",
-      kind: {
-        tag: "choice",
-        val: Object.entries(GREETINGS).map(([id, label]) => ({ id, label })),
-      },
-    },
-  ],
-  submitLabel: "Greet",
-};
 
 // Checks the submitted values in field order; the first problem is reported.
 // Lengths count characters (code points), like the Rust sample.
@@ -217,7 +201,6 @@ export const command = {
         { id: "wait", title: "Wait briefly", subtitle: "Await a WASI 0.3 clock, then answer", onAction: () => act("wait") },
         { id: "validate", title: "Validate settings", subtitle: "Reject settings with an out-of-range port", onAction: () => act("validate") },
         { id: "random", title: "Roll a number", subtitle: "A random number from this instance", onAction: () => act("random") },
-        { id: "form", title: "Greet someone", subtitle: "Fill in a form the guest checks", form: GREETING_FORM },
         {
           id: "color",
           title: "Choose a color",
@@ -244,19 +227,11 @@ export const command = {
     };
   },
 
-  async submitForm(itemId, values) {
-    if (itemId !== "form") {
-      throw { message: `unknown form: ${itemId}` };
+  async openView(commandId) {
+    if (commandId !== "form") {
+      throw new Error("this command opens no designed view");
     }
-    const submitted = Object.fromEntries(values.map(({ id, value }) => [id, value]));
-    const parsed = z.safeParse(Greeting, submitted);
-    if (!parsed.success) {
-      // A thrown FormError ({ field, message }) is shown next to its field.
-      const issue = parsed.error.issues[0];
-      throw { field: String(issue.path[0]), message: issue.message };
-    }
-    const { name, greeting } = parsed.data;
-    return `${GREETINGS[greeting]}, ${name}, from the JavaScript guest`;
+    return createView(GreetingForm);
   },
 
   async openCustomView(itemId) {
@@ -298,3 +273,82 @@ export const rootResults = {
     ];
   },
 };
+
+/**
+ * The "Greet someone" command's view (#241): the greeting form — every
+ * field the designed tree's forms offer, so the sample shows each kind.
+ * A submission validates the name and answers with the greeting; the
+ * fields' values arrive with the submission, keyed by their `id`s, and
+ * the name's is remembered: Pane keeps it as the package's settings and
+ * prefills it the next time the form opens.
+ * @returns {import("@pane-app/extension/view").Element}
+ */
+function GreetingForm() {
+  const [answer, setAnswer] = useState("");
+  const [error, setError] = useState(/** @type {string | null} */ (null));
+  const submit = (/** @type {import("@pane-app/extension/view").FormSubmittedValues} */ values) => {
+    const submitted = z.safeParse(Greeting, values);
+    if (!submitted.success) {
+      // The first problem marks its field in the tree the view answers
+      // with, as its validation error.
+      const issue = submitted.error.issues[0];
+      setError(String(issue.message));
+      return;
+    }
+    setError(null);
+    const { name, greeting } = submitted.data;
+    setAnswer(`${GREETINGS[greeting]}, ${name}, from the JavaScript guest`);
+  };
+  const form = jsxs(Form, {
+    key: "form",
+    submitTitle: "Greet",
+    onSubmit: submit,
+    children: [
+      jsxs(Form.TextField, {
+        id: "name",
+        key: "name",
+        title: "Name",
+        placeholder: "Ada Lovelace",
+        remember: true,
+        autoFocus: true,
+        error: error ?? undefined,
+      }),
+      jsxs(Form.PasswordField, { id: "secret", key: "secret", title: "Secret" }),
+      jsxs(Form.TextArea, { id: "notes", key: "notes", title: "Notes" }),
+      jsxs(Form.DatePicker, { id: "day", key: "day", title: "Day" }),
+      jsxs(Form.DateTimePicker, { id: "at", key: "at", title: "At" }),
+      jsxs(Form.Dropdown, {
+        id: "greeting",
+        key: "greeting",
+        title: "Greeting",
+        options: [
+          { value: "hello", label: "Hello", section: "Plain" },
+          { value: "morning", label: "Good morning", section: "Warm" },
+          { value: "welcome", label: "Welcome", section: "Warm" },
+        ],
+        defaultValue: "hello",
+      }),
+      jsxs(Form.TagPicker, {
+        id: "tags",
+        key: "tags",
+        title: "Tags",
+        options: [
+          { value: "friend", label: "Friend" },
+          { value: "colleague", label: "Colleague" },
+          { value: "family", label: "Family" },
+        ],
+      }),
+      jsxs(Form.FilePicker, { id: "file", key: "file", title: "File" }),
+      jsxs(Form.FolderPicker, { id: "folder", key: "folder", title: "Folder", allowMultiple: true }),
+      jsxs(Form.Checkbox, { id: "updates", key: "updates", label: "Send updates" }),
+      jsxs(Form.Toggle, { id: "quiet", key: "quiet", label: "Quiet mode" }),
+    ],
+  });
+  if (answer === "") {
+    return form;
+  }
+  return jsxs(Column, {
+    gap: "m",
+    children: [jsxs(Text, { style: "title", children: [answer] }), form],
+  });
+}

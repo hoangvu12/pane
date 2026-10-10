@@ -5,15 +5,16 @@
 //! JavaScript and TypeScript samples.
 #![no_std]
 
-use core::cell::Cell;
+use core::cell::{Cell, RefCell};
 
 use pane_extension::alloc::{format, string::String, vec, vec::Vec};
 use pane_extension::feedback::{Toast, show_toast};
+use pane_extension::form;
 use pane_extension::root::{RootAction, RootResult};
+use pane_extension::view::{Cx, IntoAnswer, View};
 use pane_extension::{
-    Choice, Command, CustomView, CustomViewInfo, CustomViewRole, Field, FieldKind, FieldValue,
-    Form, FormError, Frame, GuestCustomView, Item, Key, List, Platform, Rect, Shape, Text,
-    TextField, ViewEvent,
+    Command, CustomView, CustomViewInfo, CustomViewRole, Frame, GuestCustomView, Item, Key, List,
+    Platform, Rect, Shape, Text, ViewEvent, choice,
 };
 
 struct Sample;
@@ -44,33 +45,98 @@ const GREETINGS: [(&str, &str); 3] = [
     ("welcome", "Welcome"),
 ];
 
-/// The "form" item's form: a name to greet and a greeting to choose.
-fn greeting_form() -> Form {
-    Form {
-        title: "Greet someone".into(),
-        fields: vec![
-            Field {
-                id: "name".into(),
-                label: "Name".into(),
-                kind: FieldKind::Text(TextField {
-                    placeholder: Some("Ada Lovelace".into()),
-                }),
-            },
-            Field {
-                id: "greeting".into(),
-                label: "Greeting".into(),
-                kind: FieldKind::Choice(
+/// The form command's view (#241): the greeting form — every field the
+/// designed tree's forms offer, so the sample shows each kind. A
+/// submission validates the name and answers with the greeting; the
+/// fields' values arrive with the submission, keyed by their keys, and
+/// the name's is remembered: Pane keeps it as the package's settings and
+/// prefills it the next time the form opens.
+struct Greeting {
+    /// The name the last submission answered with, shown as the answer.
+    answered: RefCell<String>,
+    /// Why the last submission was refused, on the name's field.
+    error: RefCell<Option<&'static str>>,
+}
+
+impl View for Greeting {
+    fn render(&mut self, cx: &mut Cx<Self>) -> impl IntoAnswer {
+        let submit = cx.form_listener(|this, values| {
+            let name = values.text("name").unwrap_or_default().trim().to_owned();
+            let greeting = values
+                .text("greeting")
+                .and_then(|value| {
                     GREETINGS
                         .iter()
-                        .map(|&(id, label)| Choice {
-                            id: id.into(),
-                            label: label.into(),
-                        })
-                        .collect(),
-                ),
-            },
-        ],
-        submit_label: "Greet".into(),
+                        .find(|&&(id, _)| id == value)
+                        .map(|&(_, label)| label)
+                })
+                .unwrap_or("Hello");
+            if name.is_empty() {
+                *this.error.borrow_mut() = Some("Enter a name");
+                return;
+            }
+            if name.chars().count() > 40 {
+                *this.error.borrow_mut() = Some("Use at most 40 characters");
+                return;
+            }
+            *this.error.borrow_mut() = None;
+            *this.answered.borrow_mut() = format!("{greeting}, {name}, from the Rust guest");
+        });
+        let error = self.error.borrow().clone();
+        let answered = self.answered.borrow().clone();
+        let choice = |value: &str, label: &str| choice(value).label(label);
+        let fields = || {
+            vec![
+                form::text_field("name")
+                    .title("Name")
+                    .placeholder("Ada Lovelace")
+                    .remember()
+                    .error(error.clone().map(str::to_owned).unwrap_or_default())
+                    .auto_focus(),
+                form::password_field("secret").title("Secret"),
+                form::text_area("notes").title("Notes"),
+                form::date_picker("day").title("Day"),
+                form::date_time_picker("at").title("At"),
+                form::dropdown("greeting")
+                    .title("Greeting")
+                    .options([
+                        choice("hello", "Hello").section("Plain"),
+                        choice("morning", "Good morning").section("Warm"),
+                        choice("welcome", "Welcome").section("Warm"),
+                    ])
+                    .default_value("hello"),
+                form::tag_picker("tags")
+                    .title("Tags")
+                    .options([
+                        choice("friend", "Friend"),
+                        choice("colleague", "Colleague"),
+                        choice("family", "Family"),
+                    ]),
+                form::file_picker("file").title("File"),
+                form::folder_picker("folder").title("Folder").allow_multiple(),
+                form::checkbox("updates").label("Send updates"),
+                form::toggle("quiet").label("Quiet mode"),
+            ]
+        };
+        let mut view = form::Form::new()
+            .key("form")
+            .submit_title("Greet")
+            .on_submit(submit);
+        for field in fields() {
+            view = view.child(field);
+        }
+        if answered.is_empty() {
+            view.into_answer()
+        } else {
+            pane_extension::view::column()
+                .gap(pane_extension::view::Space::M)
+                .child(
+                    pane_extension::view::text(answered.as_str())
+                        .style(pane_extension::view::TextStyle::Title),
+                )
+                .child(view)
+                .into_answer()
+        }
     }
 }
 
@@ -199,14 +265,6 @@ impl GuestCustomView for ColorPicker {
     }
 }
 
-/// An error about the field `field`.
-fn invalid(field: &str, message: &str) -> FormError {
-    FormError {
-        field: Some(field.into()),
-        message: message.into(),
-    }
-}
-
 /// Runs the action of the item `id` and shows a toast with what [`outcome`]
 /// answers; each item's action is this with its id.
 async fn act(id: &str) -> Result<(), String> {
@@ -250,7 +308,7 @@ async fn outcome(id: &str) -> Result<String, String> {
 
 impl Command for Sample {
     type CustomView = ColorPicker;
-    type DesignedView = pane_extension::view::NoDesignedView;
+    type DesignedView = Greeting;
 
     async fn render() -> Result<List, String> {
         let item =
@@ -275,7 +333,6 @@ impl Command for Sample {
                 "Roll a number",
                 "A random number from this instance",
             ),
-            item("form", "Greet someone", "Fill in a form the guest checks").form(greeting_form()),
             item(
                 "color",
                 "Choose a color",
@@ -303,38 +360,24 @@ impl Command for Sample {
         ]))
     }
 
-    async fn submit_form(item_id: String, values: Vec<FieldValue>) -> Result<String, FormError> {
-        if item_id != "form" {
-            return Err(FormError {
-                field: None,
-                message: format!("unknown form: {item_id}"),
-            });
-        }
-        let value = |id: &str| {
-            values
-                .iter()
-                .find(|field| field.id == id)
-                .map_or("", |field| field.value.as_str())
-        };
-        let name = value("name").trim();
-        if name.is_empty() {
-            return Err(invalid("name", "Enter a name"));
-        }
-        if name.chars().count() > 40 {
-            return Err(invalid("name", "Use at most 40 characters"));
-        }
-        let greeting = value("greeting");
-        let Some(&(_, greeting)) = GREETINGS.iter().find(|&&(id, _)| id == greeting) else {
-            return Err(invalid("greeting", "Choose a greeting"));
-        };
-        Ok(format!("{greeting}, {name}, from the Rust guest"))
-    }
-
     async fn open_custom_view(item_id: String) -> Result<CustomView, String> {
         if item_id != "color" {
             return Err(format!("unknown view: {item_id}"));
         }
         Ok(CustomView::new(ColorPicker::new()))
+    }
+
+    async fn open_designed_view(
+        command: String,
+        _launch: LaunchRecord,
+    ) -> Result<Greeting, String> {
+        if command != "form" {
+            return Err("this command opens no designed view".into());
+        }
+        Ok(Greeting {
+            answered: RefCell::new(String::new()),
+            error: RefCell::new(None),
+        })
     }
 }
 
