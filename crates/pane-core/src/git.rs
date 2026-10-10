@@ -59,7 +59,6 @@ use std::fmt;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::rc::Rc;
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use sha1_checked::Sha1;
@@ -67,8 +66,10 @@ use sha1_checked::digest::Update;
 
 use crate::downloads::{Download, check_part};
 use crate::http::{Answer, GetError};
-use crate::integrity::hex;
 use crate::packages::{MANIFEST_FILE, capitalized};
+
+#[cfg(test)]
+use crate::integrity::hex;
 
 /// The largest capability advertisement or reference listing Pane reads.
 pub const MAX_REFS: u64 = 16 << 20;
@@ -1298,7 +1299,6 @@ impl Remote {
 
     /// Fetches the one commit `commit`, without its history, as a pack.
     fn fetch(&self, commit: &str, limits: Limits) -> Result<Vec<u8>, String> {
-        let name = self.repository.name();
         let mut arguments = vec![format!("want {commit}")];
         if self.shallow {
             arguments.push("deepen 1".into());
@@ -1336,7 +1336,7 @@ impl Remote {
         let wants: BTreeSet<&Id> = blobs.iter().collect();
         let mut arguments: Vec<String> = wants
             .iter()
-            .map(|id| format!("want {}", hex(*id)))
+            .map(|id| format!("want {}", hex_of(id)))
             .collect();
         arguments.push("no-progress".into());
         arguments.push("done".into());
@@ -1533,6 +1533,12 @@ impl Kind {
 /// An object id: 20 bytes.
 type Id = [u8; 20];
 
+/// The object id `id` as the hexadecimal text the protocol names it by
+/// (`want <id>`).
+fn hex_of(id: &Id) -> String {
+    id.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
 fn parse_hex(text: &str) -> Option<Id> {
     if !is_commit_id(text) {
         return None;
@@ -1573,8 +1579,10 @@ enum Stored {
     RefDelta(Id, Vec<u8>),
 }
 
-/// The objects of a pack, by id, each checked against its id.
-type Objects = HashMap<Id, (Kind, Rc<Vec<u8>>)>;
+/// The objects of a pack, by id, each checked against its id. The
+/// contents are shared, so a partial fetch can keep the revision's trees
+/// and take them across threads (#311).
+type Objects = HashMap<Id, (Kind, Arc<Vec<u8>>)>;
 
 /// Reads the pack `pack` (version 2 or 3): checks its checksum, inflates
 /// each entry, resolves its deltas and computes each object's id.
@@ -1736,14 +1744,14 @@ fn resolve(
     let mut on_entry: HashMap<usize, Vec<usize>> = HashMap::new();
     let mut on_id: HashMap<Id, Vec<usize>> = HashMap::new();
     // (entry, its kind, its contents, the deltas it took to make it)
-    let mut work: Vec<(usize, Kind, Rc<Vec<u8>>, usize)> = Vec::new();
+    let mut work: Vec<(usize, Kind, Arc<Vec<u8>>, usize)> = Vec::new();
     let mut objects = Objects::new();
     let mut unresolved = 0;
     for (i, (_, entry)) in stored.iter_mut().enumerate() {
         match entry {
             // Moved rather than copied: already counted as inflated.
             Stored::Whole(kind, data) => {
-                work.push((i, *kind, Rc::new(std::mem::take(data)), 0));
+                work.push((i, *kind, Arc::new(std::mem::take(data)), 0));
             }
             Stored::OffsetDelta(offset, _) => {
                 let base = *index.get(offset).ok_or("it has a delta with no base")?;
@@ -1780,7 +1788,7 @@ fn resolve(
             budget.give_back(delta.len() as u64);
             drop(delta);
             unresolved -= 1;
-            work.push((delta_at, kind, Rc::new(made), chain + 1));
+            work.push((delta_at, kind, Arc::new(made), chain + 1));
         }
         objects.insert(id, (kind, data));
     }
