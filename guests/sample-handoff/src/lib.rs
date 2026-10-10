@@ -33,14 +33,17 @@ struct Kept {
 
 /// The state, kept in this instance's memory: lost with it, except what
 /// the handoff carries.
-static KEPT: RefCell<Kept> = RefCell::new(Kept {
+static KEPT: KeptCell = KeptCell(RefCell::new(Kept {
     counter: 0,
     draft: String::new(),
-});
+}));
+
+/// [`RefCell`] is not `Sync`; the wrapper is.
+struct KeptCell(RefCell<Kept>);
 
 // SAFETY: a component's code runs on one thread, and no borrow of the
 // state is held across an `await`.
-unsafe impl Sync for RefCell<Kept> {}
+unsafe impl Sync for KeptCell {}
 
 struct Handoff;
 pane_extension::export!(Handoff);
@@ -55,14 +58,14 @@ impl lifecycle::Guest for Handoff {
     /// The state handed to the new code: the counter and the draft, as the
     /// SDK serialises them. `None` would hand nothing over.
     async fn snapshot() -> Option<Vec<u8>> {
-        state::save(&*KEPT.borrow())
+        state::save(&*KEPT.0.borrow())
     }
 
     /// Restores what a replaced instance handed over. An error discards the
     /// state and starts fresh, which is not a failure: this answers one
     /// when the bytes are not this version's state.
     async fn restore(bytes: Vec<u8>) -> Result<(), String> {
-        *KEPT.borrow_mut() = state::load(&bytes)?;
+        *KEPT.0.borrow_mut() = state::load(&bytes)?;
         Ok(())
     }
 }
@@ -74,7 +77,7 @@ impl Command for Handoff {
     /// the actions that change them. Stable item ids, so a reopened screen
     /// keeps its selection.
     async fn render() -> Result<List, String> {
-        let kept = KEPT.borrow();
+        let kept = KEPT.0.borrow();
         Ok(List::new(format!(
             "Handoff: {} counted, draft {}",
             kept.counter,
@@ -82,7 +85,7 @@ impl Command for Handoff {
         ))
         .item(
             Item::new("add", format!("Add one ({} so far)", kept.counter)).on_action(|| async {
-                KEPT.borrow_mut().counter += 1;
+                KEPT.0.borrow_mut().counter += 1;
                 show_toast(Toast::success("Counted one more"));
                 Ok(())
             }),
@@ -114,7 +117,7 @@ impl Command for Handoff {
             .find(|field| field.id == "draft")
             .map(|field| field.value.clone())
             .unwrap_or_default();
-        KEPT.borrow_mut().draft = text;
+        KEPT.0.borrow_mut().draft = text.clone();
         Ok(format!("Saved the draft {}", quoted(&text)))
     }
 }

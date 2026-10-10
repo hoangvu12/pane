@@ -36,11 +36,16 @@ const HELD: &str = "held";
 
 /// The counter this instance keeps in memory: handed to the new code by
 /// the handoff, and lost with the instance without one.
-static COUNTER: RefCell<u64> = RefCell::new(0);
+static COUNTER: CounterCell = CounterCell(RefCell::new(0));
 
 // SAFETY: a component's code runs on one thread, and no borrow of the
 // counter is held across an `await`.
-unsafe impl Sync for RefCell<u64> {}
+/// [`RefCell`] is not `Sync`; the wrapper is.
+struct CounterCell(RefCell<u64>);
+
+// SAFETY: a component's code runs on one thread, and no borrow is held
+// across an `await`.
+unsafe impl Sync for CounterCell {}
 
 struct Fixture;
 pane_extension::export!(Fixture);
@@ -55,13 +60,13 @@ impl lifecycle::Guest for Fixture {
     /// ask for the edges — a snapshot that answers too late, or one beyond
     /// the size limit.
     async fn snapshot() -> Option<Vec<u8>> {
-        match asked(SNAPSHOT) {
+        match asked(SNAPSHOT).as_deref() {
             Some("wait") => {
                 wasip3::clocks::monotonic_clock::wait_for(LONGER_THAN_THE_DEADLINE).await;
                 None
             }
             Some("oversized") => Some(vec![0; (1 << 20) + 1]),
-            _ => state::save(&*COUNTER.borrow()),
+            _ => state::save(&*COUNTER.0.borrow()),
         }
     }
 
@@ -69,11 +74,11 @@ impl lifecycle::Guest for Fixture {
     /// ask for the edges — a restore that answers an error, or one that
     /// traps.
     async fn restore(bytes: Vec<u8>) -> Result<(), String> {
-        match asked(RESTORE) {
+        match asked(RESTORE).as_deref() {
             Some("reject") => Err("the new code rejects the state, as the test asked".into()),
             Some("trap") => panic!("restoring the state traps, as the test asked"),
             _ => {
-                *COUNTER.borrow_mut() = state::load(&bytes)?;
+                *COUNTER.0.borrow_mut() = state::load(&bytes)?;
                 Ok(())
             }
         }
@@ -87,9 +92,9 @@ impl Command for Fixture {
     async fn render() -> Result<List, String> {
         Ok(List::new(title())
             .item(
-                Item::new("add", format!("Add one ({} so far)", *COUNTER.borrow())).on_action(
+                Item::new("add", format!("Add one ({} so far)", *COUNTER.0.borrow())).on_action(
                     || async {
-                        *COUNTER.borrow_mut() += 1;
+                        *COUNTER.0.borrow_mut() += 1;
                         show_toast(Toast::success("Counted one more"));
                         Ok(())
                     },
@@ -116,10 +121,10 @@ impl Command for Fixture {
 
 /// The command's title, saying where the counter stands.
 fn title() -> String {
-    format!("Handoff fixture: {} counted", *COUNTER.borrow())
+    format!("Handoff fixture: {} counted", *COUNTER.0.borrow())
 }
 
 /// What the fixture's settings say for `key`, if anything.
-fn asked(key: &str) -> Option<&str> {
-    settings::get(key).ok().flatten().as_deref()
+fn asked(key: &str) -> Option<String> {
+    settings::get(key).ok().flatten()
 }
