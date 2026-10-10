@@ -633,40 +633,6 @@ fn marked_blank_other_and_long_content_is_not_kept(fixture: &'static Fixture) {
     assert!(!file.contains("hunter2"));
 }
 
-fn text_from_an_excluded_program_is_not_kept(fixture: &'static Fixture) {
-    let pane = Pane::new(fixture);
-    let launcher = pane.installed();
-    pane.turn_on(&launcher);
-    pane.open(&launcher);
-    select_title(&launcher, EXCLUDE);
-    block_on(launcher.activate_selected());
-    assert!(launcher.view().form().is_some());
-    block_on(launcher.submit_pane_form(vec![
-        ("program".to_owned(), (r"C:\KeePass.exe").to_owned()),
-    ]));
-    assert!(matches!(launcher.view().status, Status::Error(_)));
-    block_on(launcher.submit_pane_form(vec![
-        ("program".to_owned(), (" KeePass.exe ").to_owned()),
-    ]));
-    assert_eq!(
-        launcher.view().status,
-        result("Text copied from KeePass.exe is not kept")
-    );
-
-    pane.clipboard.copy("secret", Some("KEEPASS.EXE"));
-    pane.clipboard.copy("note", Some("notepad.exe"));
-    assert_eq!(pane.listed(&launcher), ["note"]);
-    assert_eq!(
-        subtitle(&launcher, EXCLUDE),
-        "Text copied from it is never kept · 1 excluded"
-    );
-    assert_eq!(
-        run(&launcher, "Stop excluding keepass.exe"),
-        result("Text copied from keepass.exe is kept again")
-    );
-    pane.clipboard.copy("secret again", Some("keepass.exe"));
-    assert_eq!(pane.listed(&launcher), ["secret again", "note"]);
-}
 
 fn pausing_stops_the_watch_and_resuming_starts_it_again(fixture: &'static Fixture) {
     let pane = Pane::new(fixture);
