@@ -364,7 +364,7 @@ fn an_update_the_user_chose_hands_the_state_over_and_reopens_the_screen() {
         block_on(updating);
         assert_eq!(
             launcher.view().status,
-            Status::Result(format!("Updated {}", sample.title))
+            Status::Result(format!("Updated {} to 0.1.0", sample.title))
         );
         assert_eq!(
             launcher.view().screen,
