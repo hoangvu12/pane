@@ -649,6 +649,11 @@ pub struct Launcher {
     /// Watches the folders the packages' code registered at run time
     /// (#158), through the native watcher development mode uses.
     watchers: Option<Arc<watchers::Watchers>>,
+    /// Holds the registrations registry's hook alive: the registry keeps
+    /// only a weak handle on it (its holder must outlive it), and the hook
+    /// is what refreshes root search and wakes the worker threads when a
+    /// package registers something (#158).
+    registrations_hook: Option<Arc<dyn Fn() + Send + Sync>>,
     /// Checks for newer versions of the installed npm packages and
     /// updates the eligible ones at a safe boundary (see `updates`).
     /// Only a launcher that installs packages checks anything.
@@ -692,6 +697,9 @@ struct WeakLauncher {
     /// Held weakly, so that Pane stops checking for updates as soon as the
     /// launcher is dropped.
     updates: Option<std::sync::Weak<updates::Updates>>,
+    /// Strong, as the launcher's own handle is: the hook holds only weak
+    /// handles of what it wakes.
+    registrations_hook: Option<Arc<dyn Fn() + Send + Sync>>,
     sources: install::Sources,
     developing: std::sync::Weak<Developing>,
     state: std::sync::Weak<Mutex<State>>,
@@ -719,6 +727,7 @@ impl WeakLauncher {
             clipboard,
             schedules: self.schedules.as_ref().and_then(std::sync::Weak::upgrade),
             services: self.services.as_ref().and_then(std::sync::Weak::upgrade),
+            registrations_hook: self.registrations_hook.clone(),
             timers: self.timers.as_ref().and_then(std::sync::Weak::upgrade),
             watchers: self.watchers.as_ref().and_then(std::sync::Weak::upgrade),
             updates: self.updates.as_ref().and_then(std::sync::Weak::upgrade),
@@ -1659,6 +1668,7 @@ impl Launcher {
             services: None,
             timers: None,
             watchers: None,
+            registrations_hook: None,
             updates: None,
             sources,
             developing,
@@ -1708,13 +1718,15 @@ impl Launcher {
                 let weak = launcher.downgrade();
                 let wake_timers = timers.clone();
                 let wake_watchers = watchers.clone();
-                registrations.set_changed(Arc::new(move || {
+                let hook: Arc<dyn Fn() + Send + Sync> = Arc::new(move || {
                     if let Some(launcher) = weak.upgrade() {
                         launcher.registered();
                     }
                     wake_timers.poke();
                     wake_watchers.poke();
-                }));
+                });
+                registrations.set_changed(hook.clone());
+                launcher.registrations_hook = Some(hook);
                 timers.run(launcher.downgrade());
                 watchers.run(launcher.downgrade());
                 launcher.timers = Some(timers.clone());
@@ -1981,6 +1993,7 @@ impl Launcher {
             clipboard: self.clipboard.as_ref().map(Arc::downgrade),
             schedules: self.schedules.as_ref().map(Arc::downgrade),
             services: self.services.as_ref().map(Arc::downgrade),
+            registrations_hook: self.registrations_hook.clone(),
             timers: self.timers.as_ref().map(Arc::downgrade),
             watchers: self.watchers.as_ref().map(Arc::downgrade),
             updates: self.updates.as_ref().map(Arc::downgrade),
