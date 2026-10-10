@@ -561,7 +561,6 @@ impl LauncherView {
             _ => &[],
         }
     }
-
     /// The open form, on the form screen.
     pub fn form(&self) -> Option<&FormView> {
         match &self.screen {

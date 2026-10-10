@@ -70,8 +70,8 @@ use super::faults::Faults;
 
 use super::{
     CallError, Code, HealthReport, Host, Request, Sent, SharedApplications, SharedClipboard,
-    SharedDirectory, SharedHostFunctions, SharedLaunches, SharedTextMeasures, SharedViewAsks,
-    lock, unavailable,
+    SharedDirectory, SharedHostFunctions, SharedLaunches, SharedTextMeasures, SharedViewAsks, lock,
+    unavailable,
 };
 use crate::helpers::runner::Helpers;
 

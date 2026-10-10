@@ -94,7 +94,12 @@ const CANVAS_CONTEXT: &str = "DesignedCanvas";
 /// events.
 const CANVAS_SEMANTICS_CONTEXT: &str = "DesignedCanvasSemantics";
 
-actions!(designed, [Press, Toggle, Move, Adjust, Commit, Increment, Decrement, Activate]);
+actions!(
+    designed,
+    [
+        Press, Toggle, Move, Adjust, Commit, Increment, Decrement, Activate
+    ]
+);
 
 /// Registers the designed view's key bindings: Enter and Space press a
 /// button or a link, change a toggle or a checkbox; a segmented

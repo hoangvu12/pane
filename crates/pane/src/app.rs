@@ -1965,10 +1965,7 @@ impl Render for LauncherWindow {
         // Whether the result list is what scrolls: a form and a designed
         // view scroll their own content, which the background image does
         // not follow.
-        let listed = !matches!(
-            view.screen,
-            Screen::Form(_) | Screen::DesignedView(_)
-        );
+        let listed = !matches!(view.screen, Screen::Form(_) | Screen::DesignedView(_));
 
         // The content that changes between screens — the results, a form,
         // a designed view — is what arrives with the transition. On the

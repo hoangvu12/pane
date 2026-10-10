@@ -88,11 +88,7 @@ fn open_package<'a>(
     data: &std::path::Path,
     folder: &std::path::Path,
 ) -> (gpui::Entity<LauncherWindow>, &'a mut VisualTestContext) {
-    let launcher = Launcher::with_packages(
-        Runtime::start(),
-        vec![],
-        data.join("extensions"),
-    );
+    let launcher = Launcher::with_packages(Runtime::start(), vec![], data.join("extensions"));
     futures::executor::block_on(launcher.install_package(folder));
     open_launcher(cx, launcher, Some(data))
 }

@@ -83,9 +83,20 @@ enum Layer {
 /// as curves, a circle as four), so the painting walks one grammar.
 #[derive(Clone, Copy)]
 enum Painted {
-    Move { x: f32, y: f32 },
-    Line { x: f32, y: f32 },
-    Quad { cx: f32, cy: f32, x: f32, y: f32 },
+    Move {
+        x: f32,
+        y: f32,
+    },
+    Line {
+        x: f32,
+        y: f32,
+    },
+    Quad {
+        cx: f32,
+        cy: f32,
+        x: f32,
+        y: f32,
+    },
     Cubic {
         c1x: f32,
         c1y: f32,
@@ -103,17 +114,29 @@ enum Painted {
         ccw: bool,
     },
     Close,
-    Fill { color: gpui::Hsla },
-    Stroke { stroke: Stroked },
+    Fill {
+        color: gpui::Hsla,
+    },
+    Stroke {
+        stroke: Stroked,
+    },
     Clip {
         x: f32,
         y: f32,
         width: f32,
         height: f32,
     },
-    Translate { x: f32, y: f32 },
-    Scale { x: f32, y: f32 },
-    Rotate { degrees: f32 },
+    Translate {
+        x: f32,
+        y: f32,
+    },
+    Scale {
+        x: f32,
+        y: f32,
+    },
+    Rotate {
+        degrees: f32,
+    },
 }
 
 /// One stroke as the canvas paints it: its colour resolved (a stroke is a
@@ -243,8 +266,7 @@ pub(super) fn canvas(
         Held::Canvas { focus, bounds, .. } => Some((Some(focus.clone()), bounds.clone())),
         _ => None,
     });
-    let (focus, bounds) =
-        tracked.unwrap_or_else(|| (None, Rc::new(Cell::new(Bounds::default()))));
+    let (focus, bounds) = tracked.unwrap_or_else(|| (None, Rc::new(Cell::new(Bounds::default()))));
 
     // What the events the canvas raises carry: the node's key, the render
     // whose tree is drawn (the tree the user saw), and the handlers the
@@ -292,9 +314,12 @@ pub(super) fn canvas(
         .relative()
         .size_full()
         .overflow_hidden()
-        .children(layers.into_iter().enumerate().map(|(index, layer)| {
-            layer_element(layer, index, path, draw, &bounds, &entity)
-        }))
+        .children(
+            layers
+                .into_iter()
+                .enumerate()
+                .map(|(index, layer)| layer_element(layer, index, path, draw, &bounds, &entity)),
+        )
         .on_mouse_down(
             MouseButton::Left,
             cx.listener(move |this, event: &MouseDownEvent, window, cx| {
@@ -362,14 +387,16 @@ pub(super) fn canvas(
     let (moved, released) = (entity.clone(), entity);
     let element = div()
         .id(path.to_owned())
-        .key_context(if handlers.on_increment.is_some()
-            || handlers.on_decrement.is_some()
-            || handlers.on_activate.is_some()
-        {
-            super::CANVAS_SEMANTICS_CONTEXT
-        } else {
-            super::CANVAS_CONTEXT
-        })
+        .key_context(
+            if handlers.on_increment.is_some()
+                || handlers.on_decrement.is_some()
+                || handlers.on_activate.is_some()
+            {
+                super::CANVAS_SEMANTICS_CONTEXT
+            } else {
+                super::CANVAS_CONTEXT
+            },
+        )
         .debug_selector(move || debug.clone())
         .flex()
         .flex_col()
@@ -709,18 +736,12 @@ fn rectangle(x: f32, y: f32, width: f32, height: f32, radius: Option<f32>) -> Ve
     if radius <= 0. {
         return vec![
             Painted::Move { x, y },
-            Painted::Line {
-                x: x + width,
-                y,
-            },
+            Painted::Line { x: x + width, y },
             Painted::Line {
                 x: x + width,
                 y: y + height,
             },
-            Painted::Line {
-                x,
-                y: y + height,
-            },
+            Painted::Line { x, y: y + height },
             Painted::Close,
         ];
     }
@@ -728,14 +749,8 @@ fn rectangle(x: f32, y: f32, width: f32, height: f32, radius: Option<f32>) -> Ve
     // Each corner is a quadratic curve of its radius; the sides stay
     // straight between them.
     vec![
-        Painted::Move {
-            x: x + radius,
-            y,
-        },
-        Painted::Line {
-            x: far - radius,
-            y,
-        },
+        Painted::Move { x: x + radius, y },
+        Painted::Line { x: far - radius, y },
         Painted::Quad {
             cx: far,
             cy: y,
@@ -762,10 +777,7 @@ fn rectangle(x: f32, y: f32, width: f32, height: f32, radius: Option<f32>) -> Ve
             x,
             y: bottom - radius,
         },
-        Painted::Line {
-            x,
-            y: y + radius,
-        },
+        Painted::Line { x, y: y + radius },
         Painted::Quad {
             cx: x,
             cy: y,
@@ -781,10 +793,7 @@ fn rectangle(x: f32, y: f32, width: f32, height: f32, radius: Option<f32>) -> Ve
 fn circle(x: f32, y: f32, radius: f32) -> Vec<Painted> {
     let k = radius * 4. / 3. * (core::f32::consts::FRAC_PI_2 / 2.);
     vec![
-        Painted::Move {
-            x: x + radius,
-            y,
-        },
+        Painted::Move { x: x + radius, y },
         Painted::Cubic {
             c1x: x + radius,
             c1y: y + k,
@@ -839,7 +848,8 @@ fn sized(
     theme: &crate::ui::theme::Theme,
 ) -> f32 {
     let (style_size, _, _) = tokens::text_style(style, theme);
-    size.map(|Finite(pixels)| pixels).unwrap_or(style_size.as_f32())
+    size.map(|Finite(pixels)| pixels)
+        .unwrap_or(style_size.as_f32())
 }
 
 /// A text operation's weight: its own, or its token style's.
@@ -849,16 +859,11 @@ fn weighted(
     theme: &crate::ui::theme::Theme,
 ) -> f32 {
     let (_, style_weight, _) = tokens::text_style(style, theme);
-    weight
-        .map(|Finite(units)| units)
-        .unwrap_or(style_weight.0)
+    weight.map(|Finite(units)| units).unwrap_or(style_weight.0)
 }
 
 /// A text operation's family: its token style's.
-fn family(
-    style: Option<pane_core::TextStyle>,
-    theme: &crate::ui::theme::Theme,
-) -> SharedString {
+fn family(style: Option<pane_core::TextStyle>, theme: &crate::ui::theme::Theme) -> SharedString {
     tokens::text_style(style, theme).2
 }
 
@@ -1061,11 +1066,17 @@ impl LauncherWindow {
         let key = entry.1.key.clone();
         let seen = entry.1.render;
         let view = entry.0;
-        let Some(handler) = self.launcher.note_designed_canvas(view, &key, width, height) else {
+        let Some(handler) = self
+            .launcher
+            .note_designed_canvas(view, &key, width, height)
+        else {
             cx.notify();
             return;
         };
-        let payload = event("resize", &[number("width", width), number("height", height)]);
+        let payload = event(
+            "resize",
+            &[number("width", width), number("height", height)],
+        );
         self.designed_canvas_send(
             DesignedHandler::Resize,
             handler,
@@ -1352,9 +1363,7 @@ impl LauncherWindow {
             // The handlers of the tree now on screen, as the waiting move
             // is raised on it.
             if let Some((handlers, render, key)) = self.designed_canvas_of(path) {
-                self.designed_canvas_move(
-                    path, at, &modifiers, &handlers, render, window, cx,
-                );
+                self.designed_canvas_move(path, at, &modifiers, &handlers, render, window, cx);
                 let _ = key;
             }
         }
@@ -1459,7 +1468,14 @@ impl LauncherWindow {
         let Some(handler) = handler else {
             return;
         };
-        let payload = event(if over { "pointer-enter" } else { "pointer-leave" }, &[]);
+        let payload = event(
+            if over {
+                "pointer-enter"
+            } else {
+                "pointer-leave"
+            },
+            &[],
+        );
         let key = self.canvas_key(path);
         self.designed_canvas_send(
             DesignedHandler::Pointer,
@@ -1488,9 +1504,7 @@ impl LauncherWindow {
             return;
         };
         let (unit, (dx, dy)) = match delta {
-            gpui::ScrollDelta::Pixels(delta) => {
-                ("pixel", (delta.x.as_f32(), delta.y.as_f32()))
-            }
+            gpui::ScrollDelta::Pixels(delta) => ("pixel", (delta.x.as_f32(), delta.y.as_f32())),
             gpui::ScrollDelta::Lines(delta) => ("line", (delta.x, delta.y)),
         };
         let payload = event(
@@ -1566,7 +1580,9 @@ impl LauncherWindow {
         window: &mut Window,
         cx: &mut gpui::Context<Self>,
     ) {
-        let key = (!key.is_empty()).then(|| key.to_owned()).unwrap_or_default();
+        let key = (!key.is_empty())
+            .then(|| key.to_owned())
+            .unwrap_or_default();
         self.designed_event(handler, callback, key, seen, payload, window, cx);
     }
 }

@@ -107,7 +107,11 @@ fn open<'a>(
 fn open_installed<'a>(
     cx: &'a mut TestAppContext,
     name: &str,
-) -> (Entity<LauncherWindow>, tempfile::TempDir, &'a mut VisualTestContext) {
+) -> (
+    Entity<LauncherWindow>,
+    tempfile::TempDir,
+    &'a mut VisualTestContext,
+) {
     let data = tempfile::tempdir().unwrap();
     let folder = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../target/guests/packages")
@@ -1029,7 +1033,11 @@ fn assistive_technology_sees_the_list_the_selection_and_the_result(cx: &mut Test
 fn open_color<'a>(
     cx: &'a mut TestAppContext,
     sample: &Sample,
-) -> (Entity<LauncherWindow>, tempfile::TempDir, &'a mut VisualTestContext) {
+) -> (
+    Entity<LauncherWindow>,
+    tempfile::TempDir,
+    &'a mut VisualTestContext,
+) {
     let (window, data, cx) = open_installed(cx, &sample.component.replace('_', "-"));
     cx.simulate_keystrokes("enter");
     settle(&window, cx);
@@ -1114,7 +1122,11 @@ fn keys_change_the_color_the_view_shows(cx: &mut TestAppContext, sample: &Sample
     assert_eq!(focused_label(cx).as_deref(), Some("Color"));
     cx.simulate_keystrokes("escape");
     let view = settle(&window, cx);
-    assert!(matches!(view.screen, Screen::Root { .. }), "{:?}", view.screen);
+    assert!(
+        matches!(view.screen, Screen::Root { .. }),
+        "{:?}",
+        view.screen
+    );
 }
 
 fn the_pointer_chooses_and_drags_across_swatches(cx: &mut TestAppContext, sample: &Sample) {
@@ -1154,8 +1166,8 @@ fn open_counter<'a>(
     &'a mut VisualTestContext,
 ) {
     let data = tempfile::tempdir().unwrap();
-    let component = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../target/guests/faulty.wasm");
+    let component =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/guests/faulty.wasm");
     assert!(
         component.exists(),
         "{} is missing; run `cargo xtask guests`",

@@ -306,7 +306,11 @@ mod tests {
             } else {
                 from
             };
-            assert!(from.exists(), "run `cargo xtask guests`: {}", from.display());
+            assert!(
+                from.exists(),
+                "run `cargo xtask guests`: {}",
+                from.display()
+            );
             std::fs::copy(from, source.join(name)).unwrap();
         }
         let launcher = Launcher::with_packages(
@@ -341,7 +345,12 @@ mod tests {
     #[test]
     fn a_crash_closes_the_designed_view_of_the_thread_that_crashed() {
         let (_runtime, launcher) = with_view_open();
-        let thread = launcher.lock().designed_view.as_ref().unwrap().top_id_thread();
+        let thread = launcher
+            .lock()
+            .designed_view
+            .as_ref()
+            .unwrap()
+            .top_id_thread();
 
         launcher.note_runtime_crash(thread, &crashed());
 
@@ -351,7 +360,12 @@ mod tests {
     #[test]
     fn a_crash_leaves_a_designed_view_another_thread_opened() {
         let (_runtime, launcher) = with_view_open();
-        let thread = launcher.lock().designed_view.as_ref().unwrap().top_id_thread();
+        let thread = launcher
+            .lock()
+            .designed_view
+            .as_ref()
+            .unwrap()
+            .top_id_thread();
 
         // Reported late, after a restarted thread opened this view.
         launcher.note_runtime_crash(thread - 1, &crashed());

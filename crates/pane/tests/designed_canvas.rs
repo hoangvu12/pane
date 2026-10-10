@@ -27,8 +27,8 @@ use settle::{settle, until};
 /// receives) open.
 fn open(cx: &mut TestAppContext) -> (Entity<LauncherWindow>, &mut VisualTestContext) {
     let data = tempfile::tempdir().unwrap();
-    let assembled = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../target/guests/packages/designed");
+    let assembled =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/guests/packages/designed");
     assert!(
         assembled.exists(),
         "{} is missing; run `cargo xtask guests`",
@@ -45,8 +45,7 @@ fn open(cx: &mut TestAppContext) -> (Entity<LauncherWindow>, &mut VisualTestCont
     futures::executor::block_on(launcher.install_package(&source));
     cx.executor().allow_parking();
     cx.update(pane::bind_keys);
-    let (window, cx) =
-        cx.add_window_view(|window, cx| LauncherWindow::new(launcher, window, cx));
+    let (window, cx) = cx.add_window_view(|window, cx| LauncherWindow::new(launcher, window, cx));
     cx.simulate_keystrokes("enter");
     let view = settle(&window, cx);
     assert!(
@@ -158,7 +157,11 @@ fn the_canvas_receives_its_richer_input(cx: &mut TestAppContext) {
     );
 
     // The secondary button.
-    cx.simulate_mouse_down(at(30., 10.), gpui::MouseButton::Right, gpui::Modifiers::none());
+    cx.simulate_mouse_down(
+        at(30., 10.),
+        gpui::MouseButton::Right,
+        gpui::Modifiers::none(),
+    );
     until_received(
         &window,
         cx,
@@ -203,8 +206,7 @@ fn the_canvas_is_one_node_with_a_role_a_label_and_a_value(cx: &mut TestAppContex
     // The canvas, the menu button, the status line, the announcer and the
     // window: the drawing adds no nodes of its own.
     assert_eq!(roles.len(), 5, "{roles:?}");
-    let value: Option<String> = cx.update(|_, cx| {
-        canvas_value_of(&window.read(cx).launcher().view().screen)
-    });
+    let value: Option<String> =
+        cx.update(|_, cx| canvas_value_of(&window.read(cx).launcher().view().screen));
     assert!(value.is_some(), "the canvas names its value");
 }

@@ -963,7 +963,11 @@ fn canvas_handler(
                 .fallback
                 .as_deref()
                 .and_then(|fallback| held(fallback, key, read))
-                .or_else(|| node.children.iter().find_map(|child| held(child, key, read))),
+                .or_else(|| {
+                    node.children
+                        .iter()
+                        .find_map(|child| held(child, key, read))
+                }),
         }
     }
     held(&tree.root, key, read)

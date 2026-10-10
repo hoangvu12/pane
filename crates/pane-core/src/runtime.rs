@@ -71,15 +71,15 @@ pub use deadlines::{COMPUTE_LIMIT, UNRESPONSIVE_LIMIT, WARN_AFTER};
 pub(crate) use deadlines::{HostCall, Hosted, Watch};
 
 pub use designed::{
-    Align, Badge, Border, Button, Canvas, CanvasA11y, CanvasHandlers, CanvasOp, CanvasRole,
-    CanvasStroke, CanvasText, COMPONENT_SET, Checkbox, DesignedHandler, DesignedTree, EmptyState,
+    Align, Badge, Border, Button, COMPONENT_SET, Canvas, CanvasA11y, CanvasHandlers, CanvasOp,
+    CanvasRole, CanvasStroke, CanvasText, Checkbox, DesignedHandler, DesignedTree, EmptyState,
     Finite, Fit, IconExtent, IconNode, Image, Justify, KeySequence, Keycap, Layout, Length, Link,
     Loading, MAX_CANVAS_OPS, MAX_CANVAS_TEXT_CHARS, MAX_DEPTH, MAX_INLINE_IMAGE,
     MAX_MARKDOWN_CHARS, MAX_NODES, MAX_PX, MAX_TREE_BYTES, Markdown, MetadataItem, MetadataList,
     Node, NodeKind, Offset, Orientation, Padding, Paint, Place, Progress, RadiusLength, RichRow,
     RowAccessory, SectionHeader, Segment, Segmented, Select, Sizing, Slider, Span, StrokeCap,
-    StrokeJoin, Style, Surface, Tag, Text, TextContent, TextInput, Toggle, key_problems,
-    Tone as ButtonTone,
+    StrokeJoin, Style, Surface, Tag, Text, TextContent, TextInput, Toggle, Tone as ButtonTone,
+    key_problems,
 };
 #[cfg(any(test, debug_assertions))]
 #[doc(hidden)]
@@ -5349,7 +5349,6 @@ async fn unless<T, S>(
     .await
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -5650,7 +5649,9 @@ mod tests {
         // The other command's view is still open, and the package runs
         // again from a fresh instance.
         assert!(block_on(runtime.designed_view_event(view, designed_key_event())).is_ok());
-        assert!(block_on(runtime.render_with(&component, Some(packages.owned_by(&identity)))).is_ok());
+        assert!(
+            block_on(runtime.render_with(&component, Some(packages.owned_by(&identity)))).is_ok()
+        );
         assert_eq!(runtime.status(), RuntimeStatus::Running);
     }
 
@@ -5776,7 +5777,9 @@ mod tests {
         assert_eq!(runtime.abandoned_threads(), 1);
         assert!(lock(&reported).is_empty(), "no package is named");
         // A fresh thread serves.
-        assert!(block_on(runtime.render_with(&component, Some(packages.owned_by(&identity)))).is_ok());
+        assert!(
+            block_on(runtime.render_with(&component, Some(packages.owned_by(&identity)))).is_ok()
+        );
 
         runtime.inject(Fault::Release);
         until("the stuck thread ended", || {

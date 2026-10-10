@@ -451,12 +451,11 @@ impl Held {
                 // release may then never reach it: the custom view's rule,
                 // kept (see `canvas`).
                 let path = path.to_owned();
-                let deactivation =
-                    cx.observe_window_activation(window, move |this, window, cx| {
-                        if !window.is_window_active() {
-                            this.designed_canvas_deactivated(&path, window, cx);
-                        }
-                    });
+                let deactivation = cx.observe_window_activation(window, move |this, window, cx| {
+                    if !window.is_window_active() {
+                        this.designed_canvas_deactivated(&path, window, cx);
+                    }
+                });
                 Held::Canvas {
                     focus,
                     bounds: Default::default(),
@@ -638,8 +637,9 @@ fn held(node: &Node) -> Option<HeldKind> {
         }
         NodeKind::Select(select) => (!select.options.is_empty()).then_some(HeldKind::Select),
         NodeKind::Scroll { .. } => Some(HeldKind::Scroll),
-        NodeKind::Canvas(canvas) => (canvas.handlers.any() || node.on_key.is_some())
-            .then_some(HeldKind::Canvas),
+        NodeKind::Canvas(canvas) => {
+            (canvas.handlers.any() || node.on_key.is_some()).then_some(HeldKind::Canvas)
+        }
         _ if focusable(node)
             || node.on_focus.is_some()
             || node.on_blur.is_some()

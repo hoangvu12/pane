@@ -728,10 +728,8 @@ fn views_open_at_once_keep_their_own_state(sample: &Sample) {
         }
     };
     // One moves right, the other left: each view's own state.
-    let first_next =
-        block_on(runtime.designed_view_event(first, pressed(&rendered, "right")));
-    let second_next =
-        block_on(runtime.designed_view_event(second, pressed(&rendered, "left")));
+    let first_next = block_on(runtime.designed_view_event(first, pressed(&rendered, "right")));
+    let second_next = block_on(runtime.designed_view_event(second, pressed(&rendered, "left")));
 
     assert_eq!(value_of(&first_next), "Purple, #8E24AA");
     assert_eq!(value_of(&second_next), "Teal, #00897B");
@@ -767,8 +765,7 @@ fn value_of(next: &Result<pane_core::DesignedNext, CallError>) -> String {
 fn an_unknown_view_is_a_guest_error(sample: &Sample) {
     let runtime = Runtime::start().unwrap();
 
-    let opened =
-        block_on(runtime.open_designed_view(&sample.path(), "missing", &default_launch()));
+    let opened = block_on(runtime.open_designed_view(&sample.path(), "missing", &default_launch()));
 
     assert_eq!(
         opened.map(|(_, rendered)| rendered),

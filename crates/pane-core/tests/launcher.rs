@@ -357,13 +357,10 @@ struct Installed {
 /// A launcher with the Rust sample's package installed, at root search.
 fn sample_installed(runtime: &Runtime) -> Installed {
     let data = tempfile::tempdir().unwrap();
-    let launcher = Launcher::with_packages(
-        Ok(runtime.clone()),
-        vec![],
-        data.path().join("extensions"),
-    );
-    let folder = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../target/guests/packages/sample-rust");
+    let launcher =
+        Launcher::with_packages(Ok(runtime.clone()), vec![], data.path().join("extensions"));
+    let folder =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/guests/packages/sample-rust");
     assert!(
         folder.exists(),
         "{} is missing; run `cargo xtask guests`",
@@ -371,7 +368,10 @@ fn sample_installed(runtime: &Runtime) -> Installed {
     );
     block_on(launcher.install_package(&folder));
     assert!(matches!(launcher.view().status, Status::Result(_)));
-    Installed { _data: data, launcher }
+    Installed {
+        _data: data,
+        launcher,
+    }
 }
 
 /// A launcher over `runtime` with the Rust sample's color command (a
@@ -406,11 +406,8 @@ fn open_color_command(launcher: &Launcher) {
 /// is the counting designed view.
 fn faulty_view(runtime: &Runtime) -> Installed {
     let data = tempfile::tempdir().unwrap();
-    let launcher = Launcher::with_packages(
-        Ok(runtime.clone()),
-        vec![],
-        data.path().join("extensions"),
-    );
+    let launcher =
+        Launcher::with_packages(Ok(runtime.clone()), vec![], data.path().join("extensions"));
     let component = guest("faulty");
     let source = data.path().join("faulty");
     std::fs::create_dir_all(&source).unwrap();
@@ -440,7 +437,10 @@ fn faulty_view(runtime: &Runtime) -> Installed {
         launcher.view().screen
     );
     assert_eq!(view_value(&launcher), "0 events");
-    Installed { _data: data, launcher }
+    Installed {
+        _data: data,
+        launcher,
+    }
 }
 
 /// The open designed view's value: what its canvas says for assistive
