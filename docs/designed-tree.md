@@ -24,10 +24,13 @@ needs:
   `rendered` carries the tree as JSON, naming the version of the UI
   component set it uses, and `refresh-after-ms`, how long Pane waits
   before asking again (#236, see [Refreshes](#refreshes)). `context` is
-  JSON too: the sequence number of this render (`{"render": 1, "ui":
-  "1.1"}`), so the extension can name each render's callbacks, and the
-  version of the component set Pane supports; it can grow without WIT
-  changes.
+  JSON too: the sequence number of this render, the id of the view it
+  draws, why Pane asks (`"open"`, the view's first drawing; `"event"`,
+  the render an event's answer asks for; `"refresh"`, the drawing the
+  view asked to wait for; `"push"`, the drawing the view's own work asked
+  for, #243) and the version of the component set Pane supports, such as
+  `{"render": 1, "view": 7, "why": "open", "ui": "1.1"}`; it can grow
+  without WIT changes.
 - **`view.handle-event(event) -> result<outcome, string>`** handles the
   user's input: `ui-event` carries the callback id the tree named
   (`callback`), the sequence number of the render whose tree the user saw
@@ -167,21 +170,66 @@ answer through the change channel the continuing services use.
   done — ends any asked before it: the ask belongs to the answer, and
   every answer rules.
 
-The SDKs build their asynchronous helpers on this until the real-push
-slice (#243) lands. The JavaScript and TypeScript SDK has `useInterval`
-(run once each time `ms` passes while the view is open) and `usePending`
-(data awaited in the prompt refresh a loading state asks for); the Rust
-SDK has `.refresh_after(Duration)` on the render's root, `loading(tree)`
-for the loading state, `Pending` for the data, and `cx.refreshed()`, true
-on the render that answers the view's own ask, where an interval's work
-runs. A view with pending data renders its loading state at once, asks
-for a prompt refresh, and in it awaits the pending work — one refresh's
-worth of loading state, so fast screens never flicker; the await is
-bounded by the call's limits, as any guest compute is. The sample is a
-timer, in [Rust](../guests/sample-timer/src/lib.rs),
+The SDKs build their asynchronous helpers on this for timers and
+polling. The JavaScript and TypeScript SDK has `useInterval` (run once
+each time `ms` passes while the view is open); the Rust SDK has
+`.refresh_after(Duration)` on the render's root, and `cx.refreshed()`,
+true on the render that answers the view's own ask — the one whose
+context says `"refresh"` — where an interval's work runs. A view with
+pending data does not ask for a prompt refresh: its arrival asks for a
+drawing itself (below). The sample is a timer, in
+[Rust](../guests/sample-timer/src/lib.rs),
 [JavaScript](../guests/sample-timer-js/src/index.js) and
 [TypeScript](../guests/sample-timer-ts/src/index.tsx), held by
 `crates/pane-core/tests/view_refresh.rs`.
+
+## Pushes
+
+A view asks Pane to draw it again itself (`pane:extension/view`,
+#243): `ask-to-render(view)` names the view by the id its render context
+carries (`"view"`), from inside a call or between them. Between them is
+the point: the runtime keeps a guest that still has work running while
+one of its designed views is open — its store's event loop is driven, as
+a call's is — so work a view's answer started (the load a loading state
+waits for, a call the view has not awaited) lands in the background, and
+the view asks for a drawing the moment it does. The guest's computing
+between calls is bounded as any call's is: metered against the compute
+limit, yielding at every epoch tick, and a guest that computes for too
+long is stopped as unresponsive, its instance dropped and its package
+reported. The operation calls it makes meanwhile are served as a call's
+are, and its generation's end stops it as it stops a call.
+
+- The drawing a push asks for is sent as a refresh's is: numbered with
+  the view's events, at most one drawing of a view in flight at a time,
+  asks that arrive meanwhile coalesced into the drawing that follows its
+  answer, and a late answer never replaces a newer tree — an answer
+  arriving after the view left is dropped with it.
+- A push is served only while the view is the top of its stack and the
+  launcher's window is shown, as a refresh is; one that arrives
+  otherwise waits for the next showing, and an ask for a view no longer
+  in the stack is dropped.
+- A push is served ahead of a refresh the clock made due — data landing
+  is newer than a timer — and the drawing it asks for rules the view's
+  ask: its answer carries the next one, exactly as any answer's does.
+- The render a push asks for says so in its context (`"why": "push"`),
+  so an interval's work does not run in it as a refresh's does: the
+  drawing shows what landed, without ticking.
+
+The SDKs' loading helpers are built on this: the JavaScript and
+TypeScript SDK's `usePending(load)` starts the work in the view's first
+render, answers its loading state, and asks for a drawing when the work
+answers; the Rust SDK's `Pending::loading(work)` does the same, running
+the work beyond the render that started it. One cycle of loading state,
+no flicker, and no timer: the data is drawn the moment it arrives. The
+work must be a real future — one that awaits something the host answers
+(a file, a service, the clock) or finishes on its own — for nothing
+schedules a future that wakes no one. The `loading` command of the
+designed view sample shows it, in [Rust](../guests/sample-view/src/lib.rs),
+[JavaScript](../guests/sample-view-js/src/index.js) and
+[TypeScript](../guests/sample-view-ts/src/index.tsx), and
+`crates/pane-core/tests/view_push.rs` holds the pushes: ordered against
+event answers, dropped after the view left, drawn while another
+extension waits on a slow service.
 
 ## The document
 

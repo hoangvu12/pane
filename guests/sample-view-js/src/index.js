@@ -9,12 +9,16 @@
 // The `components` command of the same package answers a gallery of
 // every component of the UI component set (#237): the layout primitives,
 // the shared components, the tokens and the raw values, with a toggle to
-// show the tree changes.
+// show the tree changes. And its `loading` command answers a view that
+// loads something on open (#243): a loading state drawn at once, and what
+// the load answered the moment it arrives — the arrival asks for the
+// drawing itself, with no timer to wait for.
 //
 // The view is written as elements (the JSX runtime's `jsxs`), which is
 // what JSX compiles to (the TypeScript sample); the components and hooks
 // come from `@pane-app/extension/view`.
 import { jsxs } from "@pane-app/extension/jsx-runtime";
+import { waitFor } from "wasi:clocks/monotonic-clock@0.3.0";
 import {
   Badge,
   Button,
@@ -49,6 +53,7 @@ import {
   TextInput,
   Toggle,
   createView,
+  usePending,
   useState,
 } from "@pane-app/extension/view";
 
@@ -238,7 +243,27 @@ function Components() {
   });
 }
 
-/** The command's views: the counter, or the gallery. */
+/** What the loading sample loads: held back for a moment, as work from a
+ * service would be, so the loading state shows once. */
+const load = () => waitFor(300_000_000).then(() => "Pane drew this the moment it arrived");
+
+/** The loading sample: a loading state drawn at once, and what the load
+ * answered the moment it arrives. */
+function LoadingView() {
+  const what = usePending(load);
+  if (what === undefined) {
+    return jsxs(Text, { level: "secondary", children: ["Loading…"] });
+  }
+  return jsxs(Column, {
+    gap: "m",
+    children: [
+      jsxs(Text, { style: "title", children: ["Loaded"] }),
+      jsxs(Text, { level: "secondary", children: [what] }),
+    ],
+  });
+}
+
+/** The command's views: the counter, the gallery, or the loading sample. */
 export const command = {
   async openView(commandId) {
     if (commandId === "sample") {
@@ -246,6 +271,9 @@ export const command = {
     }
     if (commandId === "components") {
       return createView(Components);
+    }
+    if (commandId === "loading") {
+      return createView(LoadingView);
     }
     throw new Error("this command opens no designed view");
   },

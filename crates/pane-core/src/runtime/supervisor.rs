@@ -70,7 +70,7 @@ use super::faults::Faults;
 
 use super::{
     CallError, Code, HealthReport, Host, Request, Sent, SharedApplications, SharedClipboard,
-    SharedDirectory, SharedHostFunctions, SharedLaunches, lock, unavailable,
+    SharedDirectory, SharedHostFunctions, SharedLaunches, SharedViewAsks, lock, unavailable,
 };
 use crate::helpers::runner::Helpers;
 
@@ -210,6 +210,9 @@ pub(super) struct Shared {
     pub(super) launches: SharedLaunches,
     /// What the window and feedback host functions do: the launcher's.
     pub(super) host_functions: SharedHostFunctions,
+    /// What a designed view asking to be drawn again does (`pane:extension/view`,
+    /// #243): the launcher's.
+    pub(super) view_asks: SharedViewAsks,
     pub(super) health: Arc<Mutex<Option<HealthReport>>>,
     /// Every package's extension log: what guests print, and the runtime's
     /// own messages about their packages.
@@ -345,6 +348,7 @@ impl Shared {
             directory: SharedDirectory::default(),
             launches: SharedLaunches::default(),
             host_functions: SharedHostFunctions::default(),
+            view_asks: SharedViewAsks::default(),
             health: Arc::default(),
             logs: Default::default(),
             next_view: Arc::default(),

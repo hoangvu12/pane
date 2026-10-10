@@ -30,6 +30,13 @@
 //! the event with callback id 0 — is recorded and drawn ("Popped: …",
 //! or "Popped" when it carried no result), so a test can see it arrive.
 //!
+//! The view may also ask Pane to draw it again itself (#243, the push
+//! channel of `pane:extension/view`): "Push a render" has the next render
+//! call `ask-to-render` with the id its context names — by hand, as no SDK
+//! writes it — and "Push a render, answering slowly" the same with the
+//! drawing it asks for held back a moment, so a test can leave the view
+//! before the drawing answers.
+//!
 //! Every render also answers `refresh-after-ms` as the state's
 //! `refresh_ms` says, so the tests of #236 drive Pane's refreshing of a
 //! view through it — each button below sets it, its presses' answers
@@ -102,6 +109,14 @@ struct State {
     /// What every render answers `refresh-after-ms` as, which the refresh
     /// buttons below set: None until one is pressed.
     refresh_ms: Cell<Option<u32>>,
+    /// Whether the next render asks Pane to draw the view again (#243),
+    /// which the push buttons below set: the render after the press calls
+    /// `ask-to-render` by hand.
+    push: Cell<bool>,
+    /// How many renders away answers slowly: the slow push button sets 2,
+    /// so the render that asks answers promptly and the drawing Pane
+    /// sends for the ask is the one held back.
+    slow_in: Cell<u32>,
 }
 
 // SAFETY: a component's code runs on one thread.
@@ -120,9 +135,25 @@ struct Designed {
 }
 
 impl GuestView for Designed {
-    async fn render(&self, _context: String) -> Result<Rendered, String> {
+    async fn render(&self, context: String) -> Result<Rendered, String> {
         let renders = STATE.renders.get();
         STATE.renders.set(renders + 1);
+        // The push a button asked for (#243): the render after its press
+        // asks Pane to draw the view again, by hand, with the id this
+        // context names.
+        if STATE.push.replace(false) {
+            pane::extension::view::ask_to_render(view_of(&context));
+        }
+        // The slow answer a push asked for: this render is the drawing
+        // the ask sent for, held back so a test can leave before it
+        // answers.
+        let slow_in = STATE.slow_in.get();
+        if slow_in > 0 {
+            STATE.slow_in.set(slow_in - 1);
+            if slow_in == 1 {
+                wasip3::clocks::monotonic_clock::wait_for(300_000_000).await;
+            }
+        }
         let popped = popped_text(&self.popped.borrow());
         // A pushed view draws its own tree, with the navigation buttons
         // only; the root draws the counter, with every case's button.
@@ -230,6 +261,14 @@ impl GuestView for Designed {
             15 => STATE.refresh_ms.set(Some(25 * 60 * 60 * 1000)),
             16 => STATE.refresh_ms.set(Some(1000)),
             17 => STATE.refresh_ms.set(None),
+            // The push buttons (#243): the next render asks Pane to draw
+            // the view again; the slow one has the drawing it asks for
+            // held back, two renders away.
+            23 => STATE.push.set(true),
+            24 => {
+                STATE.push.set(true);
+                STATE.slow_in.set(2);
+            }
             _ => return Err(format!("unknown callback: {}", event.callback)),
         }
         Ok(outcome())
@@ -265,6 +304,25 @@ fn popped_text(popped: &Option<Option<String>>) -> Option<String> {
     }
 }
 
+/// The view `context` names — its id, what `ask-to-render` asks for — or 0
+/// when it says none: the context is JSON, `{"render": N, "view": V, "why":
+/// "open", "ui": "1.1"}`, read without parsing the whole document, so a
+/// context that grew a field still gives its id.
+fn view_of(context: &str) -> u64 {
+    let Some(at) = context.find("\"view\"") else {
+        return 0;
+    };
+    let digits = context[at + 6..]
+        .trim_start()
+        .strip_prefix(':')
+        .unwrap_or("")
+        .trim_start();
+    let end = digits
+        .find(|c: char| !c.is_ascii_digit())
+        .unwrap_or(digits.len());
+    digits[..end].parse().unwrap_or(0)
+}
+
 /// The result the pop event's payload carries: `{"pop": "…"}` for a pop
 /// that answered one, `{"pop": null}` for one that carried none. Read
 /// without parsing the whole document; the plain-ASCII strings the
@@ -286,14 +344,16 @@ static STATE: State = State {
     flipped: Cell::new(false),
     renders: Cell::new(0),
     refresh_ms: Cell::new(None),
+    push: Cell::new(false),
+    slow_in: Cell::new(0),
 };
 
 /// The buttons the counter's tree names: (label, key, callback id). The
 /// navigation ones answer the stack (#239), the component set's draws
-/// the component tree (#237), and the last four set what every render
-/// asks `refresh-after-ms` (#236); a pushed view's tree names the
-/// navigation ones alone.
-const BUTTONS: [(&str, &str, u32); 17] = [
+/// the component tree (#237), the next four set what every render asks
+/// `refresh-after-ms` (#236), and the last two ask Pane to draw the view
+/// again (#243); a pushed view's tree names the navigation ones alone.
+const BUTTONS: [(&str, &str, u32); 19] = [
     ("Increment", "increment", 1),
     ("Answer an error", "error", 2),
     ("Answer an over-limit tree", "over-limit", 3),
@@ -311,6 +371,8 @@ const BUTTONS: [(&str, &str, u32); 17] = [
     ("Answer refresh 25h", "refresh-25h", 15),
     ("Answer refresh 1s", "refresh-1s", 16),
     ("Stop refreshing", "stop-refresh", 17),
+    ("Push a render", "push-a-render", 23),
+    ("Push a render, answering slowly", "push-a-render-slowly", 24),
 ];
 
 /// The buttons a pushed view's tree names: the navigation ones.

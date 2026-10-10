@@ -502,6 +502,19 @@ export declare const Fragment: unique symbol;
  * the next value (a function is called with the current one); Pane asks
  * for the tree again after each event, which is when it is read.
  */
+/** `pane:extension/view@0.1.0`: a designed view asking Pane to draw it
+ * again (wit/view.wit). Used by `usePending`; a view can ask itself, with
+ * the id its `render` context names. */
+declare module "pane:extension/view@0.1.0" {
+  /**
+   * Ask Pane to draw the designed view `view` again, now: `view` is the
+   * id the view's `render` context named. At most one drawing of a view is
+   * in flight at a time; asks that arrive meanwhile are coalesced into it,
+   * and a view that has left the screen asks for nothing.
+   */
+  export function askToRender(view: number): void;
+}
+
 export declare function useState<S>(initial: S | (() => S)): [S, (next: S | ((current: S) => S)) => void];
 
 /** A value the component keeps between renders, mutable in place. */
@@ -525,9 +538,10 @@ export declare function useInterval(ms: number, run: () => void | Promise<void>)
  * Data the view is waiting for, as ordinary loading state: `undefined`
  * while the work `load` started has not answered — render a loading state
  * for that — and its answer once it has. The first render starts the work
- * and answers `undefined`, so the loading state is shown at once; Pane is
- * asked for the tree again promptly, and that render awaits the work. The
- * work runs once.
+ * and answers `undefined`, so the loading state is shown at once; when the
+ * work answers, the SDK asks Pane to draw the view again itself (#243),
+ * and that drawing shows the answer — the moment it arrived, with no timer
+ * to wait for. The work runs once.
  */
 export declare function usePending<T>(load: () => Promise<T>): T | undefined;
 

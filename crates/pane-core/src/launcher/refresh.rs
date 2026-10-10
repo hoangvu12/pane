@@ -4,6 +4,20 @@
 //! after some milliseconds, so the screen changes by itself with no
 //! change to the extension runtime.
 //!
+//! A view may also ask for a drawing directly (`pane:extension/view`,
+//! #243): the guest keeps running between Pane's calls (the runtime
+//! drives its store's event loop while one of its designed views is
+//! open), so work a render started — the load a loading state waits for —
+//! lands in the background and asks here, and the view is drawn again the
+//! moment it does, with no timer. The ask is served by this thread too,
+//! ahead of what the clock made due: data landing is newer than a timer.
+//! An ask names the view that asked (the id its render context named), so
+//! it serves only that view — one asking that is not the stack's top, or
+//! whose window is not shown, waits, and an ask for a view no longer in
+//! the stack is dropped. However often a view asks, at most one drawing
+//! of it is in flight at a time: asks that arrive meanwhile are coalesced
+//! into the drawing that follows its answer.
+//!
 //! The refresh is one guest call — `render` again, with no event — sent
 //! through the view's event numbering (see `designed_views`): at most one
 //! is asked for at a time, and a late answer never replaces a newer tree.
@@ -69,6 +83,12 @@ pub(super) struct Refresh {
     wake: Arc<Wake>,
 }
 
+/// How many views' asks to be drawn again are kept at most (#243): one
+/// per open view of the stack, and — briefly — the one whose view is still
+/// opening, whose ask arrived inside its first render. An ask that cannot
+/// be served is dropped beyond this, never queued up.
+const MAX_PUSHED: usize = 4;
+
 /// What the refresh thread keeps: the clock it follows and where the open
 /// view's next refresh stands.
 struct Refreshing {
@@ -81,6 +101,12 @@ struct Refreshing {
     /// Whether a refresh was sent and has not answered: no second one is
     /// asked for meanwhile.
     in_flight: bool,
+    /// The views that asked to be drawn again (#243,
+    /// `pane:extension/view`): their ids, as their render contexts named
+    /// them. Served for the stack's top view; one that is not it, or whose
+    /// window is not shown, waits; an ask for a view no longer in the
+    /// stack is dropped when one is open.
+    pushed: Vec<u64>,
 }
 
 impl Refresh {
@@ -92,6 +118,7 @@ impl Refresh {
                 clock: clock.clone(),
                 next: None,
                 in_flight: false,
+                pushed: Vec::new(),
             }),
             wake: Arc::default(),
         });
@@ -135,10 +162,42 @@ impl Refresh {
         self.wake.poke();
     }
 
+    /// The view `view` — its id, as its render context named it — asked to
+    /// be drawn again (#243, `pane:extension/view`): the drawing is served
+    /// for the stack's top view while it is shown, ahead of what the clock
+    /// made due, at most one at a time. An ask already asked for is not
+    /// asked twice; more than [`MAX_PUSHED`] are dropped, never queued.
+    /// Called on the runtime's thread, as the guest's ask lands: it takes
+    /// no lock of the launcher's.
+    pub(super) fn pushed(&self, view: u64) {
+        {
+            let mut refreshing = self.lock();
+            if refreshing.pushed.len() >= MAX_PUSHED || refreshing.pushed.contains(&view) {
+                return;
+            }
+            refreshing.pushed.push(view);
+        }
+        self.wake.poke();
+    }
+
     /// The view's render answer asked Pane for no drawing again: any
-    /// scheduled refresh is cancelled. Leaving the view does the same.
+    /// scheduled refresh is cancelled. The asks the view itself pushed
+    /// stay: they are the guest's, and each answer rules only the ask it
+    /// answered. Leaving the view takes those too (see [`Refresh::left`]).
     pub(super) fn cancel(&self) {
         self.lock().next = None;
+        self.wake.poke();
+    }
+
+    /// Leaving the view: its refresh is cancelled and the asks to be drawn
+    /// again that its views pushed go with it — a view opened afresh asks
+    /// anew.
+    pub(super) fn left(&self) {
+        {
+            let mut refreshing = self.lock();
+            refreshing.next = None;
+            refreshing.pushed.clear();
+        }
         self.wake.poke();
     }
 
@@ -185,8 +244,10 @@ impl Refresh {
     /// state whole.
     fn look(self: &Arc<Self>, launcher: &WeakLauncher) -> Option<RefreshRun> {
         let launcher = launcher.upgrade()?;
-        // A poisoned state is not recovered here (a plain lock, not the
-        // launcher's recovering one).
+        // A poisoned state is not recovered here (as the scheduler's looks
+        // are not): a thread that panicked while holding it is recovered by
+        // the next caller that changes something, and the next look sees
+        // the state whole.
         let mut state = match launcher.state.lock() {
             Ok(state) => state,
             Err(_) => return None,
@@ -194,8 +255,39 @@ impl Refresh {
         // The launcher's state is held while the refresh's own is taken,
         // never the other way round (as the scheduler's is).
         let mut refreshing = self.lock();
+        // The asks of views no longer in the stack — one that closed, or
+        // another command's — are dropped; with none open, one whose view
+        // is still opening is kept: its first render may be asking still.
+        if let Some(stack) = state.designed_view.as_ref() {
+            refreshing.pushed.retain(|view| stack.views.iter().any(|open| open.id.id == *view));
+        }
         if refreshing.in_flight {
             return None;
+        }
+        // A view's own ask to be drawn again (#243) is served before what
+        // the clock made due: data landing is newer than a timer. Only the
+        // stack's top view is drawn, and only while the window is shown;
+        // an ask for another view of the stack waits for its showing.
+        if let Some(top) = state.designed_view.as_ref().map(|stack| stack.top().id.id)
+            && refreshing.pushed.contains(&top)
+            && on_top_and_shown(&state)
+        {
+            let sent = launcher.start_view_push(&mut state)?;
+            refreshing.pushed.retain(|view| *view != top);
+            // The drawing it asks for rules the view's ask: its answer
+            // carries the next one, and a due refresh is not sent beside
+            // it — the ask is served by the drawing, not after it.
+            refreshing.next = None;
+            refreshing.in_flight = true;
+            drop(state);
+            drop(refreshing);
+            let refresh = Arc::downgrade(self);
+            return Some(RefreshRun {
+                launcher,
+                epoch: sent.0,
+                event: sent.1,
+                refresh,
+            });
         }
         let now = refreshing.clock.now();
         if !refreshing.next.is_some_and(|next| next <= now) {

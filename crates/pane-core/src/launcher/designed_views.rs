@@ -175,15 +175,41 @@ impl OpenDesignedView {
     /// never replaces a newer tree. A refresh answers a tree, never a
     /// navigation, so its answer is shown as the tree it re-rendered.
     pub(super) fn send_refresh(&mut self, runtime: &Runtime) -> SentDesignedEvent {
+        self.send_drawing(runtime, Drawing::Refresh)
+    }
+
+    /// Sends the drawing the view's own work asked for (#243), numbered as
+    /// a refresh's is: the same rules, with the render's context saying
+    /// the view's push asked for it, so an interval's work does not run in
+    /// it.
+    pub(super) fn send_push(&mut self, runtime: &Runtime) -> SentDesignedEvent {
+        self.send_drawing(runtime, Drawing::Push)
+    }
+
+    /// Sends one drawing of the view with no event, as `kind` asks for.
+    fn send_drawing(&mut self, runtime: &Runtime, kind: Drawing) -> SentDesignedEvent {
         self.sent += 1;
-        // The refresh is sent now, not when the reply is first polled.
-        let reply = runtime.refresh_designed_view(self.id);
+        // The drawing is sent now, not when the reply is first polled.
+        let view = self.id;
+        let reply = match kind {
+            Drawing::Refresh => runtime.refresh_designed_view(view),
+            Drawing::Push => runtime.push_designed_view(view),
+        };
         SentDesignedEvent {
-            view: self.id,
+            view,
             number: self.sent,
             reply: Box::pin(async move { reply.await.map(DesignedNext::Tree) }),
         }
     }
+}
+
+/// One drawing of an open view with no event: the refresh its answer
+/// asked for by `refresh-after-ms`, or the push its own work asked for
+/// (#243).
+#[derive(Clone, Copy)]
+enum Drawing {
+    Refresh,
+    Push,
 }
 
 impl Launcher {
@@ -407,10 +433,33 @@ impl Launcher {
     /// while it decides. `None` when no view is open or the runtime is
     /// gone.
     pub(super) fn start_view_refresh(&self, state: &mut State) -> Option<(u64, SentDesignedEvent)> {
+        self.start_view_drawing(state, Drawing::Refresh)
+    }
+
+    /// As [`Launcher::start_view_refresh`], for the drawing the view's own
+    /// work asked for (#243, `pane:extension/view`): served by the same
+    /// thread, under the same rules.
+    pub(super) fn start_view_push(&self, state: &mut State) -> Option<(u64, SentDesignedEvent)> {
+        self.start_view_drawing(state, Drawing::Push)
+    }
+
+    /// Sends one drawing of the open designed view's top, as `kind` asks
+    /// for.
+    fn start_view_drawing(
+        &self,
+        state: &mut State,
+        kind: Drawing,
+    ) -> Option<(u64, SentDesignedEvent)> {
         let epoch = state.screen_epoch;
         let stack = state.designed_view.as_mut()?;
         let runtime = self.runtime().ok()?;
-        Some((epoch, stack.top_mut().send_refresh(runtime)))
+        Some((
+            epoch,
+            match kind {
+                Drawing::Refresh => stack.top_mut().send_refresh(runtime),
+                Drawing::Push => stack.top_mut().send_push(runtime),
+            },
+        ))
     }
 
     /// The designed view's answer asked Pane to render it again after
@@ -739,7 +788,7 @@ impl Launcher {
             }
         }
         if let Some(refresh) = &self.refresh {
-            refresh.cancel();
+            refresh.left();
         }
     }
 }

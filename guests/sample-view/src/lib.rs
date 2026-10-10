@@ -7,33 +7,60 @@
 //! The `components` command of the same package answers a gallery of
 //! every component of the UI component set (#237): the layout
 //! primitives, the shared components, the tokens and the raw values,
-//! with a toggle to show the tree changes.
+//! with a toggle to show the tree changes. And its `loading` command
+//! answers a view that loads something on open (#243): a loading state
+//! drawn at once, and what the load answered the moment it arrives —
+//! the arrival asks for the drawing itself, with no timer to wait for.
 #![no_std]
 
 use core::cell::Cell;
+use core::future::Future;
 
 use pane_extension::icon::Tone as Colour;
 use pane_extension::view::{
-    Cx, Color, Fit, Icon, IconSize, IntoAnswer, IntoNode, Length, Paint, Place, Radius, Space,
-    TextLevel, TextStyle, Tone, View, badge, button, card, checkbox, choice, column, divider,
-    empty_state, icon, icon_tile, image, key_sequence, keycap, link, loading, markdown,
+    Cx, Color, Fit, Icon, IconSize, IntoAnswer, IntoNode, Length, Paint, Pending, Place, Radius,
+    Space, TextLevel, TextStyle, Tone, View, badge, button, card, checkbox, choice, column,
+    divider, empty_state, icon, icon_tile, image, key_sequence, keycap, link, loading, markdown,
     metadata_list, metadata, metadata_separator, metadata_tags, password_input, progress, rich_row,
     row, scroll, section_header, select, slider, spacer, span, spans, stack, tag, text, text_area,
     text_input, toggle,
 };
 use pane_extension::{Command, LaunchRecord};
 
-/// The screen a command opens: the counter, or the gallery of components.
+/// The screen a command opens: the counter, the gallery of components, or
+/// the loading sample.
 struct Screen {
-    /// Whether this view is the counter.
-    counter: bool,
+    /// Which of the package's screens this view is.
+    which: Which,
     count: Cell<u32>,
     on: Cell<bool>,
+    /// The loading sample's data, on its way when the view opens
+    /// (`Pending`, #243).
+    loading: Pending<String>,
+}
+
+/// Which of the package's screens a view is.
+enum Which {
+    Counter,
+    Components,
+    Loading,
 }
 
 impl View for Screen {
     fn render(&mut self, cx: &mut Cx<Self>) -> impl IntoAnswer {
-        if self.counter {
+        // The loading sample: the loading state, then what the load
+        // answered, drawn the moment it arrives.
+        if matches!(self.which, Which::Loading) {
+            return match self.loading.ready() {
+                Some(what) => column()
+                    .gap(Space::M)
+                    .child(text("Loaded").style(TextStyle::Title))
+                    .child(text(what.as_str()).level(TextLevel::Secondary))
+                    .into_answer(),
+                None => loading(text("Loading…").level(TextLevel::Secondary)),
+            };
+        }
+        if matches!(self.which, Which::Counter) {
             return column()
                 .gap(Space::M)
                 .child(
@@ -54,7 +81,7 @@ impl View for Screen {
                             .on_click(cx.listener(|this: &mut Self| this.count.set(0))),
                     ]),
                 )
-                .into_node();
+                .into_answer();
         }
         scroll().child(
             column()
@@ -212,7 +239,7 @@ impl View for Screen {
                 .child(divider())
                 .child(spacer()),
         )
-        .into_node()
+        .into_answer()
     }
 }
 
@@ -227,18 +254,26 @@ impl Command for Sample {
         command: String,
         _launch: LaunchRecord,
     ) -> Result<Screen, String> {
-        match command.as_str() {
-            "sample" => Ok(Screen {
-                counter: true,
-                count: Cell::new(0),
-                on: Cell::new(false),
-            }),
-            "components" => Ok(Screen {
-                counter: false,
-                count: Cell::new(0),
-                on: Cell::new(false),
-            }),
-            _ => Err("this command opens no designed view".into()),
-        }
+        let which = match command.as_str() {
+            "sample" => Which::Counter,
+            "components" => Which::Components,
+            "loading" => Which::Loading,
+            _ => return Err("this command opens no designed view".into()),
+        };
+        Ok(Screen {
+            which,
+            count: Cell::new(0),
+            on: Cell::new(false),
+            loading: Pending::loading(load()),
+        })
+    }
+}
+
+/// What the loading sample loads: held back for a moment, as work from a
+/// service would be, so the loading state shows once.
+fn load() -> impl Future<Output = String> {
+    async {
+        wasip3::clocks::monotonic_clock::wait_for(300_000_000).await;
+        String::from("Pane drew this the moment it arrived")
     }
 }
