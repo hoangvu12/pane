@@ -52,11 +52,20 @@ const FIRED: &str = "fired";
 /// The dynamic root item's handle, kept by this instance.
 static HELD: Held = Held(RefCell::new(None));
 
+/// The activation's timer's handle, kept with it: dropping the handle
+/// stops the timer, and the tests read its firings.
+static TICKING: Ticking = Ticking(RefCell::new(None));
+
 struct Held(RefCell<Option<registrations::RootItem>>);
+
+struct Ticking(RefCell<Option<registrations::Timer>>);
 
 // SAFETY: a component's code runs on one thread, and no borrow is held
 // across an `await`.
 unsafe impl Sync for Held {}
+
+// SAFETY: as `Held`.
+unsafe impl Sync for Ticking {}
 
 struct Fixture;
 pane_extension::export!(Fixture);
@@ -73,13 +82,16 @@ impl pane_extension::lifecycle::Guest for Fixture {
         if settings::get(TRAP).ok().flatten().as_deref() == Some("yes") {
             panic!("the activation entry point traps, as the test asked");
         }
-        // A refusal, if any, drops the timer and leaves the content
-        // empty: the activation itself still answered.
-        let _ = registrations::every(1, || async {
+        // The handle is kept with the instance, so the timer fires until
+        // its generation ends. A refusal, if any, drops it and leaves the
+        // content empty: the activation itself still answered.
+        if let Ok(ticking) = registrations::every(1, || async {
             let fired = counted(FIRED) + 1;
             content::set(FIRED, &fired.to_string())?;
             Ok(())
-        });
+        }) {
+            *TICKING.0.borrow_mut() = Some(ticking);
+        }
     }
 }
 

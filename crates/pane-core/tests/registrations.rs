@@ -16,12 +16,13 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
 use futures::executor::block_on;
 use pane_core::clipboard::{Clock, ManualClock, SystemClock};
+use pane_core::hotkeys::Shortcut;
 use pane_core::{Launcher, PackageIdentity, ResultAction, Runtime, Status, Unavailable};
 use tempfile::TempDir;
 
@@ -87,7 +88,8 @@ const PROMPTLY: Duration = Duration::from_secs(20);
 const SECOND: Duration = Duration::from_secs(1);
 
 /// One test's Pane: its data folder (outliving restarts), its source
-/// folders, its runtime cache and the clock its timers follow.
+/// folders, its runtime cache, the clock its timers follow and the hotkey
+/// system its global hotkeys go through.
 struct Pane {
     sources: TempDir,
     data: TempDir,
@@ -95,6 +97,30 @@ struct Pane {
     /// Pane's clock for timers, scheduled work and services, which moves
     /// only when a test advances it.
     clock: Arc<ManualClock>,
+    /// A hotkey system that accepts anything, so a test can record and
+    /// press a global hotkey.
+    hotkeys: Arc<AnyHotkeys>,
+}
+
+/// A hotkey system that accepts every shortcut, remembering what it
+/// registered.
+struct AnyHotkeys {
+    registered: Mutex<Vec<Shortcut>>,
+}
+
+impl pane_core::Hotkeys for AnyHotkeys {
+    fn unavailable(&self) -> Option<String> {
+        None
+    }
+
+    fn register(&self, shortcut: &Shortcut) -> Result<(), pane_core::HotkeyError> {
+        self.registered.lock().unwrap().push(shortcut.clone());
+        Ok(())
+    }
+
+    fn unregister(&self, shortcut: &Shortcut) {
+        self.registered.lock().unwrap().retain(|held| held != shortcut);
+    }
 }
 
 impl Pane {
@@ -104,6 +130,9 @@ impl Pane {
             data: tempfile::tempdir().unwrap(),
             cache: tempfile::tempdir().unwrap(),
             clock: ManualClock::at(SystemClock.now() + 365 * 86_400_000),
+            hotkeys: Arc::new(AnyHotkeys {
+                registered: Mutex::new(Vec::new()),
+            }),
         }
     }
 
@@ -116,6 +145,7 @@ impl Pane {
             self.data.path().join("extensions"),
         )
         .with_clock(self.clock.clone())
+        .with_hotkeys(self.hotkeys.clone())
     }
 
     /// Starts Pane with `sample`'s package installed and activated.
@@ -721,7 +751,7 @@ fn a_quick_slot_and_a_hotkey_of_a_dynamic_item_say_why() {
     assert_eq!(slots[0].title, "Registrations: counting");
     assert!(slots[0].ready());
     // A global hotkey holds it too: pressing it launches the command.
-    let shortcut = pane_core::hotkeys::Shortcut::parse("ctrl+alt+r").unwrap();
+    let shortcut = Shortcut::parse("ctrl+alt+r").unwrap();
     block_on(
         launcher
             .set_hotkey(&row.id, Some(shortcut.clone()))
