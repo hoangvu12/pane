@@ -447,7 +447,7 @@ fn open_color(launcher: &Launcher, command: &str) {
     select_title(launcher, "color picker");
     block_on(launcher.activate_selected());
     assert!(matches!(launcher.view().screen, Screen::DesignedView(_)));
-    send_right(launcher);
+    send_right(&launcher);
 }
 
 /// The open color view's value: what its canvas says for assistive
@@ -484,7 +484,7 @@ fn send_right(launcher: &Launcher) {
     block_on(launcher.send_designed_seen(
         pane_core::DesignedHandler::Key,
         on_key.expect("the canvas takes keys"),
-        (!key.is_empty()).then_some(key),
+        (!key.is_empty()).then_some(key.as_str()),
         Some(view.render),
         r#"{"key":"right"}"#.into(),
     ));
@@ -510,7 +510,7 @@ fn reloading_one_package_leaves_another_running_with_its_state() {
     assert!(matches!(view.screen, Screen::DesignedView(_)));
     assert_eq!(view.status, Status::Result("Reloaded Dev".into()));
     assert_eq!(color(&launcher), chosen);
-    send_right(launcher);
+    send_right(&launcher);
     assert_ne!(color(&launcher), chosen);
     assert_eq!(block_on(runtime.designed_view_count()), 1);
     assert_eq!(

@@ -560,7 +560,10 @@ fn resolve(ops: &[CanvasOp], draw: &Draw) -> Vec<Layer> {
             .map(|paint| tokens::paint_color(paint, theme))
     };
     for op in ops {
-        match *op {
+        // Cloned: the text and image operations own their content, and the
+        // rest are plain numbers.
+        let op = op.clone();
+        match op {
             CanvasOp::Text(text) => {
                 if !run.is_empty() {
                     layers.push(Layer::Shapes(std::mem::take(&mut run)));
@@ -1380,7 +1383,7 @@ impl LauncherWindow {
             }
             let held = drag.pressed;
             drag.pressed = false;
-            held
+            Some(held)
         });
         if !released.unwrap_or(false) {
             return;

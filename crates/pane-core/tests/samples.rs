@@ -504,44 +504,53 @@ fn opening_the_color_view_draws_the_picker(sample: &Sample) {
     // The frame around the chosen swatch, 8 x 3 swatches, the preview and
     // its hex code: 27 drawing operations, the hex one measured.
     assert_eq!(canvas.ops.len(), 1 + 24 + 2);
-    let rect = |x: f32, y: f32, size: f32| CanvasOp::Rect {
-        x,
-        y,
-        width: size,
-        height: size,
-        radius: None,
-        fill: None,
-        stroke: None,
-    };
+    /// The operation a swatch is: a square filled with `fill`.
+    fn square(x: f32, y: f32, size: f32, fill: Option<Paint>) -> CanvasOp {
+        CanvasOp::Rect {
+            x,
+            y,
+            width: size,
+            height: size,
+            radius: None,
+            fill,
+            stroke: None,
+        }
+    }
     assert_eq!(
         canvas.ops[0],
-        CanvasOp::Rect {
-            fill: Some(Paint {
+        square(
+            180.,
+            36.,
+            36.,
+            Some(Paint {
                 tint: pane_core::Tint::Same(pane_core::Color::Rgba(0xf1f3f5ff)),
                 exact: false,
-            }),
-            ..rect(180., 36., 36.)
-        }
+            })
+        )
     );
     assert_eq!(
         canvas.ops[1],
-        CanvasOp::Rect {
-            fill: Some(Paint {
+        square(
+            2.,
+            2.,
+            32.,
+            Some(Paint {
                 tint: pane_core::Tint::Same(pane_core::Color::Rgba(0xef9a9aff)),
                 exact: true,
-            }),
-            ..rect(2., 2., 32.)
-        }
+            })
+        )
     );
     assert_eq!(
         canvas.ops[25],
-        CanvasOp::Rect {
-            fill: Some(Paint {
+        square(
+            300.,
+            2.,
+            64.,
+            Some(Paint {
                 tint: pane_core::Tint::Same(pane_core::Color::Rgba(0x1e88e5ff)),
                 exact: true,
-            }),
-            ..rect(300., 2., 64.)
-        }
+            })
+        )
     );
     // The hex code, measured: its text sits under the preview, as far
     // down as the stub measures it.
@@ -714,22 +723,20 @@ fn views_open_at_once_keep_their_own_state(sample: &Sample) {
 
     // The event each view is sent: a key pressed on its canvas, by the
     // callback id its own tree named.
-    let pressed = |rendered: &pane_core::DesignedRendered, key: &str| {
+    let pressed = |rendered: &pane_core::DesignedRendered, name: &str| {
         let drawn = canvas_of_tree(&rendered.tree);
         DesignedEvent {
             render: rendered.render,
             key: drawn.node_key,
             callback: drawn.on_key.expect("the canvas takes keys"),
-            payload: key(key),
+            payload: key(name),
         }
     };
     // One moves right, the other left: each view's own state.
     let first_next =
-        block_on(runtime.designed_view_event(first, pressed(&rendered, "right"))).unwrap();
-    let second_next = block_on(
-        runtime.designed_view_event(second, pressed(&rendered, "left")),
-    )
-    .unwrap();
+        block_on(runtime.designed_view_event(first, pressed(&rendered, "right")));
+    let second_next =
+        block_on(runtime.designed_view_event(second, pressed(&rendered, "left")));
 
     assert_eq!(value_of(&first_next), "Purple, #8E24AA");
     assert_eq!(value_of(&second_next), "Teal, #00897B");
