@@ -462,7 +462,6 @@ fn run(launcher: &Launcher, title: &str) -> Status {
     shown(launcher)
 }
 
-
 /// Waits until Pane wrote what its clipboard history batched (#192): the
 /// copies kept and the items expired, written together a moment after the
 /// first.
