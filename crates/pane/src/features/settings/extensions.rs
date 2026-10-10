@@ -7,13 +7,15 @@
 //! **The group.** After Pane's own pages, the sidebar's Extensions entry
 //! heads the group: its + menu installs from a folder, npm or Git, and
 //! under it each installed extension has an entry of its own — its icon,
-//! its title, and a mark in a word while it is paused, broken or updating
+//! its title, the word Official on one of Pane's own (ADR 0045), and a
+//! mark in a word while it is paused, broken or updating
 //! ([`sidebar_entries`]). The entry itself opens the group's page: the
 //! installed extensions as a list, what governs them all (automatic
 //! updates), what belongs to none of them (the runtime's rows, data kept
 //! for an uninstalled extension), and the install sources.
 //!
-//! **An extension's page.** Its large icon, title, description and source
+//! **An extension's page.** Its large icon, its title with Official
+//! beside it on one of Pane's own (ADR 0045), its description and source
 //! at the top, with the mark that needs saying; its enable switch; its
 //! "Actions…" menu — Check for Update, Reload, Clear Cache, Reset
 //! Confirmations, Show Source Folder, Uninstall, and what else the
@@ -73,6 +75,7 @@ use gpui::{
     anchored, deferred, div, prelude::*, px,
 };
 use gpui_elements::editable_text::{EditableTextState, StringStorage, TextChanged, text_input};
+use pane_core::clipboard::{Clock as _, SystemClock};
 use pane_core::{
     ExtensionMark, ExtensionOperation, InstalledPackage, Launcher, LauncherView, OperationKind,
     PackageIdentity, PackagePreferences, PathKind, PreferenceField, PreferenceKind, Screen,
@@ -95,6 +98,15 @@ pub(crate) const ABOUT: &str = "Install and manage extensions";
 
 /// The group's title: its sidebar entry, and its page's.
 pub(crate) const TITLE: &str = "Extensions";
+
+/// The word the sidebar's entry and an extension's page mark one of
+/// Pane's own extensions with (#280, ADR 0045): an official extension, in
+/// a word.
+const OFFICIAL_WORD: &str = "Official";
+
+/// What the group's list says of one of Pane's own extensions (#280,
+/// ADR 0045), in full.
+const OFFICIAL: &str = "One of Pane's official extensions";
 
 /// The scroll anchor of the preferences of the command `command` (its id
 /// in `pane.json`) on the page of the extension whose identity key is
@@ -398,9 +410,10 @@ fn focus(
 
 /// Whether the launcher's screen is one an extension's operation opened:
 /// a confirmation, a package's preview, pause, build, network, program or
-/// runtime details. While it is, the pages draw it from the launcher's
-/// live view, so its confirmations show and are answered here; otherwise
-/// they read the launcher, whose screen stays wherever the user left it.
+/// runtime details, or the update results. While it is, the pages draw it
+/// from the launcher's live view, so its confirmations show and are
+/// answered here; otherwise they read the launcher, whose screen stays
+/// wherever the user left it.
 pub(crate) fn in_extension_flow(screen: &Screen) -> bool {
     matches!(
         screen,
@@ -411,6 +424,7 @@ pub(crate) fn in_extension_flow(screen: &Screen) -> bool {
             | Screen::RuntimeDetails { .. }
             | Screen::NetworkDetails { .. }
             | Screen::ProgramDetails { .. }
+            | Screen::UpdateResults { .. }
     )
 }
 
@@ -426,6 +440,7 @@ fn details_screen(screen: &Screen) -> bool {
             | Screen::NetworkDetails { .. }
             | Screen::ProgramDetails { .. }
             | Screen::Package { .. }
+            | Screen::UpdateResults { .. }
     )
 }
 
@@ -639,8 +654,9 @@ fn popover(
 
 /// The sidebar's entries for the installed extensions, under the group's
 /// own entry (`group`, its index among the pages): each its icon, its
-/// title and the mark that needs saying (a word: Paused, Broken,
-/// Updating), selected while its page shows.
+/// title, the word Official on one of Pane's own, and the mark that needs
+/// saying (a word: Paused, Broken, Updating), selected while its page
+/// shows.
 pub(super) fn sidebar_entries(
     this: &SettingsWindow,
     group: usize,
@@ -678,16 +694,23 @@ fn sidebar_entry_of(
     let key = package.identity.key();
     let title = package.title();
     let mark = this.launcher.extension_mark(&package.identity);
+    let official = this.launcher.extension_is_official(&package.identity);
     let icon = crate::features::icons::row_icon_of(&this.launcher, &key, theme);
-    let label = match &mark {
-        Some(mark) => format!("{title}, {}", mark.word()),
-        None => title.clone(),
-    };
+    // What the entry is called for assistive technology: its title, then
+    // that it is one of Pane's own, then the word of what needs saying.
+    let mut label = title.clone();
+    if official {
+        label = format!("{label}, {OFFICIAL_WORD}");
+    }
+    if let Some(mark) = &mark {
+        label = format!("{label}, {}", mark.word());
+    }
     let selector = format!("extension-entry-{title}");
     sidebar_entry(
         ("extension-entry", index),
         &icon,
         &title,
+        official,
         mark.as_ref(),
         selected,
         theme,
@@ -705,12 +728,14 @@ fn sidebar_entry_of(
 
 /// One extension's sidebar entry: the sidebar item's family (#97) — its
 /// height, padding, radius and washes — indented under the group's entry,
-/// with the extension's own icon in place of a glyph and its mark at its
-/// right end, in the warning's tone.
+/// with the extension's own icon in place of a glyph, the word Official
+/// at its right end on one of Pane's own, and the mark that needs saying
+/// beyond it, in the warning's tone.
 fn sidebar_entry(
     id: impl Into<ElementId>,
     icon: &RowIcon,
     title: &str,
+    official: bool,
     mark: Option<&ExtensionMark>,
     selected: bool,
     theme: &Theme,
@@ -724,6 +749,16 @@ fn sidebar_entry(
     };
     let caption = typography.settings_caption_size;
     let scope = format!("extension-entry-{title}");
+    let official = official.then(|| {
+        let selector = format!("extension-entry-official-{title}");
+        div()
+            .id("entry-official")
+            .debug_selector(move || selector)
+            .flex_none()
+            .text_size(caption)
+            .text_color(theme.text_muted)
+            .child(OFFICIAL_WORD)
+    });
     let mark = mark.map(|mark| {
         let selector = format!("extension-entry-mark-{title}");
         div()
@@ -770,6 +805,7 @@ fn sidebar_entry(
                 .truncate()
                 .child(title.to_owned()),
         )
+        .children(official)
         .children(mark)
 }
 
@@ -860,7 +896,11 @@ fn render(
             .into_any_element()
     });
     let body = if flow {
-        flow_screen(&live, &theme, cx)
+        if matches!(live.screen, Screen::UpdateResults { .. }) {
+            update_results_screen(this, &live, &theme, cx)
+        } else {
+            flow_screen(&live, &theme, cx)
+        }
     } else {
         match this.extension.clone() {
             Some(key) => extension_page(this, &key, &theme, window, cx),
@@ -951,6 +991,97 @@ fn flow_screen(
     ]
 }
 
+/// The update results screen in place of the page (#256): the launcher's
+/// record of the latest pass that recorded, its groups in the order
+/// Updated, Skipped, Failed, the empty ones hidden, each row the
+/// extension's icon, title and outcome, opening that extension's page —
+/// as the screen's own rows do in the launcher window. The way back is
+/// the page's own Back button, as a details screen's is.
+fn update_results_screen(
+    this: &mut SettingsWindow,
+    live: &LauncherView,
+    theme: &Theme,
+    cx: &mut Context<SettingsWindow>,
+) -> Vec<AnyElement> {
+    let results = this.launcher.update_results();
+    let mut groups = Vec::new();
+    let mut at: usize = 0;
+    for (label, group) in [
+        ("Updated", &results.updated),
+        ("Waiting", &results.waiting),
+        ("Skipped", &results.skipped),
+        ("Failed", &results.failed),
+    ] {
+        if group.is_empty() {
+            continue;
+        }
+        let mut items: Vec<AnyElement> = Vec::new();
+        for row in group {
+            let index = at;
+            at += 1;
+            let key = row.identity.key();
+            let title = row.title.clone();
+            let icon = crate::features::icons::row_icon_of(&this.launcher, &key, theme);
+            let tile = row_icon_at(
+                &icon,
+                TileSize::Row,
+                ("extension-item-icon", index),
+                &format!("extension-{title}"),
+                theme,
+            );
+            let lines = vec![
+                controls::field_description(row.detail.clone(), theme.text_muted, theme)
+                    .truncate()
+                    .into_any_element(),
+            ];
+            let selector = format!("extension-row-{title}");
+            items.push(
+                controls::list_item(
+                    ("extension-row", index),
+                    Some(tile),
+                    title.clone(),
+                    lines,
+                    theme,
+                )
+                .debug_selector(move || selector)
+                .role(Role::Link)
+                .aria_label(title)
+                .on_click(cx.listener(move |this, _: &gpui::ClickEvent, _, cx| {
+                    this.show_extension(Some(key.clone()), cx);
+                }))
+                .into_any_element(),
+            );
+        }
+        groups.push(
+            controls::section(Some(label.into()), controls::list_card(items, theme), theme)
+                .debug_selector(move || format!("section-{label}"))
+                .into_any_element(),
+        );
+    }
+    let back = controls::button("extension-back", "Back", true, theme)
+        .debug_selector(|| "extension-back".into())
+        .role(Role::Button)
+        .aria_label("Back")
+        .on_click(cx.listener(|this, _: &gpui::ClickEvent, _, cx| {
+            // The way out of the results screen, as the launcher window's
+            // Escape is there.
+            this.launcher.back();
+            launcher_changed_outside(cx);
+            cx.notify();
+        }));
+    let body = div()
+        .flex()
+        .flex_col()
+        .gap(theme.geometry.settings.section_label_gap)
+        .children(groups)
+        .child(div().flex().child(back));
+    vec![
+        controls::section(Some(live.title.clone().into()), body, theme)
+            .debug_selector(|| "extensions-title".into())
+            .into_any_element(),
+    ]
+}
+
 /// One entry of a list on these pages as a Settings list item named `id`:
 /// its tile (with the scope its icon's selectors name) and its title,
 /// and, when it cannot be used here, the reason in the warning tone, which
@@ -975,6 +1106,33 @@ fn list_entry(
         .role(Role::Button)
         .aria_label(title.to_owned())
         .when_some(reason, |item, reason| item.aria_description(reason))
+}
+
+/// What the group's page says under its Check for updates button: when
+/// Pane last checked for extension updates, for people — "Last checked 3
+/// minutes ago" — or that it has not yet. The clock the record keeps is
+/// the launcher's, which in release builds is the system's.
+fn last_checked_words(checked: Option<u64>) -> String {
+    let Some(at) = checked else {
+        return "Not checked yet".into();
+    };
+    // A future time (the record read before this Pane's clock caught up)
+    // reads as just now, as a negative ago does elsewhere.
+    let seconds = SystemClock.now().saturating_sub(at) / 1000;
+    let ago = |count: u64, unit: &str| {
+        if count == 1 {
+            format!("1 {unit} ago")
+        } else {
+            format!("{count} {unit}s ago")
+        }
+    };
+    let when = match seconds {
+        0..60 => "just now".into(),
+        60..3600 => ago(seconds / 60, "minute"),
+        3600..86_400 => ago(seconds / 3600, "hour"),
+        _ => ago(seconds / 86_400, "day"),
+    };
+    format!("Last checked {when}")
 }
 
 /// The group's own page: the installed extensions, each opening its page;
@@ -1017,6 +1175,14 @@ fn group_page(
                     .id(("extension-item-description", index))
                     .debug_selector(|| "extension-item-description".into())
                     .into_any_element(),
+            );
+        }
+        // One of Pane's own, said after where it comes from (#280).
+        if this.launcher.extension_is_official(&package.identity) {
+            let selector = format!("extension-item-official-{title}");
+            lines.push(
+                controls::field_description(OFFICIAL, theme.text_muted, theme)
+                    .debug_selector(move || selector)                    .into_any_element(),
             );
         }
         if !package.enabled {
@@ -1131,10 +1297,43 @@ fn group_page(
         .on_click(cx.listener(move |this, _: &gpui::ClickEvent, _, cx| {
             run(this, &operation, cx);
         }));
+        // Check for updates, beside the choice that governs the automatic
+        // ones: the pass the user asked for — the same pass root search's
+        // Check for Extension Updates row starts (ADR 0043: two entry
+        // points, one flow) — with when Pane last checked under it. The
+        // toast that follows the pass is the launcher window's; the page
+        // says when the check ran.
+        let words = last_checked_words(this.launcher.last_extension_check());
+        let last = controls::field_description(words.clone(), theme.text_muted, theme)
+            .id("extension-last-checked")
+            .role(Role::Status)
+            .aria_label(words)
+            .debug_selector(|| "extension-last-checked".into());
+        let check = controls::setting_row_with(
+            div()
+                .flex()
+                .flex_col()
+                .child(controls::field_label("Check for updates", theme))
+                .child(last),
+            Vec::new(),
+            theme,
+        )
+        .child(
+            controls::button("extension-check-updates", "Check for updates", true, theme)
+                .debug_selector(|| "extension-check-updates".into())
+                .role(Role::Button)
+                .aria_label("Check for updates")
+                .on_click(cx.listener(|this, _: &gpui::ClickEvent, _, cx| {
+                    this.extensions.outcome = None;
+                    keep_outcome_of(this.launcher.check_extension_updates(), cx);
+                })),
+        )
+        .id("extension-row-Check for updates")
+        .debug_selector(|| "extension-row-Check for updates".into());
         content.push(
             controls::section(
                 None,
-                controls::card([switch.into_any_element()], theme),
+                controls::card([switch.into_any_element(), check.into_any_element()], theme),
                 theme,
             )
             .into_any_element(),
@@ -1388,7 +1587,8 @@ fn extension_page(
 }
 
 /// The page's header: the extension's large icon, its title, what it does,
-/// where it comes from, and the mark that needs saying, in full.
+/// where it comes from, and the mark that needs saying, in full. One of
+/// Pane's own carries the word beside its title (#280, ADR 0045).
 fn header(
     this: &SettingsWindow,
     package: &InstalledPackage,
@@ -1398,6 +1598,19 @@ fn header(
     let key = package.identity.key();
     let title = package.title();
     let icon = crate::features::icons::row_icon_of(&this.launcher, &key, theme);
+    let official = this
+        .launcher
+        .extension_is_official(&package.identity)
+        .then(|| {
+            div()
+                .id("extension-page-official")
+                .debug_selector(|| "extension-page-official".into())
+                .flex_none()
+                .text_size(theme.typography.settings_caption_size)
+                .font_weight(theme.typography.medium)
+                .text_color(theme.text_muted)
+                .child(OFFICIAL_WORD)
+        });
     let description = description_of(package).map(|description| {
         controls::field_description(description, theme.text_body, theme)
             .id("extension-page-description")
@@ -1442,14 +1655,24 @@ fn header(
                 .gap(px(2.))
                 .child(
                     div()
-                        .id("extension-page-title")
-                        .debug_selector(move || title_selector)
-                        .text_size(px(18.))
-                        .font_weight(theme.typography.medium)
-                        .text_color(theme.text_title)
-                        .role(Role::Heading)
-                        .aria_label(title.clone())
-                        .child(title.clone()),
+                        .flex()
+                        .items_center()
+                        .gap(px(6.))
+                        .child(
+                            div()
+                                .id("extension-page-title")
+                                .debug_selector(move || title_selector)
+                                .flex_1()
+                                .min_w(px(0.))
+                                .truncate()
+                                .text_size(px(18.))
+                                .font_weight(theme.typography.medium)
+                                .text_color(theme.text_title)
+                                .role(Role::Heading)
+                                .aria_label(title.clone())
+                                .child(title.clone()),
+                        )
+                        .children(official),
                 )
                 .children(description)
                 .child(
@@ -2573,5 +2796,39 @@ mod tests {
             appended("KeePass.exe,1Password.exe", "keepass.EXE"),
             "KeePass.exe, 1Password.exe"
         );
+    }
+
+    /// What the group's page says of when Pane last checked, pluralized as
+    /// the codebase's other "… ago" words are.
+    #[test]
+    fn the_last_checked_line_says_when_for_people() {
+        assert_eq!(last_checked_words(None), "Not checked yet");
+        let now = SystemClock.now();
+        let minutes = |count: u64| now - count * 60 * 1000;
+        assert_eq!(last_checked_words(Some(now)), "Last checked just now");
+        assert_eq!(
+            last_checked_words(Some(now + 60_000)),
+            "Last checked just now"
+        );
+        assert_eq!(
+            last_checked_words(Some(minutes(1))),
+            "Last checked 1 minute ago"
+        );
+        assert_eq!(
+            last_checked_words(Some(minutes(3))),
+            "Last checked 3 minutes ago"
+        );
+        let hours = |count: u64| now - count * 3600 * 1000;
+        assert_eq!(
+            last_checked_words(Some(hours(1))),
+            "Last checked 1 hour ago"
+        );
+        assert_eq!(
+            last_checked_words(Some(hours(2))),
+            "Last checked 2 hours ago"
+        );
+        let days = |count: u64| now - count * 86_400 * 1000;
+        assert_eq!(last_checked_words(Some(days(1))), "Last checked 1 day ago");
+        assert_eq!(last_checked_words(Some(days(5))), "Last checked 5 days ago");
     }
 }

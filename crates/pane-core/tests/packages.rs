@@ -88,6 +88,9 @@ const IMPORT_ROW: &str = "Import Extension…";
 const INSTALL_ROW: &str = "Install extension from folder…";
 const NPM_ROW: &str = "Install extension from npm…";
 const GIT_ROW: &str = "Install extension from Git…";
+/// Root search's row for the pass the user asks for, listed once an
+/// extension is installed (#267).
+const CHECK_ROW: &str = "Check for Extension Updates";
 const MANAGE_ROW: &str = "Manage Extensions";
 const SETTINGS_ROW: &str = "Settings…";
 
@@ -156,6 +159,7 @@ fn a_previewed_local_package_installs_and_its_command_runs() {
             GIT_ROW,
             CREATE_ROW,
             IMPORT_ROW,
+            CHECK_ROW,
             MANAGE_ROW,
             SETTINGS_ROW
         ]
@@ -262,6 +266,7 @@ fn a_second_explicit_install_of_the_same_folder_is_rejected() {
             GIT_ROW,
             CREATE_ROW,
             IMPORT_ROW,
+            CHECK_ROW,
             MANAGE_ROW,
             SETTINGS_ROW
         ]
@@ -337,6 +342,7 @@ fn copies_in_different_folders_are_distinct_packages_despite_the_same_title() {
             GIT_ROW,
             CREATE_ROW,
             IMPORT_ROW,
+            CHECK_ROW,
             MANAGE_ROW,
             SETTINGS_ROW
         ]
@@ -425,6 +431,7 @@ fn installed_commands_are_listed_after_a_restart_without_running_any_guest() {
             GIT_ROW,
             CREATE_ROW,
             IMPORT_ROW,
+            CHECK_ROW,
             MANAGE_ROW,
             SETTINGS_ROW
         ]
@@ -667,6 +674,7 @@ fn a_damaged_installed_copy_is_listed_with_its_problem_and_others_still_run() {
             GIT_ROW,
             CREATE_ROW,
             IMPORT_ROW,
+            CHECK_ROW,
             MANAGE_ROW,
             SETTINGS_ROW
         ]
@@ -764,6 +772,7 @@ fn an_install_finishing_in_the_background_keeps_the_selected_row() {
             GIT_ROW,
             CREATE_ROW,
             IMPORT_ROW,
+            CHECK_ROW,
             MANAGE_ROW,
             SETTINGS_ROW
         ]
@@ -1008,6 +1017,7 @@ fn a_package_for_this_system_shows_its_systems_and_installs() {
             GIT_ROW,
             CREATE_ROW,
             IMPORT_ROW,
+            CHECK_ROW,
             MANAGE_ROW,
             SETTINGS_ROW
         ]
@@ -1039,6 +1049,7 @@ fn an_installed_copy_for_other_systems_lists_its_commands_as_unavailable() {
             GIT_ROW,
             CREATE_ROW,
             IMPORT_ROW,
+            CHECK_ROW,
             MANAGE_ROW,
             SETTINGS_ROW
         ]
@@ -1106,6 +1117,7 @@ fn a_command_for_other_systems_is_listed_with_its_reason_and_others_still_open()
                 (GIT_ROW.into(), None),
                 (CREATE_ROW.into(), None),
                 (IMPORT_ROW.into(), None),
+                (CHECK_ROW.into(), None),
                 (MANAGE_ROW.into(), None),
                 (SETTINGS_ROW.into(), None),
             ]

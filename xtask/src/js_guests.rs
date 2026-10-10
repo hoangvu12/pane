@@ -18,7 +18,7 @@ use serde_json::json;
 
 /// (component file in `guests/prebuilt/` and `target/guests/`, source
 /// package) of each prebuilt JS/TS sample.
-pub(crate) const SAMPLES: [(&str, &str); 35] = [
+pub(crate) const SAMPLES: [(&str, &str); 41] = [
     ("sample_js", "guests/sample-js"),
     ("sample_ts", "guests/sample-ts"),
     ("sample_settings_js", "guests/sample-settings-js"),
@@ -54,6 +54,24 @@ pub(crate) const SAMPLES: [(&str, &str); 35] = [
     ("sample_icons_ts", "guests/sample-icons-ts"),
     ("sample_programs_js", "guests/sample-programs-js"),
     ("sample_programs_ts", "guests/sample-programs-ts"),
+    ("sample_run_js", "guests/sample-run-js"),
+    ("sample_run_ts", "guests/sample-run-ts"),
+    (
+        "sample_switch_windows_js",
+        "guests/sample-switch-windows-js",
+    ),
+    (
+        "sample_switch_windows_ts",
+        "guests/sample-switch-windows-ts",
+    ),
+    (
+        "sample_system_commands_js",
+        "guests/sample-system-commands-js",
+    ),
+    (
+        "sample_system_commands_ts",
+        "guests/sample-system-commands-ts",
+    ),
 ];
 
 /// Pane's WIT, copied beside the world in `guests/js/wit`.

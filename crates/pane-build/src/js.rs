@@ -58,11 +58,15 @@ const EXPORT_OPTIONS: [(&str, &str); 5] = [
     ("service", "pane:extension/service@0.1.0"),
 ];
 /// `"pane"` option -> the interface a command setting it also imports,
-/// beyond what every command may import (`js-extension`).
-const IMPORT_OPTIONS: [(&str, &str); 3] = [
+/// beyond what every command may import (`js-extension`). `run` and
+/// `windows` are Windows-only capabilities: a command importing them
+/// elsewhere has every call answer not-available, which is not a failure.
+const IMPORT_OPTIONS: [(&str, &str); 5] = [
     ("files", "pane:extension/files@0.1.0"),
     ("fileIndex", "pane:extension/file-index@0.1.0"),
     ("clipboardHistory", "pane:extension/clipboard-history@0.1.0"),
+    ("run", "pane:extension/run@0.1.0"),
+    ("windows", "pane:extension/windows@0.1.0"),
 ];
 /// The exports the adapter wraps, by `pane` option, each with the handler
 /// that answers errors as text (see `guests/js/adapt.js`).
@@ -78,6 +82,11 @@ const ADAPTED_PROVIDERS: [(&str, &str, &str); 5] = [
 /// component imports only what its code calls: Pane lists a package whose
 /// component imports it as one that uses the network.
 const HTTP_IMPORT: &str = "wasi:http/client@0.3.0";
+
+/// Pane's session and power commands (wit/system-commands.wit), which a
+/// command imports only if its bundle uses them (itself, or through
+/// `@pane-app/extension/system-commands`), the same way.
+const SYSTEM_COMMANDS_IMPORT: &str = "pane:extension/system-commands@0.1.0";
 /// Pane's system programs (`wit/programs.wit`), which a command imports only
 /// if its bundle uses them (itself, or through
 /// `@pane-app/extension/programs`), as a Rust command's component imports
@@ -166,7 +175,12 @@ pub fn build_js_command(
         Ok(bundled) => bundled,
         Err(error) => return failed(&format!("{} cannot be read: {error}", bundle.display())),
     };
-    let world = match command_world(&options, uses_http(&bundled), uses_programs(&bundled)) {
+    let world = match command_world(
+        &options,
+        uses_http(&bundled),
+        uses_programs(&bundled),
+        uses_system_commands(&bundled),
+    ) {
         Ok(world) => world,
         Err(reason) => return failed(&reason),
     };
@@ -529,6 +543,7 @@ fn command_world(
     options: &Map<String, Value>,
     http: bool,
     programs: bool,
+    system_commands: bool,
 ) -> Result<String, String> {
     let known: Vec<&str> = EXPORT_OPTIONS
         .iter()
@@ -563,6 +578,9 @@ fn command_world(
     if programs {
         imports.push_str(&format!("  import {PROGRAMS_IMPORT};\n"));
     }
+    if system_commands {
+        imports.push_str(&format!("  import {SYSTEM_COMMANDS_IMPORT};\n"));
+    }
     for (option, interface) in EXPORT_OPTIONS {
         if options
             .get(option)
@@ -585,6 +603,11 @@ fn uses_http(bundle: &str) -> bool {
 /// Whether the bundled module imports Pane's system programs.
 fn uses_programs(bundle: &str) -> bool {
     uses_import(bundle, "pane:extension/programs@")
+}
+
+/// Whether the bundled module imports Pane's session and power commands.
+fn uses_system_commands(bundle: &str) -> bool {
+    uses_import(bundle, "pane:extension/system-commands@")
 }
 
 /// Whether `bundle` imports `interface`: an import of it, static or dynamic,
@@ -738,11 +761,11 @@ mod tests {
         options.insert("rootResults".into(), Value::Bool(true));
         options.insert("files".into(), Value::Bool(true));
         assert_eq!(
-            command_world(&options, false, false).unwrap(),
+            command_world(&options, false, false, false).unwrap(),
             "package pane:js-guest@0.1.0;\n\nworld js-command {\n  include js-extension;\n  \
              import pane:extension/files@0.1.0;\n  export pane:extension/root-results@0.1.0;\n}\n"
         );
-        let world = command_world(&Map::new(), true, true).unwrap();
+        let world = command_world(&Map::new(), true, true, true).unwrap();
         assert!(
             world.contains("  import wasi:http/client@0.3.0;\n"),
             "{world}"
@@ -751,10 +774,14 @@ mod tests {
             world.contains("  import pane:extension/programs@0.1.0;\n"),
             "{world}"
         );
+        assert!(
+            world.contains("  import pane:extension/system-commands@0.1.0;\n"),
+            "{world}"
+        );
         let mut unknown = Map::new();
         unknown.insert("noSuchOption".into(), Value::Bool(true));
         assert!(
-            command_world(&unknown, false, false)
+            command_world(&unknown, false, false, false)
                 .unwrap_err()
                 .contains("unknown \"pane\" options in package.json: noSuchOption")
         );
@@ -776,6 +803,12 @@ mod tests {
         assert!(!uses_http("const url = 'https://wasi:http/';"));
         assert!(!uses_programs(
             "import { run } from \"pane:extension/other\";"
+        ));
+        assert!(uses_system_commands(
+            r#"import { lock } from "pane:extension/system-commands@0.1.0";"#
+        ));
+        assert!(!uses_system_commands(
+            "import { lock } from \"pane:extension/other\";"
         ));
         assert!(!uses_http(""));
     }

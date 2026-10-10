@@ -21,6 +21,7 @@ pub mod extension_log;
 pub mod feedback;
 pub mod file_index;
 pub mod files;
+pub mod game_mode;
 mod generation;
 pub mod git;
 mod helpers;
@@ -45,11 +46,14 @@ mod platform;
 mod preferences;
 mod programs;
 mod protection;
+pub mod run;
 mod runtime;
 pub mod schema;
 mod search;
 mod source_map;
+pub mod switch_windows;
 pub mod system;
+pub mod system_commands;
 pub mod system_icons;
 pub mod templates;
 mod threads;
@@ -66,6 +70,7 @@ pub use feedback::{
     ConfirmAnswer, Confirmation, Hud, NextShowing, PopToRoot, ShownToast, Toast, ToastAction,
     ToastSlot, ToastStyle, WindowControl, WindowPresence,
 };
+pub use game_mode::GameMode;
 pub use helpers::runner::{MAX_HELPER_INPUT, MAX_HELPER_OUTPUT};
 pub use host_settings::{
     BackgroundEffect, EscapeBehavior, HostSettings, MaterialPreference, NavigationBindings,
@@ -86,7 +91,8 @@ pub use launcher::{
     Question, QuickSlot, ResultAction, ResultActionItem, ResultActions, Row, RowKind,
     RowPresentation, Screen, Section, SelectedAction, SettingsTarget, SetupHeader, ShortcutCatalog,
     ShortcutCommand, ShortcutGroup, SlotChange, Status, SubmenuState, UNEXPECTED_QUIT, Unavailable,
-    UnboundShortcut, UpdateHold, answer_sections, root_sections,
+    UnboundShortcut, UpdateHold, UpdateResult, UpdateResults, UpdateResultsAction, answer_sections,
+    root_sections,
 };
 pub use links::LinkOpener;
 pub use operations::{MAX_CALL_DEPTH, MAX_OPERATION_JSON};

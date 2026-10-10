@@ -24,6 +24,9 @@ const IMPORT_ROW: &str = "Import Extension…";
 const INSTALL_ROW: &str = "Install extension from folder…";
 const NPM_ROW: &str = "Install extension from npm…";
 const GIT_ROW: &str = "Install extension from Git…";
+/// Root search's row for the pass the user asks for, listed once an
+/// extension is installed (#267).
+const CHECK_ROW: &str = "Check for Extension Updates";
 const MANAGE_ROW: &str = "Manage Extensions";
 const SETTINGS_ROW: &str = "Settings…";
 
@@ -166,6 +169,7 @@ fn a_disabled_package_leaves_root_search_and_stays_disabled_after_a_restart(fixt
             GIT_ROW,
             CREATE_ROW,
             IMPORT_ROW,
+            CHECK_ROW,
             MANAGE_ROW,
             SETTINGS_ROW
         ]
@@ -205,6 +209,7 @@ fn a_disabled_package_leaves_root_search_and_stays_disabled_after_a_restart(fixt
             GIT_ROW,
             CREATE_ROW,
             IMPORT_ROW,
+            CHECK_ROW,
             MANAGE_ROW,
             SETTINGS_ROW
         ]
@@ -221,6 +226,7 @@ fn a_disabled_package_leaves_root_search_and_stays_disabled_after_a_restart(fixt
             GIT_ROW,
             CREATE_ROW,
             IMPORT_ROW,
+            CHECK_ROW,
             MANAGE_ROW,
             SETTINGS_ROW
         ]
@@ -264,6 +270,7 @@ fn re_enabling_after_a_restart_restores_the_saved_settings(fixture: &Fixture) {
             GIT_ROW,
             CREATE_ROW,
             IMPORT_ROW,
+            CHECK_ROW,
             MANAGE_ROW,
             SETTINGS_ROW
         ]
@@ -350,6 +357,7 @@ fn copies_with_the_same_title_are_enabled_and_keep_settings_by_identity(fixture:
             GIT_ROW,
             CREATE_ROW,
             IMPORT_ROW,
+            CHECK_ROW,
             MANAGE_ROW,
             SETTINGS_ROW
         ]
@@ -397,6 +405,7 @@ fn disabling_through_the_api_closes_the_package_command_and_updating_keeps_it_di
             GIT_ROW,
             CREATE_ROW,
             IMPORT_ROW,
+            CHECK_ROW,
             MANAGE_ROW,
             SETTINGS_ROW
         ]
@@ -422,6 +431,7 @@ fn disabling_through_the_api_closes_the_package_command_and_updating_keeps_it_di
             GIT_ROW,
             CREATE_ROW,
             IMPORT_ROW,
+            CHECK_ROW,
             MANAGE_ROW,
             SETTINGS_ROW
         ]

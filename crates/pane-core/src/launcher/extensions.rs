@@ -13,7 +13,8 @@
 //! ([`Launcher::manage_extensions`]).
 //!
 //! Also here: turning one command of a package on or off, checking a
-//! package for an update and the folder its page shows.
+//! package for an update, the folder its page shows, and which of the
+//! installed extensions are Pane's own (#280, ADR 0045).
 
 use std::future::Future;
 use std::path::{Path, PathBuf};
@@ -126,6 +127,14 @@ impl Launcher {
                 retained::rows(&state.retained, &installation.data);
             rows.extend(retained_rows);
             entries.extend(retained_entries);
+            // The update results of the latest pass that recorded, before
+            // the global automatic-update choice, last of all: what the
+            // last pass did is found beside what governs the next one.
+            if !state.update_results.results.is_empty() {
+                let (row, entry) = results_row();
+                rows.push(row);
+                entries.push(entry);
+            }
             // The global automatic-update choice comes last, after every
             // package's rows: the packages are the list, and what governs
             // them all is found beneath them.
@@ -180,9 +189,23 @@ fn opened_by_operation(screen: &Screen) -> bool {
             | Screen::ProgramDetails { .. }
             | Screen::BuildDetails { .. }
             | Screen::ExtensionLog { .. }
+            | Screen::UpdateResults { .. }
             | Screen::RuntimeDetails { .. }
             | Screen::Hotkey { .. }
     )
+}
+
+/// The extension list's row for the update results of the latest pass
+/// that recorded, before the global choice: what the last pass did to
+/// every extension it considered.
+fn results_row() -> (Row, Entry) {
+    let row = Row {
+        id: "update-results".into(),
+        title: "Update Results".into(),
+        subtitle: Some("What the last check updated, skipped or failed".into()),
+        unavailable: None,
+    };
+    (row, Entry::UpdateResults)
 }
 
 /// What one of the extensions' operations does (#168): Settings offers each
@@ -238,6 +261,9 @@ pub enum OperationKind {
     RestartRuntime,
     /// Deletes the data kept for an extension no longer installed.
     DeleteRetainedData,
+    /// Shows the update results of the latest pass that recorded: every
+    /// extension it considered, grouped as Updated, Skipped and Failed.
+    UpdateResults,
 }
 
 impl OperationKind {
@@ -266,6 +292,7 @@ impl OperationKind {
             OperationKind::RuntimeDetails => "Why the Runtime Stopped",
             OperationKind::RestartRuntime => "Restart the Runtime",
             OperationKind::DeleteRetainedData => "Delete Retained Data",
+            OperationKind::UpdateResults => "Update Results",
         }
     }
 }
@@ -466,6 +493,7 @@ fn operation(state: &State, row: Row, entry: &Entry) -> Option<ExtensionOperatio
             None,
             None,
         ),
+        Entry::UpdateResults => (OperationKind::UpdateResults, None, None, None),
         _ => return None,
     };
     Some(ExtensionOperation {
@@ -865,6 +893,34 @@ impl Launcher {
             .is_paused(identity)
             .then(|| ExtensionMark::Paused(crate::packages::paused_reason(&title)))
     }
+
+    /// Whether the installed extension with `identity` is one of Pane's
+    /// own, an official extension (ADR 0045): a default extension, or a
+    /// package whose recorded Git source is a repository in the pane-app
+    /// organization on GitHub — installed by Pane at first setup or by
+    /// the user by hand alike. An extension from any other source, another
+    /// Git host, npm or a folder, is not official, and Settings says
+    /// nothing of it. The mark is read here rather than derived in the
+    /// window, so the rule lives in one place beside the rest the window
+    /// reads about an extension.
+    pub fn extension_is_official(&self, identity: &PackageIdentity) -> bool {
+        identity.default_id().is_some()
+            || identity
+                .git_repository()
+                .is_some_and(in_pane_app_organization)
+    }
+}
+
+/// Whether the repository a Git package's identity records, spelled
+/// `host[:port]/path` ([`crate::git::Repository::name`]), is one of Pane's
+/// own in the pane-app organization on GitHub (ADR 0045): the host
+/// `github.com` and a path under `pane-app/`. Pane's own spelling of the
+/// identity is what is checked, so the path is lowercase however the
+/// user wrote the address (github.com serves a repository at any case of
+/// its path); a host with a port, or the same path on another host, is
+/// not the pane-app organization.
+fn in_pane_app_organization(repository: &str) -> bool {
+    repository.starts_with("github.com/pane-app/")
 }
 
 /// What [`Launcher::begin_command_switch`] left to do.
