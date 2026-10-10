@@ -37,8 +37,10 @@ fn detail_of(text: &str) -> List {
         Item::new("copy", "Copy the text")
             .subtitle("Puts what root search sent on the clipboard")
             .on_action(|| async {
-                let text =
-                    pane_extension::commands::current().fallback_text.clone().unwrap_or_default();
+                let text = pane_extension::commands::current()
+                    .fallback_text
+                    .clone()
+                    .unwrap_or_default();
                 copy(&Clip::Text(text), false)?;
                 show_toast(Toast::success("Copied"));
                 Ok(())
