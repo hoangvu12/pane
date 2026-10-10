@@ -67,7 +67,7 @@ impl View for Screen {
                 .child(
                     // A stack: a badge over an icon tile, placed.
                     stack()
-                        .place(Place::TopEnd)
+                        .align(Place::TopEnd)
                         .child(icon_tile(Icon::builtin("layers")))
                         .child(
                             badge("4")

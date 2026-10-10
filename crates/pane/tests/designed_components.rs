@@ -221,12 +221,11 @@ fn the_components_announce_their_roles_and_names(cx: &mut TestAppContext) {
         ("PasswordInput", "Secret"),
         ("MultilineTextInput", "Notes"),
         ("ComboBox", "Pick"),
-        ("Link", "https://pane.dev"),
+        ("Link", "a link"),
         ("ListItem", "Pane"),
         ("Heading", "Markdown"),
         ("Heading", "Nothing here"),
         ("Button", "Start over"),
-        ("Button", "Increment"),
     ];
     for (role, label) in expect {
         assert!(

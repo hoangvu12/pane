@@ -815,7 +815,7 @@ pub fn card() -> Container {
 }
 
 /// A stack: children drawn over each other, each placed by its `place`
-/// method or the stack's own.
+/// method or the stack's `align`.
 pub fn stack() -> Stack {
     Stack(Node::of(NodeKind::Stack(Place::TopStart)))
 }
@@ -1371,7 +1371,7 @@ lays_out!(Container);
 
 impl Stack {
     /// Where in this stack a child that says none is placed.
-    pub fn place(mut self, place: Place) -> Stack {
+    pub fn align(mut self, place: Place) -> Stack {
         if let NodeKind::Stack(own) = &mut self.0.kind {
             *own = place;
         }
