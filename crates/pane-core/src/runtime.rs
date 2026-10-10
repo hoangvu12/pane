@@ -60,6 +60,7 @@ mod supervisor;
 mod system_functions;
 mod tree;
 
+pub use crate::tokens::{Space, TextLevel, TextStyle};
 use deadlines::Doing;
 #[doc(hidden)]
 pub use deadlines::Limits;

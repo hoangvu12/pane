@@ -50,6 +50,7 @@ pub mod system;
 pub mod system_icons;
 
 mod threads;
+pub mod tokens;
 pub mod tray;
 mod util;
 #[cfg(windows)]
@@ -124,6 +125,7 @@ pub use runtime::{
     ViewId, WARN_AFTER,
 };
 pub use search::{SettingsEntry, settings_matches, title_matches};
+pub use tokens::{IconSize, Radius};
 // Icons, accessories and tooltips (#139).
 pub use icons::{Color, Icon, IconSource, Mask, Tint, Tone};
 

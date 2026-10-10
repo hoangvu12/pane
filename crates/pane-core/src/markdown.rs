@@ -291,7 +291,6 @@ fn list_marker(line: &str) -> Option<(bool, usize)> {
     }
     let digits = line.chars().take_while(char::is_ascii_digit).count();
     if digits > 0
-
         && line
             .get(digits + 1..digits + 2)
             .is_some_and(|after| after == " " || after == "\t")

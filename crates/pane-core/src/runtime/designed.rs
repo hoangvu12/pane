@@ -2037,7 +2037,7 @@ mod tests {
         );
         assert_eq!(
             read(r##"{"type":"text","text":"a","color":{"light":"#111","dark":"secondary"}}"##)
-                    .unwrap(),
+                .unwrap(),
             Some(Paint {
                 tint: Tint::Pair {
                     light: Color::Rgba(0x111111FF),
@@ -2048,7 +2048,7 @@ mod tests {
         );
         assert_eq!(
             read(r##"{"type":"text","text":"a","color":{"raw":{"light":"#111","dark":"#eee"}}}"##)
-            .unwrap(),
+                .unwrap(),
             Some(Paint {
                 tint: Tint::Pair {
                     light: Color::Rgba(0x111111FF),
