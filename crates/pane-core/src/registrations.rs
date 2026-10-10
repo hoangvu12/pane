@@ -484,17 +484,6 @@ pub(crate) struct RegistrationOf {
     pub(crate) kind: Kind,
 }
 
-impl RegistrationOf {
-    /// The manifest id of the command a dynamic root item is under;
-    /// `None` for another kind.
-    pub(crate) fn command(&self) -> Option<&str> {
-        match &self.kind {
-            Kind::RootItem { command, .. } => Some(command),
-            _ => None,
-        }
-    }
-}
-
 /// What the timers thread fires: one timer registration, with its tag.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct TimerOf {

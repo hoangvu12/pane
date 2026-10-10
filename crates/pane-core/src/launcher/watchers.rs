@@ -60,7 +60,8 @@ struct Watching {
 
 /// One native watcher, for one registration.
 struct Held {
-    watcher: RecommendedWatcher,
+    /// Held for its drop: it is what watches, and the field is never read.
+    _watcher: RecommendedWatcher,
     /// The registration it watches for, as the registry holds it.
     registered: WatcherOf,
     /// The changes arriving since the first, and when that was: delivered
@@ -347,7 +348,7 @@ fn make(watchers: &Watchers, registered: &WatcherOf) -> Option<Held> {
     };
     native.watch(&path, mode).ok()?;
     Some(Held {
-        watcher: native,
+        _watcher: native,
         registered: registered.clone(),
         coalescing: None,
     })

@@ -1514,7 +1514,7 @@ impl Runtime {
     /// What the packages' guests registered at run time, and which
     /// activation entry points ran: the registry the launcher reads (see
     /// `registrations`).
-    pub fn registrations(&self) -> Arc<Registrations> {
+    pub(crate) fn registrations(&self) -> Arc<Registrations> {
         self.shared.registrations.clone()
     }
 
