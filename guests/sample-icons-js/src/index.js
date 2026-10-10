@@ -164,6 +164,6 @@ export const command = {
   },
 
   async openView(/** @type {string} */ commandId) {
-    throw new Error(`The icons sample has no custom views: ${commandId}`);
+    throw new Error(`The icons sample opens no designed view: ${commandId}`);
   },
 };

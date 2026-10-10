@@ -133,7 +133,8 @@ export const command: Command = {
     return `Searching ${address} from now on`;
   },
   async openView() {
-    throw new Error("Package search has opens no designed view"))},
+    throw new Error("Package search opens no designed view");
+  },
 };
 
 export const commandSearch: CommandSearch = {
