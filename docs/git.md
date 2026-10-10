@@ -127,6 +127,19 @@ field, a duplicate id or path, a malformed id, an id reused through
 `renamed`, a path that is not a plain relative folder, or a path naming no
 package.
 
+Each extension is released on its own, its releases tagged `<id>/v<semver>`
+(Go's convention for modules in subfolders), so a fix to one never forces
+a version on the rest; the repository's own tags — other extensions' and
+`v<semver>` — are never taken for one's. An extension installed from its
+own release tag [updates by itself](#updating-by-itself) to the newest
+release above the version installed, pinned to that tag's commit; one on
+a tracked reference updates as any Git package does, the newer revision
+read through the collection's index, so an extension whose folder moved
+within it still updates, keeping its identity. A revision whose index no
+longer lists the id is refused — following a rename, or reporting a
+removal, is a later ticket — and the extension keeps running its
+installed code.
+
 Naming a collection without an id, by address or by a picked folder, is
 explained as a collection whose extension must be named; the list to choose
 from comes with a later ticket. A `#<id>` on a one-extension repository is
@@ -206,11 +219,33 @@ Git repository … holds only the source of …; It keeps running its
 installed code"), announced once the next time the launcher is shown,
 and leaves the installed copy as it is.
 
+One extension of a collection installed from its own release tag
+`<id>/v<semver>` (ADR 0044) is checked differently: the repository's tags
+with the extension's prefix (`ls-refs` with `refs/tags/<id>/`) alone say
+what its newest release is — nothing is fetched while the newest names
+the version installed, and the repository's other tags, other
+extensions' and `v<semver>`, are never taken for its. When a newer
+release exists, the tag's commit is fetched and checked as an install
+checks a package, read through the collection's index so an extension
+whose folder moved within it still updates, and the extension is pinned
+to that tag's commit — the update is its own, never moving another
+extension of the collection. A revision whose index no longer lists the
+id is a Failed row ("It was not updated: Tag clock/v0.2.0 (commit …) of
+the Git repository … lists no extension `clock` in its
+pane-collection.json; It keeps running its installed code") and the
+extension keeps running its installed code; following a rename, or
+reporting a removal, is a later ticket. Check for Update on its page
+previews that one extension by its repository and id, at its newest
+release above the version installed — the ordinary preview, whose
+Update keeps or changes the recorded reference as a Git package's does.
+
 **Which packages update** (as [npm's](npm.md#which-packages-update)):
 an installed Git package that is tracked — installed from the default
-branch or a named branch — enabled, not paused after a failure, and not
-turned off; a tag or commit named to install it pins it, and an update
-installs that revision again, so it is never updated by itself. The same
+branch or a named branch — or, one extension of a collection, installed
+from its own release tag; enabled, not paused after a failure, and not
+turned off; any other tag or a commit named to install it pins it, and
+an update installs that revision again, so it is never updated by
+itself. The same
 safe boundary defers an update while a command runs, and an update the
 user chose (choosing the repository again, Update on its preview, `pane
 --install git:<address>`) replaces the copy without waiting, as a reload
@@ -364,7 +399,17 @@ yet.
   (identity, tracked reference and pin kept, the new copy running), a
   pinned tag never asked about, the per-package control row, and a
   branch that has moved to a source-only revision refused with the
-  installed copy untouched.
+  installed copy untouched; since #309, one extension of a collection
+  installed from its own release tag updating to the newest one above
+  the version installed, choosing it among other extensions' tags, a
+  prerelease and the repository's root `v<semver>` tag; a tracked branch
+  moving the extension's folder within the collection, its identity
+  kept; each extension updating on its own, one's release never moving
+  another; a release whose index no longer lists the id refused; one
+  that needs a newer Pane refused; a pinned tag that is not the
+  extension's own never asked about; and Check for Update on its page
+  previewing it at its newest release (or its installed one, when
+  none is newer).
 - The native smokes' own phase (frames 300 to 307;
   [Linux](platforms/linux.md#git-packages-46)).
 
@@ -375,8 +420,8 @@ yet.
 - The package must be at the repository's root; submodules and Git LFS are
   not fetched.
 - No check for a newer commit other than the updater's [tracked-branch
-  check](#updating-by-itself) and choosing the repository again, no
-  history browser and no publishing to a host.
+  and release-tag checks](#updating-by-itself) and choosing the repository
+  again, no history browser and no publishing to a host.
 - Signed tags and commits are not checked; the commit id, checked object by
   object, is the pin, and it proves contents, not provenance: a fork's
   commit served at the repository's address is only cautioned about, on

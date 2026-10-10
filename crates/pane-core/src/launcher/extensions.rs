@@ -23,10 +23,11 @@ use std::sync::{Arc, Mutex};
 
 use super::pausing::{self, Pauses};
 use super::{
-    Entry, Launcher, LauncherView, Row, Screen, State, first_index, network, programs, retained,
-    updates,
+    Entry, Launcher, LauncherView, Row, Screen, State, first_index, network, off_thread, programs,
+    retained, updates,
 };
 use super::{Pending, Status};
+use crate::git;
 use crate::packages::{InstalledPackage, PackageIdentity, Store};
 
 impl Launcher {
@@ -762,9 +763,12 @@ impl Launcher {
     /// again from its source — the preview an install from npm or Git
     /// shows, which offers its Update when the source has a newer version
     /// or commit (a pinned npm version stays pinned, and a Git package
-    /// keeps the branch, tag or commit it is installed from). `None` for a
-    /// package with no source to check: a folder's (reload it instead) and
-    /// a default extension's (Pane updates those itself).
+    /// keeps the branch, tag or commit it is installed from). One
+    /// extension of a collection installed from its own release tag is
+    /// previewed at its newest release above the version installed, which
+    /// its Update pins (ADR 0044). `None` for a package with no source to
+    /// check: a folder's (reload it instead) and a default extension's
+    /// (Pane updates those itself).
     pub fn check_for_update(
         &self,
         identity: &PackageIdentity,
@@ -772,26 +776,61 @@ impl Launcher {
         enum Source {
             Npm(String),
             Git(String),
+            /// One extension of a collection installed from its own release
+            /// tag `<id>/v<semver>` (ADR 0044): the repository's address,
+            /// the extension's id, and the version installed — the manifest's
+            /// or, when it declares none, the tag's own.
+            Release {
+                url: String,
+                id: String,
+                installed: String,
+            },
         }
         let source = {
             let state = self.lock();
             let package = state.package(identity)?;
             match (package.identity.npm_name(), package.git.as_ref()) {
                 (Some(name), _) => Source::Npm(name.to_owned()),
-                // One extension of a collection is checked as the extension
-                // it is, its id naming it after `#` in the repository's
-                // address (ADR 0044); the repository alone would be read
-                // as the collection it holds.
-                (None, Some(git)) => Source::Git(match package.identity.extension_id() {
-                    Some(id) => format!("{}#{id}", git.url),
-                    None => git.url.clone(),
-                }),
+                (None, Some(git)) => match package.identity.extension_id() {
+                    // One extension of a collection is checked as the
+                    // extension it is, its id naming it after `#` in the
+                    // repository's address (ADR 0044); the repository
+                    // alone would be read as the collection it holds.
+                    Some(id) if git.revision.is_own_release_tag(id) => Source::Release {
+                        url: format!("{}#{id}", git.url),
+                        id: id.to_owned(),
+                        // The version installed, as the updater's check of
+                        // a release tag reads it.
+                        installed: package
+                            .version()
+                            .or_else(|| git.revision.own_release_version(id))
+                            .unwrap_or_default(),
+                    },
+                    Some(id) => Source::Git(format!("{}#{id}", git.url)),
+                    None => Source::Git(git.url.clone()),
+                },
                 (None, None) => return None,
             }
         };
         Some(match source {
             Source::Npm(name) => Box::pin(self.preview_npm(&name)),
             Source::Git(url) => Box::pin(self.preview_git(&url)),
+            Source::Release { url, id, installed } => {
+                let launcher = self.clone();
+                Box::pin(async move {
+                    // The newest release above the version installed, from
+                    // the repository's tags with the extension's prefix
+                    // (ADR 0044), listed off the thread the window runs
+                    // on; the preview fetches it through the collection's
+                    // index as an install's fetch does. Without one — the
+                    // newest release is the version installed, or the
+                    // listing could not be read — the extension is
+                    // previewed as it is installed, from its release tag's
+                    // revision, which the preview names again.
+                    let asked = off_thread(move || newest_asked(url, id, installed)).await;
+                    launcher.preview_git(&asked).await;
+                })
+            }
         })
     }
 
@@ -916,6 +955,31 @@ impl Launcher {
                 .git_repository()
                 .is_some_and(in_pane_app_organization)
     }
+}
+
+/// The address whose preview Check for Update shows for one extension of
+/// a collection installed from its own release tag (ADR 0044): the
+/// extension's newest release tag above the version installed — as the
+/// updater's check takes it — named after `#<id>` as a reference follows
+/// it. With no newer release, or a listing too long to tell, the
+/// repository and id alone, whose preview keeps the release tag the
+/// extension is installed from.
+fn newest_asked(url: String, id: String, installed: String) -> String {
+    let asked = format!("{url}#{id}");
+    let Ok(spec) = git::GitSpec::parse(&url) else {
+        return asked;
+    };
+    let prefix = format!("{id}/v");
+    let Ok(Some(tags)) = git::release_tags(&spec.repository, &prefix) else {
+        return asked;
+    };
+    let Some(found) = tags
+        .iter()
+        .find(|tag| git::is_newer_release(tag.version(), &installed))
+    else {
+        return asked;
+    };
+    format!("{asked}@refs/tags/{}", found.tag)
 }
 
 /// Whether the repository a Git package's identity records, spelled

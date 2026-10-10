@@ -1,8 +1,10 @@
 //! Automatic updates of installed packages from npm and Git: Pane
 //! replaces the managed copy of an eligible npm package with a compatible
-//! newer version from its registry, and of an eligible Git package with
-//! the newer commit of the tracked branch it was installed from, without
-//! the user asking (US72–US75, T15).
+//! newer version from its registry, of an eligible Git package with the
+//! newer commit of the tracked branch it was installed from, and of one
+//! extension of a collection installed from its own release tag with the
+//! commit of its newest release above the version installed (ADR 0044) —
+//! all without the user asking (US72–US75, T15).
 //!
 //! The updater is a thread of Pane's own, shaped like the scheduler's and
 //! the services thread's, driven by the launcher's clock: it checks a
@@ -11,9 +13,11 @@
 //! [`CHECK_EVERY`](CHECK_EVERY) hours, in the background, so the window
 //! never waits for the registry or the repository. A check reads only the
 //! metadata — the registry's for an npm package, the repository's
-//! reference listing for a Git one; nothing is downloaded while the
-//! latest version is the version installed, or the tracked branch points
-//! at the commit installed. A newer version or commit is fetched and
+//! reference listing for a Git one, its release tags for one extension of
+//! a collection installed from a release tag; nothing is downloaded while
+//! the latest version is the version installed, the tracked branch points
+//! at the commit installed, or the newest release tag names the version
+//! installed. A newer version, commit or release is fetched and
 //! checked exactly as an install checks a package (its manifest and API,
 //! its components, its platforms and helpers, and its dependencies as a
 //! plan), and what was downloaded stays staged until it is applied.
@@ -34,10 +38,12 @@
 //! with its late answer discarded.
 //!
 //! Which packages are eligible: installed from npm and not pinned (a
-//! pinned version is kept, whatever the latest is), or installed from Git
-//! and tracked (a tag or commit named to install it is pinned and kept,
-//! and an update follows the branch), and in either case enabled, not
-//! paused after a failure, and not turned off — the user's controls are a
+//! pinned version is kept, whatever the latest is), installed from Git
+//! and tracked, or — one extension of a collection — installed from its
+//! own release tag `<id>/v<semver>` (ADR 0044; any other tag or commit
+//! named to install it is pinned and kept, and an update follows the
+//! branch, or the extension's newer releases), and in every case enabled,
+//! not paused after a failure, and not turned off — the user's controls are a
 //! global choice and a per-package one (rows in the extension list,
 //! recorded in `updates.json` beside `installed.json`). A local folder's
 //! or a development copy's code is never replaced here: only npm and Git
@@ -647,8 +653,10 @@ impl Updates {
     /// Checks one installed package for a newer version and stages what it
     /// finds, collecting the outcome in `pass`: the metadata alone says
     /// what the latest is (the registry's for an npm package, the
-    /// repository's reference listing for a Git one, and its release tags
-    /// for a default extension), and what is newer is downloaded and
+    /// repository's reference listing for a Git one — or, one extension of
+    /// a collection installed from its own release tag, its tags with the
+    /// extension's prefix — and its release tags for a default extension),
+    /// and what is newer is downloaded and
     /// checked as an install checks a package. May run on any of the
     /// pass's few check threads (see [`Updates::check`]); each request is
     /// bounded by Pane's HTTP limits as ever.
@@ -709,11 +717,13 @@ impl Updates {
         }
     }
 
-    /// Checks one installed Git package for the newer commit of its
-    /// tracked branch and stages what it finds, collecting the outcome in
-    /// `pass`. The repository's reference listing alone says what its
-    /// branch points to now: nothing is fetched while that is the commit
-    /// installed.
+    /// Checks one installed Git package for a newer revision and stages
+    /// what it finds, collecting the outcome in `pass`. A tracked
+    /// reference: the repository's reference listing alone says what its
+    /// branch points to now — nothing is fetched while that is the commit
+    /// installed. One extension of a collection installed from its own
+    /// release tag: the repository's tags with the extension's prefix
+    /// alone say what its newest release is (ADR 0044).
     fn check_git(
         &self,
         launcher: &Launcher,
@@ -740,8 +750,22 @@ impl Updates {
                 return;
             }
         };
-        // The tracked reference the copy was installed from (a pinned
-        // revision is never a candidate: `eligible` filters it out).
+        // One extension of a collection installed from its own release
+        // tag (ADR 0044): the check looks for the newest release above
+        // the version installed among the repository's tags with its
+        // prefix — not the reference it was installed from, a tag that
+        // the extension's newer releases replace.
+        if let Some(id) = spec
+            .extension
+            .as_deref()
+            .filter(|id| git.revision.is_own_release_tag(id))
+        {
+            self.check_extension_release(launcher, package, git, &spec, id, pass);
+            return;
+        }
+        // The tracked reference the copy was installed from (any other
+        // pinned revision is never a candidate: `eligible` filters it
+        // out).
         let asked_as = git.revision.asked_as();
         match git::resolve_reference(&spec.repository, asked_as.as_deref()) {
             Err(reason) => {
@@ -780,6 +804,95 @@ impl Updates {
         }
     }
 
+    /// Checks one installed extension of a collection, installed from its
+    /// own release tag, for a newer release of its own and stages what it
+    /// finds, collecting the outcome in `pass` (ADR 0044): the extension
+    /// was installed from the tag `<id>/v<semver>`, so the repository's
+    /// tags with its prefix alone say what its newest release is — its
+    /// other tags, other extensions' and `v<semver>`, never among them —
+    /// and nothing is fetched while the newest names the version
+    /// installed. A newer tag's commit is fetched, checked as an install
+    /// checks a package — read through the collection's index, so an
+    /// extension whose folder moved within it still updates, and one
+    /// whose id the newer index no longer lists fails, keeping its
+    /// installed code — and staged pinned to that tag's commit.
+    fn check_extension_release(
+        &self,
+        launcher: &Launcher,
+        package: &InstalledPackage,
+        git: git::InstalledGit,
+        spec: &git::GitSpec,
+        id: &str,
+        pass: &mut Pass,
+    ) {
+        // The repository's tags with the extension's prefix, newest first.
+        let tags = match git::release_tags(&spec.repository, &format!("{id}/v")) {
+            Ok(Some(tags)) => tags,
+            // A listing longer than Pane reads: the newest release cannot
+            // be told, so the check fails rather than guess.
+            Ok(None) => {
+                pass.failed(
+                    package.identity.clone(),
+                    package.title(),
+                    &format!(
+                        "It was not checked for a newer version: Could not list the \
+                         references of {}: {}",
+                        spec.repository.name(),
+                        git::TOO_LARGE
+                    ),
+                );
+                return;
+            }
+            Err(reason) => {
+                pass.failed(
+                    package.identity.clone(),
+                    package.title(),
+                    &format!("It was not checked for a newer version: {reason}"),
+                );
+                return;
+            }
+        };
+        // The version installed, as the manifest declares or the release
+        // tag names, and the newest release tag above it — tags newest
+        // first. Nothing is fetched while the newest names that version
+        // (or an older one: a repository that moved its tags backwards is
+        // not followed down). A record that keeps no version to compare
+        // names none newer.
+        let installed = package
+            .version()
+            .or_else(|| git.revision.own_release_version(id))
+            .unwrap_or_default();
+        let Some(found) = tags
+            .iter()
+            .find(|tag| git::is_newer_release(tag.version(), &installed))
+        else {
+            return;
+        };
+        // That tag's commit is the one installed, or is staged already:
+        // nothing is fetched.
+        let already_staged = self.lock().staged.iter().any(|staged| {
+            staged.identity == package.identity
+                && staged
+                    .package
+                    .git
+                    .as_ref()
+                    .is_some_and(|origin| origin.revision.commit == found.commit)
+        });
+        if found.commit == git.revision.commit || already_staged {
+            return;
+        }
+        // The revision to fetch: the extension's newer release tag, named
+        // after `#<id>` as a reference follows it, pinned to the commit it
+        // points to.
+        let request = install::Request::Git(git::GitSpec {
+            reference: Some(format!("refs/tags/{}", found.tag)),
+            ..spec.clone()
+        });
+        if let Some(staged) = self.stage(launcher, request, package, pass) {
+            self.lock().staged.push(staged);
+        }
+    }
+
     /// Checks one installed default extension for a newer release of its
     /// repository and stages what it finds, collecting the outcome in
     /// `pass`. The repository's reference listing alone says what its
@@ -814,7 +927,7 @@ impl Updates {
                 return;
             }
         };
-        let tags = match git::release_tags(&spec.repository) {
+        let tags = match git::release_tags(&spec.repository, "v") {
             Ok(Some(tags)) => tags,
             // A listing longer than Pane reads: the newest release cannot
             // be told, so the check fails rather than guess.
@@ -882,7 +995,8 @@ impl Updates {
 
     /// Downloads and checks what `request` names — the latest version of
     /// an npm package, the moved commit of a Git package's tracked
-    /// branch, or a default extension's newer release tag — as an install
+    /// branch, a default extension's newer release tag, or one extension
+    /// of a collection's — as an install
     /// checks a package, working out what it means for its dependencies,
     /// against the installed copy `installed`, and collects the outcome
     /// in `pass`: the update to stage, or `None` with the pass recording
@@ -1232,8 +1346,10 @@ impl Came {
 
 /// Whether `package` is one Pane updates by itself: installed from npm
 /// and not pinned (a pinned version is kept, whatever the latest is),
-/// installed from Git and tracked (a tag or commit named to install it is
-/// pinned and kept; an update follows the branch), or a default extension
+/// installed from Git and tracked or — one extension of a collection —
+/// installed from its own release tag (any other tag or commit named to
+/// install it is pinned and kept, and an update follows the branch, or
+/// the extension's newer releases), or a default extension
 /// whose record keeps its repository — and in every case enabled, not
 /// paused after a failure, and not turned off by the user's controls (the
 /// global one first).
@@ -1256,7 +1372,8 @@ pub(in crate::launcher) fn eligible_when_asked(package: &InstalledPackage) -> bo
 }
 
 /// Whether the source `package` was installed from is one Pane updates:
-/// npm without a pin, Git with a tracked reference, or a default
+/// npm without a pin, Git with a tracked reference or with one extension
+/// of a collection's own release tag, or a default
 /// extension whose record keeps its repository. A default's `pinned`
 /// records what first setup installed — the release tag this Pane release
 /// pinned — never a choice of the user's, so it never keeps a default
@@ -1265,10 +1382,27 @@ pub(in crate::launcher) fn eligible_when_asked(package: &InstalledPackage) -> bo
 fn from_a_source_pane_updates(package: &InstalledPackage) -> bool {
     match (&package.npm, &package.git, &package.default) {
         (Some(npm), _, _) => !npm.pinned,
-        (None, Some(git), _) => !git.revision.pinned(),
+        (None, Some(git), _) => git_updatable(&package.identity, git),
         (None, None, Some(_)) => true,
         (None, None, None) => false,
     }
+}
+
+/// Whether the installed Git copy `git` of the package with `identity` is
+/// one Pane updates by itself: a tracked reference, or the own release
+/// tag of one extension of a collection — `<id>/v<semver>` (ADR 0044) —
+/// which an update follows to the newest release above the version
+/// installed, as a default extension's is (#269). Any other tag, and a
+/// commit, pins the revision as ever.
+fn git_updatable(identity: &PackageIdentity, git: &git::InstalledGit) -> bool {
+    !git.revision.pinned() || follows_release_tags(identity, git)
+}
+
+/// Whether the installed Git copy `git` of the package with `identity`
+/// follows one extension of a collection's own release tags, rather than
+/// a branch (see [`git_updatable`]).
+fn follows_release_tags(identity: &PackageIdentity, git: &git::InstalledGit) -> bool {
+    identity.extension_id().is_some_and(|id| git.revision.is_own_release_tag(id))
 }
 
 /// Whether the only reason a pass did not look at `package` is the
@@ -1341,7 +1475,7 @@ fn skipped_row(
     if package
         .git
         .as_ref()
-        .is_some_and(|git| git.revision.pinned())
+        .is_some_and(|git| !git_updatable(&package.identity, git))
     {
         return Some((
             package.identity.clone(),
@@ -1813,8 +1947,9 @@ impl Launcher {
 }
 
 /// The extension list's rows for the update controls: one per installed
-/// npm package that is not pinned, per Git package that is tracked and
-/// per default extension whose record keeps its repository (after the
+/// npm package that is not pinned, per Git package that is tracked or
+/// follows one extension of a collection's own release tags, and per
+/// default extension whose record keeps its repository (after the
 /// reload rows a local package has; an npm or Git package has none),
 /// saying whether it updates by itself.
 pub(super) fn package_rows(
@@ -1828,7 +1963,7 @@ pub(super) fn package_rows(
                 || package
                     .git
                     .as_ref()
-                    .is_some_and(|git| !git.revision.pinned())
+                    .is_some_and(|git| git_updatable(&package.identity, git))
                 || package.default.is_some()
         })
         .map(|package| {
@@ -1838,9 +1973,15 @@ pub(super) fn package_rows(
             // What the row says is replaced: the newer npm version of an
             // npm package, the newer commit of the tracked branch of a
             // Git one, the newer release of a default extension's
-            // repository.
+            // repository or of one extension of a collection's own.
             let newer = if package.default.is_some() {
                 "a newer release of its repository"
+            } else if package
+                .git
+                .as_ref()
+                .is_some_and(|git| follows_release_tags(&package.identity, git))
+            {
+                "a newer release of its own"
             } else if package.git.is_some() {
                 "a newer commit of its tracked branch"
             } else {
