@@ -989,10 +989,10 @@ mod windows {
     fn waited(marker: &Path, expected: &str) -> String {
         let deadline = Instant::now() + Duration::from_secs(30);
         loop {
-            if let Ok(text) = fs::read_to_string(marker) {
-                if text.contains(expected) {
-                    return text;
-                }
+            if let Ok(text) = fs::read_to_string(marker)
+                && text.contains(expected)
+            {
+                return text;
             }
             if Instant::now() > deadline {
                 panic!(
@@ -1062,7 +1062,7 @@ mod windows {
         // Deleting one that is not there says so, and a key that does not
         // exist is empty: the Run dialog on a fresh Windows.
         assert!(run.delete_from_history("gone").is_err());
-        let fresh = adapter(&own_key(), Arc::new(|| OsString::new()));
+        let fresh = adapter(&own_key(), Arc::new(OsString::new));
         assert_eq!(fresh.history().unwrap(), Vec::<String>::new());
     }
 
@@ -1154,7 +1154,7 @@ mod windows {
         let name = format!("{}.exe", own("app"));
         register_app_path(&name, &format!("\"{}\"", program.display()));
 
-        let run = adapter(&own_key(), Arc::new(|| OsString::new()));
+        let run = adapter(&own_key(), Arc::new(OsString::new));
         run.run(&name, false).unwrap();
         assert!(!waited(&marker, "ECHO").trim().is_empty(), "it ran");
 

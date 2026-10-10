@@ -1341,7 +1341,7 @@ mod extension {
             let running = self.launcher.activate_selected();
             Running {
                 thread: thread::spawn(move || {
-                    let _ = block_on(running);
+                    block_on(running);
                 }),
             }
         }
@@ -1826,7 +1826,7 @@ mod extension {
                 [hud(done_text, ToastStyle::Success)],
                 "{command}"
             );
-            assert_eq!(pane.commands.take(), [done.clone()], "{command}");
+            assert_eq!(pane.commands.take(), vec![done.clone()], "{command}");
             assert!(
                 pane.launcher
                     .remembered_confirmations(&pane.identity)
@@ -1845,7 +1845,7 @@ mod extension {
                 [hud(done_text, ToastStyle::Success)],
                 "{command}"
             );
-            assert_eq!(pane.commands.take(), [done.clone()], "{command}");
+            assert_eq!(pane.commands.take(), vec![done.clone()], "{command}");
             assert!(
                 pane.launcher
                     .remembered_confirmations(&pane.identity)

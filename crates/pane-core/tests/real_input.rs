@@ -644,7 +644,7 @@ Start-Sleep -Seconds 300\n";
         unsafe { RegisterClassW(&registered) };
         // SAFETY: the class is registered; a small, visible window with no
         // menu or creation data.
-        let window = unsafe {
+        unsafe {
             CreateWindowExW(
                 WINDOW_EX_STYLE::default(),
                 PCWSTR(class.as_ptr()),
@@ -660,8 +660,7 @@ Start-Sleep -Seconds 300\n";
                 None,
             )
         }
-        .expect("the test's own window");
-        window
+        .expect("the test's own window")
     }
 
     /// The script of a selection target: a form with a multiline text box
