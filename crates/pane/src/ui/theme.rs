@@ -174,7 +174,9 @@ pub(crate) struct Theme {
     pub(crate) query_placeholder: Hsla,
     /// The faint level, 20% of the primary ink: marks drawn in the text
     /// colour. The launcher draws no such mark today; the level completes
-    /// the set the theme tests hold to its strength.
+    /// the set the theme tests hold to its strength, so the field is read
+    /// only there and allowed to rest unread in the library itself.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) text_faint: Hsla,
     /// The launcher's separators — the rule under the search field, the
     /// footer's top rule and the rule between its buttons, the Actions
