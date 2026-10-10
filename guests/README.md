@@ -314,9 +314,9 @@ Rust's standard library on `wasm32-wasip2`) is rejected with an explanation.
 
 The [sample](sample-rust/src/lib.rs) is the complete example. A command is a
 `cdylib` crate depending on `pane-extension` that implements `pane_extension::Command`:
-`render`, its list, whose items' actions are closures, and two functions
-for forms and custom views (see [Forms](#forms) and
-[Custom views](#custom-views)), and names its custom view type. The SDK hands
+`render`, its list, whose items' actions are closures, and its entry
+points for custom views and designed views (see
+[Custom views](#custom-views) and [Forms](#forms)), naming their types. The SDK hands
 Pane the list as a versioned JSON tree and runs an item's closure when the
 user chooses it, then Pane asks for the list again
 ([list-tree.md](../docs/list-tree.md)):
@@ -326,7 +326,7 @@ user chooses it, then Pane asks for the list again
 
 use pane_extension::alloc::{string::String, vec::Vec};
 use pane_extension::feedback::{Toast, show_toast};
-use pane_extension::{Command, CustomView, FieldValue, FormError, Item, List, NoCustomView};
+use pane_extension::{Command, CustomView, Item, List, NoCustomView};
 
 struct Hello;
 pane_extension::export!(Hello);
@@ -339,10 +339,6 @@ impl Command for Hello {
             show_toast(Toast::success("hi!"));
             Ok(())
         })))
-    }
-
-    async fn submit_form(_item_id: String, _values: Vec<FieldValue>) -> Result<String, FormError> {
-        Err(FormError { field: None, message: "this command has no forms".into() })
     }
 
     async fn open_view(_item_id: String) -> Result<CustomView, String> {
@@ -470,9 +466,9 @@ cache.set("last-greeting", greeting);
 The [JavaScript](sample-js/src/index.js) and
 [TypeScript](sample-ts/src/index.ts) samples are complete examples. A command
 is an npm package whose `main` module exports `command` with `render`, its
-list, whose items' actions are functions (`onAction`), and two functions for
-forms and custom views (see [Forms](#forms) and
-[Custom views](#custom-views)). The SDK hands Pane the list as a versioned
+list, whose items' actions are functions (`onAction`), and its entry
+points for designed views (see [Forms](#forms)) and custom views
+(`openCustomView`). The SDK hands Pane the list as a versioned
 JSON tree and runs an item's `onAction` when the user chooses it, then Pane
 asks for the list again ([list-tree.md](../docs/list-tree.md)). Pane's types
 come from
@@ -499,9 +495,6 @@ export const command: Command = {
         },
       ],
     };
-  },
-  async submitForm() {
-    throw { message: "this command has no forms" };
   },
   async openView() {
     throw new Error("this command has no custom views");
@@ -586,99 +579,86 @@ Linux, and each build's TypeScript sample passes Pane's checks there (`component
 
 ## Forms
 
-An item can open a form instead of running an action: a single-line text
-field and a choice of one option per field, and a submit button. Pane renders
-the controls, handles focus, typing and input methods, and calls
-`submit-form` with every field's value; the command validates them and answers
-with a result, or with an error about one field (shown under it, with focus
-moved there) or about the whole form. The contract, keyboard behavior and
-accessibility are described in [docs/forms.md](../docs/forms.md). The "Greet
-someone" item of each sample is the complete example.
+A form is a designed view (#241): a `"mode": "designed"` command whose
+view answers a `form` node with the fields in the author's own layout.
+The fields are the tree's field components — text, password, text area,
+checkbox, toggle, date and date-time pickers, dropdowns with sections
+and search, tag pickers, file and folder pickers, with descriptions,
+separators and links between them — each with a title, a note, an error,
+a default, an auto-focus and a remembered value. Submission is an
+action: Enter in a single-line field submits, Ctrl+Enter does in a text
+area, and the form's submit button does; the values arrive keyed by the
+fields' `id`s, and the tree the view answers with sets each field's
+`error` when it refuses one. The contract, keyboard behavior and
+accessibility are described in
+[docs/designed-tree.md](../docs/designed-tree.md). The "Greet someone"
+command of each sample is the complete example.
 
-Rust:
-
-```rust
-use pane_extension::{Choice, Field, FieldKind, FieldValue, Form, FormError, Item, TextField};
-
-let form = Form {
-    title: "Greet someone".into(),
-    fields: vec![
-        Field {
-            id: "name".into(),
-            label: "Name".into(),
-            kind: FieldKind::Text(TextField { placeholder: Some("Ada Lovelace".into()) }),
-        },
-        Field {
-            id: "greeting".into(),
-            label: "Greeting".into(),
-            kind: FieldKind::Choice(vec![
-                Choice { id: "hello".into(), label: "Hello".into() },
-                Choice { id: "morning".into(), label: "Good morning".into() },
-            ]),
-        },
-    ],
-    submit_label: "Greet".into(),
-};
-let item = Item::new("form", "Greet someone").form(form);
-
-// In `impl Command`:
-async fn submit_form(item_id: String, values: Vec<FieldValue>) -> Result<String, FormError> {
-    let name = values.iter().find(|v| v.id == "name").map_or("", |v| v.value.trim());
-    if name.is_empty() {
-        return Err(FormError { field: Some("name".into()), message: "Enter a name".into() });
-    }
-    Ok(format!("Hello, {name}"))
-}
-```
-
-JavaScript or TypeScript (fields are camelCase; a field's `kind` is a tagged
-value, `{ tag: "text", val: {...} }` or `{ tag: "choice", val: [...] }`):
-
-```ts
-const form: Form = {
-  title: "Greet someone",
-  fields: [
-    { id: "name", label: "Name", kind: { tag: "text", val: { placeholder: "Ada Lovelace" } } },
-    { id: "greeting", label: "Greeting", kind: { tag: "choice", val: [
-      { id: "hello", label: "Hello" }, { id: "morning", label: "Good morning" },
-    ] } },
-  ],
-  submitLabel: "Greet",
-};
-// items: [{ id: "form", title: "Greet someone", form }]
-
-async submitForm(itemId, values) {
-  const name = values.find((v) => v.id === "name")?.value.trim() ?? "";
-  if (!name) throw { field: "name", message: "Enter a name" } satisfies FormError;
-  return `Hello, ${name}`;
-},
-```
-
-In JS/TS, reject a submission by throwing a plain `FormError` object as above.
-Throwing an `Error` (or a string) from `submitForm` rejects the form as a
-whole with its message. The samples validate with Zod and turn its first
-issue into a `FormError`.
-
-A command's whole screen can be a form instead of a list, as Quicklinks'
-Create Quicklink is (#149): in Rust, `render` returns
-`List::form(id, form)`, its fields filled in with `.value(field, value)`.
-Pane shows it as soon as the command opens, `submit_form` receives `id`, and
-Escape leaves the command. A component serving several view commands tells
-which one is opened from `pane_extension::commands::current().command`, its id
-in `pane.json`:
+Rust ([`pane_extension::form`](../guests/pane-extension/src/form.rs)):
 
 ```rust
-async fn render() -> Result<List, String> {
-    if pane_extension::commands::current().command == "create" {
-        return Ok(List::form("create", form).value("name", "Docs"));
+use pane_extension::form;
+
+struct Greeting { name: core::cell::RefCell<String> }
+
+impl pane_extension::view::View for Greeting {
+    fn render(&mut self, cx: &mut pane_extension::view::Cx<Self>) -> impl pane_extension::view::IntoAnswer {
+        let submit = cx.form_listener(|this, values| {
+            let name = values.text("name").unwrap_or_default().trim().to_owned();
+            if name.is_empty() {
+                *this.name.borrow_mut() = String::new();
+                return;
+            }
+            *this.name.borrow_mut() = name;
+        });
+        let error = if self.name.borrow().is_empty() { "Enter a name" } else { "" };
+        form::Form::new()
+            .key("form")
+            .submit_title("Greet")
+            .on_submit(submit)
+            .child(form::text_field("name").title("Name")
+                .placeholder("Ada Lovelace").remember().error(error))
+            .into_answer()
     }
-    Ok(List::new("Notes").items(items))
 }
+
+// In `impl Command`: `type DesignedView = Greeting;` and `open_designed_view`
+// answers it for the form command's id.
 ```
 
-The JavaScript SDK does not write form screens yet; its launch record has
-the same `command`.
+JavaScript or TypeScript (`Form` and `Form.*` from
+`@pane-app/extension/view`):
 
+```tsx
+import { Form, createView, useState } from "@pane-app/extension/view";
+
+function GreetingForm() {
+  const [answer, setAnswer] = useState("");
+  return (
+    <Form
+      submitTitle="Greet"
+      onSubmit={(values) => setAnswer(`Hello, ${values.name}`)}
+    >
+      <Form.TextField id="name" title="Name" placeholder="Ada Lovelace" remember />
+      <Form.PasswordField id="secret" title="Secret" />
+      <Form.TextArea id="notes" title="Notes" />
+      <Form.Checkbox id="updates" label="Send updates" />
+      <Form.DatePicker id="day" title="Day" />
+      <Form.Dropdown id="greeting" title="Greeting"
+        options={[{ value: "hello", label: "Hello" }]} />
+      <Form.TagPicker id="tags" title="Tags" options={[{ value: "friend", label: "Friend" }]} />
+      <Form.FilePicker id="file" title="File" />
+      <Form.Description>{"What the form asks for."}</Form.Description>
+    </Form>
+  );
+}
+
+export const command = { async openView(id) { return createView(GreetingForm); } };
+```
+
+A field's `remember` keeps its last submitted value as the package's
+settings and prefills it the next time the form opens. The three samples'
+"Greet someone" command is the complete example in each language.
 ## Errors and crashes
 
 An error a command returns (Rust `Err`; in JS/TS, anything a handler

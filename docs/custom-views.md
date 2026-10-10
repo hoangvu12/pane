@@ -2,7 +2,7 @@
 
 Added for [#21](https://github.com/pane-app/pane/issues/21) (US37, US38, T05,
 G2). A custom view is an interactive view the extension draws itself, for
-what standard controls such as [forms](forms.md) cannot show. This slice is
+what the [designed tree](designed-tree.md) cannot show. This slice is
 the minimum a small color picker needs: filled rectangles and text in a
 fixed-size area, a few keys, and pointer press, drag and release. It is not a
 drawing or layout framework, and it does not settle the rest of the G2 UI
@@ -17,7 +17,7 @@ Defined in [`wit/extension.wit`](../wit/extension.wit), identically for Rust
 - An item may carry a `customView` (screen title, accessible label, role;
   the WIT record `custom-view-info`, carried in the list's tree, see
   [list-tree.md](list-tree.md)). Activating it calls `open-custom-view(item-id)`
-  instead of running the item's action (a `form`, if also set, wins).
+  instead of running the item's action.
 - `open-custom-view` returns a `custom-view`, a WIT **resource** the extension
   implements and in which it keeps the view's state. Each call opens a new
   view with its own state. Pane owns the handle: it drops it when the view

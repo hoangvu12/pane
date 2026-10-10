@@ -477,7 +477,7 @@ The operating system and processor a native helper's file is built for, written 
 _Avoid_: Platform (a supported platform is an operating system alone), triple
 
 **Form**:
-A set of fields an extension command asks the user to fill in and submit; the launcher renders its standard controls and the extension validates the submitted values.
+A set of fields an extension command asks the user to fill in, submitted as an action: a `form` node of a designed view whose children are the author's own layout with the fields in it, so fields sit in any arrangement the tree allows. Each field carries a title, a note, an error the extension's next render sets, a default, an auto-focus and a remembered value Pane keeps as the package's settings; submission collects their values and runs the form's listener, Enter in a single-line field submitting as Ctrl+Enter does in a text area. Pane's own forms (the argument form, the Setup screen) are the same components in a tree the launcher answers. Typed form (the retired WIT shape) is gone.
 _Avoid_: Dialog, custom view
 
 **Custom view**:
