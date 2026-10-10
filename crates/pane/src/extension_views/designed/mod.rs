@@ -153,7 +153,7 @@ impl LauncherWindow {
             .clone()
             .unwrap_or_else(|| "Search".into())
             .into();
-        let geometry = &theme.geometry;
+        let geometry = theme.geometry.clone();
         let dropdown = self.render_designed_dropdown(view, cx);
         // The navigation title, above the field: a screen's title row.
         let heading = (!title.is_empty()).then(|| {

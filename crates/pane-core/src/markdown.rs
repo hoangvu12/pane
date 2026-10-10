@@ -132,9 +132,7 @@ pub fn visit_images(blocks: &mut [Block], visit: &mut dyn FnMut(&mut Option<Icon
 fn visit_inline_images(inlines: &mut [Inline], visit: &mut dyn FnMut(&mut Option<Icon>, &str)) {
     for inline in inlines {
         match inline {
-            Inline::Emphasis(inner) | Inline::Strong(inner) => {
-                visit_inline_images(inner, visit)
-            }
+            Inline::Emphasis(inner) | Inline::Strong(inner) => visit_inline_images(inner, visit),
             Inline::Link { text: inner, .. } => visit_inline_images(inner, visit),
             Inline::Image { source, icon, .. } => visit(icon, source),
             Inline::Text(_) | Inline::Code(_) | Inline::Break => {}

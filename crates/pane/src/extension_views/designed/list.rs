@@ -251,7 +251,7 @@ impl LauncherWindow {
             if rows.is_empty() {
                 continue;
             }
-            sections.push(self.render_grid_section(view, list, section, rows, cx));
+            sections.push(self.render_grid_section(view, list, &titles, section, rows, cx));
         }
         if at < list.rows.len() {
             // Cells with no section above them (a grid whose sections
@@ -262,7 +262,7 @@ impl LauncherWindow {
                 note: None,
                 first: at,
             };
-            sections.push(self.render_grid_section(view, list, &section, rows, cx));
+            sections.push(self.render_grid_section(view, list, &titles, &section, rows, cx));
         }
         let empty = if list.rows.is_empty() {
             self.render_designed_empty(view, list, cx)
@@ -290,6 +290,7 @@ impl LauncherWindow {
         &mut self,
         view: &DesignedViewSnapshot,
         list: &DesignedList,
+        titles: &[(String, Option<String>)],
         section: &pane_core::Section,
         rows: &[pane_core::DesignedRow],
         cx: &mut Context<Self>,
@@ -307,7 +308,7 @@ impl LauncherWindow {
             cells.push(self.render_designed_cell(
                 view,
                 list,
-                &titles,
+                titles,
                 index,
                 selected,
                 cx,
@@ -472,7 +473,7 @@ impl LauncherWindow {
                         .get(index)
                         .map(|(title, _)| title.clone())
                         .filter(|title| !title.is_empty())
-                        .unwrap_or_else(|| SharedString::from("cell")),
+                        .unwrap_or_else(|| "cell".to_owned()),
                 )
             })
             .aria_selected(selected);

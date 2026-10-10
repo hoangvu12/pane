@@ -471,13 +471,18 @@ pub(super) fn draw_node(
         // carrying the presented one.
         NodeKind::List(_) | NodeKind::Grid(_) => {
             let own = path.clone();
-            let children = children(node, path, inner, cx);
-            let div = apply(div().id(own).flex().flex_col().min_w(px(0.)), node, &draw);
+            let drawn = children(node, path, inner, cx);
+            let div = apply(
+                div().id(own).flex().flex_col().min_w(px(0.)),
+                node,
+                &draw,
+            )
+            .children(drawn);
             named(div, name.as_deref()).into_any_element()
         }
         NodeKind::ListSection(_) => {
             let own = path.clone();
-            let children = children(node, path, inner, cx);
+            let drawn = children(node, path, inner, cx);
             let div = apply(
                 div()
                     .id(own)
@@ -487,7 +492,8 @@ pub(super) fn draw_node(
                     .gap(tokens::space(pane_core::Space::Xs)),
                 node,
                 &draw,
-            );
+            )
+            .children(drawn);
             named(div, name.as_deref()).into_any_element()
         }
         NodeKind::ListItem(item) => styled(
