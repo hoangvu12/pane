@@ -248,9 +248,7 @@ impl Launcher {
         }
         let mut empty = false;
         for (key, value) in values {
-            if value.trim().is_empty()
-                && pane_form::mark_error(&mut shown.tree, key, "Required")
-            {
+            if value.trim().is_empty() && pane_form::mark_error(&mut shown.tree, key, "Required") {
                 empty = true;
             }
         }
