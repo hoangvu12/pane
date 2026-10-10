@@ -20,7 +20,7 @@ import {
   EmptyState,
   List,
   TextInput,
-  push,
+  Push,
   createView,
   pop,
   useRef,
@@ -167,7 +167,7 @@ function Packages() {
         title={failed ?? "Type to search the package registry"}
         description="Results come from the service as you type; Enter shows a package's details"
       >
-        <Button onClick={push(<AddressView />)}>Service address</Button>
+        <Button onClick={Push(<AddressView />)}>Service address</Button>
       </EmptyState>
     </List>
   );

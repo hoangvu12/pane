@@ -20,7 +20,7 @@ import {
   EmptyState,
   List,
   TextInput,
-  push,
+  Push,
   createView,
   pop,
   useRef,
@@ -178,7 +178,7 @@ function Packages() {
         description: "Results come from the service as you type; Enter shows a package's details",
         children: [
           jsxs(Button, {
-            onClick: push(jsxs(AddressView, { children: [] })),
+            onClick: Push(jsxs(AddressView, { children: [] })),
             children: ["Service address"],
           }),
         ],
