@@ -289,7 +289,7 @@ fn choices_of(form: &pane_core::PaneForm, key: &str) -> Vec<String> {
 }
 
 /// The title a field of the argument form's tree carries.
-fn title_of(form: &pane_core::PaneForm, key: &str) -> &str {
+fn title_of<'a>(form: &'a pane_core::PaneForm, key: &str) -> &'a str {
     match &field_node(form, key).kind {
         pane_core::NodeKind::TextInput(input) | pane_core::NodeKind::PasswordInput(input) => {
             input.field.title.as_deref().unwrap_or_default()

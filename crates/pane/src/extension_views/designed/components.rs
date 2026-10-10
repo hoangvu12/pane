@@ -106,6 +106,7 @@ pub(super) fn text(
             // width runs out; a link span is a link — raised on the text
             // node's key, whose handler its spans name.
             let key = key.unwrap_or_default().to_owned();
+
             let runs = spans
                 .iter()
                 .enumerate()
@@ -970,6 +971,7 @@ pub(super) fn toggle(
         return controls::toggle(toggle.on, theme).into_any_element();
     };
     let key = key.unwrap_or_default().to_owned();
+
     let (for_press, key_for_press) = (callback, key.clone());
     let (for_click, key_for_click) = (callback, key);
     let next = !toggle.on;
@@ -1004,7 +1006,7 @@ pub(super) fn toggle(
         .clone()
         .or_else(|| toggle.field.title.clone())
         .unwrap_or_else(|| "toggle".into());
-    let key = key.unwrap_or_default().to_owned();
+
     let switch = div()
         .id(path.to_owned())
         .debug_selector(move || "designed-toggle".into())
@@ -1057,6 +1059,7 @@ pub(super) fn checkbox(
         return checkbox_box(checkbox.checked, theme).into_any_element();
     };
     let key = key.unwrap_or_default().to_owned();
+
     let (for_press, key_for_press) = (callback, key.clone());
     let (for_click, key_for_click) = (callback, key);
     let next = !checkbox.checked;
@@ -1091,7 +1094,7 @@ pub(super) fn checkbox(
         .clone()
         .or_else(|| checkbox.field.title.clone())
         .unwrap_or_else(|| "checkbox".into());
-    let key = key.unwrap_or_default().to_owned();
+
     let control = div()
         .id(path.to_owned())
         .debug_selector(move || "designed-checkbox".into())
@@ -1211,6 +1214,7 @@ pub(super) fn segmented(
     );
     let current = Rc::new(chosen);
     let key = key.unwrap_or_default().to_owned();
+
     let (for_move, key_for_move) = (callback, key.clone());
     let (for_click, key_for_click) = (callback, key);
     let (moved_values, moved_current) = (values.clone(), current.clone());
@@ -1315,6 +1319,7 @@ pub(super) fn slider(
         ))
     };
     let key = key.unwrap_or_default().to_owned();
+
     let (for_adjust, key_for_adjust) = (callback, key.clone());
     let (for_click, key_for_click) = (callback, key);
     let seen = draw.render;
@@ -1529,6 +1534,7 @@ pub(super) fn metadata_list(
     cx: &mut gpui::Context<LauncherWindow>,
 ) -> AnyElement {
     let key = key.unwrap_or_default().to_owned();
+
     let rows = list
         .items
         .iter()

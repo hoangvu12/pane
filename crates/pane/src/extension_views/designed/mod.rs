@@ -48,7 +48,7 @@ mod reconcile;
 mod tree;
 
 use gpui::prelude::*;
-use gpui::{App, Context, KeyBinding, PathPromptOptions, actions, div, px};
+use gpui::{App, Context, KeyBinding, PathPromptOptions, Window, actions, div, px};
 
 use gpui_elements::editable_text::EditableTextState;
 use pane_core::{DesignedHandler, DesignedViewSnapshot};
@@ -1325,7 +1325,7 @@ pub(super) fn plain_payload(value: impl std::fmt::Display) -> String {
 }
 
 /// The file or folder picker node at `path` of the screen's tree.
-fn path_node_of(window: &LauncherWindow, path: &str) -> Option<&pane_core::FilePicker> {
+fn path_node_of<'a>(window: &'a LauncherWindow, path: &str) -> Option<&'a pane_core::FilePicker> {
     let tree = match window.launcher.screen() {
         pane_core::Screen::DesignedView(view) => Some(view.tree),
         pane_core::Screen::PaneForm(form) => Some(form.tree),

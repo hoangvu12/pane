@@ -115,10 +115,10 @@ pub(super) fn date_field(
     };
     let label = field_label(&field.field, None);
     let control = components::field_well(
-        TextInputNode {
+        &TextInputNode {
             value: String::new(),
             placeholder: Some(placeholder.into()),
-            label: Some(label.clone()),
+            label: Some(label.as_ref().to_owned()),
             field: field.field.clone(),
             ..TextInputNode::default()
         },
@@ -127,6 +127,7 @@ pub(super) fn date_field(
         path,
         FieldKind::Text,
         theme,
+        cx,
     );
     // Up and Down step the date; the field's other keys are the text
     // field's own.
@@ -409,10 +410,10 @@ pub(super) fn path_field(
             return div().into_any_element();
         };
         let well = components::field_well(
-            TextInputNode {
+            &TextInputNode {
                 value: String::new(),
                 placeholder: picker.field.title.clone(),
-                label: Some(label.clone()),
+                label: Some(label.to_string()),
                 field: picker.field.clone(),
                 ..TextInputNode::default()
             },
@@ -421,6 +422,7 @@ pub(super) fn path_field(
             path,
             FieldKind::Text,
             theme,
+            cx,
         )
         .flex_1();
         let (choose_path, field_id) = (path.to_owned(), field_id.clone());
