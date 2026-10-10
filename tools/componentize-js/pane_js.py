@@ -519,15 +519,19 @@ def build(package: Path, out: Path, toolchain: Toolchain) -> dict:
 
 
 # The exports the adapter wraps, by `pane` option (None: always), each with
-# the handler that answers errors as text (see guests/js/adapt.js).
+# the handlers that answer errors as text (see guests/js/adapt.js). The
+# lifecycle interface is one object of three handlers: `activate` names it
+# with its activation entry point alone, `snapshot` with the state
+# handoff's two beside it (ADR 0041).
 ADAPTED_PROVIDERS = {
-    "rootResults": ("rootResults", "resultsFor"),
-    "indexedResults": ("indexedResults", "results"),
-    "operations": ("publishedOperations", "runOperation"),
-    "search": ("commandSearch", "search"),
-    "service": ("service", "runCycle"),
-    "events": ("events", "handleEvent"),
-    "activate": ("lifecycle", "activate"),
+    "rootResults": ("rootResults", ["resultsFor"]),
+    "indexedResults": ("indexedResults", ["results"]),
+    "operations": ("publishedOperations", ["runOperation"]),
+    "search": ("commandSearch", ["search"]),
+    "service": ("service", ["runCycle"]),
+    "events": ("events", ["handleEvent"]),
+    "activate": ("lifecycle", ["activate"]),
+    "snapshot": ("lifecycle", ["activate", "snapshot", "restore"]),
 }
 
 
@@ -545,9 +549,10 @@ def adapted_entry(entry: Path, adapter: Path, options: dict) -> str:
         f"export * from {entry_js};",
         "export const command = adaptCommand(extension.command);",
     ]
-    for option, (name, handler) in ADAPTED_PROVIDERS.items():
+    for option, (name, handlers) in ADAPTED_PROVIDERS.items():
         if options.get(option):
-            lines.append(f"export const {name} = adaptProvider(extension.{name}, {json.dumps(handler)});")
+            adapted = f"adaptProvider(extension.{name}, {json.dumps(handlers)})"
+            lines.append(f"export const {name} = {adapted};")
     return "\n".join(lines) + "\n"
 
 
