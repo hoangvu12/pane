@@ -28,9 +28,7 @@ use core::cell::RefCell;
 use pane_extension::alloc::{format, string::String, string::ToString};
 use pane_extension::feedback::{Toast, show_toast};
 use pane_extension::registrations::{self, Change, Item};
-use pane_extension::{
-    Command, CustomView, FieldValue, FormError, List, NoCustomView, content, publish, settings,
-};
+use pane_extension::{Command, List, NoCustomView, content, publish, settings};
 
 /// The command's id in the pane.json the test writes.
 const COMMAND: &str = "fixture";
@@ -75,11 +73,13 @@ impl pane_extension::lifecycle::Guest for Fixture {
         if settings::get(TRAP).ok().flatten().as_deref() == Some("yes") {
             panic!("the activation entry point traps, as the test asked");
         }
-        registrations::every(1, || async {
+        // A refusal, if any, drops the timer and leaves the content
+        // empty: the activation itself still answered.
+        let _ = registrations::every(1, || async {
             let fired = counted(FIRED) + 1;
             content::set(FIRED, &fired.to_string())?;
             Ok(())
-        })?;
+        });
     }
 }
 

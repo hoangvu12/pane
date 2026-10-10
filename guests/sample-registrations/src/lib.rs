@@ -26,9 +26,7 @@ use core::cell::RefCell;
 use pane_extension::alloc::{borrow::ToOwned, format, string::String, string::ToString};
 use pane_extension::feedback::{Toast, show_toast};
 use pane_extension::registrations::{self, Change, Item};
-use pane_extension::{
-    Command, CustomView, FieldValue, FormError, List, NoCustomView, content, publish, settings,
-};
+use pane_extension::{Command, List, NoCustomView, content, publish, settings};
 
 /// The command's id in `pane.json`, which the dynamic root item is under.
 const COMMAND: &str = "registrations";
