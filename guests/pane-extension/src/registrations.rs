@@ -536,3 +536,5 @@ macro_rules! export_events {
         $crate::registrations::export!($crate::registrations::Events);
     };
 }
+
+pub use crate::export_events;

@@ -23,7 +23,7 @@
 
 use core::cell::RefCell;
 
-use pane_extension::alloc::{format, string::String};
+use pane_extension::alloc::{borrow::ToOwned, format, string::String, string::ToString};
 use pane_extension::feedback::{Toast, show_toast};
 use pane_extension::registrations::{self, Change, Item};
 use pane_extension::{

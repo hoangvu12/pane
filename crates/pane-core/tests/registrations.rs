@@ -318,18 +318,8 @@ fn a_dynamic_root_item_appears_updates_and_disappears_in_root_search() {
         assert_eq!(row.subtitle, Some(item_subtitle(&sample, 0, 0)));
         // The undo list holds what the activation registered: the item
         // and the timer (no watcher: no folder is named).
-        assert!(
-            launcher
-                .undo_list(&identity)
-                .iter()
-                .any(|what| *what == "dynamic root item")
-        );
-        assert!(
-            launcher
-                .undo_list(&identity)
-                .iter()
-                .any(|what| *what == "timer")
-        );
+        assert!(launcher.undo_list(&identity).contains(&"dynamic root item"));
+        assert!(launcher.undo_list(&identity).contains(&"timer"));
         // The timer fires and updates the row: the thread has begun the
         // timer's interval where the clock stands.
         pane.timers_settled(&launcher);
@@ -423,12 +413,7 @@ fn a_folder_watcher_delivers_coalesced_changes() {
             .iter()
             .any(|row| row.id.ends_with(":counted"))
     });
-    assert!(
-        launcher
-            .undo_list(&identity)
-            .iter()
-            .any(|what| *what == "folder watcher")
-    );
+    assert!(launcher.undo_list(&identity).contains(&"folder watcher"));
     // Two files written at once: one coalesced event, both paths in it.
     fs::write(watched.path().join("one.txt"), "one").unwrap();
     fs::write(watched.path().join("two.txt"), "two").unwrap();
@@ -476,10 +461,7 @@ fn a_run_time_provision_makes_the_package_a_provider_only_while_held() {
     // fan-out's answers.
     open_and_run(&launcher, SAMPLES[0].command, "Sign in to the provision");
     pane.until("the provision's undo entry", true, || {
-        launcher
-            .undo_list(&identity)
-            .iter()
-            .any(|what| *what == "run-time provision")
+        launcher.undo_list(&identity).contains(&"run-time provision")
     });
     assert!(
         every_provider(&launcher).contains("Rust registrations sample"),
@@ -492,12 +474,7 @@ fn a_run_time_provision_makes_the_package_a_provider_only_while_held() {
         !every_provider(&launcher).contains("registrations sample"),
         "the provider answered after the provision was dropped"
     );
-    assert!(
-        !launcher
-            .undo_list(&identity)
-            .iter()
-            .any(|what| *what == "run-time provision")
-    );
+    assert!(!launcher.undo_list(&identity).contains(&"run-time provision"));
 }
 
 /// A consumer that requires the capability waits while no provider holds
@@ -539,10 +516,7 @@ fn a_waiting_package_runs_no_timer_code_until_the_provision_comes() {
     // its activation runs, and its timer counts firings.
     open_and_run(&launcher, SAMPLES[0].command, "Sign in to the provision");
     pane.until("the activation's timer", true, || {
-        launcher
-            .undo_list(&identity)
-            .iter()
-            .any(|what| *what == "timer")
+        launcher.undo_list(&identity).contains(&"timer")
     });
     pane.timers_settled(&launcher);
     pane.clock.advance(3 * SECOND);
@@ -599,10 +573,7 @@ fn beyond_the_limits_bounds_and_declarations_is_refused() {
     block_on(launcher.install_package(&fixture));
     let identity = PackageIdentity::local(&fixture).unwrap();
     pane.until("the activation's timer", true, || {
-        launcher
-            .undo_list(&identity)
-            .iter()
-            .any(|what| *what == "timer")
+        launcher.undo_list(&identity).contains(&"timer")
     });
     open_fixture(&launcher);
     run_fixture_item(&launcher, "Register many items");
@@ -698,10 +669,7 @@ fn a_trapping_activation_counts_towards_pausing() {
     // The activation traps, is started again, traps again: three within
     // the window pause the package.
     pane.until("the pause", true, || {
-        match fixture_row(&launcher).unavailable {
-            Some(Unavailable::Paused(_)) => true,
-            _ => false,
-        }
+        matches!(fixture_row(&launcher).unavailable, Some(Unavailable::Paused(_)))
     });
     assert!(
         matches!(
@@ -857,18 +825,12 @@ fn a_reload_undoes_the_registrations_and_activates_again() {
             .any(|row| row.id.ends_with(":counted"))
     });
     assert!(
-        launcher
-            .undo_list(&identity)
-            .iter()
-            .any(|what| *what == "dynamic root item"),
+        launcher.undo_list(&identity).contains(&"dynamic root item"),
         "the activation did not register the item again: {:?}",
         launcher.undo_list(&identity)
     );
     assert!(
-        !launcher
-            .undo_list(&identity)
-            .iter()
-            .any(|what| *what == "run-time provision"),
+        !launcher.undo_list(&identity).contains(&"run-time provision"),
         "the provision was not undone by the reload"
     );
     let _ = folder;
