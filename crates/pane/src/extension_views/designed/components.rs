@@ -28,13 +28,13 @@ use gpui::{
 };
 
 use pane_core::{
-    Badge as BadgeNode, Binding, Button as ButtonNode, Checkbox as CheckboxNode,
+    Badge as BadgeNode, Binding, Button as ButtonNode, Checkbox as CheckboxNode, Keycap as KeycapNode,
     EmptyState as EmptyStateNode, Finite, Fit, Icon, IconExtent, IconNode, Image as ImageNode,
-    Link as LinkNode, Loading as LoadingNode, Markdown as MarkdownNode,
-    MetadataItem as MetadataItemNode, MetadataList as MetadataListNode, Node, Paint,
-    Progress as ProgressNode, RichRow as RichRowNode, Segmented as SegmentedNode,
-    Select as SelectNode, Slider as SliderNode, Span, Tag as TagNode, Text as TextNode,
-    TextContent, TextInput as TextInputNode, Toggle as ToggleNode,
+    KeySequence as KeySequenceNode, Link as LinkNode, Loading as LoadingNode,
+    Markdown as MarkdownNode, MetadataItem as MetadataItemNode, MetadataList as MetadataListNode,
+    Node, Paint, Progress as ProgressNode, RichRow as RichRowNode, SectionHeader,
+    Segmented as SegmentedNode, Select as SelectNode, Slider as SliderNode, Span, Tag as TagNode,
+    Text as TextNode, TextContent, TextInput as TextInputNode, Toggle as ToggleNode,
 };
 use pane_core::{Space, TextLevel};
 
@@ -379,7 +379,7 @@ fn keys_of(keys: &[String]) -> KeySequence {
 }
 
 /// One keycap: the key its cap shows.
-pub(super) fn keycap(keycap: &pane_core::Keycap, path: &str, theme: &Theme) -> AnyElement {
+pub(super) fn keycap(keycap: &KeycapNode, path: &str, theme: &Theme) -> AnyElement {
     let keys = KeySequence {
         keys: vec![Key::new(keycap.key.clone(), keycap.key.clone())],
     };
@@ -1200,11 +1200,10 @@ pub(super) fn slider(
         on_change,
         label,
     } = slider;
-    let (Finite(min), Finite(max), Finite(value), Finite(by)) =
-        (min.0, max.0, value.0, by.0.abs().max(f32::EPSILON));
+    let (min, max, value, by) = (min.0, max.0, value.0, by.0.abs().max(f32::EPSILON));
     let span = (max - min).abs().max(f32::EPSILON);
     let fraction = ((value - min) / span).clamp(0., 1.);
-    let Some(callback) = on_change else {
+    let Some(callback) = *on_change else {
         return div()
             .id(path.to_owned())
             .debug_selector(move || "designed-slider".into())
@@ -1229,9 +1228,13 @@ pub(super) fn slider(
     let (for_adjust, key_for_adjust) = (callback, key.clone());
     let (for_click, key_for_click) = (callback, key);
     let clicked = cx.listener(move |this, event: &ClickEvent, window, cx| {
+        let position = match event {
+            ClickEvent::Mouse(click) => click.up.position,
+            _ => bounds.get().center(),
+        };
         let bounds = bounds.get();
         let width = bounds.size.width.as_f32().max(f32::EPSILON);
-        let at = ((event.up.position.x.as_f32() - bounds.origin.x.as_f32()) / width).clamp(0., 1.);
+        let at = ((position.x.as_f32() - bounds.origin.x.as_f32()) / width).clamp(0., 1.);
         let next = min + at * span;
         this.send_designed_event(
             for_click,
@@ -1386,11 +1389,7 @@ pub(super) fn markdown(markdown: &MarkdownNode, path: &str, draw: &Draw) -> AnyE
 }
 
 /// A section header: a title over a group, with its note beside it.
-pub(super) fn section_header(
-    header: &pane_core::SectionHeader,
-    path: &str,
-    theme: &Theme,
-) -> AnyElement {
+pub(super) fn section_header(header: &SectionHeader, path: &str, theme: &Theme) -> AnyElement {
     let title: SharedString = header.title.clone().into();
     let debug = format!("designed-section-{}", header.title);
     div()

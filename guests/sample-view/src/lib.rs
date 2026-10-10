@@ -81,14 +81,15 @@ impl View for Screen {
                         span("Accept the "),
                         span("terms").on_click(cx.listener(|_: &mut Self| {})),
                         span(" before continuing.").code(),
-                    ])
-                    .level(TextLevel::Body),
+                    ]),
                 )
                 .child(
                     row()
                         .gap(Space::S)
                         .children([
                             icon(Icon::builtin("star")).size(IconSize::L),
+                            // A raw blue, corrected for contrast.
+                            icon(Icon::builtin("bell").tint(Color::Raw("#88ccff".into()))),
                             keycap("ctrl"),
                             key_sequence(["ctrl", "shift", "p"]),
                             tag("beta").color(Colour::Blue),
@@ -204,9 +205,7 @@ impl View for Screen {
                     row()
                         .gap(Space::S)
                         .children([
-                            text("Corrected")
-                                .color(Color::Raw("#88ccff".into()))
-                                .level(TextLevel::Body),
+                            text("Corrected").color(Color::Raw("#88ccff".into())),
                             text("Exact").color(Paint::Exact(Color::Raw("#ff6363".into()))),
                         ]),
                 )

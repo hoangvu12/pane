@@ -86,12 +86,14 @@ function Components() {
           </Badge>
         </Stack>
         {/* A text with spans, one a link. */}
-        <Text level="body">
+        <Text>
           Accept the <Span onClick={() => {}}>terms</Span>
           <Span code> before continuing.</Span>
         </Text>
         <Row name="Marks" gap="s">
           <Icon icon="star" size="l" />
+          {/* A raw blue, corrected for contrast. */}
+          <Icon icon={{ builtin: "bell", tint: "#88ccff" }} />
           <Keycap>ctrl</Keycap>
           <KeySequence keys={["ctrl", "shift", "p"]} />
           <Tag color="blue">beta</Tag>
@@ -161,7 +163,7 @@ function Components() {
           <Link onClick={() => {}}>A link</Link>
         </Row>
         <Row gap="s">
-          <Text level="body" color="#88ccff">
+          <Text color="#88ccff">
             Corrected
           </Text>
           <Text color={{ raw: "#ff6363" }}>Exact</Text>

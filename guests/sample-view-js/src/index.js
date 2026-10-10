@@ -104,7 +104,6 @@ function Components() {
           }),
           // A text with spans, one a link.
           jsxs(Text, {
-            level: "body",
             children: [
               "Accept the ",
               jsxs(Span, { onClick: () => {}, children: ["terms"] }),
@@ -116,6 +115,8 @@ function Components() {
             gap: "s",
             children: [
               jsxs(Icon, { icon: "star", size: "l" }),
+              // A raw blue, corrected for contrast.
+              jsxs(Icon, { icon: { builtin: "bell", tint: "#88ccff" } }),
               jsxs(Keycap, { children: ["ctrl"] }),
               jsxs(KeySequence, { keys: ["ctrl", "shift", "p"] }),
               jsxs(Tag, { color: "blue", children: ["beta"] }),
@@ -225,7 +226,7 @@ function Components() {
           jsxs(Row, {
             gap: "s",
             children: [
-              jsxs(Text, { level: "body", color: "#88ccff", children: ["Corrected"] }),
+              jsxs(Text, { color: "#88ccff", children: ["Corrected"] }),
               jsxs(Text, { color: { raw: "#ff6363" }, children: ["Exact"] }),
             ],
           }),

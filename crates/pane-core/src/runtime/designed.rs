@@ -1956,7 +1956,7 @@ mod tests {
 
     #[test]
     fn every_node_carries_its_sizing_and_surface_with_variants() {
-        let tree = tree(
+        let read = tree(
             r##"{"type":"text","text":"Hi","grow":1,"shrink":0,"basis":"40px",
                 "width":"1/2","height":64,"minWidth":"s","maxWidth":4096,
                 "aspectRatio":1.5,
@@ -1965,7 +1965,7 @@ mod tests {
                 "hover":{"background":{"raw":"#ff0000"}},"pressed":{"opacity":1}"##,
         )
         .unwrap();
-        let style = &tree.root.style;
+        let style = &read.root.style;
         assert_eq!(style.sizing.grow, Some(Finite(1.)));
         assert_eq!(style.sizing.shrink, Some(Finite(0.)));
         assert_eq!(style.sizing.basis, Some(Length::Px(Finite(40.))));

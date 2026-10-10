@@ -62,12 +62,18 @@ enum Next {
     OtherMajor,
     /// Text that is not JSON, once.
     Unreadable,
+    /// The component set's vocabulary, once, then again with the toggle
+    /// flipped.
+    Components,
 }
 
 /// The view's state, kept in the resource.
 struct State {
     count: Cell<u32>,
     next: Cell<Next>,
+    /// Whether the components tree's toggle is on, flipped by the change
+    /// event's payload.
+    flipped: Cell<bool>,
 }
 
 // SAFETY: a component's code runs on one thread.
@@ -79,6 +85,11 @@ struct Designed;
 impl GuestView for Designed {
     async fn render(&self, _context: String) -> Result<Rendered, String> {
         let next = STATE.next.replace(Next::Counter);
+        // The component set stays on screen until the counter's buttons
+        // are pressed again; its toggle flips within it.
+        if matches!(next, Next::Components) {
+            STATE.next.set(Next::Components);
+        }
         let tree = match next {
             Next::Counter => counter(),
             Next::Error => return Err("the view failed on purpose".into()),
@@ -105,6 +116,7 @@ impl GuestView for Designed {
                     refresh_after_ms: None,
                 })
             }
+            Next::Components => components(),
         };
         Ok(Rendered {
             tree,
@@ -117,6 +129,16 @@ impl GuestView for Designed {
             1 if event.key == "increment" => {
                 STATE.count.set(STATE.count.get() + 1);
             }
+            10 => STATE.next.set(Next::Components),
+            11 => {
+                // The toggle's change: the payload names the value the
+                // user chose, so the fixture flips with it.
+                if event.payload.contains("true") {
+                    STATE.flipped.set(true);
+                } else {
+                    STATE.flipped.set(false);
+                }
+            }
             2 => STATE.next.set(Next::Error),
             3 => STATE.next.set(Next::OverLimit),
             4 => STATE.next.set(Next::UnknownWithFallback),
@@ -124,6 +146,7 @@ impl GuestView for Designed {
             6 => STATE.next.set(Next::NewerMinor),
             7 => STATE.next.set(Next::OtherMajor),
             8 => STATE.next.set(Next::Unreadable),
+            12..=19 => {}
             _ => return Err(format!("unknown callback: {}", event.callback)),
         }
         Ok(Outcome {
@@ -137,10 +160,11 @@ impl GuestView for Designed {
 static STATE: State = State {
     count: Cell::new(0),
     next: Cell::new(Next::Counter),
+    flipped: Cell::new(false),
 };
 
 /// The buttons the counter's tree names: (label, key, callback id).
-const BUTTONS: [(&str, &str, u32); 9] = [
+const BUTTONS: [(&str, &str, u32); 10] = [
     ("Increment", "increment", 1),
     ("Answer an error", "error", 2),
     ("Answer an over-limit tree", "over-limit", 3),
@@ -150,6 +174,7 @@ const BUTTONS: [(&str, &str, u32); 9] = [
     ("Draw another major's tree", "other-major", 7),
     ("Answer an unreadable tree", "unreadable", 8),
     ("Answer an unknown callback", "unknown-callback", 9),
+    ("Draw the component set", "components", 10),
 ];
 
 /// The counter as its tree, with one button per case above.
@@ -169,6 +194,60 @@ fn counter() -> String {
          {{\"type\":\"row\",\"gap\":\"s\",\"children\":[{}]}}]}}}}",
         STATE.count.get(),
         buttons.join(","),
+    )
+}
+
+/// The component set's vocabulary, as a tree: the layout primitives, the
+/// style every node carries, the shared components, the tokens and the
+/// raw values — every kind of node, once, with the toggle's state drawn
+/// from what the change events flipped.
+fn components() -> String {
+    let on = STATE.flipped.get();
+    format!(
+        "{{\"version\":\"{COMPONENT_SET}\",\"root\":{{\"type\":\"scroll\",         \"children\":[{{\"type\":\"column\",\"gap\":\"l\",\"children\":[\
+         {{\"type\":\"text\",\"text\":\"The component set\",\"style\":\"heading\"}},\
+         {{\"type\":\"stack\",\"align\":\"top-end\",\"children\":[\
+         {{\"type\":\"icon\",\"icon\":{{\"builtin\":\"layers\"}},\"size\":\"l\"}},\
+         {{\"type\":\"badge\",\"text\":\"4\",\"place\":\"bottom-end\",         \"offset\":{{\"x\":4,\"y\":\"4px\"}}}}]}},\
+         {{\"type\":\"text\",\"spans\":[\
+         {{\"text\":\"Accept the \"}},\
+         {{\"text\":\"terms\",\"onPress\":12,\"color\":\"accent\"}},\
+         {{\"text\":\" now\",\"code\":true}}],\"level\":\"body\"}},\
+         {{\"type\":\"row\",\"gap\":\"s\",\"name\":\"Marks\",\"children\":[\
+         {{\"type\":\"keycap\",\"key\":\"ctrl\"}},\
+         {{\"type\":\"key-sequence\",\"keys\":[\"ctrl\",\"shift\",\"p\"]}},\
+         {{\"type\":\"tag\",\"text\":\"beta\",\"color\":\"blue\"}},\
+         {{\"type\":\"badge\",\"text\":\"3\"}}]}},\
+         {{\"type\":\"card\",\"gap\":\"s\",\"children\":[\
+         {{\"type\":\"rich-row\",\"title\":\"Pane\",\"subtitle\":\"A tree\",\
+         \"icon\":{{\"builtin\":\"layers\"}},\
+         \"accessories\":[{{\"text\":\"new\",\"tag\":true}}],\"onPress\":13}}]}},\
+         {{\"type\":\"toggle\",\"key\":\"toggle\",\"on\":{on},\"label\":\"Dark mode\",         \"onChange\":11}},\
+         {{\"type\":\"checkbox\",\"checked\":{on},\"label\":\"Remember\",\"onChange\":11}},\
+         {{\"type\":\"segmented\",\"options\":[{{\"value\":\"a\",\"label\":\"A\"}},\
+         {{\"value\":\"b\"}}],\"value\":\"a\",\"onChange\":14}},\
+         {{\"type\":\"slider\",\"value\":0.4,\"min\":0,\"max\":2,\"step\":0.2,\"onChange\":15}},\
+         {{\"type\":\"progress\",\"value\":0.7}},\
+         {{\"type\":\"loading\",\"label\":\"Checking\"}},\
+         {{\"type\":\"markdown\",\"markdown\":\"# Title\\n\\nSome *prose*.\",\"grow\":1}},\
+         {{\"type\":\"metadata-list\",\"items\":[\
+         {{\"label\":\"Author\",\"value\":\"Vu\",\"onPress\":16}},\
+         {{\"label\":\"Tags\",\"tags\":[\"one\",\"two\"]}},\
+         {{\"separator\":true}},\
+         {{\"label\":\"Kind\",\"value\":\"sample\"}}]}},\
+         {{\"type\":\"empty-state\",\"title\":\"Nothing\",\"description\":\"Over\",\
+         \"icon\":{{\"builtin\":\"search-minus\"}},\
+         \"children\":[{{\"type\":\"button\",\"label\":\"Start over\",\"onPress\":17}}]}},\
+         {{\"type\":\"text-input\",\"key\":\"name\",\"value\":\"typed\",         \"placeholder\":\"Type here\",\"label\":\"Name\",\"onChange\":18}},\
+         {{\"type\":\"password-input\",\"label\":\"Secret\"}},\
+         {{\"type\":\"text-area\",\"value\":\"two lines\",\"label\":\"Notes\"}},\
+         {{\"type\":\"select\",\"options\":[{{\"value\":\"x\",\"label\":\"X\"}}],\
+         \"value\":\"x\",\"label\":\"Pick\",\"onChange\":19}},\
+         {{\"type\":\"divider\"}},{{\"type\":\"spacer\"}},\
+         {{\"type\":\"text\",\"text\":\"Surface\",\"level\":\"secondary\",         \"background\":\"danger\",\"radius\":\"m\",\"hover\":{{\"background\":\"accent\"}}}},\
+         {{\"type\":\"text\",\"text\":\"Corrected\",\"color\":\"#88ccff\"}},\
+         {{\"type\":\"text\",\"text\":\"Exact\",\"color\":{{\"raw\":\"#ff6363\"}}}}\
+         ]}}]}}"
     )
 }
 

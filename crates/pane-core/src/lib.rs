@@ -117,10 +117,10 @@ pub use runtime::{
     Item, Justify, Key, KeySequence, Keycap, Layout, Length, Link, Loading, MAX_DEPTH,
     MAX_FRAME_SHAPES, MAX_FRAME_SIZE, MAX_INLINE_IMAGE, MAX_MARKDOWN_CHARS, MAX_NODES, MAX_PX,
     MAX_TREE_BYTES, Markdown, MetadataItem, MetadataList, Node, NodeKind, Offset, Orientation,
-    Paint, Padding, Place, Progress, RadiusLength, RichRow, RowAccessory, Runtime, RuntimeFailure,
-    RuntimeStatus, Shape, Sizing, Slider, Span, Style, SubmenuEntries, Surface, TREE_VERSION, Tag,
-    Text, TextInput, TextContent, TextLevel, TextStyle, Toggle, UNRESPONSIVE_LIMIT, View,
-    ViewEvent, ViewId, WARN_AFTER,
+    Paint, Padding, PathKind, Place, Point, Progress, RadiusLength, RichRow, RowAccessory,
+    Runtime, RuntimeFailure, RuntimeStatus, Rgb, Segmented, Select, Shape, Sizing, Slider, Span,
+    Space, Style, SubmenuEntries, Surface, TREE_VERSION, Tag, Text, TextInput, TextContent,
+    TextLevel, TextStyle, Toggle, UNRESPONSIVE_LIMIT, View, ViewEvent, ViewId, WARN_AFTER,
 };
 pub use search::{SettingsEntry, settings_matches, title_matches};
 // Icons, accessories and tooltips (#139).
