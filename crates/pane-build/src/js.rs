@@ -121,13 +121,12 @@ pub fn build_js_command(
     let options = match manifest.get("pane") {
         None => Map::new(),
         Some(Value::Object(options)) => options.clone(),
-        Some(_) => return failed("\"pane\" in package.json must be an object".into()),
+        Some(_) => return failed("\"pane\" in package.json must be an object"),
     };
     let Some(node) = find_node() else {
         return failed(
             "Pane found no Node.js and npm to build it (it looked for node and npm on PATH; \
-             a JavaScript or TypeScript package needs Node.js 22 or newer)"
-                .into(),
+             a JavaScript or TypeScript package needs Node.js 22 or newer)",
         );
     };
 
@@ -176,10 +175,8 @@ pub fn build_js_command(
         return failed(&format!("{} cannot be written: {error}", wit.display()));
     }
     let out = out.to_path_buf();
-    if let Some(parent) = out.parent() {
-        if let Err(error) = fs::create_dir_all(parent) {
-            return failed(&format!("{} cannot be created: {error}", parent.display()));
-        }
+    if let Some(parent) = out.parent() && let Err(error) = fs::create_dir_all(parent) {
+        return failed(&format!("{} cannot be created: {error}", parent.display()));
     }
     let world_file = wit.join("command.wit");
     if let Err(error) = fs::write(&world_file, world) {
@@ -303,10 +300,10 @@ fn find_node() -> Option<PathBuf> {
 /// files in it, keeping `node_modules` (with the marker of the lockfile its
 /// dependencies were installed for) so nothing is installed again.
 fn refresh_staging(package: &Path, staged: &Path, types: &Path) -> std::io::Result<()> {
-    if let Err(error) = fs::remove_dir_all(types) {
-        if error.kind() != std::io::ErrorKind::NotFound {
-            return Err(error);
-        }
+    if let Err(error) = fs::remove_dir_all(types)
+        && error.kind() != std::io::ErrorKind::NotFound
+    {
+        return Err(error);
     }
     js_assets::write_sdk(types)?;
     if staged.is_dir() {
@@ -339,7 +336,7 @@ fn copy_files(package: &Path, staged: &Path) -> std::io::Result<()> {
         if name == "node_modules" || name == ".git" {
             continue;
         }
-        let to = staged.join(&name);
+        let to = staged.join(name);
         if fs::symlink_metadata(&entry)?.is_dir() {
             fs::create_dir_all(&to)?;
             copy_files(&entry, &to)?;
@@ -381,13 +378,11 @@ fn install(job: &BuildJob, staged: &Path) -> Option<BuildOutcome> {
     crate::build::without_pane_build_environment(&mut command);
     match job.run_command(command, "npm ci --ignore-scripts", None) {
         BuildOutcome::Built => {
-            if let Some(parent) = marker.parent() {
-                if let Err(error) = fs::create_dir_all(parent) {
-                    return Some(failed(&format!(
-                        "{} cannot be created: {error}",
-                        parent.display()
-                    )));
-                }
+            if let Some(parent) = marker.parent() && let Err(error) = fs::create_dir_all(parent) {
+                return Some(failed(&format!(
+                    "{} cannot be created: {error}",
+                    parent.display()
+                )));
             }
             if let Err(error) = fs::write(&marker, digest) {
                 return Some(failed(&format!(

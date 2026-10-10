@@ -333,14 +333,14 @@ fn default_componentizer(default: Option<PathBuf>) -> Componentizer {
     #[cfg(feature = "componentizer")]
     {
         let _ = default;
-        return Componentizer::Linked;
+        Componentizer::Linked
     }
     #[cfg(not(feature = "componentizer"))]
     {
-        return match default.filter(|folder| crate::js::componentizer_parts(folder).is_ok()) {
+        match default.filter(|folder| crate::js::componentizer_parts(folder).is_ok()) {
             Some(folder) => Componentizer::Binary(Some(folder)),
             None => Componentizer::Binary(None),
-        };
+        }
     }
 }
 
@@ -387,10 +387,10 @@ impl<M: ManifestFiles + Clone> Builder for Toolchains<M> {
         if folder.join("package.json").is_file() {
             let componentizer = match self.componentizer.clone() {
                 Componentizer::Linked => Componentizer::Linked,
-                Componentizer::Binary(None) => match crate::js::package_componentizer(folder) {
-                    Ok(package) => Componentizer::Binary(Some(package)),
-                    Err(reason) => return Err(reason),
-                },
+                Componentizer::Binary(None) => {
+                    let package = crate::js::package_componentizer(folder)?;
+                    Componentizer::Binary(Some(package))
+                }
                 Componentizer::Binary(Some(folder)) => {
                     match crate::js::componentizer_parts(&folder) {
                         Ok(_) => Componentizer::Binary(Some(folder)),
