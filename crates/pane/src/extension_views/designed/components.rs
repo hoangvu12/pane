@@ -2021,8 +2021,7 @@ pub(super) fn list_item(
     let ring = focus_ring(theme);
     row.key_context(BUTTON_CONTEXT)
         .when_some(draw.focus_of(path), |row, focus| {
-            row.track_focus(&focus)
-                .focus(move |row| row.shadow(ring))
+            row.track_focus(&focus).focus(move |row| row.shadow(ring))
         })
         .on_action(press)
         .on_click(click)

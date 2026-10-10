@@ -1123,10 +1123,7 @@ impl LauncherWindow {
         }
         // The Grid's cells: Left and Right move by cell, no wrap (the
         // launcher clamps the selection at the ends).
-        if list.grid
-            && plain
-            && matches!(keystroke.key.as_str(), "left" | "right")
-        {
+        if list.grid && plain && matches!(keystroke.key.as_str(), "left" | "right") {
             let step = if keystroke.key == "left" { -1 } else { 1 };
             self.launcher.move_selection(step);
             self.announcer.user_moved();
@@ -2149,10 +2146,8 @@ impl Render for LauncherWindow {
                     )
                     .into_any_element()
                 }
-                None => {
-                    motion::arriving(self.render_designed_view(designed, cx), arriving)
-                        .into_any_element()
-                }
+                None => motion::arriving(self.render_designed_view(designed, cx), arriving)
+                    .into_any_element(),
             },
             // While the Actions panel is open, its dimmer lies over the
             // results — between the search header and the footer — and
