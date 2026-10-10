@@ -766,6 +766,23 @@ impl LauncherWindow {
         self.preview_package(folder, window, cx);
     }
 
+    /// Brings the launcher forward with the extension `id` of the
+    /// collection in `folder` shown for installation, as
+    /// [`LauncherWindow::present_package`] shows a package folder: the
+    /// extension's own preview, which the author confirms here.
+    pub fn present_collection(
+        &mut self,
+        folder: &Path,
+        id: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.unhide(window, cx);
+        window.activate_window();
+        cx.activate(true);
+        self.preview_collection(folder, id, window, cx);
+    }
+
     /// Downloads and shows the npm package `spec` names, as
     /// [`LauncherWindow::preview_package`] shows a folder.
     pub fn preview_npm(&mut self, spec: &str, window: &mut Window, cx: &mut Context<Self>) {

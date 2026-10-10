@@ -1,7 +1,8 @@
 //! `pane-ext`, the command-line tool authors use beside the app to develop
 //! an extension package (ADR 0047, #128). `pane-ext dev [folder]` builds the
 //! package in the terminal and hands each build to the running Pane (see
-//! `dev`); `new`, `check` and `pack` are to follow.
+//! `dev`), with a `#<id>` naming one extension of a collection (ADR 0044);
+//! `new`, `check` and `pack` are to follow.
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -15,7 +16,9 @@ Usage: pane-ext dev [folder]
   dev [folder]  Build the package in folder (the current folder by default)
                 here, hand the build to the running Pane, starting Pane if
                 none is running, then build it again after each save and
-                have Pane reload it, until Ctrl+C.
+                have Pane reload it, until Ctrl+C. A #<id> after the folder
+                names one extension of the collection there
+                (pane-collection.json), developing it alone.
 
   --version     Print pane-ext's version.
 ";

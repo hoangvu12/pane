@@ -30,6 +30,7 @@ use super::{
 use crate::defaults::DefaultExtension;
 use crate::dependencies::{self, Assumptions, Plan, RequiredState};
 use crate::git::{self as git_source, GitSpec};
+use crate::local_channel::ToPreview;
 use crate::npm::{self, NpmSpec, Registry};
 use crate::packages::{InstalledPackage, PackageError, PackageIdentity, SourcePackage, SourceSpec};
 use crate::platform::{self, Platform};
@@ -497,19 +498,35 @@ impl Launcher {
     }
 
     /// Where the install preview of the local package with `identity`,
-    /// shown by [`Launcher::preview_package`] for its folder, stands.
-    pub(crate) fn previewing(&self, identity: &PackageIdentity) -> InstallPreview {
+    /// shown by [`Launcher::preview_package`] for its folder (or
+    /// [`Launcher::preview_collection`] for one extension of a collection,
+    /// ADR 0044), stands. The window is asked for it as `asked` says, with
+    /// the window brought forward.
+    pub(crate) fn previewing(
+        &self,
+        identity: &PackageIdentity,
+        asked: &ToPreview,
+    ) -> InstallPreview {
         let state = self.lock();
         if state.package(identity).is_some() {
             return InstallPreview::Installed;
         }
-        let (Screen::Package { details }, Some(folder)) =
-            (&state.view.screen, identity.local_folder())
-        else {
+        let Screen::Package { details } = &state.view.screen else {
             return InstallPreview::Elsewhere;
         };
+        // The row the preview offers: the package folder, or the
+        // collection's with the id of its extension (ADR 0044).
         let offered = state.entries.iter().any(|entry| {
-            matches!(entry, Entry::Install(Request::Folder(shown), _, _) if shown == folder)
+            let Entry::Install(request, _, _) = entry else {
+                return false;
+            };
+            match (request, asked) {
+                (Request::Folder(shown), ToPreview::Folder(folder)) => shown == folder,
+                (Request::Collection(shown, named), ToPreview::Collection(root, id)) => {
+                    shown == root && named == id
+                }
+                _ => false,
+            }
         });
         if offered {
             return InstallPreview::Shown;
@@ -518,7 +535,12 @@ impl Launcher {
         // offered: its source, or the folder if it could not be read.
         let named = [
             format!("Source: {identity}"),
-            format!("Folder: {}", folder.display()),
+            match asked {
+                ToPreview::Folder(folder) => format!("Folder: {}", folder.display()),
+                ToPreview::Collection(root, id) => {
+                    format!("Collection: {}#{id}", root.display())
+                }
+            },
         ];
         match &state.view.status {
             Status::Error(why) if details.iter().any(|line| named.contains(line)) => {

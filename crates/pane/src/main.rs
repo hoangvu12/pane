@@ -431,18 +431,24 @@ fn main() {
         .detach();
         // `pane-ext dev` hands its builds to this Pane over the local
         // channel (#217), which asks the window to show the install preview
-        // of a folder Pane has not installed. It listens where PANE_CHANNEL
-        // says, if it says, as pane-ext looks there: a second Pane beside an
-        // installed one, and the tests.
+        // of a package Pane has not installed — the extension's own, where
+        // it develops one extension of a collection (ADR 0044). It listens
+        // where PANE_CHANNEL says, if it says, as pane-ext looks there: a
+        // second Pane beside an installed one, and the tests.
         let endpoint = local_channel::Endpoint::from_env();
         match endpoint.and_then(|endpoint| local_channel::serve(developing, &endpoint)) {
             Ok((server, mut previews)) => {
                 cx.spawn(async move |cx| {
                     // Pane listens for as long as it runs.
                     let _server = server;
-                    while let Some(folder) = previews.next().await {
-                        let shown = window.update(cx, |launcher, window, cx| {
-                            launcher.present_package(&folder, window, cx)
+                    while let Some(asked) = previews.next().await {
+                        let shown = window.update(cx, |launcher, window, cx| match &asked {
+                            local_channel::ToPreview::Folder(folder) => {
+                                launcher.present_package(folder, window, cx)
+                            }
+                            local_channel::ToPreview::Collection(folder, id) => {
+                                launcher.present_collection(folder, id, window, cx)
+                            }
                         });
                         if shown.is_err() {
                             break;
