@@ -12,8 +12,8 @@
 use gpui::prelude::*;
 use gpui::{AnyElement, Div, Role, TextAlign, div, px};
 
-
 use pane_core::Space;
+use pane_core::markdown::{Alignment, Block, Inline, Item};
 
 use crate::ui::theme::Theme;
 use crate::ui::tokens;
