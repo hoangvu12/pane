@@ -1809,6 +1809,8 @@ impl Launcher {
             foreground: Some(source),
             ..self
         }
+    }
+
     /// A recording session with this system's hotkeys adapter, for a
     /// recorder that is about to listen (#260): while the session lasts,
     /// the adapter holds the keys back from the system and reports the
