@@ -89,11 +89,13 @@ answer through the change channel the continuing services use.
   the next refresh, not replayed.
 - Refreshes run only while the view is on top — today the one designed
   view the command opened; the navigation stack (#239) will make it the
-  stack's top — and while the launcher's window is shown: a hidden screen
-  refreshes nothing, so it uses no CPU or battery. A refresh that fell
-  due otherwise waits for the next showing, which runs it at once — one
-  refresh from the clock's current time, not the ticks it missed. Leaving
-  the view cancels its refresh; a view opened afresh asks anew.
+  stack's top — and while the launcher's window is shown expanded, not
+  hidden or collapsed to its search field, where no view is drawn: a
+  hidden screen refreshes nothing, so it uses no CPU or battery. A
+  refresh that fell due otherwise waits for the next showing, which runs
+  it at once — one refresh from the clock's current time, not the ticks
+  it missed. Leaving the view cancels its refresh; a view opened afresh
+  asks anew.
 - An answer that asks for no refresh — one that failed, or the view's
   done — ends any asked before it: the ask belongs to the answer, and
   every answer rules.
