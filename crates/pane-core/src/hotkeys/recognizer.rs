@@ -33,8 +33,10 @@
 //! - a key another tool injected is recognized like the user's — a
 //!   remapper sends the keys the user pressed, and the binding must work —
 //!   but never swallowed: the key is the tool's, not Pane's to take. Such
-//!   keys do not count as the user's for the liveness watchdog either
-//!   (they are not the keyboard's; see [`Recognizer::physical_events`]);
+//!   keys do not count as the user's either (they are not the
+//!   keyboard's; see [`Recognizer::physical_events`]) — but the hook
+//!   still sees them, which the liveness watchdog counts
+//!   ([`Recognizer::events`]);
 //! - while the Windows key is held, a key Pane took — the key of a chord
 //!   it swallowed, or the second press of a double tap it fired — makes
 //!   the Windows key's release carry [`Decision::Tap`] with its mask, or
@@ -417,6 +419,12 @@ pub struct Recognizer {
     recording: bool,
     /// How many key events the keyboard reported, injected ones apart.
     physical: u64,
+    /// How many key events the hook saw, Pane's own injected keys and
+    /// other tools' among them: the count the liveness watchdog compares
+    /// the raw input with, so the keys a tool injects — which reach the
+    /// raw input as the keyboard's do but are not the keyboard's — do not
+    /// look like a hook Windows removed.
+    events: u64,
 }
 
 impl Recognizer {
@@ -452,6 +460,9 @@ impl Recognizer {
 
     /// One key event, and what to do about it.
     pub fn step(&mut self, event: KeyEvent) -> Decision {
+        // Every event the hook saw, whatever its source: the watchdog's
+        // evidence that the hook is still seeing the keyboard.
+        self.events += 1;
         if event.tag == INJECTED_TAG {
             // Pane's own injected key: passed through untouched.
             return Decision::Pass;
@@ -721,5 +732,12 @@ impl Recognizer {
     /// tools inject are not counted as the user's.
     pub fn physical_events(&self) -> u64 {
         self.physical
+    }
+
+    /// How many key events the hook has seen, injected keys among them:
+    /// the liveness watchdog's count (see [`Recognizer::events`] — the
+    /// field's doc says what it is for).
+    pub fn events(&self) -> u64 {
+        self.events
     }
 }

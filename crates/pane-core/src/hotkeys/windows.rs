@@ -1489,15 +1489,18 @@ fn def(window: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     unsafe { DefWindowProcW(window, message, wparam, lparam) }
 }
 
-/// The watchdog's check on one raw key event: the hook reports each
-/// physical key event to its recognizer, so when several raw events
-/// arrive with the hook reporting none, Windows has removed the hook and
-/// it is installed again.
+/// The watchdog's check on one raw key event: the hook sees every key
+/// event the raw input also reports — the keyboard's own, another tool's
+/// injected keys and Pane's own among them — so when several raw events
+/// arrive with the hook seeing none, Windows has removed the hook and it
+/// is installed again. The keys a tool injects reach the raw input as the
+/// keyboard's do but are not the keyboard's, so counting only the
+/// keyboard's own here would take a busy remapper for a removed hook.
 fn watch(state: &mut Hooked) {
     if state.given_up {
         return;
     }
-    let seen = state.recognizer.physical_events();
+    let seen = state.recognizer.events();
     if seen != state.last_seen {
         state.last_seen = seen;
         state.unseen = 0;
