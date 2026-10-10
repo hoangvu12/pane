@@ -207,7 +207,7 @@ fn the_create_row_opens_the_form_and_creates_builds_and_develops(cx: &mut TestAp
     // Installing it develops it: the window says so by itself, and the
     // extension list offers to stop.
     cx.simulate_keystrokes("enter");
-    let view = until(
+    until(
         &window,
         cx,
         |view| matches!(&view.status, Status::Result(text) if text.starts_with("Developing Word Count")),
@@ -224,7 +224,7 @@ fn the_create_row_opens_the_form_and_creates_builds_and_develops(cx: &mut TestAp
 
     // The template's command is listed and runs, its component being the
     // sample guest the stand-in build stages.
-    let view = until(&window, cx, |view| {
+    until(&window, cx, |view| {
         view.rows.iter().any(|row| row.title == "Word Count")
     });
     assert!(cx.debug_bounds("row-Word Count").is_some());

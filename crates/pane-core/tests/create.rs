@@ -113,7 +113,7 @@ fn created(launcher: &Launcher, parent: &Path, name: &str, language: &str) -> St
 
 #[test]
 fn the_authoring_rows_are_listed_and_ask_the_window_for_folders() {
-    let (sources, data) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    let (_sources, data) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
     let launcher = launcher(&data, Arc::new(TemplateBuilder::default()));
     assert_eq!(
         titles(&launcher),
@@ -150,7 +150,7 @@ fn the_authoring_rows_are_listed_and_ask_the_window_for_folders() {
 
 #[test]
 fn the_form_creates_builds_previews_and_develops_the_package() {
-    let (sources, data) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    let (_sources, data) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
     let launcher = launcher(&data, Arc::new(TemplateBuilder::default()));
     launcher.show_create_form(sources.path());
 
@@ -224,7 +224,7 @@ fn the_form_creates_builds_previews_and_develops_the_package() {
 
 #[test]
 fn a_typescript_package_is_created_the_same_way() {
-    let (sources, data) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    let (_sources, data) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
     let launcher = launcher(&data, Arc::new(TemplateBuilder::default()));
     let status = created(&launcher, sources.path(), "Word Count", "typescript");
     // `npm install` needs the registry packages an author installs, which
@@ -243,7 +243,7 @@ fn a_typescript_package_is_created_the_same_way() {
 
 #[test]
 fn a_folder_that_is_not_empty_is_refused_and_the_form_stays() {
-    let (sources, data) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    let (_sources, data) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
     let existing = sources.path().join("word-count");
     fs::create_dir_all(&existing).unwrap();
     fs::write(existing.join("keep.txt"), "an author's file").unwrap();
@@ -267,7 +267,7 @@ fn a_folder_that_is_not_empty_is_refused_and_the_form_stays() {
 
 #[test]
 fn a_build_failure_is_shown_and_the_folder_is_kept_for_importing() {
-    let (sources, data) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    let (_sources, data) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
     let launcher = launcher(
         &data,
         Arc::new(TemplateBuilder::failing("error: expected `;`")),
@@ -291,7 +291,7 @@ fn a_build_failure_is_shown_and_the_folder_is_kept_for_importing() {
 
 #[test]
 fn a_launcher_without_a_builder_names_that_it_cannot_build() {
-    let (sources, data) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    let (_sources, data) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
     let launcher =
         Launcher::with_packages(Runtime::start(), vec![], data.path().join("extensions"));
     let status = created(&launcher, sources.path(), "Word Count", "rust");
@@ -308,7 +308,7 @@ fn a_launcher_without_a_builder_names_that_it_cannot_build() {
 
 #[test]
 fn importing_previews_a_folder_and_develops_it_once_installed() {
-    let (sources, data) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    let (_sources, data) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
     let folder = package(&sources.path().join("hello"));
     let launcher = launcher(&data, Arc::new(TemplateBuilder::default()));
 
@@ -334,7 +334,7 @@ fn importing_previews_a_folder_and_develops_it_once_installed() {
 
 #[test]
 fn importing_a_folder_that_is_no_package_is_explained_by_the_preview() {
-    let (sources, data) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    let (_sources, data) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
     let launcher = launcher(&data, Arc::new(TemplateBuilder::default()));
 
     // The picker cannot look for pane.json; the preview explains what was
@@ -355,7 +355,7 @@ fn importing_a_folder_that_is_no_package_is_explained_by_the_preview() {
 
 #[test]
 fn leaving_the_preview_drops_what_would_be_developed() {
-    let (sources, data) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    let (_sources, data) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
     let folder = package(&sources.path().join("hello"));
     let launcher = launcher(&data, Arc::new(TemplateBuilder::default()));
 
@@ -377,7 +377,7 @@ fn leaving_the_preview_drops_what_would_be_developed() {
 
 #[test]
 fn an_installed_folder_imported_again_is_updated_and_developed() {
-    let (sources, data) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    let (_sources, data) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
     let folder = package(&sources.path().join("hello"));
     let launcher = launcher(&data, Arc::new(TemplateBuilder::default()));
     block_on(launcher.install_package(&folder));
