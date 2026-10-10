@@ -168,7 +168,10 @@ development copy's code is never replaced here, and neither is a
 disabled or paused one — updating a paused package would unpause it,
 which is the user's choice to make (Retry); a disabled one is the user
 switched off, and the code it does not run does not change under it.
-These last two are provisional choices.
+These last two are provisional choices. A default extension is eligible
+on the same terms — enabled, not paused, not turned off — updating from
+its repository's newer release tags
+([installer](installer.md#updating-the-default-extensions)).
 
 **The controls.** Settings › Extensions ends with **Update extensions
 automatically** ("On · every eligible extension updates by itself, at

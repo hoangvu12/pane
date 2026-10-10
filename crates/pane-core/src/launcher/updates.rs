@@ -58,9 +58,10 @@
 //! **The pass the user asks for** ([`Launcher::check_extension_updates`])
 //! checks at once, whatever the cadence, and looks wider than the
 //! automatic pass: every installed package from a source Pane updates,
-//! turned off, disabled and paused ones included — the user asked, so
-//! "update all" means all (an update keeps a disabled package disabled,
-//! and unpauses a paused one, as the preview's Update row does). A toast
+//! default extensions included, turned off, disabled and paused ones
+//! included — the user asked, so "update all" means all (an update keeps
+//! a disabled package disabled, and unpauses a paused one, as the
+//! preview's Update row does). A toast
 //! follows it — "Checking for extension updates…", "Updating N of M…", a
 //! summary ending with View Details — and it answers even when everything
 //! is up to date. Root search's "Check for Extension Updates" row, the
@@ -85,12 +86,14 @@ use std::time::Duration;
 use super::install::{self, Stopped};
 use super::update_results::Pass;
 use super::{
-    Changing, Entry, Launcher, Mode, PackageIdentity, Row, State, Status, WeakLauncher, off_thread,
+    ApplicationUpdate, Changing, Entry, Launcher, Mode, PackageIdentity, Row, State, Status,
+    WeakLauncher, off_thread,
 };
 use crate::atomic::{Readers, write_atomically};
 use crate::clipboard::Clock;
+use crate::defaults::{DefaultExtension, InstalledDefault};
 use crate::dependencies;
-use crate::git;
+use crate::git::{self, GitRevision};
 use crate::npm;
 use crate::packages::{InstalledPackage, PackageError, SourcePackage};
 
@@ -503,12 +506,12 @@ impl Updates {
         // so the next check begins a fresh (automatic) pass whatever
         // happens to this one.
         let asked = self.lock().asked.take();
-        // What to check: the eligible installed npm and Git packages,
-        // skipping any something is already happening to (an install, an
-        // update, a change the user asked for), which the next check
-        // catches. An asked pass looks wider — turned-off, disabled and
-        // paused packages too, the user asking for them — and, asked of
-        // one extension, that one alone. The pass the outcomes collect
+        // What to check: the eligible installed npm, Git and default
+        // packages, skipping any something is already happening to (an
+        // install, an update, a change the user asked for), which the next
+        // check catches. An asked pass looks wider — turned-off, disabled
+        // and paused packages too, the user asking for them — and, asked
+        // of one extension, that one alone. The pass the outcomes collect
         // for, and the rows for every package the pass looks at but does
         // not check, with why it does not: a pass that records says what
         // became of every extension it considered.
@@ -644,15 +647,18 @@ impl Updates {
     /// Checks one installed package for a newer version and stages what it
     /// finds, collecting the outcome in `pass`: the metadata alone says
     /// what the latest is (the registry's for an npm package, the
-    /// repository's reference listing for a Git one), and what is newer is
-    /// downloaded and checked as an install checks a package. May run on
-    /// any of the pass's few check threads (see [`Updates::check`]); each
-    /// request is bounded by Pane's HTTP limits as ever.
+    /// repository's reference listing for a Git one, and its release tags
+    /// for a default extension), and what is newer is downloaded and
+    /// checked as an install checks a package. May run on any of the
+    /// pass's few check threads (see [`Updates::check`]); each request is
+    /// bounded by Pane's HTTP limits as ever.
     fn check_one(&self, launcher: &Launcher, package: &InstalledPackage, pass: &mut Pass) {
         if let Some(npm) = package.npm.clone() {
             self.check_npm(launcher, package, npm, pass);
         } else if let Some(git) = package.git.clone() {
             self.check_git(launcher, package, git, pass);
+        } else if let Some(default) = package.default.clone() {
+            self.check_default(launcher, package, default, pass);
         }
     }
 
@@ -769,15 +775,116 @@ impl Updates {
         }
     }
 
+    /// Checks one installed default extension for a newer release of its
+    /// repository and stages what it finds, collecting the outcome in
+    /// `pass`. The repository's reference listing alone says what its
+    /// release tags are: nothing is fetched while the newest names the
+    /// version installed. A newer tag's commit is fetched, checked and
+    /// staged exactly as first setup acquires one — the same retries, the
+    /// default identity and the tag's own origin recorded — so the
+    /// record's Git fields name where the update came from
+    /// ([`crate::defaults`]).
+    fn check_default(
+        &self,
+        launcher: &Launcher,
+        package: &InstalledPackage,
+        default: InstalledDefault,
+        pass: &mut Pass,
+    ) {
+        let Some(id) = package.identity.default_id() else {
+            return;
+        };
+        // The repository as the installed copy's record names it, fetched
+        // from where the revision it was installed from was fetched; a
+        // record Pane cannot read names no repository (the package is not
+        // a candidate then).
+        let spec = match git::GitSpec::parse(&default.repository) {
+            Ok(spec) => spec,
+            Err(reason) => {
+                pass.failed(
+                    package.identity.clone(),
+                    package.title(),
+                    &format!("It was not checked for a newer version: {reason}"),
+                );
+                return;
+            }
+        };
+        let tags = match git::release_tags(&spec.repository) {
+            Ok(Some(tags)) => tags,
+            // A listing longer than Pane reads: the newest release cannot
+            // be told, so the check fails rather than guess.
+            Ok(None) => {
+                pass.failed(
+                    package.identity.clone(),
+                    package.title(),
+                    &format!(
+                        "It was not checked for a newer version: Could not list the \
+                         references of {}: {}",
+                        spec.repository.name(),
+                        git::TOO_LARGE
+                    ),
+                );
+                return;
+            }
+            Err(reason) => {
+                pass.failed(
+                    package.identity.clone(),
+                    package.title(),
+                    &format!("It was not checked for a newer version: {reason}"),
+                );
+                return;
+            }
+        };
+        // The version installed, as the record keeps it, and the newest
+        // release tag above it — tags newest first. Nothing is fetched
+        // while the newest tag names that version (or an older one: a
+        // repository that moved its tags backwards is not followed down).
+        // A record that keeps no version to compare names none newer.
+        let installed = installed_version(&default).unwrap_or_default();
+        let Some(found) = tags
+            .iter()
+            .find(|tag| git::is_newer_release(tag.version(), &installed))
+        else {
+            return;
+        };
+        // That tag's commit is the one installed, or is staged already:
+        // nothing is fetched.
+        let already_staged = self.lock().staged.iter().any(|staged| {
+            staged.identity == package.identity
+                && staged
+                    .package
+                    .default
+                    .as_ref()
+                    .is_some_and(|origin| origin.revision.commit == found.commit)
+        });
+        if found.commit == default.revision.commit || already_staged {
+            return;
+        }
+        // The revision to fetch: the default's identity and title, its
+        // repository, and the newer tag with the commit it points to —
+        // a pin in the update's shape, staged as first setup acquires one.
+        let request = install::Request::Default(DefaultExtension {
+            id: id.to_owned(),
+            title: package.title(),
+            repository: default.repository.clone(),
+            tag: found.tag.clone(),
+            commit: found.commit.clone(),
+        });
+        if let Some(staged) = self.stage(launcher, request, package, pass) {
+            self.lock().staged.push(staged);
+        }
+    }
+
     /// Downloads and checks what `request` names — the latest version of
-    /// an npm package, or the moved commit of a Git package's tracked
-    /// branch — as an install checks a package, working out what it means
-    /// for its dependencies, against the installed copy `installed`, and
-    /// collects the outcome in `pass`: the update to stage, or `None`
-    /// with the pass recording why the installed copy stays — a newer
-    /// version that needs a newer Pane or is not available on this system
-    /// skipped with that reason, anything else failed. Blocks on the
-    /// network and the checks; runs no code of the package.
+    /// an npm package, the moved commit of a Git package's tracked
+    /// branch, or a default extension's newer release tag — as an install
+    /// checks a package, working out what it means for its dependencies,
+    /// against the installed copy `installed`, and collects the outcome
+    /// in `pass`: the update to stage, or `None` with the pass recording
+    /// why the installed copy stays — a newer version that needs a newer
+    /// Pane or is not available on this system skipped with that reason,
+    /// anything else failed. Blocks on the network and the checks; runs
+    /// no code of the package.
     fn stage(
         &self,
         launcher: &Launcher,
@@ -801,9 +908,16 @@ impl Updates {
                 // its integrity, the revision holds only the source —
                 // failed, and the installed copy keeps running.
                 match &reason {
-                    PackageError::IncompatibleApi(_)
-                    | PackageError::NewerManifest(_)
-                    | PackageError::UnsupportedPlatform(_) => {
+                    PackageError::IncompatibleApi(_) | PackageError::NewerManifest(_) => {
+                        // The reason points the user at Pane's own update
+                        // when one exists, so they know what to do.
+                        pass.refused(
+                            installed.identity.clone(),
+                            title,
+                            &format!("{reason}{}", application_update_note(launcher)),
+                        );
+                    }
+                    PackageError::UnsupportedPlatform(_) => {
                         pass.refused(installed.identity.clone(), title, &reason.to_string());
                     }
                     _ => {
@@ -818,7 +932,12 @@ impl Updates {
             }
         };
         // What the update stages the copy at: the version of an npm
-        // package, the revision a Git one fetched.
+        // package, the revision a Git one fetched, the release a default
+        // extension takes.
+        let default_release = package
+            .default
+            .as_ref()
+            .map(|origin| default_says(package.manifest.version.clone(), &origin.revision));
         let staged_revision = package
             .npm
             .as_ref()
@@ -829,6 +948,7 @@ impl Updates {
                     .as_ref()
                     .map(|origin| origin.revision.describe())
             })
+            .or(default_release)
             .unwrap_or_default();
         let sources = self.lock_sources().clone();
         let (package, plan) =
@@ -934,15 +1054,27 @@ impl Updates {
     fn apply_one(&self, launcher: &Launcher, update: Staged) -> Applied {
         let identity = update.identity.clone();
         // What the update installs, checked as it was staged: the version
-        // of an npm package, the commit of a Git one.
+        // of an npm package, the commit of a Git one or of a default
+        // extension's release.
         let target = staged_at(&update.package).unwrap_or_default();
         let from = update.installed.clone();
+        // What an Updated row says of the old and the new revision: the
+        // version of an npm package, a Git commit id as people read it,
+        // and a default extension's old and new version — what its
+        // record declared and its release tags name.
+        let mut says = (revision(&from), revision(&target));
         let mut claimed;
         {
             let mut state = launcher.lock();
             let Some(installed) = state.package(&identity) else {
                 return Applied::Dropped;
             };
+            if let (Some(old), Some(new)) = (&installed.default, update.package.default.as_ref()) {
+                says = (
+                    default_says(old.version.clone(), &old.revision),
+                    default_says(update.package.manifest.version.clone(), &new.revision),
+                );
+            }
             // Not the copy this was staged for, or already there: the next
             // check plans again.
             let Some(at) = installed_at(installed) else {
@@ -1030,8 +1162,8 @@ impl Updates {
                 Some(Came::Updated {
                     identity: identity.clone(),
                     title: state.title_of(&identity),
-                    from: revision(&from),
-                    to: revision(&target),
+                    from: says.0,
+                    to: says.1,
                 })
             }
             // What the update needs changed while it was being applied:
@@ -1094,11 +1226,12 @@ impl Came {
 }
 
 /// Whether `package` is one Pane updates by itself: installed from npm
-/// and not pinned (a pinned version is kept, whatever the latest is), or
+/// and not pinned (a pinned version is kept, whatever the latest is),
 /// installed from Git and tracked (a tag or commit named to install it is
-/// pinned and kept; an update follows the branch), and in either case
-/// enabled, not paused after a failure, and not turned off by the user's
-/// controls (the global one first).
+/// pinned and kept; an update follows the branch), or a default extension
+/// whose record keeps its repository — and in every case enabled, not
+/// paused after a failure, and not turned off by the user's controls (the
+/// global one first).
 fn eligible(state: &State, package: &InstalledPackage) -> bool {
     from_a_source_pane_updates(package)
         && package.enabled
@@ -1118,12 +1251,18 @@ pub(in crate::launcher) fn eligible_when_asked(package: &InstalledPackage) -> bo
 }
 
 /// Whether the source `package` was installed from is one Pane updates:
-/// npm without a pin, or Git with a tracked reference.
+/// npm without a pin, Git with a tracked reference, or a default
+/// extension whose record keeps its repository. A default's `pinned`
+/// records what first setup installed — the release tag this Pane release
+/// pinned — never a choice of the user's, so it never keeps a default
+/// from updating; a default whose record keeps no repository (an older
+/// Pane acquired it from Pane's own downloads) is not one Pane updates.
 fn from_a_source_pane_updates(package: &InstalledPackage) -> bool {
-    match (&package.npm, &package.git) {
-        (Some(npm), _) => !npm.pinned,
-        (None, Some(git)) => !git.revision.pinned(),
-        (None, None) => false,
+    match (&package.npm, &package.git, &package.default) {
+        (Some(npm), _, _) => !npm.pinned,
+        (None, Some(git), _) => !git.revision.pinned(),
+        (None, None, Some(_)) => true,
+        (None, None, None) => false,
     }
 }
 
@@ -1145,10 +1284,9 @@ pub(in crate::launcher) fn only_the_switch(state: &State, package: &InstalledPac
 /// look at (the reverse of [`eligible`] — for a pass the user asked for,
 /// of [`eligible_when_asked`] — with the words the record keeps): its
 /// identity, its title and why the pass did not look. `None` when the
-/// pass looks at it, or has nothing to say of it — a default extension,
-/// which Pane updates from its artifact source (#269 owns its row), not
-/// from this pass. A pass the user asked for looks at turned-off,
-/// disabled and paused packages too, so those are not its skip reasons.
+/// pass looks at it, or has nothing to say of it. A pass the user asked
+/// for looks at turned-off, disabled and paused packages too, so those
+/// are not its skip reasons.
 fn skipped_row(
     launcher: &Launcher,
     state: &State,
@@ -1165,10 +1303,18 @@ fn skipped_row(
         ));
     }
     // From a source this pass does not update: a local folder's or a
-    // development copy's code is never replaced here.
-    if package.npm.is_none() && package.git.is_none() {
+    // development copy's code is never replaced here, and neither is a
+    // default extension whose record keeps no repository — an older Pane
+    // acquired it from Pane's own downloads, which recorded none. (A
+    // default whose record keeps its repository falls through to the
+    // pass's own reasons, as an unpinned npm package does.)
+    if package.npm.is_none() && package.git.is_none() && package.default.is_none() {
         if package.identity.default_id().is_some() {
-            return None;
+            return Some((
+                package.identity.clone(),
+                package.title(),
+                "It was installed by an older Pane, which kept no repository for it".into(),
+            ));
         }
         return Some((
             package.identity.clone(),
@@ -1236,18 +1382,26 @@ fn skipped_row(
 }
 
 /// What marks the revision `package` is installed at: the version of an
-/// npm package, the commit of a Git one; `None` for a package from a
-/// local folder, which the updater never replaces.
+/// npm package, the commit of a Git one, the commit of a default
+/// extension's revision (as its download's identity does); `None` for a
+/// package from a local folder, which the updater never replaces.
 fn installed_at(package: &InstalledPackage) -> Option<String> {
     package
         .npm
         .as_ref()
         .map(|npm| npm.version.clone())
         .or_else(|| package.git.as_ref().map(|git| git.revision.commit.clone()))
+        .or_else(|| {
+            package
+                .default
+                .as_ref()
+                .map(|default| default.revision.commit.clone())
+        })
 }
 
 /// What marks the revision a staged `package` would install: the version
-/// of an npm package, the commit of a Git one.
+/// of an npm package, the commit of a Git one or of a default extension's
+/// release.
 fn staged_at(package: &SourcePackage) -> Option<String> {
     package
         .npm
@@ -1259,6 +1413,56 @@ fn staged_at(package: &SourcePackage) -> Option<String> {
                 .as_ref()
                 .map(|origin| origin.revision.commit.clone())
         })
+        .or_else(|| {
+            package
+                .default
+                .as_ref()
+                .map(|origin| origin.revision.commit.clone())
+        })
+}
+
+/// The version a default extension is installed at, as its record keeps
+/// it: the version its manifest declared, or — when the manifest declared
+/// none — its release tag's own. `None` when the record keeps neither:
+/// no version to compare, so no release is newer.
+fn installed_version(default: &InstalledDefault) -> Option<String> {
+    default
+        .version
+        .clone()
+        .or_else(|| tag_version(&default.revision))
+}
+
+/// The version a default extension's release tag names: `refs/tags/v0.2.0`
+/// is `0.2.0`; `None` for a revision that is not a tagged release.
+fn tag_version(of: &GitRevision) -> Option<String> {
+    of.ref_name()
+        .and_then(|name| name.strip_prefix("refs/tags/v").map(ToOwned::to_owned))
+}
+
+/// What a failure's message and an Updated row say of a default
+/// extension's revision: the version its manifest declares or its release
+/// tag names — the commit, as people read it, when its tag names no
+/// version.
+fn default_says(version: Option<String>, of: &GitRevision) -> String {
+    version
+        .or_else(|| tag_version(of))
+        .unwrap_or_else(|| revision(&of.commit))
+}
+
+/// What the refusal of a newer version that needs a newer Pane appends
+/// when Pane's own application update exists: pointing the user at it,
+/// the reason's own help. Nothing when no offer exists or no release
+/// source is configured.
+fn application_update_note(launcher: &Launcher) -> String {
+    match launcher.application_update() {
+        ApplicationUpdate::Offered { version, .. } | ApplicationUpdate::Installing { version } => {
+            format!(" Pane {version} is available: update Pane itself.")
+        }
+        ApplicationUpdate::Installed { version } => {
+            format!(" Pane {version} runs from the next start.")
+        }
+        _ => String::new(),
+    }
 }
 
 /// Whether `package` is at the safe boundary for replacing its code: no
@@ -1604,9 +1808,10 @@ impl Launcher {
 }
 
 /// The extension list's rows for the update controls: one per installed
-/// npm package that is not pinned and per Git package that is tracked
-/// (after the reload rows a local package has; an npm or Git package has
-/// none), saying whether it updates by itself.
+/// npm package that is not pinned, per Git package that is tracked and
+/// per default extension whose record keeps its repository (after the
+/// reload rows a local package has; an npm or Git package has none),
+/// saying whether it updates by itself.
 pub(super) fn package_rows(
     packages: &[InstalledPackage],
     off: &HashSet<String>,
@@ -1619,6 +1824,7 @@ pub(super) fn package_rows(
                     .git
                     .as_ref()
                     .is_some_and(|git| !git.revision.pinned())
+                || package.default.is_some()
         })
         .map(|package| {
             let identity = package.identity.clone();
@@ -1626,8 +1832,11 @@ pub(super) fn package_rows(
             let off = off.contains(&identity.key());
             // What the row says is replaced: the newer npm version of an
             // npm package, the newer commit of the tracked branch of a
-            // Git one.
-            let newer = if package.git.is_some() {
+            // Git one, the newer release of a default extension's
+            // repository.
+            let newer = if package.default.is_some() {
+                "a newer release of its repository"
+            } else if package.git.is_some() {
                 "a newer commit of its tracked branch"
             } else {
                 "a compatible newer npm version"

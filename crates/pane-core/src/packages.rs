@@ -19,6 +19,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::arguments::{self, ManifestArgument};
 use crate::atomic::{Readers, write_atomically};
+use crate::defaults::InstalledDefault;
 use crate::git::{GitOrigin, GitRevision, GitSpec, InstalledGit, Repository};
 use crate::helpers::runner;
 use crate::icons::{self, Icon};
@@ -1639,9 +1640,8 @@ impl SourcePackage {
                 return Err(PackageError::Defaults(format!(
                     "{revision} holds only the source of \"{command}\": its built component {} \
                      is not in it. Pane does not build packages from Git or run anything in a \
-                     repository; the release this Pane pins was tested with must include the \
-                     built components, and until its repository releases one, Pane cannot set \
-                     this default extension up",
+                     repository; a release must include the built components, and until its \
+                     repository releases one, Pane cannot install this default extension",
                     component.display()
                 )));
             }
@@ -1652,8 +1652,8 @@ impl SourcePackage {
             if origin.lfs_pointers.contains(&path) {
                 return Err(PackageError::Defaults(format!(
                     "{revision} stores its component {path} with Git LFS, which Pane does not \
-                     fetch: its repository must commit the built component itself in the \
-                     release this Pane pins"
+                     fetch: its repository must commit the built component itself in a \
+                     release revision"
                 )));
             }
         }
@@ -1749,6 +1749,14 @@ pub struct InstalledPackage {
     /// For a package from Git, the address it was fetched from and the
     /// revision installed.
     pub git: Option<InstalledGit>,
+    /// For a default extension, the Git source its record keeps: the
+    /// repository it was fetched from, the release tag and commit of the
+    /// revision installed, and the version its manifest declared — what
+    /// the updater reads to check the repository's newer release tags
+    /// ([#269](https://github.com/pane-app/pane/issues/269)). `None` for
+    /// a record an older Pane wrote from its own downloads, which kept
+    /// no repository.
+    pub default: Option<crate::defaults::InstalledDefault>,
     /// Whether a component of it imports `wasi:http`, so its code can make
     /// web requests, as found when it was installed, updated or reloaded.
     pub uses_network: bool,
@@ -1815,6 +1823,7 @@ impl InstalledPackage {
         recorded: &[ResolvedJson],
         npm: Option<&NpmRecordJson>,
         git: Option<&GitRecordJson>,
+        default: Option<&DefaultRecordJson>,
     ) -> InstalledPackage {
         let manifest = Manifest::read_installed(&location);
         let dependencies = match &manifest {
@@ -1833,6 +1842,7 @@ impl InstalledPackage {
         };
         let npm = npm.and_then(|npm| npm.package(&identity));
         let git = git.and_then(|git| git.installed(&identity));
+        let default = default.and_then(|default| default.installed(&identity));
         let mut package = InstalledPackage {
             manifest,
             identity,
@@ -1840,6 +1850,7 @@ impl InstalledPackage {
             enabled,
             npm,
             git,
+            default,
             uses_network,
             // Its record says, once loaded (see `Store::installed`).
             uses_programs: false,
@@ -2338,7 +2349,9 @@ impl GitRecordJson {
 /// are what a later release's updater reads to find the repository's
 /// newer release tags (#269); an older Pane, which acquired the default
 /// from its own downloads, wrote `defaultVersion` alone, and such a
-/// record is still read as it is.
+/// record is still read as it is. `pinned` records what first setup
+/// installed (the release tag this Pane release pinned), never a choice
+/// of the user's: a default extension's updates do not read it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 struct DefaultRecordJson {
     /// The version the installed manifest declares, when it declares one.
@@ -2357,6 +2370,26 @@ struct DefaultRecordJson {
     commit: Option<String>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pinned: bool,
+}
+
+impl DefaultRecordJson {
+    /// The default extension's recorded source for the package with
+    /// `identity`, a default one: what the updater reads to check the
+    /// repository's newer release tags (#269). `None` when the record
+    /// keeps no repository or commit — an older Pane acquired the default
+    /// from Pane's own downloads and wrote `defaultVersion` alone.
+    fn installed(&self, identity: &PackageIdentity) -> Option<InstalledDefault> {
+        identity.default_id()?;
+        Some(InstalledDefault {
+            repository: self.url.clone()?,
+            revision: GitRevision::from_record(
+                self.reference.as_deref(),
+                self.commit.as_deref()?,
+                self.pinned,
+            ),
+            version: self.version.clone(),
+        })
+    }
 }
 
 /// A dependency id and the source it resolved to.
@@ -2518,6 +2551,7 @@ impl Store {
                     &record.dependencies,
                     record.npm.as_ref(),
                     record.git.as_ref(),
+                    record.default.as_ref(),
                 );
                 package.uses_programs = record.programs;
                 package.disabled_commands = record.disabled_commands.iter().cloned().collect();
@@ -2965,6 +2999,7 @@ impl Store {
             &dependencies,
             npm.as_ref(),
             git.as_ref(),
+            default.as_ref(),
         );
         installed.uses_programs = package.programs;
         // An update keeps the commands the user turned off.

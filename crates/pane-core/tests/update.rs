@@ -1,35 +1,44 @@
-//! Automatic updates of installed npm and Git packages through the
-//! launcher's public interface: the npm ones from a local registry on
-//! 127.0.0.1 that each test fills (`support/npm_registry.rs`), the Git
-//! ones from a repository each test makes with the `git` program and
-//! serves over Git's smart HTTP protocol from 127.0.0.1
-//! (`support/repo_server.rs`) — nothing here reaches the network, the
-//! real npm registry or a real Git host. The npm package is the assembled
-//! JavaScript settings sample
+//! Automatic updates of installed npm, Git and default-extension
+//! packages through the launcher's public interface: the npm ones from a
+//! local registry on 127.0.0.1 that each test fills
+//! (`support/npm_registry.rs`), the Git ones from a repository each test
+//! makes with the `git` program and serves over Git's smart HTTP protocol
+//! from 127.0.0.1 (`support/repo_server.rs`), and the default extensions
+//! from repositories of their own, made and served the same way and
+//! pinned as a Pane release pins them (`support/defaults.rs`, the
+//! fixture `installer.rs` uses for first setup) — nothing here reaches
+//! the network, the real npm registry or a real Git host. The npm package
+//! is the assembled JavaScript settings sample
 //! (`target/guests/packages/sample-settings-js`) packed as an npm
 //! package: its Greeting command saves settings and has "Save after
 //! waiting", which waits ten seconds, so that a command still running can
 //! stand in the update's way. The Git package is the assembled Git sample
 //! (`target/guests/git/greeter`), whose tracked `release` branch moves to
-//! a newer commit.
+//! a newer commit. The default extensions are the settings sample's
+//! package in repositories of their own, whose release tags move.
 //!
 //! What is checked: a newer version updates the npm package by itself
 //! once no command of it runs, keeping its identity, its settings and its
 //! disabled state, ending the old code's generation, and a tracked
 //! branch that has moved updates the Git package the same way, keeping
 //! its identity and its tracked reference, while a pinned revision never
-//! moves; a command that is running finishes first, the update waiting
-//! until the screen the user is on closes; a pinned, disabled, or
-//! turned-off package is never replaced, and neither is an installed
-//! local folder's copy; the global and per-extension controls work
-//! through Manage extensions, a Git package's row among them; an
+//! moves; a newer release tag updates a default extension the same way,
+//! keeping the default identity, its settings and its controls, while
+//! one disabled, turned off or uninstalled is never updated by itself
+//! (and an older Pane's record, which keeps no repository, is skipped);
+//! a command that is running finishes first, the update waiting until
+//! the screen the user is on closes; a pinned, disabled, or turned-off
+//! package is never replaced, and neither is an installed local folder's
+//! copy; the global and per-extension controls work through Manage
+//! extensions, a Git package's and a default's row among them; an
 //! incompatible version, a dependency that cannot be installed, an
 //! unreachable registry and a tracked branch that has moved to a
-//! source-only revision explain and leave the installed copy alone; an
-//! action or an opening asked in the moment the replacement is being
-//! applied is refused rather than started and stopped by it; a new
-//! version that fails to start is not rolled back; and the check repeats
-//! on its cadence, and at Pane's start.
+//! source-only revision explain and leave the installed copy alone, as
+//! an unreachable default's repository does; an action or an opening
+//! asked in the moment the replacement is being applied is refused rather
+//! than started and stopped by it; a new version that fails to start is
+//! not rolled back; and the check repeats on its cadence, and at Pane's
+//! start.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -58,6 +67,12 @@ mod unreachable;
 use feedback::shown;
 use npm_registry::{Registry, pack};
 use repo_server::{Repo, Server, greeter_files};
+
+#[path = "support/defaults.rs"]
+mod defaults;
+
+use defaults::made;
+use pane_core::DefaultExtension;
 
 #[path = "support/guests.rs"]
 mod guests;
@@ -244,6 +259,55 @@ impl Dirs {
         )
     }
 
+    /// A launcher on this data folder that sets the default extensions
+    /// `extensions` up from their pins, as a Pane release's does: the
+    /// same registry and clock as [`Dirs::launcher`].
+    fn launcher_with(&self, extensions: Vec<DefaultExtension>) -> Launcher {
+        Launcher::with_packages(Ok(self.runtime.clone()), vec![], self.packages_dir())
+            .with_npm_registry(NpmRegistry::local(self.registry.url()).unwrap())
+            .with_clock(self.clock.clone())
+            .with_defaults(extensions)
+    }
+
+    /// The default extension `id` (`title` in Pane's messages): its
+    /// repository made from `files` and tagged `tag`, served on 127.0.0.1,
+    /// and the pin that names it — the shape a Pane release's committed
+    /// pins have. The repository's work tree is kept, for the test to
+    /// release a newer version of it.
+    fn default_extension(
+        &self,
+        id: &str,
+        title: &str,
+        tag: &str,
+        files: &[(String, Vec<u8>)],
+    ) -> (Repo, DefaultExtension) {
+        let (repo, pin) = made(&self.server, self.repos.path(), id, title, tag, files);
+        self.server.serve(id, &repo);
+        (repo, pin)
+    }
+
+    /// The record of the default extension `id` in `installed.json`.
+    fn default_record(&self, id: &str) -> serde_json::Value {
+        let text = fs::read_to_string(self.packages_dir().join("installed.json")).unwrap();
+        let registry: serde_json::Value = serde_json::from_str(&text).unwrap();
+        registry["packages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|record| record["default"] == id)
+            .cloned()
+            .unwrap_or_else(|| panic!("no record of {id} in {registry:#}"))
+    }
+
+    /// The version the default extension `id` is installed at, from its
+    /// record's `defaultVersion`.
+    fn default_version(&self, id: &str) -> String {
+        self.default_record(id)["defaultVersion"]
+            .as_str()
+            .unwrap()
+            .to_owned()
+    }
+
     /// What the Greeting command saved in its settings, as the whole
     /// settings file's text.
     fn settings(&self) -> String {
@@ -265,6 +329,17 @@ impl Dirs {
     /// applied or deferred.
     fn check(&self, launcher: &Launcher) {
         self.clock.advance(Duration::from_secs(62));
+        assert!(
+            launcher.wait_for_updates(Duration::from_secs(30)),
+            "the updater did not settle"
+        );
+    }
+
+    /// Asks the launcher for the next check on its cadence, a day after
+    /// the last one: for the checks after one that already ran, which
+    /// set when the next one is.
+    fn check_next_day(&self, launcher: &Launcher) {
+        self.clock.advance(Duration::from_secs(24 * 3600 + 10));
         assert!(
             launcher.wait_for_updates(Duration::from_secs(30)),
             "the updater did not settle"
@@ -427,9 +502,65 @@ fn error_of(launcher: &Launcher) -> String {
     }
 }
 
+/// The installed packages' titles, in installed order.
+fn installed(launcher: &Launcher) -> Vec<String> {
+    launcher.packages().iter().map(|p| p.title()).collect()
+}
+
 /// A Git commit id as the update results say it: its first 12 digits.
 fn short_commit(commit: &str) -> String {
     commit[..commit.len().min(12)].to_owned()
+}
+
+/// The files of a default extension's package: the settings sample's
+/// component under a `pane.json` titled `title`, at `version`, asking for
+/// the API version `api` (the version this Pane provides is 0.1), with
+/// the dependency declarations `dependencies` (JSON, already quoted) —
+/// the package a default extension's repository holds as a release, as
+/// the samples stand in for the defaults' own repositories (#285).
+fn default_files(
+    title: &str,
+    version: &str,
+    api: &str,
+    dependencies: &str,
+    component: Vec<u8>,
+) -> Vec<(String, Vec<u8>)> {
+    let manifest = format!(
+        r#"{{ "manifestVersion": 1, "title": "{title}", "version": "{version}",
+             "apiVersion": "{api}",
+             "commands": [{{ "id": "greeting", "title": "Greeting",
+                             "component": "sample_settings_js.wasm" }}]{dependencies} }}"#
+    );
+    vec![
+        ("pane.json".to_owned(), manifest.into_bytes()),
+        ("sample_settings_js.wasm".to_owned(), component),
+    ]
+}
+
+/// Releases `version` of the default extension whose repository is
+/// `repo`, from `files`: committed and tagged `v<version>`, the release a
+/// later check finds. Returns the commit the tag points to.
+fn release(repo: &Repo, files: &[(String, Vec<u8>)], version: &str) -> String {
+    let borrowed: Vec<(&str, Vec<u8>)> = files
+        .iter()
+        .map(|(path, contents)| (path.as_str(), contents.clone()))
+        .collect();
+    let tag = format!("v{version}");
+    let commit = repo.commit(&borrowed, &format!("Release {tag}"));
+    repo.tag(&tag);
+    commit
+}
+
+/// Opens the Greeting command of the default extension `id` from root
+/// search and runs its item titled `item`, returning what it showed: its
+/// toast, or the status line; the command's screen stays open, as it does
+/// for a user.
+fn run_default(launcher: &Launcher, id: &str, item: &str) -> Status {
+    to_root(launcher);
+    activate_greeting_of(launcher, &PackageIdentity::default_extension(id).key());
+    assert_eq!(launcher.view().screen, Screen::Command);
+    activate(launcher, item);
+    shown(launcher)
 }
 
 /// The settings sample's files as a package named `name` at `version`
@@ -1951,5 +2082,665 @@ fn update_now_updates_an_extension_skipped_only_for_the_users_switch() {
     assert_eq!(
         launcher.toast().map(|toast| toast.toast.title),
         Some("Updated 1 extension".into())
+    );
+}
+
+/// The default extensions' updates from their repositories' release tags
+/// (#269): the fixture `installer.rs` uses for first setup, driven by the
+/// launcher's clock — a default installed from a pinned loopback
+/// repository whose newer release tags move.
+#[test]
+fn a_newer_release_tag_updates_the_default_extension_by_itself_keeping_its_data() {
+    let dirs = Dirs::new();
+    // The calculator as a default extension: the settings sample's
+    // package in a repository of its own, tagged v0.1.0 and pinned as a
+    // Pane release pins it.
+    let files = default_files("Calculator", "0.1.0", "0.1", "", sample_component());
+    let (repo, pin) = dirs.default_extension("calculator", "Calculator", "v0.1.0", &files);
+    // The address the pin names, which the record keeps as the update's
+    // source too.
+    let repository = pin.repository.clone();
+    let launcher = dirs.launcher_with(vec![pin]);
+    block_on(launcher.acquire_defaults());
+    assert_eq!(installed(&launcher), ["Calculator"]);
+    // A setting saved through the old code: an update keeps it.
+    assert_eq!(
+        run_default(&launcher, "calculator", "Use a casual greeting"),
+        Status::Result("Saved the casual greeting".into())
+    );
+    assert!(dirs.settings().contains("casual"));
+    to_root(&launcher);
+
+    // The repository releases 0.2.0, tagged; the launcher's clock drives
+    // a pass.
+    let files = default_files("Calculator", "0.2.0", "0.1", "", sample_component());
+    let released = release(&repo, &files, "0.2.0");
+    dirs.check(&launcher);
+
+    // The update applied by itself, quietly: the record keeps the
+    // default identity, the new version, and the new release's Git
+    // source — the repository, the tag and the commit it points to — and
+    // the row says the old and the new version.
+    assert_eq!(launcher.view().status, Status::Idle);
+    assert_eq!(dirs.default_version("calculator"), "0.2.0");
+    let record = dirs.default_record("calculator");
+    assert_eq!(record["default"], "calculator");
+    assert_eq!(record["gitUrl"], repository.as_str());
+    assert_eq!(record["gitRef"], "refs/tags/v0.2.0");
+    assert_eq!(record["gitCommit"], released.as_str());
+    assert_eq!(record["pinned"], serde_json::json!(true));
+    let recorded = launcher.update_results();
+    assert_eq!(recorded.updated.len(), 1, "{recorded:#?}");
+    assert_eq!(recorded.updated[0].title, "Calculator");
+    assert_eq!(recorded.updated[0].detail, "0.1.0 → 0.2.0");
+    assert_eq!(
+        recorded.updated[0].identity,
+        PackageIdentity::default_extension("calculator")
+    );
+    // The new code runs, and the saved setting is still there.
+    assert_eq!(
+        run_default(&launcher, "calculator", "Use a casual greeting"),
+        Status::Result("Saved the casual greeting".into())
+    );
+    assert!(dirs.settings().contains("casual"));
+    // A check that finds the newest tag naming the version installed
+    // fetches nothing: a day passes on the clock, no download appears and
+    // the record stays.
+    dirs.check_next_day(&launcher);
+    assert_eq!(dirs.default_version("calculator"), "0.2.0");
+    dirs.wait_for_no_downloads();
+    assert_eq!(launcher.update_results(), recorded, "the record stays");
+}
+
+#[test]
+fn a_new_default_release_that_needs_a_newer_pane_is_skipped() {
+    let dirs = Dirs::new();
+    let files = default_files("Calculator", "0.1.0", "0.1", "", sample_component());
+    let (repo, pin) = dirs.default_extension("calculator", "Calculator", "v0.1.0", &files);
+    let launcher = dirs.launcher_with(vec![pin]);
+    block_on(launcher.acquire_defaults());
+    assert_eq!(
+        run_default(&launcher, "calculator", "Use a casual greeting"),
+        Status::Result("Saved the casual greeting".into())
+    );
+    to_root(&launcher);
+
+    // The new release needs an API this Pane does not provide: skipped
+    // with that reason, so skipping never looks like a fault — nothing
+    // failed, and the record holds the row under Skipped.
+    let files = default_files("Calculator", "0.2.0", "0.2", "", sample_component());
+    release(&repo, &files, "0.2.0");
+    dirs.check(&launcher);
+
+    let recorded = launcher.update_results();
+    assert!(
+        recorded.updated.is_empty() && recorded.failed.is_empty(),
+        "{recorded:#?}"
+    );
+    assert_eq!(recorded.skipped.len(), 1, "{recorded:#?}");
+    let detail = &recorded.skipped[0].detail;
+    assert!(
+        detail.starts_with(
+            "Incompatible package: it needs Pane extension API 0.2, but this Pane provides 0.1."
+        ),
+        "{detail}"
+    );
+    assert!(
+        detail.ends_with("It keeps running its installed code."),
+        "{detail}"
+    );
+    assert_eq!(dirs.default_version("calculator"), "0.1.0");
+    // The installed copy still runs.
+    assert_eq!(
+        run_default(&launcher, "calculator", "Use a casual greeting"),
+        Status::Result("Saved the casual greeting".into())
+    );
+    dirs.wait_for_no_downloads();
+}
+
+#[test]
+fn an_unreachable_default_repository_is_recorded_and_leaves_the_installed_copy_alone() {
+    let dirs = Dirs::new();
+    let files = default_files("Calculator", "0.1.0", "0.1", "", sample_component());
+    let (_, pin) = dirs.default_extension("calculator", "Calculator", "v0.1.0", &files);
+    let launcher = dirs.launcher_with(vec![pin]);
+    block_on(launcher.acquire_defaults());
+    assert_eq!(
+        run_default(&launcher, "calculator", "Use a casual greeting"),
+        Status::Result("Saved the casual greeting".into())
+    );
+    // A setting saved through the old code: the installed copy keeps
+    // running, whatever its repository does.
+    assert!(dirs.settings().contains("casual"));
+    to_root(&launcher);
+    drop(launcher);
+
+    // A restart whose record names a repository nothing answers at, as
+    // one that is down does: a bound socket that never listens, so
+    // nothing else can take the port meanwhile.
+    let closed = unreachable::ClosedPort::new();
+    rewrite_default_url(
+        &dirs,
+        "calculator",
+        &format!("{}/calculator.git", closed.url()),
+    );
+    let launcher = dirs.launcher_with(vec![]);
+    dirs.check(&launcher);
+
+    let recorded = launcher.update_results();
+    assert_eq!(recorded.failed.len(), 1, "{recorded:#?}");
+    let detail = &recorded.failed[0].detail;
+    assert!(
+        detail.starts_with(
+            "It was not checked for a newer version: Could not reach the Git repository \
+             127.0.0.1:"
+        ),
+        "{detail}"
+    );
+    assert!(
+        detail.ends_with("It keeps running its installed code."),
+        "{detail}"
+    );
+    assert_eq!(dirs.default_version("calculator"), "0.1.0");
+    assert!(dirs.settings().contains("casual"));
+}
+
+/// Rewrites the repository of the default extension `id`'s record in
+/// `dirs`' `installed.json` to `url`, as a repository that moved is read
+/// by the next Pane that starts.
+fn rewrite_default_url(dirs: &Dirs, id: &str, url: &str) {
+    let path = dirs.packages_dir().join("installed.json");
+    let mut registry: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+    let record = registry["packages"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|record| record["default"] == id)
+        .unwrap_or_else(|| panic!("no record of {id}"));
+    record["gitUrl"] = serde_json::Value::String(url.to_owned());
+    fs::write(&path, registry.to_string()).unwrap();
+}
+
+#[test]
+fn a_new_default_release_whose_dependency_cannot_be_installed_changes_nothing() {
+    let dirs = Dirs::new();
+    let files = default_files("Calculator", "0.1.0", "0.1", "", sample_component());
+    let (repo, pin) = dirs.default_extension("calculator", "Calculator", "v0.1.0", &files);
+    let launcher = dirs.launcher_with(vec![pin]);
+    block_on(launcher.acquire_defaults());
+    // The installed copy's record, before anything changes: an update
+    // that fails part-way changes nothing, whatever it needs.
+    let record = dirs.default_record("calculator");
+
+    // The new release requires a dependency the registry does not hold:
+    // refused as an install would refuse it, all or nothing, and the
+    // installed copy keeps running.
+    let files = default_files(
+        "Calculator",
+        "0.2.0",
+        "0.1",
+        r#", "dependencies": [{ "id": "nobody", "source": "npm:nobody",
+                                  "operations": [{ "id": "nothing", "version": 1 }] }]"#,
+        sample_component(),
+    );
+    release(&repo, &files, "0.2.0");
+    dirs.check(&launcher);
+
+    let recorded = launcher.update_results();
+    assert_eq!(recorded.failed.len(), 1, "{recorded:#?}");
+    let detail = &recorded.failed[0].detail;
+    assert!(
+        detail.starts_with("It was not updated to 0.2.0: "),
+        "{detail}"
+    );
+    assert!(
+        detail.contains("npm package nobody was not found in the registry"),
+        "{detail}"
+    );
+    assert!(
+        detail.ends_with("It keeps running its installed code."),
+        "{detail}"
+    );
+    assert_eq!(dirs.default_version("calculator"), "0.1.0");
+    assert_eq!(dirs.default_record("calculator"), record, "nothing changed");
+    dirs.wait_for_no_downloads();
+}
+
+/// One default for each way the automatic pass must leave a default
+/// alone, with one it updates: the pass's record then says what became of
+/// every one of them.
+#[test]
+fn a_disabled_turned_off_or_uninstalled_default_is_not_updated_automatically() {
+    let dirs = Dirs::new();
+    // Four default extensions: one the user disabled, one whose automatic
+    // updates are turned off, one the user uninstalled while keeping its
+    // data, and one plain one the pass updates, so the record says what
+    // became of the rest.
+    let of = |id: &str, title: &str| {
+        let files = default_files(title, "0.1.0", "0.1", "", sample_component());
+        dirs.default_extension(id, title, "v0.1.0", &files)
+    };
+    let (disabled_repo, disabled) = of("disabled", "Disabled calculator");
+    let (off_repo, off) = of("off", "Off calculator");
+    let (gone_repo, gone) = of("gone", "Gone calculator");
+    let (moving_repo, moving) = of("moving", "Moving calculator");
+    let launcher = dirs.launcher_with(vec![disabled, off, gone, moving]);
+    block_on(launcher.acquire_defaults());
+    assert_eq!(
+        installed(&launcher),
+        [
+            "Disabled calculator",
+            "Off calculator",
+            "Gone calculator",
+            "Moving calculator"
+        ]
+    );
+    // A setting saved through the one the user will uninstall, which the
+    // uninstall keeps.
+    assert_eq!(
+        run_default(&launcher, "gone", "Use a casual greeting"),
+        Status::Result("Saved the casual greeting".into())
+    );
+    assert!(dirs.settings().contains("casual"));
+
+    // The user disables one, turns another's updates off (its row in
+    // Manage extensions, which defaults now have), and uninstalls a third
+    // keeping its data.
+    block_on(launcher.set_enabled(&PackageIdentity::default_extension("disabled"), false));
+    let identity = PackageIdentity::default_extension("gone");
+    block_on(launcher.uninstall(&identity, pane_core::SavedData::Keep));
+    assert_eq!(
+        installed(&launcher),
+        ["Disabled calculator", "Off calculator", "Moving calculator"]
+    );
+
+    // Every repository releases a newer version, and the off one's
+    // automatic updates are turned off: turning updates off checks at
+    // once, so the pass that follows is the one over everything as it
+    // now stands.
+    for (repo, title) in [
+        (disabled_repo, "Disabled calculator"),
+        (off_repo, "Off calculator"),
+        (gone_repo, "Gone calculator"),
+        (moving_repo, "Moving calculator"),
+    ] {
+        let files = default_files(title, "0.2.0", "0.1", "", sample_component());
+        release(&repo, &files, "0.2.0");
+    }
+    let asked = dirs.server.requests().len();
+    manage(&launcher);
+    activate(&launcher, "Update Off calculator automatically");
+    assert_eq!(
+        launcher.view().status,
+        Status::Result("Automatic updates of Off calculator are off".into())
+    );
+    to_root(&launcher);
+    assert!(
+        launcher.wait_for_updates(Duration::from_secs(30)),
+        "the toggle's check settled"
+    );
+
+    // The plain one updated; the rest are as the user left them, their
+    // rows in the record saying why, and the uninstalled one is not even
+    // considered: never re-acquired, never updated, whatever its
+    // repository does.
+    assert_eq!(dirs.default_version("moving"), "0.2.0");
+    assert_eq!(dirs.default_version("disabled"), "0.1.0");
+    assert_eq!(dirs.default_version("off"), "0.1.0");
+    let recorded = launcher.update_results();
+    assert_eq!(recorded.updated.len(), 1, "{recorded:#?}");
+    assert_eq!(recorded.updated[0].title, "Moving calculator");
+    let skipped = |key: String| {
+        recorded
+            .skipped
+            .iter()
+            .find(|row| row.identity.key() == key)
+            .unwrap_or_else(|| panic!("no row for {key}: {recorded:#?}"))
+    };
+    assert_eq!(
+        skipped(PackageIdentity::default_extension("disabled").key()).detail,
+        "It is disabled"
+    );
+    assert_eq!(
+        skipped(PackageIdentity::default_extension("off").key()).detail,
+        "Automatic updates of it are off"
+    );
+    assert!(
+        !recorded
+            .skipped
+            .iter()
+            .any(|row| row.identity == PackageIdentity::default_extension("gone")),
+        "the uninstalled default has no row"
+    );
+    // Its repository was not asked for anything: it is not installed, so
+    // the pass never reached it.
+    let wanted = "GET /gone.git/info/refs";
+    assert!(
+        !dirs.server.requests()[asked..]
+            .iter()
+            .any(|request| request.starts_with(wanted)),
+        "the uninstalled default's repository was asked"
+    );
+    // Its data is kept, and the disabled one stays disabled.
+    assert!(dirs.settings().contains("casual"));
+    assert!(
+        !launcher
+            .packages()
+            .into_iter()
+            .any(
+                |package| package.identity == PackageIdentity::default_extension("disabled")
+                    && package.enabled
+            )
+    );
+
+    // Turning the off one's updates back on checks at once, and the
+    // update applies.
+    manage(&launcher);
+    activate(&launcher, "Update Off calculator automatically");
+    assert_eq!(
+        launcher.view().status,
+        Status::Result("Automatic updates of Off calculator are on".into())
+    );
+    wait_until("the update applied", Duration::from_secs(30), || {
+        dirs.default_version("off") == "0.2.0"
+    });
+}
+
+#[test]
+fn turning_updates_off_everywhere_stops_a_default_extension_too() {
+    let dirs = Dirs::new();
+    let files = default_files("Calculator", "0.1.0", "0.1", "", sample_component());
+    let (repo, pin) = dirs.default_extension("calculator", "Calculator", "v0.1.0", &files);
+    let launcher = dirs.launcher_with(vec![pin]);
+    block_on(launcher.acquire_defaults());
+
+    manage(&launcher);
+    activate(&launcher, "Update extensions automatically");
+    assert_eq!(
+        launcher.view().status,
+        Status::Result("Automatic updates of extensions are off".into())
+    );
+    to_root(&launcher);
+    assert!(
+        launcher.wait_for_updates(Duration::from_secs(30)),
+        "the toggle's check settled"
+    );
+
+    // A newer release exists; a day passes on the clock and a check
+    // runs: the global choice keeps the default as it is.
+    let files = default_files("Calculator", "0.2.0", "0.1", "", sample_component());
+    release(&repo, &files, "0.2.0");
+    dirs.check_next_day(&launcher);
+    assert_eq!(dirs.default_version("calculator"), "0.1.0");
+
+    // Back on: the update applies.
+    manage(&launcher);
+    activate(&launcher, "Update extensions automatically");
+    assert_eq!(
+        launcher.view().status,
+        Status::Result("Automatic updates of extensions are on".into())
+    );
+    wait_until("the update applied", Duration::from_secs(30), || {
+        dirs.default_version("calculator") == "0.2.0"
+    });
+}
+
+#[test]
+fn a_pass_the_user_asked_for_updates_off_disabled_and_paused_defaults() {
+    let dirs = Dirs::new();
+    // Four default extensions: a plain one, one whose automatic updates
+    // are turned off, one disabled, and one paused after crashing — the
+    // pass the user asks for looks at all of them.
+    let of = |id: &str, title: &str| {
+        let files = default_files(title, "0.1.0", "0.1", "", sample_component());
+        dirs.default_extension(id, title, "v0.1.0", &files)
+    };
+    let (moving_repo, moving) = of("moving", "Moving calculator");
+    let (off_repo, off) = of("off", "Off calculator");
+    let (disabled_repo, disabled) = of("disabled", "Disabled calculator");
+    let (paused_repo, paused) = of("paused", "Paused calculator");
+    let launcher = dirs.launcher_with(vec![moving, off, disabled, paused]);
+    block_on(launcher.acquire_defaults());
+    assert_eq!(
+        installed(&launcher),
+        [
+            "Moving calculator",
+            "Off calculator",
+            "Disabled calculator",
+            "Paused calculator"
+        ]
+    );
+
+    // The off one's automatic updates are turned off — the toggle checks
+    // at once, over everything as it stands: nothing is newer yet, so
+    // nothing happens.
+    manage(&launcher);
+    activate(&launcher, "Update Off calculator automatically");
+    to_root(&launcher);
+    assert!(
+        launcher.wait_for_updates(Duration::from_secs(30)),
+        "the toggle's check settled"
+    );
+    // The user disables one; another's command crashes until Pane pauses
+    // it after the third.
+    block_on(launcher.set_enabled(&PackageIdentity::default_extension("disabled"), false));
+    for _ in 0..3 {
+        activate_greeting_of(
+            &launcher,
+            &PackageIdentity::default_extension("paused").key(),
+        );
+        activate(&launcher, "Crash");
+    }
+    assert!(matches!(
+        launcher.extension_mark(&PackageIdentity::default_extension("paused")),
+        Some(pane_core::ExtensionMark::Paused(_))
+    ));
+    to_root(&launcher);
+
+    // Every repository releases a newer version, and the user asks for
+    // the pass: "update all" means all, the user's switches and the
+    // packages' states notwithstanding.
+    for (repo, title) in [
+        (moving_repo, "Moving calculator"),
+        (off_repo, "Off calculator"),
+        (disabled_repo, "Disabled calculator"),
+        (paused_repo, "Paused calculator"),
+    ] {
+        let files = default_files(title, "0.2.0", "0.1", "", sample_component());
+        release(&repo, &files, "0.2.0");
+    }
+    block_on(launcher.check_extension_updates());
+
+    // All four updated. An update keeps a disabled one disabled, and
+    // unpauses a paused one, as the preview's Update row does.
+    assert_eq!(dirs.default_version("moving"), "0.2.0");
+    assert_eq!(dirs.default_version("off"), "0.2.0");
+    assert_eq!(dirs.default_version("disabled"), "0.2.0");
+    assert!(
+        !launcher
+            .packages()
+            .into_iter()
+            .any(
+                |package| package.identity == PackageIdentity::default_extension("disabled")
+                    && package.enabled
+            )
+    );
+    assert_eq!(dirs.default_version("paused"), "0.2.0");
+    assert_eq!(
+        launcher.extension_mark(&PackageIdentity::default_extension("paused")),
+        None,
+        "the paused one is unpaused"
+    );
+    assert_eq!(
+        run_default(&launcher, "paused", "Use a casual greeting"),
+        Status::Result("Saved the casual greeting".into())
+    );
+
+    // The record: every one updated, its rows in the installed list's
+    // order, saying the old and the new version — and the ending toast is
+    // the pass's summary.
+    let recorded = launcher.update_results();
+    assert_eq!(recorded.updated.len(), 4, "{recorded:#?}");
+    assert_eq!(
+        recorded
+            .updated
+            .iter()
+            .map(|row| row.identity.key())
+            .collect::<Vec<_>>(),
+        vec![
+            PackageIdentity::default_extension("moving").key(),
+            PackageIdentity::default_extension("off").key(),
+            PackageIdentity::default_extension("disabled").key(),
+            PackageIdentity::default_extension("paused").key(),
+        ]
+    );
+    for row in &recorded.updated {
+        assert_eq!(row.detail, "0.1.0 → 0.2.0", "{row:?}");
+    }
+    assert_eq!(
+        launcher.toast().map(|toast| toast.toast.title),
+        Some("Updated 4 extensions".into())
+    );
+}
+
+#[test]
+fn a_new_default_release_that_fails_to_start_is_paused_not_rolled_back() {
+    let dirs = Dirs::new();
+    let files = default_files("Calculator", "0.1.0", "0.1", "", sample_component());
+    let (repo, pin) = dirs.default_extension("calculator", "Calculator", "v0.1.0", &files);
+    let launcher = dirs.launcher_with(vec![pin]);
+    block_on(launcher.acquire_defaults());
+    // A setting saved through the old code: the replacement keeps it.
+    assert_eq!(
+        run_default(&launcher, "calculator", "Use a casual greeting"),
+        Status::Result("Saved the casual greeting".into())
+    );
+    to_root(&launcher);
+
+    // The new release passes its checks and is applied. Its code fails
+    // when it is started — it crashes until Pane pauses it — and no older
+    // version is restored (Q31, ADR 0004): the extension is paused with
+    // Retry, and the record's row moves to Failed with the pause's
+    // explanation.
+    let files = default_files("Calculator", "0.2.0", "0.1", "", sample_component());
+    release(&repo, &files, "0.2.0");
+    dirs.check(&launcher);
+    assert_eq!(dirs.default_version("calculator"), "0.2.0");
+    let recorded = launcher.update_results();
+    assert_eq!(recorded.updated.len(), 1, "{recorded:#?}");
+
+    for _ in 0..3 {
+        activate_greeting_of(
+            &launcher,
+            &PackageIdentity::default_extension("calculator").key(),
+        );
+        activate(&launcher, "Crash");
+    }
+    let identity = PackageIdentity::default_extension("calculator");
+    assert!(matches!(
+        launcher.extension_mark(&identity),
+        Some(pane_core::ExtensionMark::Paused(_))
+    ));
+    let recorded = launcher.update_results();
+    assert_eq!(recorded.updated.len(), 0, "{recorded:#?}");
+    assert_eq!(recorded.failed.len(), 1, "{recorded:#?}");
+    let detail = &recorded.failed[0].detail;
+    assert!(
+        detail.contains("Calculator crashed 3 times within 5 minutes"),
+        "{detail}"
+    );
+    assert!(
+        detail.contains("and is paused: Pane runs none of its code until you retry it"),
+        "{detail}"
+    );
+    // Not rolled back: still the new version, with its setting kept.
+    assert_eq!(dirs.default_version("calculator"), "0.2.0");
+    assert!(dirs.settings().contains("casual"));
+
+    // The extension list offers Retry, and retrying starts the new code.
+    manage(&launcher);
+    assert!(
+        titles(&launcher)
+            .iter()
+            .any(|title| title == "Retry Calculator"),
+        "the retry row: {:?}",
+        titles(&launcher)
+    );
+    activate(&launcher, "Retry Calculator");
+    assert_eq!(
+        launcher.view().status,
+        Status::Result("Started Calculator".into())
+    );
+    assert_eq!(launcher.extension_mark(&identity), None);
+    assert_eq!(
+        run_default(&launcher, "calculator", "Use a casual greeting"),
+        Status::Result("Saved the casual greeting".into())
+    );
+    assert_eq!(dirs.default_version("calculator"), "0.2.0");
+}
+
+/// An install that acquired a default from the artifact source (an older
+/// Pane) keeps it, un-updated: its record keeps no repository, so nothing
+/// is asked of the one this Pane release pins, and the pass says why it
+/// never looked.
+#[test]
+fn a_default_an_older_pane_acquired_from_the_artifact_source_is_skipped_not_updated() {
+    let dirs = Dirs::new();
+    // The repository a Pane release pins, holding a newer release:
+    // nothing of it is ever asked for.
+    let files = default_files("Calculator", "0.1.0", "0.1", "", sample_component());
+    let (repo, pin) = dirs.default_extension("calculator", "Calculator", "v0.1.0", &files);
+    let newer = default_files("Calculator", "0.2.0", "0.1", "", sample_component());
+    release(&repo, &newer, "0.2.0");
+    // The record an older Pane wrote, which acquired the calculator as a
+    // default from its own downloads: the default identity and a version,
+    // and no Git source. The managed copy is in place, as that Pane left
+    // it.
+    let copy = dirs.packages_dir().join("packages").join("1");
+    fs::create_dir_all(&copy).unwrap();
+    for (path, contents) in &files {
+        let file = copy.join(path);
+        fs::create_dir_all(file.parent().expect("inside the copy")).unwrap();
+        fs::write(&file, contents).unwrap();
+    }
+    fs::write(
+        dirs.packages_dir().join("installed.json"),
+        r#"{ "version": 1, "next": 2, "packages": [
+            { "default": "calculator", "defaultVersion": "0.1.0", "dir": "1" } ] }"#,
+    )
+    .unwrap();
+    let launcher = dirs.launcher_with(vec![pin]);
+    assert_eq!(installed(&launcher), ["Calculator"]);
+    let record = dirs.default_record("calculator");
+    let asked = dirs.server.requests().len();
+
+    // The automatic pass does nothing with it — nothing newer is found,
+    // so the record it keeps stays empty — and nothing is asked of the
+    // repository.
+    dirs.check(&launcher);
+    assert!(launcher.update_results().is_empty());
+    assert_eq!(dirs.server.requests().len(), asked);
+
+    // The pass the user asks for says why it never looked, and still
+    // nothing is asked of the repository.
+    block_on(launcher.check_extension_updates());
+    let recorded = launcher.update_results();
+    assert_eq!(recorded.skipped.len(), 1, "{recorded:#?}");
+    assert_eq!(
+        recorded.skipped[0].identity,
+        PackageIdentity::default_extension("calculator")
+    );
+    assert_eq!(
+        recorded.skipped[0].detail,
+        "It was installed by an older Pane, which kept no repository for it"
+    );
+    assert_eq!(dirs.server.requests().len(), asked);
+    // The extension is as it was: its record unchanged, its command still
+    // running.
+    assert_eq!(dirs.default_record("calculator"), record);
+    assert_eq!(
+        run_default(&launcher, "calculator", "Use a casual greeting"),
+        Status::Result("Saved the casual greeting".into())
     );
 }
