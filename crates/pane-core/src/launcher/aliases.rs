@@ -437,7 +437,10 @@ impl Launcher {
             // registered: while it is, the choice is not one of a missing
             // command; while it is not, it says so, as a gone command's
             // does.
-            if id.contains(':') {
+            // A dynamic root item's alias is held by its row id, `<command
+            // id>#<manifest id>:<item id>` (#158): the manifest part of a
+            // plain command's id never contains a `:`.
+            if split(id).1.contains(':') {
                 let owner = state.packages.iter().find(|p| p.identity.key() == key);
                 // The row the alias names, as the registry holds it now.
                 if super::dynamic::pinned_by_id(state, id).is_some() {

@@ -447,31 +447,32 @@ impl Launcher {
         let opening = self.hotkey_opening(&state, shortcut);
         // A hotkey recorded for a dynamic root item that is not
         // registered (#158) says so, rather than launching nothing
-        // silently; anything else launches nothing at all.
-        let why = opening
-            .is_none()
-            .then(|| gone_dynamic(&state, shortcut))
-            .flatten();
+        // silently; any other shortcut that launches nothing now
+        // launches nothing at all, as before.
+        let gone = match &opening {
+            Some(_) => None,
+            None => gone_dynamic(&state, shortcut),
+        };
+        if opening.is_none() && gone.is_none() {
+            return None;
+        }
+        // Its data as the package is now, so a disable or reload meanwhile
+        // stops the opening.
         let data = opening
             .as_ref()
             .map(|opening| self.data_in(&state, &opening.component))
             .flatten();
         match &opening {
-            Some(opening) => {
-                if opening.no_view {
-                    // Root search stays while a no-view command runs.
-                    Launcher::begin_run(&mut state);
-                } else {
-                    self.show_root(&mut state, Some(opening.component.clone()));
-                    state.view.status = Status::Running;
-                }
+            Some(opening) if !opening.no_view => {
+                self.show_root(&mut state, Some(opening.component.clone()));
+                state.view.status = Status::Running;
             }
+            // Root search stays while a no-view command runs.
+            Some(_) => Launcher::begin_run(&mut state),
             None => {
+                let reason = gone.clone().expect("checked above");
                 self.show_root(&mut state, None);
-                state.view.status = match why {
-                    Some(reason) => Status::Error(reason),
-                    None => Status::Idle,
-                };
+                state.view.status = Status::Error(reason);
             }
         }
         let epoch = state.screen_epoch;
@@ -479,8 +480,6 @@ impl Launcher {
         let launcher = self.clone();
         Some(async move {
             if let Some(opening) = opening {
-                // Its data as the package is now, so a disable or reload
-                // meanwhile stops the opening.
                 launcher.launch_opening(epoch, opening, data).await;
             }
         })
