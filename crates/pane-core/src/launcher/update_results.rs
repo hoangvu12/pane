@@ -246,19 +246,23 @@ impl Record {
         let Ok(read) = serde_json::from_str::<Recorded>(&text) else {
             return Record::default();
         };
-        (read.version == 1)
-            .then(|| Record {
-                pass: read.pass,
-                announced: false,
-                last_checked: read.last_checked,
-                results: UpdateResults {
-                    updated: read.updated,
-                    waiting: read.waiting,
-                    skipped: read.skipped,
-                    failed: read.failed,
-                },
-            })
-            .unwrap_or_default()
+        // Only this record layout's version reads; anything else is
+        // yesterday's record, not this Pane's (a pass that records writes
+        // it anew).
+        if read.version != 1 {
+            return Record::default();
+        }
+        Record {
+            pass: read.pass,
+            announced: false,
+            last_checked: read.last_checked,
+            results: UpdateResults {
+                updated: read.updated,
+                waiting: read.waiting,
+                skipped: read.skipped,
+                failed: read.failed,
+            },
+        }
     }
 
     /// The record's text, and where it goes.
@@ -850,10 +854,10 @@ impl Launcher {
         let epoch = state.screen_epoch;
         self.show_update_results_at(state, &query);
         state.screen_epoch = epoch;
-        if let Some(id) = selected {
-            if let Some(index) = state.view.rows.iter().position(|row| row.id == id) {
-                state.view.selected = Some(index);
-            }
+        if let Some(id) = selected
+            && let Some(index) = state.view.rows.iter().position(|row| row.id == id)
+        {
+            state.view.selected = Some(index);
         }
     }
 }

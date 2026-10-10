@@ -2006,6 +2006,7 @@ fn disabling_a_required_extension_from_its_page_confirms_and_disables_all(cx: &m
             "Install extension from folder…",
             "Install extension from npm…",
             "Install extension from Git…",
+            "Check for Extension Updates",
             "Manage Extensions",
             "Settings…"
         ]
