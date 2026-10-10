@@ -75,8 +75,7 @@ export const command = {
     if (commandId !== "greet" && commandId !== "wait") {
       throw new Error("this command opens no designed view");
     }
-  async openView(/** @type {string} */ commandId) {
-    throw new Error(`unknown designed view: ${commandId}`);
+    return createView(CallForm, { waiting: commandId === "wait" });
   },
 };
 

@@ -2546,7 +2546,16 @@ struct LiveDesignedView {
     /// key (#242): what every render context names for them. Noted as the
     /// window lays the tree out; a change asks the view to draw again.
     canvases: RefCell<HashMap<String, (f32, f32)>>,
-tion calls served inside it: the guest calls
+}
+
+/// The engine and the host interfaces guests link against, shared by the
+/// runtime thread and the checker thread.
+struct Code {
+    engine: Engine,
+    linker: Linker<GuestState>,
+}
+
+/// One request and the operation calls served inside it: the guest calls
 /// running for it, outermost first. Each package in it is busy until its
 /// call returns.
 #[derive(Clone, Default)]

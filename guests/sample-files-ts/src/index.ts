@@ -54,7 +54,7 @@ async function render(): Promise<List> {
   };
 }
 
-openView(itemId: string): Promise<DesignedView> {
+async function openView(itemId: string): Promise<DesignedView> {
   throw new Error(`unknown designed view: ${itemId}`);
 }
 

@@ -168,7 +168,7 @@ async function outcome(itemId: string): Promise<string | null> {
   }
 }
 
-  async openView(commandId: string): Promise<DesignedView> {
+async function openView(commandId: string): Promise<DesignedView> {
   throw new Error(`unknown designed view: ${commandId}`);
 }
 

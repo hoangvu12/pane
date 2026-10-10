@@ -170,10 +170,6 @@ function CallForm({ waiting = false }: { waiting?: boolean }): Element {
   );
 }
 
-async function openView(itemId: string): Promise<DesignedView> {
-  throw new Error(`unknown designed view: ${itemId}`);
-}
-
 async function runOperation(operation: string, input: string): Promise<string> {
   if (operation === "wait") {
     set("waiting", "started");
