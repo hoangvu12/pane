@@ -439,6 +439,115 @@ export interface CellProps extends NodeProps {
 export interface DetailProps extends NodeProps {
   children?: unknown;
 }
+/** One drawing operation of a canvas (`ops`): what it paints, or how it
+ * moves the state the painting that follows paints in. Coordinates are
+ * logical pixels in the canvas's own space, its origin its top-left
+ * corner. */
+export type Draw =
+  | {
+      op: "rect";
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+      radius?: number;
+      fill?: Paint;
+      stroke?: Paint;
+      strokeWidth?: number;
+      cap?: "butt" | "round" | "square";
+      join?: "miter" | "round" | "bevel";
+    }
+  | {
+      op: "circle";
+      x: number;
+      y: number;
+      radius: number;
+      fill?: Paint;
+      stroke?: Paint;
+      strokeWidth?: number;
+    }
+  | {
+      op: "text";
+      x: number;
+      y: number;
+      text: string;
+      style?: TextStyle;
+      level?: TextLevel;
+      color?: Paint;
+      size?: number;
+      weight?: number;
+    }
+  | { op: "image"; image: Icon; x: number; y: number; width: number; height: number }
+  | { op: "move"; x: number; y: number }
+  | { op: "line"; x: number; y: number }
+  | { op: "quad"; cx: number; cy: number; x: number; y: number }
+  | {
+      op: "cubic";
+      c1x: number;
+      c1y: number;
+      c2x: number;
+      c2y: number;
+      x: number;
+      y: number;
+    }
+  | {
+      op: "arc";
+      x: number;
+      y: number;
+      radius: number;
+      start: number;
+      end: number;
+      ccw?: boolean;
+    }
+  | { op: "close" }
+  | { op: "fill"; color: Paint }
+  | { op: "stroke"; color: Paint; width?: number; cap?: string; join?: string }
+  | { op: "clip"; x: number; y: number; width: number; height: number }
+  | { op: "translate"; x: number; y: number }
+  | { op: "scale"; x: number; y: number }
+  | { op: "rotate"; degrees: number };
+
+/** What a canvas draws, takes and is. */
+export interface CanvasProps extends NodeProps {
+  /** The operations it paints, in order: later ones over earlier ones,
+   * clipped to its size. At most 20,000. */
+  ops?: Draw[];
+  /** What kind of control the canvas is to assistive technology. */
+  role?: "color-well" | "slider" | "image" | "figure" | "group" | "generic";
+  /** What names the canvas to assistive technology. */
+  label?: string;
+  /** What the canvas currently holds, as a color well names its chosen
+   * color. */
+  value?: string;
+  /** The up arrow, as the semantic increment it is. */
+  onIncrement?: () => unknown;
+  /** The down arrow, as the semantic decrement it is. */
+  onDecrement?: () => unknown;
+  /** Space, as the semantic activation it is. */
+  onActivate?: () => unknown;
+  onPointerDown?: (event: CanvasEvent) => unknown;
+  onPointerUp?: (event: CanvasEvent) => unknown;
+  /** A drag's move, coalesced to the latest while one is in flight. */
+  onPointerMove?: (event: CanvasEvent) => unknown;
+  onPointerEnter?: (event: CanvasEvent) => unknown;
+  onPointerLeave?: (event: CanvasEvent) => unknown;
+  onWheel?: (event: CanvasEvent) => unknown;
+  onDoubleClick?: (event: CanvasEvent) => unknown;
+  onSecondary?: (event: CanvasEvent) => unknown;
+  /** The canvas's size changing, told the new size. */
+  onResize?: (event: CanvasEvent) => unknown;
+}
+
+/**
+ * Measures `text` in `style`: the width and height it occupies when the
+ * canvas draws it, laid out exactly, at the size and weight the tree's
+ * text styles resolve to. `style` names what a canvas text operation
+ * does.
+ */
+export declare function measureText(
+  text: string,
+  style?: { style?: TextStyle; size?: number; weight?: number },
+): { width: number; height: number };
 
 /** A slider's properties. */
 export interface SliderProps extends NodeProps {
@@ -650,6 +759,46 @@ export declare const Dropdown: (props: DropdownProps) => Element;
 
 /** A Detail (#240): a scrolled column of Markdown, metadata, actions. */
 export declare const Detail: (props: DetailProps) => Element;
+/** A canvas: a leaf the view draws into by its `ops`, taking input and
+ * named to assistive technology. Its size comes from its style as any
+ * node's does — a `width` and `height`, or the space the layout gives it,
+ * which the render context names and a change of which is the resize
+ * event. */
+export declare const Canvas: (props: CanvasProps) => Element;
+
+/** The input a canvas receives, as its listeners are told it: the event
+ * kind, the point in the canvas's own space, and what else it carries. */
+export type CanvasEvent =
+  | {
+      event: "pointer-down";
+      x: number;
+      y: number;
+      button: string;
+      /** How many clicks this press is: two is a double one. */
+      clicks: number;
+      ctrl: boolean;
+      alt: boolean;
+      shift: boolean;
+    }
+  | { event: "pointer-up"; x: number; y: number; button: string }
+  | { event: "pointer-move"; x: number; y: number; button: string }
+  | { event: "pointer-enter" }
+  | { event: "pointer-leave" }
+  | {
+      event: "wheel";
+      x: number;
+      y: number;
+      dx: number;
+      dy: number;
+      /** Whether the delta is in pixels (else lines). */
+      unit: "pixel" | "line";
+      ctrl: boolean;
+      alt: boolean;
+      shift: boolean;
+    }
+  | { event: "double-click"; x: number; y: number; button: string }
+  | { event: "secondary"; x: number; y: number; button: string }
+  | { event: "resize"; width: number; height: number };
 
 /** A fragment: its children are drawn where it sits, unwrapped. */
 export declare const Fragment: unique symbol;

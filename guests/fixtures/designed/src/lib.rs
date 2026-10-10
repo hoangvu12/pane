@@ -69,8 +69,7 @@ use core::ffi::c_void;
 wit_bindgen::generate!({ path: "../../../wit", world: "extension" });
 
 use exports::pane::extension::command::{
-    CustomView, FieldValue, FormError, Frame, Guest, GuestCustomView, GuestView, LaunchRecord,
-    Outcome, Rendered, UiEvent, View, ViewEvent,
+    FieldValue, FormError, Guest, GuestView, LaunchRecord, Outcome, Rendered, UiEvent, View,
 };
 
 /// The version of the UI component set the fixture writes.
@@ -620,20 +619,109 @@ struct Fixture;
 export!(Fixture);
 
 /// A view type that is never opened.
-enum NoView {}
+/// The `canvas` command's view (#242): a canvas that fills the space the
+/// layout gives it, drawing the size the render context names for it and
+/// every event it receives, so the tests can see both arrive. Its tree is
+/// written by hand, as the counter's is.
+struct CanvasView {
+    /// The size the last render's context named for the canvas, as
+    /// "WxH", when it named one.
+    size: RefCell<String>,
+    /// What every event the view received says, drawn in the canvas's
+    /// value, so a test can see what Pane sent.
+    received: RefCell<Vec<String>>,
+}
 
-impl GuestCustomView for NoView {
-    async fn render(&self) -> Frame {
-        match *self {}
+impl GuestView for CanvasView {
+    async fn render(&self, context: String) -> Result<Rendered, String> {
+        // The context names the size each canvas was laid out at:
+        // {"canvases":{"fill":{"width":W,"height":H}}}. Read without a
+        // parser, as the fields' payloads are.
+        let mut size = String::from("0x0");
+        if let Some(at) = context.find("\"canvases\"") {
+            let rest = &context[at..];
+            if let Some(width) = number_after(rest, "\"width\":") {
+                if let Some(height) = number_after(rest, "\"height\":") {
+                    size = format!("{width}x{height}");
+                }
+            }
+        }
+        *self.size.borrow_mut() = size.clone();
+        let received = self.received.borrow().join("; ");
+        let value = if received.is_empty() {
+            size.clone()
+        } else {
+            format!("{size}; {received}")
+        };
+        let ops = format!(
+            "[{{\"op\":\"text\",\"x\":4,\"y\":4,\"text\":\"{value}\"}}]"
+        );
+        let tree = format!(
+            "{{\"version\":\"{COMPONENT_SET}\",\"root\":{{\"type\":\"column\",\"children\":[\
+             {{\"type\":\"canvas\",\"key\":\"fill\",\"grow\":1,\"role\":\"slider\",\"label\":\"Filler\",\
+             \"value\":\"{value}\",\"onResize\":1,\"onKey\":2,\"onPointerDown\":3,\"onPointerUp\":4,\
+             \"onPointerMove\":5,\"onPointerEnter\":6,\"onPointerLeave\":7,\"onWheel\":8,\
+             \"onDoubleClick\":9,\"onSecondary\":10,\"onIncrement\":11,\
+             \"ops\":{ops}}}]}}}}"
+        );
+        Ok(Rendered {
+            tree,
+            refresh_after_ms: None,
+        })
     }
 
-    async fn handle_event(&self, _event: ViewEvent) -> Result<(), String> {
-        match *self {}
+    async fn handle_event(&self, event: UiEvent) -> Result<Outcome, String> {
+        // Every event is recorded, drawn in the next render's value, but
+        // the pop (callback 0) and the resize (callback 1): the resize is
+        // the size the value already names.
+        if event.callback <= 1 {
+            return Ok(outcome());
+        }
+        let said = event_summary(&event.payload);
+        self.received.borrow_mut().push(said);
+        let excess = self.received.borrow().len().saturating_sub(6);
+        self.received.borrow_mut().drain(0..excess);
+        Ok(outcome())
     }
 }
 
+/// What an event's payload says, as the canvas's value draws it: the kind
+/// it names and where it happened.
+fn event_summary(payload: &str) -> String {
+    let kind = payload
+        .find("\"event\":\"")
+        .map(|at| {
+            let rest = &payload[at + 10..];
+            let end = rest.find('"').unwrap_or(rest.len());
+            rest[..end].to_owned()
+        })
+        .or_else(|| {
+            payload.find("\"key\":\"").map(|at| {
+                let rest = &payload[at + 7..];
+                let end = rest.find('"').unwrap_or(rest.len());
+                format!("key {}", &rest[..end])
+            })
+        })
+        .unwrap_or_else(|| "unknown".into());
+    let at = |name: &str| number_after(payload, &format!("\"{name}\":"));
+    let point = match (at("x"), at("y")) {
+        (Some(x), Some(y)) => format!(" {x},{y}"),
+        _ => String::new(),
+    };
+    format!("{kind}{point}")
+}
+
+/// The number after `needle` in `text`, when one is there.
+fn number_after(text: &str, needle: &str) -> Option<u32> {
+    let at = text.find(needle)?;
+    let rest = text[at + needle.len()..].trim_start();
+    let end = rest
+        .find([',', '}', ' '])
+        .unwrap_or(rest.len());
+    rest[..end].parse().ok()
+}
+
 impl Guest for Fixture {
-    type CustomView = NoView;
     type View = Designed;
 
     async fn render(_launch: LaunchRecord) -> Result<String, String> {
@@ -655,20 +743,24 @@ impl Guest for Fixture {
         })
     }
 
-    async fn open_custom_view(item_id: String) -> Result<CustomView, String> {
-        Err(format!("unknown view: {item_id}"))
-    }
-
-    async fn open_view(_command: String, _launch: LaunchRecord) -> Result<View, String> {
-        STATE.count.set(0);
-        STATE.next.set(Next::Counter);
-        STATE.renders.set(0);
-        STATE.refresh_ms.set(None);
-        STATE.received.borrow_mut().clear();
-        Ok(View::new(Designed {
-            root: true,
-            popped: RefCell::new(None),
-        }))
+    async fn open_view(command: String, _launch: LaunchRecord) -> Result<View, String> {
+        match command.as_str() {
+            "canvas" => Ok(View::new(CanvasView {
+                size: RefCell::new(String::from("0x0")),
+                received: RefCell::new(Vec::new()),
+            })),
+            _ => {
+                STATE.count.set(0);
+                STATE.next.set(Next::Counter);
+                STATE.renders.set(0);
+                STATE.refresh_ms.set(None);
+                STATE.received.borrow_mut().clear();
+                Ok(View::new(Designed {
+                    root: true,
+                    popped: RefCell::new(None),
+                }))
+            }
+        }
     }
 }
 

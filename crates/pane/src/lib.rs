@@ -86,7 +86,6 @@ pub(crate) fn bind_keys_with(
     features::actions_panel::bind_keys(cx, &text_editing);
     features::settings::bind_keys(cx);
     ui::select::bind_keys(cx);
-    extension_views::custom_view::bind_keys(cx);
     extension_views::designed::bind_keys(cx);
     keyboard::bind_keys(cx, keyboard, navigation);
 }

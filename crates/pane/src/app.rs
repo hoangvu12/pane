@@ -3,7 +3,7 @@
 //!
 //! [`LauncherWindow`] is a thin renderer over [`pane_core::Launcher`]: key
 //! and mouse input call launcher actions, and each frame draws the
-//! launcher's snapshot. The query field, forms and custom views bind their
+//! launcher's snapshot. The query field, forms and designed views bind their
 //! data in their own modules — [`crate::features`] and
 //! [`crate::extension_views`] — whose `impl LauncherWindow` blocks supply
 //! the per-screen sync and render methods this orchestration calls.
@@ -30,7 +30,8 @@ use pane_core::{
     Screen, SelectedAction, SettingsTarget, Status, WindowPresence,
 };
 
-use crate::extension_views::{custom_view, designed, form};
+use crate::extension_views::designed::measures_of;
+use crate::extension_views::{designed, form};
 use crate::features::actions_panel;
 use crate::features::announcer;
 use crate::features::clipboard_history;
@@ -71,9 +72,6 @@ pub struct LauncherWindow {
     pub(crate) query: root_search::QueryField,
     /// The open form's controls; `Some` exactly on the form screen.
     pub(crate) form: Option<form::FormControls>,
-    /// The open custom view's focus and layout; `Some` exactly on the
-    /// custom view screen.
-    pub(crate) custom_view: Option<custom_view::CustomViewControls>,
     /// The open designed view's button focus; `Some` exactly on the
     /// designed view screen.
     pub(crate) designed: Option<designed::DesignedControls>,
@@ -196,6 +194,12 @@ impl LauncherWindow {
         // The window draws only the rows in view (#165): their icons load
         // as they are drawn, not all as a list opens.
         launcher.load_icons_as_shown();
+        // The fonts this window draws with measure the text a designed
+        // view's canvases ask to measure (`pane:extension/view.measure-text`,
+        // #242): laid out exactly, at the size and weight the tree's text
+        // styles resolve to. `launcher` is moved below, so it is installed
+        // first.
+        launcher.set_text_measures(measures_of(window.text_system().clone()));
         let results = result_list::ResultList::new(&crate::settings::launcher_visuals(cx).theme);
         // Quitting ends development: its watchers go and a running build
         // is stopped with the processes it started.
@@ -215,7 +219,6 @@ impl LauncherWindow {
             scrolled_for: None,
             reveal_after_layout: None,
             dates: None,
-            custom_view: None,
             designed: None,
             designed_search: designed::SearchEvents::default(),
             menu_button,
@@ -1295,7 +1298,7 @@ impl LauncherWindow {
 
     /// Shows the launcher's state now and again when `pending`, a launcher
     /// action's reply, has been applied, without blocking the window
-    /// meanwhile. Each time the form's and custom view's controls follow the
+    /// meanwhile. Each time the form's and designed view's controls follow the
     /// launcher's screen (opening a form needs no guest call, so its controls
     /// appear at once).
     pub(crate) fn show_until_done(
@@ -1386,7 +1389,7 @@ impl LauncherWindow {
         cx.notify();
     }
 
-    /// Makes the form's and custom view's controls, root search's query
+    /// Makes the form's and designed view's controls, root search's query
     /// field, and focus, follow the launcher's screen.
     ///
     /// This also asks every window to redraw, not only this one: the
@@ -1407,7 +1410,6 @@ impl LauncherWindow {
             self.launcher.close_submenus();
         }
         self.sync_form(window, cx);
-        self.sync_custom_view(window, cx);
         self.sync_designed_view(window, cx);
         // Last: coming back to root search, even as a view closes, focuses
         // the query rather than the list.
@@ -1679,7 +1681,7 @@ impl LauncherWindow {
     }
 
     /// The footer's right-hand buttons: the selected action's button,
-    /// when the screen has a primary action at all (a custom view, the
+    /// when the screen has a primary action at all (a designed view, the
     /// network details screen and a hotkey screen with nothing to remove
     /// have none) and no status shows, and on root search and a command's
     /// list the Actions button. `action` is the launcher's one
@@ -1735,7 +1737,7 @@ impl LauncherWindow {
 
     /// The footer's left at rest on a screen with no heading line (#162):
     /// the open command's icon and the screen's title — the command's own
-    /// on its list and search, a form's or a custom view's on those — or,
+    /// on its list and search, a form's or a designed view's on those — or,
     /// over the extension list the tests show as a screen
     /// ([`LauncherWindow::enter_extension_flow`]), the Manage Extensions
     /// row's tile and title. `None` on every
@@ -1747,7 +1749,6 @@ impl LauncherWindow {
             Screen::Command
             | Screen::CommandSearch { .. }
             | Screen::Form(_)
-            | Screen::CustomView(_)
             | Screen::DesignedView(_) => self.launcher.open_command_id()?,
             Screen::Extensions { .. } => pane_core::MANAGE_EXTENSIONS.to_owned(),
             _ => return None,
@@ -1909,8 +1910,7 @@ impl Render for LauncherWindow {
             Screen::Package { .. } => "Nothing to install.",
             Screen::Form(_) => "",
             Screen::Extensions { .. } => "No extensions are installed.",
-            Screen::CustomView(_)
-            | Screen::DesignedView(_)
+            Screen::DesignedView(_)
             | Screen::NetworkDetails { .. }
             | Screen::ProgramDetails { .. } => "",
             Screen::Confirm { .. }
@@ -2083,7 +2083,7 @@ impl Render for LauncherWindow {
         // The launcher decides what an item opens; its screen says which.
         // Root search has no title — the reference's launcher has none —
         // and neither has an extension's view (its list, its search, a
-        // form or a custom view of it) nor the extension list the tests
+        // form or a designed view of it) nor the extension list the tests
         // show (Pane's own extensions are managed in Settings): they start
         // with their content, as Raycast's do, and the footer's left names
         // the open command instead (#162). The core's own screens (a
@@ -2100,31 +2100,23 @@ impl Render for LauncherWindow {
             | Screen::Command
             | Screen::CommandSearch { .. }
             | Screen::Form(_)
-            | Screen::CustomView(_)
             | Screen::DesignedView(_)
             | Screen::Extensions { .. } => None,
             _ => Some(shell::screen_heading(view.title.clone(), &theme)),
         };
-        // Whether the result list is what scrolls: a form and a custom
+        // Whether the result list is what scrolls: a form and a designed
         // view scroll their own content, which the background image does
         // not follow.
-        let listed = !matches!(
-            view.screen,
-            Screen::Form(_) | Screen::CustomView(_) | Screen::DesignedView(_)
-        );
+        let listed = !matches!(view.screen, Screen::Form(_) | Screen::DesignedView(_));
 
         // The content that changes between screens — the results, a form,
-        // a custom view — is what arrives with the transition. On the
+        // a designed view — is what arrives with the transition. On the
         // search screens the query field is the shell's search header,
         // above the results and outside the moving area, so the field
         // never moves while the list below it arrives.
         let body = match view.screen {
             Screen::Form(form) => {
                 motion::arriving(self.render_form(view.title.clone(), form, cx), arriving)
-                    .into_any_element()
-            }
-            Screen::CustomView(custom_view) => {
-                motion::arriving(self.render_custom_view(custom_view, cx), arriving)
                     .into_any_element()
             }
             // A designed view whose tree names a List or Grid: the

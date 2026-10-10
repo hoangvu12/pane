@@ -69,7 +69,6 @@ struct Sample;
 pane_extension::export!(Sample);
 
 impl Command for Sample {
-    type CustomView = pane_extension::NoCustomView;
     type DesignedView = Timer;
 
     async fn open_designed_view(

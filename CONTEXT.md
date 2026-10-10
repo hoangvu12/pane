@@ -481,8 +481,12 @@ A set of fields an extension command asks the user to fill in and submit; the la
 _Avoid_: Dialog, custom view
 
 **Custom view**:
-An interactive view an extension draws itself from shapes the launcher paints, receiving the user's key and pointer input while it is open; the launcher keeps focus and its accessible representation. It is now a canvas: a leaf node of a UI tree, beside components (ADR 0036).
+What an extension drew itself before the designed tree: a view of shapes the launcher painted, taking the keys and pointer input the extension asked for (ADR 0036's Q13). It became the canvas (#242); the term is retired.
 _Avoid_: Webview, custom control (a UI component is Pane's own)
+
+**Canvas**:
+A leaf node of a UI tree an extension draws into with drawing operations — paths with fills and strokes, rectangles, circles, images, text, clip and transform — taking pointer, wheel and key input and named to assistive technology as one control with a role, a label and a value (ADR 0036; #242, the custom view's successor). Its size comes from its style, named in the view's render context; a change of it is the resize event.
+_Avoid_: Drawing layer, paint surface, bitmap (it is a node of the tree)
 
 **UI tree**:
 What a command's view renders: a tree of layout nodes (row, column, stack, scroll, wrap) and UI components that Pane renders and runs (ADR 0036). Authors write it with a GPUI-like builder in Rust or JSX in JavaScript and TypeScript; the SDKs carry it as versioned JSON the author never sees (`docs/designed-tree.md`). A designed view's tree is carried through its `view` resource: Pane asks for it when the view opens and again after each event, and keeps each node's state by the key the author gave it (#238).

@@ -7,7 +7,7 @@
 //! return a future that applies the extension's reply when awaited.
 //!
 //! Every reply is checked against the screen it was requested from: once the
-//! user has left that screen, the reply is discarded, and a custom view that
+//! user has left that screen, the reply is discarded, and a view that
 //! opened after the user left is closed again.
 //!
 //! A call into an installed package also belongs to the package's
@@ -29,7 +29,7 @@
 //! service itself answers with, each cycle a call into the generation
 //! current when the services thread asked for it.
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
@@ -83,9 +83,8 @@ use crate::packages::{
 };
 use crate::platform;
 use crate::runtime::{
-    CallError, CustomViewInfo, CustomViewRole, DesignedHandler, DesignedTree, FieldKind,
-    FieldValue, Form, Frame, Item, Point, ResultListing, RootAction, RootResult as ComputedResult,
-    Runtime, ScreenForm, View, ViewEvent, ViewId, WeakRuntime,
+    CallError, DesignedTree, FieldKind, FieldValue, Form, Item, ResultListing, RootAction,
+    RootResult as ComputedResult, Runtime, ScreenForm, View, ViewId, WeakRuntime,
 };
 use crate::search::{self, Keys, Query};
 
@@ -199,7 +198,7 @@ impl CommandRegistration {
 }
 
 /// Which screen the launcher shows, with what only that screen has.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Screen {
     /// Root search: the root results matching `query`, the text typed into
     /// it, best match first, or every root result when it is empty.
@@ -221,9 +220,6 @@ pub enum Screen {
     /// The installed packages, each enabled or disabled, with lines of
     /// information under the title.
     Extensions { details: Vec<String> },
-    /// A custom view opened from an item of the command's list view. It has
-    /// no rows.
-    CustomView(CustomViewSnapshot),
     /// A designed view opened as the command's own screen (`"mode":
     /// "designed"`): the tree its extension describes, which the window
     /// renders. It has no rows.
@@ -369,20 +365,19 @@ struct CommandList {
 
 impl CommandList {
     /// The list of a command whose list view has `items`. Choosing an item
-    /// opens its form, else its custom view, else runs its primary action
-    /// (the first, by its callback id); an item with none of them cannot be
-    /// activated and says so.
+    /// opens its form, else runs its primary action (the first, by its
+    /// callback id); an item with none of them cannot be activated and says
+    /// so.
     fn of(items: Vec<Item>) -> CommandList {
         let (rows, entries) = items
             .into_iter()
             .map(|item| {
                 let unavailable = platform::unavailable(item.platforms.as_deref(), "this action");
-                let entry = match (&unavailable, item.form, item.custom_view) {
+                let entry = match (&unavailable, item.form) {
                     (Some(reason), ..) => Entry::Unavailable(reason.clone()),
-                    (None, Some(form), _) => Entry::Form(item.id.clone(), form),
-                    (None, None, Some(info)) => Entry::CustomView(item.id.clone(), info),
-                    (None, None, None) if item.actions.is_empty() => Entry::NoActions,
-                    (None, None, None) => Entry::Actions(item_actions::Listed {
+                    (None, Some(form)) => Entry::Form(item.id.clone(), form),
+                    (None, None) if item.actions.is_empty() => Entry::NoActions,
+                    (None, None) => Entry::Actions(item_actions::Listed {
                         id: item.id.clone(),
                         title: item.title.clone(),
                         actions: item.actions,
@@ -442,7 +437,7 @@ pub enum Status {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SelectedAction {
     /// The action's label, from its identity. Empty where there is no
-    /// primary action to show at all: a custom view takes the keys itself,
+    /// primary action to show at all: a designed view takes the keys itself,
     /// the network details screen has only Back, and the hotkey screen
     /// with no row to remove has only the keys it records — the window
     /// shows no button there.
@@ -485,24 +480,10 @@ pub struct FormField {
     pub required: bool,
 }
 
-/// An open custom view as the extension last drew it.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct CustomViewSnapshot {
-    /// Which opened view this is: a view opened again, even of the same
-    /// item, has another id.
-    pub id: ViewId,
-    /// Names the view to assistive technology.
-    pub label: String,
-    pub role: CustomViewRole,
-    /// The latest drawing: the answer to the most recent event whose answer
-    /// has arrived, or the first drawing.
-    pub frame: Frame,
-}
-
 /// The designed view on screen, as the window draws it (`Screen::DesignedView`,
 /// ADR 0036): the tree its extension described, typed, so the window never
 /// meets the JSON the extension answered with.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct DesignedViewSnapshot {
     /// Which opened view this is: a view opened again has another id.
     pub id: ViewId,
@@ -521,11 +502,11 @@ pub struct DesignedViewSnapshot {
 }
 
 /// A snapshot of what the launcher shows.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct LauncherView {
     pub screen: Screen,
     pub title: String,
-    /// Empty on the form and custom view screens.
+    /// Empty on the form and designed view screens.
     pub rows: Vec<Row>,
     /// Index into `rows`; `None` when there are no rows.
     pub selected: Option<usize>,
@@ -584,19 +565,10 @@ impl LauncherView {
             _ => &[],
         }
     }
-
     /// The open form, on the form screen.
     pub fn form(&self) -> Option<&FormView> {
         match &self.screen {
             Screen::Form(form) => Some(form),
-            _ => None,
-        }
-    }
-
-    /// The open custom view, on the custom view screen.
-    pub fn custom_view(&self) -> Option<&CustomViewSnapshot> {
-        match &self.screen {
-            Screen::CustomView(view) => Some(view),
             _ => None,
         }
     }
@@ -782,8 +754,6 @@ struct State {
     /// The search an alias or hotkey flow returns to when the Actions
     /// panel opened it; `None` when the flow came from the extension list.
     actions_return: Option<actions::Return>,
-    /// The custom view on screen, if one is open.
-    custom_view: Option<OpenCustomView>,
     /// The designed view on screen, if one is open: the command's own
     /// screen, a navigation stack of views (its root the command opened,
     /// each further one a push added), rather than one opened from an item
@@ -1079,51 +1049,6 @@ enum FormPurpose {
     Arguments(Box<argument_form::Asking>),
 }
 
-/// What the launcher keeps about the open custom view besides its snapshot.
-struct OpenCustomView {
-    /// The view in the runtime; closed when the view leaves the screen.
-    id: ViewId,
-    /// The command view that Back returns to.
-    return_to: LauncherView,
-    /// Whether the primary pointer button was pressed over the view and is
-    /// still held; pointer moves and the release are sent only meanwhile.
-    pressed: bool,
-    /// How many events were sent to the view.
-    sent: u64,
-    /// The number of the event whose answer is on screen, so an older answer
-    /// arriving late does not replace a newer one.
-    shown: u64,
-    /// Pointer moves sent to the view and not answered yet. While there are
-    /// any, a further move waits in `waiting_move` instead of being sent.
-    moves_in_flight: u32,
-    /// The latest move of a drag that has not been sent: sent when the
-    /// moves in flight are answered, or before the next other event.
-    waiting_move: Option<Point>,
-}
-
-/// An event sent to the open view, whose answer is still to be shown.
-struct SentEvent {
-    /// The event's number among those sent to the view.
-    number: u64,
-    is_move: bool,
-    reply: Pin<Box<dyn Future<Output = Result<Frame, CallError>> + Send>>,
-}
-
-impl OpenCustomView {
-    fn send(&mut self, runtime: &Runtime, event: ViewEvent) -> SentEvent {
-        self.sent += 1;
-        let is_move = matches!(event, ViewEvent::PointerMove(_));
-        if is_move {
-            self.moves_in_flight += 1;
-        }
-        SentEvent {
-            number: self.sent,
-            is_move,
-            reply: Box::pin(runtime.view_event(self.id, event)),
-        }
-    }
-}
-
 /// A result root search can list: its row, what activating it does, and
 /// its text as the query is matched against it.
 struct RootResult {
@@ -1216,8 +1141,6 @@ enum Entry {
     NoActions,
     /// Open this form of the open command's item with this id.
     Form(String, Form),
-    /// Open the custom view of the open command's item with this id.
-    CustomView(String, CustomViewInfo),
     /// Install the previewed package from this folder or npm package, or
     /// replace its installed copy, as the preview's plan assumed things to
     /// be.
@@ -1335,7 +1258,6 @@ enum Pending {
         name: String,
     },
     Run(String),
-    CustomView(String, CustomViewInfo),
     OpenUrl(String),
     /// One event of the open designed view (#240): sent to it by its
     /// callback id, its answer shown by the designed view's own path.
@@ -1531,7 +1453,6 @@ impl Launcher {
             browsing: None,
             form: None,
             actions_return: None,
-            custom_view: None,
             designed_view: None,
             designed_events: Arc::default(),
             looks: looks::Looks::default(),
@@ -1812,6 +1733,19 @@ impl Launcher {
         self.refresh
             .as_ref()
             .is_some_and(|refresh| refresh.settled(limit))
+    }
+
+    /// Has `measures` measure text for the drawing of a designed view's
+    /// canvases (`pane:extension/view.measure-text`, #242): the fonts the
+    /// window drew the view with, which the pane crate owns. Until a
+    /// window installs one, a measurement answers no extent.
+    pub fn set_text_measures(
+        &self,
+        measures: std::sync::Arc<dyn Fn(&str, &str) -> (f32, f32) + Send + Sync>,
+    ) {
+        if let Ok(runtime) = &self.runtime {
+            runtime.set_text_measures(measures);
+        }
     }
 
     /// Waits until the updater completed a check after this was asked —
@@ -2614,9 +2548,9 @@ impl Launcher {
         }
     }
 
-    /// Leaves an open form or custom view for its command's list, or an open
-    /// command, package preview or the extension list for root search. A
-    /// custom view is closed, and a designed view's stack pops one view at
+    /// Leaves an open form for its command's list, or an open command,
+    /// package preview or the extension list for root search. A designed
+    /// view's stack pops one view at
     /// a time — the back key's order, its root leaving the command as
     /// leaving its list does. On root search it clears the query. The
     /// answer is whether something was left: on root search with an empty
@@ -2646,7 +2580,6 @@ impl Launcher {
                 }
                 state.view.status = Status::Idle;
             }
-            Screen::CustomView(_) => self.return_from_custom_view(&mut state, Status::Idle),
             // The designed view is the command's own screen, with a stack
             // of views: the back key clears the List's search field first,
             // as it clears root search's query (#240; the general order is
@@ -2801,7 +2734,7 @@ impl Launcher {
                 opening: Opening { component, .. },
                 ..
             }) => Some(component),
-            Pending::Run(_) | Pending::CustomView(..) => open.as_ref(),
+            Pending::Run(_) => open.as_ref(),
             _ => None,
         };
         let data = called.and_then(|component| self.data_in(state, component));
@@ -2839,13 +2772,6 @@ impl Launcher {
                 Pending::OpenUrl(url) => launcher.open_url(epoch, url).await,
                 Pending::Own(work) => launcher.do_own(epoch, work).await,
                 Pending::ClearCache(identity) => launcher.clear_cache(epoch, identity).await,
-                Pending::CustomView(item_id, info) => {
-                    if let Some(component) = open {
-                        launcher
-                            .open_custom_view(epoch, component, item_id, info, data)
-                            .await
-                    }
-                }
                 Pending::Develop(identity, start) => {
                     launcher.finish_developing(identity, start).await
                 }
@@ -3086,10 +3012,6 @@ impl Launcher {
             Entry::NoActions => {
                 state.view.status = Status::Error(item_actions::NO_ACTIONS.into());
                 Pending::Nothing
-            }
-            Entry::CustomView(item_id, info) => {
-                state.view.status = Status::Running;
-                Pending::CustomView(item_id, info)
             }
             Entry::OpenApplication { id, name } => {
                 state.view.status = Status::Running;
@@ -3435,6 +3357,20 @@ impl Launcher {
     /// Shows root search with an empty query: this build's commands, then
     /// the installed packages' commands, then the install row. Selects the
     /// command with component `select` if given, else the first row.
+    /// Leaves the open command, and any form or designed view of it, for
+    /// another screen, which the caller then shows: the view is closed in
+    /// the runtime, and replies for the old screen are discarded.
+    fn leave_command(&self, state: &mut State) {
+        self.close_designed_view(state);
+        // Its search in progress, if any, is stopped.
+        state.searching = None;
+        state.open = None;
+        state.open_command = None;
+        state.launch = LaunchRecord::default();
+        state.form = None;
+        state.next_screen();
+    }
+
     fn show_root(&self, state: &mut State, select: Option<PathBuf>) {
         state.list_entered = false;
         self.note_setup_needed(state);
@@ -3486,8 +3422,9 @@ impl Launcher {
     /// to. Root search always is, and so are the screens of Pane's own
     /// flows (a package's preview, details and confirmations); the
     /// extension list is not, since it is the flow Settings drives and the
-    /// launcher window has no screen for it (#168); a command's view — its list, its search, a form or
-    /// a custom view of it — is only while the command's package is still
+    /// launcher window has no screen for it (#168); a command's view — its
+    /// list, its search, a form or a designed view of it — is only while
+    /// the command's package is still
     /// installed and enabled, since a removed or disabled extension
     /// leaves nothing to restore and a reopening launcher returns safely
     /// to root search instead. A command not installed as a package — one
@@ -3528,7 +3465,6 @@ impl Launcher {
             | Screen::CommandSearch { .. }
             | Screen::Package { .. }
             | Screen::Form(_)
-            | Screen::CustomView(_)
             | Screen::DesignedView(_)
             | Screen::Confirm { .. }
             | Screen::Hotkey { .. } => {}
@@ -4132,215 +4068,6 @@ impl Launcher {
             state,
             |entry| matches!(entry, Entry::AskClearCache(asked) if asked == identity),
         );
-    }
-
-    /// Opens the custom view of `item_id` and shows its first drawing, or
-    /// closes it again if the user has left the command meanwhile.
-    async fn open_custom_view(
-        &self,
-        epoch: u64,
-        component: PathBuf,
-        item_id: String,
-        info: CustomViewInfo,
-        data: Option<PackageData>,
-    ) {
-        let result = match self.runtime() {
-            Ok(runtime) => {
-                runtime
-                    .open_view_with(&component, &item_id, data.clone())
-                    .await
-            }
-            Err(error) => Err(error),
-        };
-        let current = self.lock_if_current(epoch);
-        let stopped = current
-            .as_ref()
-            .and_then(|state| stopped(state, &component, &data));
-        let Some(mut state) = current.filter(|_| stopped.is_none()) else {
-            if let (Ok((id, _)), Ok(runtime)) = (result, self.runtime()) {
-                runtime.close_view(id);
-            }
-            if let Some(problem) = stopped {
-                // Stopped while it was opening.
-                self.lock().view.status = Status::Error(problem);
-            }
-            return;
-        };
-        match result {
-            Ok((id, frame)) => {
-                let snapshot = CustomViewSnapshot {
-                    id,
-                    label: info.label,
-                    role: info.role,
-                    frame,
-                };
-                let view = LauncherView::new(Screen::CustomView(snapshot), info.title);
-                let return_to = LauncherView {
-                    status: Status::Idle,
-                    ..std::mem::replace(&mut state.view, view)
-                };
-                state.custom_view = Some(OpenCustomView {
-                    id,
-                    return_to,
-                    pressed: false,
-                    sent: 0,
-                    shown: 0,
-                    moves_in_flight: 0,
-                    waiting_move: None,
-                });
-                state.next_screen();
-            }
-            Err(error) => state.view.status = Status::Error(error.to_string()),
-        }
-    }
-
-    /// Sends the user's input to the open custom view. Await the returned
-    /// future to show the view's new drawing. A pointer move or release is
-    /// sent only while the button pressed over the view is held; anything
-    /// sent when no view is open is ignored.
-    ///
-    /// Events are handled in order, and a drawing is shown only if no later
-    /// event's drawing is on screen yet. An error the extension reports is
-    /// shown while the view stays open; a crash closes the view.
-    ///
-    /// A drag is coalesced: while a pointer move is being handled, a further
-    /// move is not sent; only the latest one waiting is, once the moves in
-    /// flight are answered (by the future of the move answered last), or
-    /// before the next other event. Await every returned future.
-    pub fn send_view_event(&self, event: ViewEvent) -> impl Future<Output = ()> + Send + 'static {
-        let mut state = self.lock();
-        let epoch = state.screen_epoch;
-        // Sent now, so the view handles events in the order of these calls
-        // whenever the returned futures are awaited.
-        let mut sent: VecDeque<SentEvent> = self.send_to_view(&mut state, event).into();
-        drop(state);
-        let launcher = self.clone();
-        async move {
-            while let Some(event) = sent.pop_front() {
-                let result = event.reply.await;
-                launcher.show_view_answer(epoch, event.number, result);
-                if event.is_move {
-                    sent.extend(launcher.finish_move(epoch));
-                }
-            }
-        }
-    }
-
-    /// Whether the primary pointer button was pressed over the open view and
-    /// is still held, so the window should forward pointer moves and the
-    /// release.
-    pub fn pointer_held(&self) -> bool {
-        self.lock()
-            .custom_view
-            .as_ref()
-            .is_some_and(|open| open.pressed)
-    }
-
-    /// Sends `event` to the open view, after a waiting move, unless it is a
-    /// move or release with no press held, or a move to wait (see
-    /// [`Launcher::send_view_event`]).
-    fn send_to_view(&self, state: &mut State, event: ViewEvent) -> Vec<SentEvent> {
-        let (Some(open), Ok(runtime)) = (state.custom_view.as_mut(), self.runtime()) else {
-            return Vec::new();
-        };
-        match event {
-            ViewEvent::PointerDown(_) => open.pressed = true,
-            ViewEvent::PointerMove(_) | ViewEvent::PointerUp(_) if !open.pressed => {
-                return Vec::new();
-            }
-            ViewEvent::PointerUp(_) => open.pressed = false,
-            ViewEvent::PointerMove(_) | ViewEvent::Key(_) => {}
-        }
-        if let ViewEvent::PointerMove(at) = event
-            && open.moves_in_flight > 0
-        {
-            open.waiting_move = Some(at);
-            return Vec::new();
-        }
-        let mut sent = Vec::new();
-        if let Some(at) = open.waiting_move.take() {
-            sent.push(open.send(runtime, ViewEvent::PointerMove(at)));
-        }
-        sent.push(open.send(runtime, event));
-        sent
-    }
-
-    /// Notes that a move sent to the view of `epoch` was answered, and
-    /// sends the waiting move once no other move is in flight.
-    fn finish_move(&self, epoch: u64) -> Option<SentEvent> {
-        let mut state = self.lock_if_current(epoch)?;
-        let runtime = self.runtime().ok()?;
-        let open = state.custom_view.as_mut()?;
-        open.moves_in_flight = open.moves_in_flight.saturating_sub(1);
-        if open.moves_in_flight > 0 {
-            return None;
-        }
-        let at = open.waiting_move.take()?;
-        Some(open.send(runtime, ViewEvent::PointerMove(at)))
-    }
-
-    /// Shows the open view's answer to its event number `number`.
-    fn show_view_answer(&self, epoch: u64, number: u64, result: Result<Frame, CallError>) {
-        let Some(mut state) = self.lock_if_current(epoch) else {
-            return;
-        };
-        let state = &mut *state;
-        let open = state.custom_view.as_mut().expect("a view is open");
-        match result {
-            // An answer to an event older than the one on screen is stale.
-            Ok(_) | Err(CallError::Guest(_)) if number <= open.shown => {}
-            Ok(frame) => {
-                open.shown = number;
-                let Screen::CustomView(snapshot) = &mut state.view.screen else {
-                    unreachable!("a view is open");
-                };
-                snapshot.frame = frame;
-                state.view.status = Status::Idle;
-            }
-            // The view refused the event and keeps its drawing.
-            Err(error @ CallError::Guest(_)) => {
-                open.shown = number;
-                state.view.status = Status::Error(error.to_string());
-            }
-            // The guest instance, and the view with it, is gone.
-            Err(error) => self.return_from_custom_view(state, Status::Error(error.to_string())),
-        }
-    }
-
-    /// Closes the open custom view and shows the command view it was opened
-    /// from, with `status`, as a new screen.
-    fn return_from_custom_view(&self, state: &mut State, status: Status) {
-        let return_to = self.close_custom_view(state).expect("a view is open");
-        state.next_screen();
-        state.view = LauncherView {
-            status,
-            ..return_to
-        };
-    }
-
-    /// Leaves the open command, and any form or custom view of it, for
-    /// another screen, which the caller then shows: the view is closed in
-    /// the runtime, and replies for the old screen are discarded.
-    fn leave_command(&self, state: &mut State) {
-        self.close_custom_view(state);
-        self.close_designed_view(state);
-        // Its browsing, if any, is dropped.
-        state.browsing = None;
-        state.open = None;
-        state.open_command = None;
-        state.launch = LaunchRecord::default();
-        state.form = None;
-        state.next_screen();
-    }
-
-    /// Closes the open custom view, if there is one, and returns the command
-    /// view it was opened from.
-    fn close_custom_view(&self, state: &mut State) -> Option<LauncherView> {
-        let open = state.custom_view.take()?;
-        if let Ok(runtime) = self.runtime() {
-            runtime.close_view(open.id);
-        }
-        Some(open.return_to)
     }
 
     /// Opens `url` with the link opener, off the calling thread, and reports

@@ -121,6 +121,12 @@ impl DesignedStack {
         self.top().id.number()
     }
 
+    /// The runtime thread number of the top view, whose crash closes the
+    /// view's screen (see `recovery`).
+    pub(super) fn top_id_thread(&self) -> u64 {
+        self.top().id.thread()
+    }
+
     /// Whether the view `view` — the id its render context named — is one
     /// of the stack's, so an ask for it is one to hold; one for any other
     /// view is dropped.
@@ -336,6 +342,35 @@ impl Launcher {
         }
     }
 
+    /// Notes the size the canvas `key` of the open designed view was laid
+    /// out at (#242): every render context of the view names it, and when
+    /// the size moved, the handler id its tree named by `onResize` — which
+    /// the window tells the view of, the resize event re-rendering it as
+    /// any event does. Called by the window as it lays the tree out;
+    /// `None` when no designed view is open or its tree names no handler.
+    pub fn note_designed_canvas(
+        &self,
+        view: ViewId,
+        key: &str,
+        width: f32,
+        height: f32,
+    ) -> Option<u32> {
+        if let Ok(runtime) = self.runtime() {
+            runtime.note_canvas_size(view, key, width, height);
+        }
+        let mut state = self.lock();
+        let Some(stack) = state.designed_view.as_ref() else {
+            return None;
+        };
+        if stack.top().id != view {
+            return None;
+        }
+        // Only a canvas whose tree asks to be told of its size changing is
+        // told; its handler rides the tree the user saw, as any event's
+        // does.
+        canvas_handler(&stack.top().tree, key, |handlers| handlers.on_resize)
+    }
+
     /// Sends the press of the button the open designed view's tree named
     /// with callback id `callback` (`onPress`) to the view — raised on the
     /// node with `key`, or none when the tree gave it none — and shows its
@@ -471,6 +506,11 @@ impl Launcher {
             DesignedHandler::Key => "a key",
             DesignedHandler::Selection => "a selection",
             DesignedHandler::More => "a load-more",
+            DesignedHandler::Pointer => "a pointer event",
+            DesignedHandler::Wheel => "a wheel",
+            DesignedHandler::DoubleClick => "a double click",
+            DesignedHandler::Secondary => "a secondary press",
+            DesignedHandler::Resize => "a resize",
         };
         self.developing.logs.pane(
             &owner,
@@ -924,6 +964,34 @@ fn stale(number: u64, shown: u64, result: &Result<DesignedNext, CallError>) -> b
             result,
             Ok(_) | Err(CallError::Guest(_)) | Err(CallError::Unreadable(_))
         )
+}
+
+/// The handler `read` names on the canvas `key` of `tree`, when its node
+/// still names one — the handler the window's resize event asks for.
+fn canvas_handler(
+    tree: &DesignedTree,
+    key: &str,
+    read: fn(&crate::runtime::CanvasHandlers) -> Option<u32>,
+) -> Option<u32> {
+    fn held(
+        node: &Node,
+        key: &str,
+        read: fn(&crate::runtime::CanvasHandlers) -> Option<u32>,
+    ) -> Option<u32> {
+        match &node.kind {
+            NodeKind::Canvas(canvas) if node.key.as_deref() == Some(key) => read(&canvas.handlers),
+            _ => node
+                .fallback
+                .as_deref()
+                .and_then(|fallback| held(fallback, key, read))
+                .or_else(|| {
+                    node.children
+                        .iter()
+                        .find_map(|child| held(child, key, read))
+                }),
+        }
+    }
+    held(&tree.root, key, read)
 }
 
 /// Whether `tree` holds a node with `key` naming a handler of `handler`'s

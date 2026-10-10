@@ -33,6 +33,9 @@
 //! item keywords, host filtering, controlled search text and selection,
 //! the search-bar dropdown, pagination, the empty view and the detail
 //! pane; the Grid; the Detail, and Markdown images.
+//! `focus` ask) and the focus, blur and key events (#238); 1.3 adds the
+//! canvas, a leaf the extension draws into (#242, the custom view's
+//! successor).
 
 use serde::Deserialize;
 use serde_json::{Map, Value};
@@ -72,6 +75,16 @@ pub enum DesignedHandler {
     /// `onLoadMore` — a List's or Grid's selection nearing the end of
     /// what it shows, while the tree says more is there.
     More,
+    /// One of a canvas's pointer handlers (`onPointerDown` and its kind).
+    Pointer,
+    /// `onWheel` — a canvas's wheel.
+    Wheel,
+    /// `onDoubleClick` — a canvas's double click.
+    DoubleClick,
+    /// `onSecondary` — a canvas's secondary button.
+    Secondary,
+    /// `onResize` — a canvas changing size.
+    Resize,
 }
 
 /// The most nodes one document may hold, counting `fallback` subtrees.
@@ -82,6 +95,10 @@ pub const MAX_DEPTH: usize = 64;
 pub const MAX_TREE_BYTES: usize = 4 * 1024 * 1024;
 /// The most characters one text node may hold.
 pub const MAX_TEXT_CHARS: usize = 64 * 1024;
+/// The most characters one canvas text operation's text may hold.
+pub const MAX_CANVAS_TEXT_CHARS: usize = 64 * 1024;
+/// The most drawing operations one canvas may hold.
+pub const MAX_CANVAS_OPS: usize = 20_000;
 /// The most characters one markdown node's source may hold.
 pub const MAX_MARKDOWN_CHARS: usize = 1024 * 1024;
 /// The most bytes of inline image data one icon's `data:` URL may hold.
@@ -93,7 +110,7 @@ pub const MAX_PX: f32 = 4096.;
  * A designed view's tree: its root node. The version it named is checked
  * while reading; a tree that was read is of a version Pane renders.
  */
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct DesignedTree {
     pub root: Node,
 }
@@ -110,9 +127,9 @@ impl DesignedTree {
 
 impl Node {
     /// Whether this node is one whose state Pane keeps by key: a field, a
-    /// select, a scroll region, or a control with a handler. A tree that
-    /// names no key for such a node is reported in development (its state
-    /// is kept by position instead).
+    /// select, a scroll region, a canvas, or a control with a handler. A
+    /// tree that names no key for such a node is reported in development
+    /// (its state is kept by position instead).
     pub fn stateful(&self) -> bool {
         self.handles(DesignedHandler::Press)
             || self.handles(DesignedHandler::Change)
@@ -122,6 +139,11 @@ impl Node {
             || self.handles(DesignedHandler::Key)
             || self.handles(DesignedHandler::Selection)
             || self.handles(DesignedHandler::More)
+            || self.handles(DesignedHandler::Pointer)
+            || self.handles(DesignedHandler::Wheel)
+            || self.handles(DesignedHandler::DoubleClick)
+            || self.handles(DesignedHandler::Secondary)
+            || self.handles(DesignedHandler::Resize)
             || matches!(
                 &self.kind,
                 NodeKind::TextInput(_)
@@ -135,6 +157,7 @@ impl Node {
                     | NodeKind::Scroll { .. }
                     | NodeKind::List(_)
                     | NodeKind::Grid(_)
+                    | NodeKind::Canvas(_)
             )
     }
 
@@ -156,6 +179,13 @@ impl Node {
                     TextContent::Spans(spans) => spans.iter().any(|span| held(span.on_press)),
                 },
                 NodeKind::MetadataList(list) => list.items.iter().any(|item| held(item.on_press)),
+                // The canvas's semantic handlers (the up and down arrows,
+                // Space) are presses, as a button's is.
+                NodeKind::Canvas(canvas) => {
+                    held(canvas.handlers.on_increment)
+                        || held(canvas.handlers.on_decrement)
+                        || held(canvas.handlers.on_activate)
+                }
                 _ => false,
             },
             DesignedHandler::Change => match &self.kind {
@@ -187,6 +217,32 @@ impl Node {
             DesignedHandler::Focus => held(self.on_focus),
             DesignedHandler::Blur => held(self.on_blur),
             DesignedHandler::Key => held(self.on_key),
+            DesignedHandler::Pointer => match &self.kind {
+                NodeKind::Canvas(canvas) => {
+                    held(canvas.handlers.on_pointer_down)
+                        || held(canvas.handlers.on_pointer_up)
+                        || held(canvas.handlers.on_pointer_move)
+                        || held(canvas.handlers.on_pointer_enter)
+                        || held(canvas.handlers.on_pointer_leave)
+                }
+                _ => false,
+            },
+            DesignedHandler::Wheel => match &self.kind {
+                NodeKind::Canvas(canvas) => held(canvas.handlers.on_wheel),
+                _ => false,
+            },
+            DesignedHandler::DoubleClick => match &self.kind {
+                NodeKind::Canvas(canvas) => held(canvas.handlers.on_double_click),
+                _ => false,
+            },
+            DesignedHandler::Secondary => match &self.kind {
+                NodeKind::Canvas(canvas) => held(canvas.handlers.on_secondary),
+                _ => false,
+            },
+            DesignedHandler::Resize => match &self.kind {
+                NodeKind::Canvas(canvas) => held(canvas.handlers.on_resize),
+                _ => false,
+            },
         }
     }
 }
@@ -200,7 +256,7 @@ impl Node {
 /// itself. A focusable node may ask for the keyboard (`focus`) and name
 /// handlers for the events Pane raises on it (`on-focus`, `on-blur`,
 /// `on-key`).
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Node {
     pub kind: NodeKind,
     /// The sizing and surface every node may carry, with their `hover` and
@@ -241,7 +297,7 @@ pub struct Node {
 }
 
 /// What a node is.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum NodeKind {
     Column(Layout),
     Row(Layout),
@@ -310,6 +366,12 @@ pub enum NodeKind {
     /// A Detail (#240): a scrolling column of what a record or an article
     /// is — Markdown, a metadata panel, a loading state, actions.
     Detail(Layout),
+    /// A canvas: a leaf the extension draws into with drawing operations,
+    /// taking input and reporting its size (#242, the custom view's
+    /// successor). Its size comes from its style's sizing as any node's
+    /// does — a fixed `width` and `height`, or the space the layout gives
+    /// it — and the render context names it.
+    Canvas(Canvas),
     /// A node whose type Pane does not know, or whose `requires` it does
     /// not meet: its `fallback` and children decide what is drawn.
     Unknown(String),
@@ -824,6 +886,233 @@ pub enum Tone {
     Destructive,
 }
 
+/// One canvas: the drawing operations it paints in order, later ones over
+/// earlier ones, clipped to its size; what it is to assistive technology
+/// (one node, with a role, a label and a value); and the handlers its
+/// input names. Its size is its style's sizing, as any node's is — fixed,
+/// or filling the space the layout gives it, which the view's render
+/// context names with its key (#242).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Canvas {
+    /// The operations it paints, in order.
+    pub ops: Vec<CanvasOp>,
+    /// What the one node the canvas is to assistive technology says.
+    pub a11y: CanvasA11y,
+    /// The handlers the canvas's input names, each by the callback id its
+    /// tree gave it.
+    pub handlers: CanvasHandlers,
+}
+
+/// What the one node a canvas is to assistive technology says: its role,
+/// its label and its value, as a control's are.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct CanvasA11y {
+    /// What kind of control the canvas is. `None` when the tree names none
+    /// the set holds, which reads as a generic one.
+    pub role: Option<CanvasRole>,
+    /// What names the canvas to assistive technology.
+    pub label: Option<String>,
+    /// What the canvas currently holds, as a color well names its chosen
+    /// color or a slider its value.
+    pub value: Option<String>,
+}
+
+/// What kind of control a canvas is to assistive technology: a set wide
+/// enough for the controls the custom view could not name, one of which
+/// the old contract's only role (`color-well`) maps to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CanvasRole {
+    /// A color chooser, whose value names its chosen color.
+    ColorWell,
+    /// A value between bounds, adjustable by increment and decrement.
+    Slider,
+    /// A picture, whose label names what it shows.
+    Image,
+    /// A figure: a picture with its caption in the label.
+    Figure,
+    /// A group of things the label names.
+    Group,
+    /// Whatever else the canvas is.
+    Generic,
+}
+
+/// The handlers a canvas's input names, each by the callback id its tree
+/// gave it. Keys ride the node's own `onKey` as every focusable node's do;
+/// `onIncrement` and `onDecrement` are the semantic handlers the up and
+/// down arrows run, `onActivate` the one Space runs, so a control-like
+/// canvas needs no key parsing — a canvas naming them takes those keys
+/// itself, and they reach no `onKey`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct CanvasHandlers {
+    pub on_increment: Option<u32>,
+    pub on_decrement: Option<u32>,
+    pub on_activate: Option<u32>,
+    pub on_pointer_down: Option<u32>,
+    pub on_pointer_up: Option<u32>,
+    /// A pointer move while the button pressed over the canvas is held —
+    /// a drag — coalesced to the latest while one is in flight, as the
+    /// custom view's were.
+    pub on_pointer_move: Option<u32>,
+    /// The pointer entering the canvas, hover that sends no moves.
+    pub on_pointer_enter: Option<u32>,
+    /// The pointer leaving it.
+    pub on_pointer_leave: Option<u32>,
+    pub on_wheel: Option<u32>,
+    /// The primary button pressed twice over the canvas.
+    pub on_double_click: Option<u32>,
+    /// The secondary button pressed over the canvas.
+    pub on_secondary: Option<u32>,
+    /// The canvas's size changing, its payload naming the new one.
+    pub on_resize: Option<u32>,
+}
+
+impl CanvasHandlers {
+    /// Whether the canvas names any handler of its input (its keys ride
+    /// the node's own `onKey`, which this does not count): whether it is
+    /// focusable and stateful.
+    pub fn any(&self) -> bool {
+        self.on_increment.is_some()
+            || self.on_decrement.is_some()
+            || self.on_activate.is_some()
+            || self.on_pointer_down.is_some()
+            || self.on_pointer_up.is_some()
+            || self.on_pointer_move.is_some()
+            || self.on_pointer_enter.is_some()
+            || self.on_pointer_leave.is_some()
+            || self.on_wheel.is_some()
+            || self.on_double_click.is_some()
+            || self.on_secondary.is_some()
+            || self.on_resize.is_some()
+    }
+}
+
+/// One drawing operation of a canvas: what it paints, or how it moves the
+/// state the painting that follows paints in. Coordinates are logical
+/// pixels in the canvas's own space, its origin its top-left corner; a
+/// position outside its size is clipped away when it is drawn.
+#[derive(Clone, Debug, PartialEq)]
+pub enum CanvasOp {
+    /// A rectangle, filled and/or stroked, `radius` rounding its corners.
+    Rect {
+        x: f32,
+        y: f32,
+        width: f32,
+        height: f32,
+        radius: Option<Finite>,
+        fill: Option<Paint>,
+        stroke: Option<CanvasStroke>,
+    },
+    /// A circle, `x` and `y` its center.
+    Circle {
+        x: f32,
+        y: f32,
+        radius: Finite,
+        fill: Option<Paint>,
+        stroke: Option<CanvasStroke>,
+    },
+    /// Move the current path's point, starting a new sub-path.
+    Move { x: f32, y: f32 },
+    /// A straight line to a point.
+    Line { x: f32, y: f32 },
+    /// A quadratic curve to a point, through a control point.
+    Quad { cx: f32, cy: f32, x: f32, y: f32 },
+    /// A cubic curve to a point, through two control points.
+    Cubic {
+        c1x: f32,
+        c1y: f32,
+        c2x: f32,
+        c2y: f32,
+        x: f32,
+        y: f32,
+    },
+    /// An arc of a circle, `x` and `y` its center, from `start` to `end`
+    /// radians, drawn the short way from `start` to `end` unless `ccw`.
+    Arc {
+        x: f32,
+        y: f32,
+        radius: Finite,
+        start: f32,
+        end: f32,
+        ccw: bool,
+    },
+    /// Close the current sub-path with a line to where it began.
+    Close,
+    /// Fill the current path, which it ends.
+    Fill { color: Paint },
+    /// Stroke the current path, which it ends.
+    Stroke { stroke: CanvasStroke },
+    /// One line of text, its top-left corner at `x`, `y`, in a token style
+    /// or a raw size, its color corrected as a text's is.
+    Text(CanvasText),
+    /// An image of the icon model, at a position and size. It is drawn
+    /// while it loads as its fallback or nothing.
+    Image {
+        image: Option<Icon>,
+        x: f32,
+        y: f32,
+        width: Finite,
+        height: Finite,
+    },
+    /// Clip what follows to this rectangle, intersected with the clips
+    /// before it.
+    Clip {
+        x: f32,
+        y: f32,
+        width: Finite,
+        height: Finite,
+    },
+    /// Move the origin the operations that follow draw at.
+    Translate { x: f32, y: f32 },
+    /// Scale the space the operations that follow draw in, from the
+    /// origin.
+    Scale { x: f32, y: f32 },
+    /// Rotate the space the operations that follow draw in, around the
+    /// origin, clockwise by this many degrees.
+    Rotate { degrees: f32 },
+}
+
+/// One stroke: its colour, its width, and the shapes of its ends and
+/// corners.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CanvasStroke {
+    pub color: Paint,
+    /// One pixel when the tree gives none.
+    pub width: Option<Finite>,
+    pub cap: Option<StrokeCap>,
+    pub join: Option<StrokeJoin>,
+}
+
+/// How a stroke's ends are drawn.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StrokeCap {
+    Butt,
+    Round,
+    Square,
+}
+
+/// How a stroke's corners are drawn.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StrokeJoin {
+    Miter,
+    Round,
+    Bevel,
+}
+
+/// One line of text a canvas draws: its position, its content, and how it
+/// is drawn — a token style and level, or a raw size, a weight, and its
+/// colour, corrected as a text's is.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CanvasText {
+    pub x: f32,
+    pub y: f32,
+    pub content: String,
+    pub style: Option<TextStyle>,
+    pub level: Option<TextLevel>,
+    pub color: Option<Paint>,
+    pub size: Option<Finite>,
+    pub weight: Option<Finite>,
+}
+
 /// A finite number as the tree gives one: a pixel length, a fraction, a
 /// weight, a value. [`Eq`] holds because reading keeps every number
 /// finite.
@@ -1037,6 +1326,7 @@ fn kind_name(kind: &NodeKind) -> String {
         NodeKind::GridItem(_) => "grid-item".to_owned(),
         NodeKind::ListDropdown(_) => "list-dropdown".to_owned(),
         NodeKind::Detail(_) => "detail".to_owned(),
+        NodeKind::Canvas(_) => "canvas".to_owned(),
         NodeKind::Unknown(kind) => kind.clone(),
     }
 }
@@ -1215,6 +1505,7 @@ fn node(wire: WireNode, depth: usize, nodes: &mut usize) -> Result<Node, ReadErr
             "grid-item" => NodeKind::GridItem(grid_item(&wire)?),
             "list-dropdown" => NodeKind::ListDropdown(list_dropdown(&wire)?),
             "detail" => NodeKind::Detail(layout(&wire)?),
+            "canvas" => NodeKind::Canvas(canvas(&wire)?),
             _ => NodeKind::Unknown(wire.kind.clone()),
         }
     };
@@ -1906,6 +2197,271 @@ fn fit_of(value: Option<&Value>) -> Result<Fit, ReadError> {
             ))),
         },
         Some(_) => Err(unreadable("its fit is not a fit")),
+/// The canvas a canvas node's properties give it: its operations, what it
+/// is to assistive technology, and the handlers its input names. Its size
+/// comes from its style's sizing, as any node's does.
+fn canvas(wire: &WireNode) -> Result<Canvas, ReadError> {
+    let rest = &wire.rest;
+    let ops = match rest.get("ops") {
+        None | Some(Value::Null) => Vec::new(),
+        Some(Value::Array(ops)) => {
+            if ops.len() > MAX_CANVAS_OPS {
+                return Err(ReadError::Guest(format!(
+                    "a canvas of the view has {} operations; at most {MAX_CANVAS_OPS} are drawn",
+                    ops.len()
+                )));
+            }
+            ops.iter()
+                .map(canvas_op)
+                .collect::<Result<Vec<Option<CanvasOp>>, ReadError>>()?
+                .into_iter()
+                .flatten()
+                .collect()
+        }
+        Some(_) => return Err(unreadable("a canvas node's ops are not a list")),
+    };
+    Ok(Canvas {
+        ops,
+        a11y: CanvasA11y {
+            role: token(rest.get("role"), "role", canvas_role)?,
+            label: string(wire, "label")?,
+            value: string(wire, "value")?,
+        },
+        handlers: CanvasHandlers {
+            on_increment: callback(wire, "onIncrement")?,
+            on_decrement: callback(wire, "onDecrement")?,
+            on_activate: callback(wire, "onActivate")?,
+            on_pointer_down: callback(wire, "onPointerDown")?,
+            on_pointer_up: callback(wire, "onPointerUp")?,
+            on_pointer_move: callback(wire, "onPointerMove")?,
+            on_pointer_enter: callback(wire, "onPointerEnter")?,
+            on_pointer_leave: callback(wire, "onPointerLeave")?,
+            on_wheel: callback(wire, "onWheel")?,
+            on_double_click: callback(wire, "onDoubleClick")?,
+            on_secondary: callback(wire, "onSecondary")?,
+            on_resize: callback(wire, "onResize")?,
+        },
+    })
+}
+
+/// One drawing operation, as the tree gives it: an object naming its `op`
+/// and the properties that op reads. An op this version does not know is
+/// `None` — a newer minor version may add one — while one whose properties
+/// are of the wrong type is unreadable, as a node's are.
+fn canvas_op(value: &Value) -> Result<Option<CanvasOp>, ReadError> {
+    let Value::Object(fields) = value else {
+        return Err(unreadable("an operation of a canvas is not an object"));
+    };
+    let op = match fields.get("op") {
+        Some(Value::String(op)) => op.as_str(),
+        _ => return Err(unreadable("an operation of a canvas names no op")),
+    };
+    let at = |name: &str| coordinate(fields, name);
+    let size = |name: &str| measure(fields, name);
+    let paint = |name: &str| paint(fields.get(name), name);
+    let stroked = || -> Result<CanvasStroke, ReadError> {
+        Ok(CanvasStroke {
+            color: paint("stroke")?.ok_or(unreadable("its stroke names no colour"))?,
+            width: optional_measure(fields, "strokeWidth")?,
+            cap: token(fields.get("cap"), "cap", stroke_cap)?,
+            join: token(fields.get("join"), "join", stroke_join)?,
+        })
+    };
+    let known = match op {
+        "rect" => CanvasOp::Rect {
+            x: at("x")?,
+            y: at("y")?,
+            width: at("width")?,
+            height: at("height")?,
+            radius: optional_measure(fields, "radius")?,
+            fill: paint("fill")?,
+            stroke: paint("stroke")?.is_some().then(|| stroked()).transpose()?,
+        },
+        "circle" => CanvasOp::Circle {
+            x: at("x")?,
+            y: at("y")?,
+            radius: size("radius")?,
+            fill: paint("fill")?,
+            stroke: paint("stroke")?.is_some().then(|| stroked()).transpose()?,
+        },
+        "move" => CanvasOp::Move {
+            x: at("x")?,
+            y: at("y")?,
+        },
+        "line" => CanvasOp::Line {
+            x: at("x")?,
+            y: at("y")?,
+        },
+        "quad" => CanvasOp::Quad {
+            cx: at("cx")?,
+            cy: at("cy")?,
+            x: at("x")?,
+            y: at("y")?,
+        },
+        "cubic" => CanvasOp::Cubic {
+            c1x: at("c1x")?,
+            c1y: at("c1y")?,
+            c2x: at("c2x")?,
+            c2y: at("c2y")?,
+            x: at("x")?,
+            y: at("y")?,
+        },
+        "arc" => CanvasOp::Arc {
+            x: at("x")?,
+            y: at("y")?,
+            radius: size("radius")?,
+            start: angle(fields, "start")?,
+            end: angle(fields, "end")?,
+            ccw: match fields.get("ccw") {
+                None | Some(Value::Null) => false,
+                Some(Value::Bool(ccw)) => *ccw,
+                Some(_) => return Err(unreadable("its arc's ccw is not a boolean")),
+            },
+        },
+        "close" => CanvasOp::Close,
+        "fill" => CanvasOp::Fill {
+            color: paint("color")?.ok_or(unreadable("a fill names no colour"))?,
+        },
+        "stroke" => CanvasOp::Stroke {
+            stroke: CanvasStroke {
+                color: paint("color")?.ok_or(unreadable("a stroke names no colour"))?,
+                width: optional_measure(fields, "width")?,
+                cap: token(fields.get("cap"), "cap", stroke_cap)?,
+                join: token(fields.get("join"), "join", stroke_join)?,
+            },
+        },
+        "text" => {
+            let content = match fields.get("text") {
+                Some(Value::String(content)) => content.clone(),
+                _ => return Err(unreadable("a text operation has no text")),
+            };
+            if content.chars().count() > MAX_CANVAS_TEXT_CHARS {
+                return Err(ReadError::Guest(format!(
+                    "a text of the canvas has {} characters; at most \
+                     {MAX_CANVAS_TEXT_CHARS} are drawn",
+                    content.chars().count()
+                )));
+            }
+            CanvasOp::Text(CanvasText {
+                x: at("x")?,
+                y: at("y")?,
+                content,
+                style: token(fields.get("style"), "style", text_style)?,
+                level: token(fields.get("level"), "level", text_level)?,
+                color: paint("color")?,
+                size: sized(fields.get("size"), "size")?,
+                weight: weighted(fields.get("weight"), "weight")?,
+            })
+        }
+        "image" => CanvasOp::Image {
+            image: icon_of(fields.get("image"), "image")?,
+            x: at("x")?,
+            y: at("y")?,
+            width: size("width")?,
+            height: size("height")?,
+        },
+        "clip" => CanvasOp::Clip {
+            x: at("x")?,
+            y: at("y")?,
+            width: size("width")?,
+            height: size("height")?,
+        },
+        "translate" => CanvasOp::Translate {
+            x: at("x")?,
+            y: at("y")?,
+        },
+        "scale" => CanvasOp::Scale {
+            x: at("x")?,
+            y: at("y")?,
+        },
+        "rotate" => CanvasOp::Rotate {
+            degrees: angle(fields, "degrees")?,
+        },
+        // An operation a newer minor version added: skipped, as a
+        // property Pane does not know is.
+        _ => return Ok(None),
+    };
+    Ok(Some(known))
+}
+
+/// One coordinate an operation names: any finite number, in the canvas's
+/// own space, so a drawing may begin outside what its clip shows.
+fn coordinate(fields: &Map<String, Value>, name: &str) -> Result<f32, ReadError> {
+    match fields.get(name) {
+        Some(Value::Number(number)) => number
+            .as_f64()
+            .filter(|number| number.is_finite())
+            .map(|number| number as f32)
+            .ok_or_else(|| unreadable(&format!("its {name} is not a coordinate"))),
+        _ => Err(unreadable(&format!(
+            "an operation of a canvas has no {name}"
+        ))),
+    }
+}
+
+/// One size an operation names, clamped to what a canvas draws.
+fn measure(fields: &Map<String, Value>, name: &str) -> Result<Finite, ReadError> {
+    optional_measure(fields, name)?
+        .ok_or_else(|| unreadable(&format!("an operation of a canvas has no {name}")))
+}
+
+/// One size an operation may name, clamped to what a canvas draws.
+fn optional_measure(fields: &Map<String, Value>, name: &str) -> Result<Option<Finite>, ReadError> {
+    match fields.get(name) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::Number(number)) => Ok(number
+            .as_f64()
+            .filter(|number| number.is_finite())
+            .map(|number| Finite((number as f32).clamp(0., MAX_PX)))),
+        Some(_) => Err(unreadable(&format!("its {name} is not a size"))),
+    }
+}
+
+/// One angle an operation names: radians for an arc, degrees for a
+/// rotation, any finite number.
+fn angle(fields: &Map<String, Value>, name: &str) -> Result<f32, ReadError> {
+    match fields.get(name) {
+        Some(Value::Number(number)) => number
+            .as_f64()
+            .filter(|number| number.is_finite())
+            .map(|number| number as f32)
+            .ok_or_else(|| unreadable(&format!("its {name} is not an angle"))),
+        _ => Err(unreadable(&format!(
+            "an operation of a canvas has no {name}"
+        ))),
+    }
+}
+
+/// A canvas's role, as the tree names it.
+fn canvas_role(name: &str) -> Option<CanvasRole> {
+    match name {
+        "color-well" => Some(CanvasRole::ColorWell),
+        "slider" => Some(CanvasRole::Slider),
+        "image" => Some(CanvasRole::Image),
+        "figure" => Some(CanvasRole::Figure),
+        "group" => Some(CanvasRole::Group),
+        "generic" => Some(CanvasRole::Generic),
+        _ => None,
+    }
+}
+
+/// A stroke's cap, as the tree names it.
+fn stroke_cap(name: &str) -> Option<StrokeCap> {
+    match name {
+        "butt" => Some(StrokeCap::Butt),
+        "round" => Some(StrokeCap::Round),
+        "square" => Some(StrokeCap::Square),
+        _ => None,
+    }
+}
+
+/// A stroke's join, as the tree names it.
+fn stroke_join(name: &str) -> Option<StrokeJoin> {
+    match name {
+        "miter" => Some(StrokeJoin::Miter),
+        "round" => Some(StrokeJoin::Round),
+        "bevel" => Some(StrokeJoin::Bevel),
+        _ => None,
     }
 }
 

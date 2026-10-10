@@ -33,7 +33,7 @@
 // a Pane that renders another major refuses it naming both versions, and
 // one that knows less draws what it understands.
 
-import { askToRender } from "pane:extension/view@0.1.0";
+import { askToRender, measureText as witMeasureText } from "pane:extension/view@0.1.0";
 
 /** The version of the UI component set this SDK writes. */
 const COMPONENT_SET = "1.3";
@@ -150,6 +150,8 @@ List.Item = Item;
 List.Dropdown = Dropdown;
 Grid.Section = Section;
 Grid.Item = Cell;
+/** A canvas: a leaf the view draws into by its `ops`, taking input. */
+export const Canvas = builtin("canvas");
 
 /** A fragment: its children are drawn where it sits, unwrapped. */
 export const Fragment = Symbol.for("pane.extension.fragment");
@@ -359,6 +361,15 @@ function writeChild(child, index, parentPath, callbacks, cells, used, into) {
   throw new Error(`a tree's element type must be a component, not ${typeof type}`);
 }
 
+/** The listener `listener` becomes, told the text the event's payload
+ * names: its `value` (a field's, a control's) or `key` (a key pressed),
+ * which the listeners that take no argument ignore. */
+function textListener(callbacks, listener) {
+  const id = callbacks.size + 1;
+  callbacks.set(id, (payload) => listener(payloadText(payload)));
+  return id;
+}
+
 /** One built-in node, with the properties `props` gives it. */
 function builtinNode(name, props, path, callbacks, cells, used) {
   const given = props ?? {};
@@ -378,19 +389,13 @@ function builtinNode(name, props, path, callbacks, cells, used) {
   // both focus the node), and the focus, blur and key handlers.
   if (given.focus === true) node.focus = true;
   if (typeof given.onFocus === "function") {
-    const id = callbacks.size + 1;
-    callbacks.set(id, given.onFocus);
-    node.onFocus = id;
+    node.onFocus = textListener(callbacks, given.onFocus);
   }
   if (typeof given.onBlur === "function") {
-    const id = callbacks.size + 1;
-    callbacks.set(id, given.onBlur);
-    node.onBlur = id;
+    node.onBlur = textListener(callbacks, given.onBlur);
   }
   if (typeof given.onKey === "function") {
-    const id = callbacks.size + 1;
-    callbacks.set(id, given.onKey);
-    node.onKey = id;
+    node.onKey = textListener(callbacks, given.onKey);
   }
   if (given.fallback != null) {
     // The fallback is drawn in the node's place when Pane does not know
@@ -466,9 +471,7 @@ function builtinNode(name, props, path, callbacks, cells, used) {
       if (given.keys !== undefined) node.keys = given.keys;
       if (given.enabled !== undefined) node.enabled = given.enabled;
       if (typeof given.onClick === "function") {
-        const id = callbacks.size + 1;
-        callbacks.set(id, given.onClick);
-        node.onPress = id;
+        node.onPress = textListener(callbacks, given.onClick);
       }
       return node;
     }
@@ -476,9 +479,7 @@ function builtinNode(name, props, path, callbacks, cells, used) {
       node.label = textOf(given.children);
       if (given.color !== undefined) node.color = given.color;
       if (typeof given.onClick === "function") {
-        const id = callbacks.size + 1;
-        callbacks.set(id, given.onClick);
-        node.onPress = id;
+        node.onPress = textListener(callbacks, given.onClick);
       }
       return node;
     }
@@ -501,9 +502,7 @@ function builtinNode(name, props, path, callbacks, cells, used) {
       if (given.icon !== undefined) node.icon = given.icon;
       if (given.accessories !== undefined) node.accessories = given.accessories;
       if (typeof given.onClick === "function") {
-        const id = callbacks.size + 1;
-        callbacks.set(id, given.onClick);
-        node.onPress = id;
+        node.onPress = textListener(callbacks, given.onClick);
       }
       return node;
     }
@@ -527,9 +526,7 @@ function builtinNode(name, props, path, callbacks, cells, used) {
       else node.checked = given.on === true;
       if (given.label !== undefined) node.label = given.label;
       if (typeof given.onChange === "function") {
-        const id = callbacks.size + 1;
-        callbacks.set(id, given.onChange);
-        node.onChange = id;
+        node.onChange = textListener(callbacks, given.onChange);
       }
       return node;
     }
@@ -539,9 +536,7 @@ function builtinNode(name, props, path, callbacks, cells, used) {
       if (given.value !== undefined) node.value = given.value;
       if (given.label !== undefined) node.label = given.label;
       if (typeof given.onChange === "function") {
-        const id = callbacks.size + 1;
-        callbacks.set(id, given.onChange);
-        node.onChange = id;
+        node.onChange = textListener(callbacks, given.onChange);
       }
       return node;
     }
@@ -552,9 +547,7 @@ function builtinNode(name, props, path, callbacks, cells, used) {
       if (given.step !== undefined) node.step = given.step;
       if (given.label !== undefined) node.label = given.label;
       if (typeof given.onChange === "function") {
-        const id = callbacks.size + 1;
-        callbacks.set(id, given.onChange);
-        node.onChange = id;
+        node.onChange = textListener(callbacks, given.onChange);
       }
       return node;
     }
@@ -706,20 +699,63 @@ function builtinNode(name, props, path, callbacks, cells, used) {
       // `onChange` on its commits, and a `value` that differs from the
       // field's value in the previous render replaces its text.
       if (typeof given.onInput === "function") {
-        const id = callbacks.size + 1;
-        callbacks.set(id, given.onInput);
-        node.onInput = id;
+        node.onInput = textListener(callbacks, given.onInput);
       }
       if (typeof given.onChange === "function") {
-        const id = callbacks.size + 1;
-        callbacks.set(id, given.onChange);
-        node.onChange = id;
+        node.onChange = textListener(callbacks, given.onChange);
       }
       if (given.throttleMs !== undefined) node.throttleMs = given.throttleMs;
       return node;
     }
+    case "canvas": {
+      if (given.ops !== undefined) node.ops = given.ops;
+      if (given.role !== undefined) node.role = given.role;
+      if (given.label !== undefined) node.label = given.label;
+      if (given.value !== undefined) node.value = given.value;
+      // The canvas's input: each handler is told the event that reached
+      // it, its payload read into what it names. The semantic handlers
+      // (the arrows and Space) are plain listeners, as a button's are.
+      for (const [field, name] of [
+        ["onPointerDown", "onPointerDown"],
+        ["onPointerUp", "onPointerUp"],
+        ["onPointerMove", "onPointerMove"],
+        ["onPointerEnter", "onPointerEnter"],
+        ["onPointerLeave", "onPointerLeave"],
+        ["onWheel", "onWheel"],
+        ["onDoubleClick", "onDoubleClick"],
+        ["onSecondary", "onSecondary"],
+        ["onResize", "onResize"],
+      ]) {
+        if (typeof given[field] === "function") {
+          const id = callbacks.size + 1;
+          callbacks.set(id, (payload) => given[field](canvasEvent(payload)));
+          node[name] = id;
+        }
+      }
+      for (const field of ["onIncrement", "onDecrement", "onActivate"]) {
+        if (typeof given[field] === "function") {
+          const id = callbacks.size + 1;
+          callbacks.set(id, (payload) => given[field]());
+          node[field] = id;
+        }
+      }
+      return node;
+    }
     default:
       throw new Error(`the tree has no ${name} component`);
+  }
+}
+
+/** The canvas event `payload` names, read into what it names: the event
+ * kind, the point in the canvas's own space, and what else it carries. A
+ * payload that does not name one answers `null`. */
+function canvasEvent(payload) {
+  try {
+    const held = JSON.parse(payload);
+    if (typeof held?.event !== "string") return null;
+    return held;
+  } catch {
+    return null;
   }
 }
 
@@ -759,9 +795,7 @@ function spanNode(child, path, callbacks) {
   }
   if (given.code === true) span.code = true;
   if (typeof given.onClick === "function") {
-    const id = callbacks.size + 1;
-    callbacks.set(id, given.onClick);
-    span.onPress = id;
+    span.onPress = textListener(callbacks, given.onClick);
   }
   return span;
 }
@@ -886,7 +920,10 @@ export function createView(component, props = {}) {
       const run = tables.get(event.render)?.get(event.callback);
       let navigation = null;
       if (run !== undefined) {
-        navigation = await run(payloadText(event.payload));
+        // The listener is told the event's payload as it is: the plain
+        // ones read its text (its `value` or `key`), a canvas's the event
+        // it names.
+        navigation = await run(event.payload);
       }
       // What the listener answered next: at most one of a push, a replace
       // and a pop is acted on — a pop first, then a replace, then a push,
@@ -969,6 +1006,22 @@ export function pop(result) {
  * answered (or none, the back key's) before this view re-renders. */
 export function Push(target, onPop) {
   return () => push(target, onPop);
+}
+
+/**
+ * Measures `text` in `style` (#242, `pane:extension/view.measure-text`):
+ * the width and height it occupies when the canvas draws it, laid out
+ * exactly, at the size and weight the tree's text styles resolve to. A
+ * canvas's drawing calls this while the view renders, so the text it
+ * draws fits what it says. `style` names what a canvas text operation
+ * does: `{"style": "caption", "size": 13, "weight": 400}`.
+ */
+export function measureText(text, style = {}) {
+  const held = {};
+  if (style.style !== undefined) held.style = style.style;
+  if (style.size !== undefined) held.size = style.size;
+  if (style.weight !== undefined) held.weight = style.weight;
+  return witMeasureText(text, JSON.stringify(held));
 }
 
 /** Why Pane asks for the tree, as `context` names: the render answering

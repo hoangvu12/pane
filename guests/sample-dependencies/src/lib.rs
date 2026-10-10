@@ -18,7 +18,7 @@
 use pane_extension::alloc::{format, string::String, string::ToString, vec::Vec};
 use pane_extension::feedback::{Toast, show_toast};
 use pane_extension::operations::{CallErrorKind, call};
-use pane_extension::{Command, CustomView, FieldValue, FormError, Item, List, NoCustomView};
+use pane_extension::{Command, FieldValue, FormError, Item, List};
 use serde_json::{Value, json};
 
 struct Dependencies;
@@ -73,7 +73,6 @@ fn item(id: &'static str, title: &str, subtitle: &str) -> Item {
 }
 
 impl Command for Dependencies {
-    type CustomView = NoCustomView;
     type DesignedView = pane_extension::view::NoDesignedView;
 
     async fn render() -> Result<List, String> {
@@ -98,7 +97,4 @@ impl Command for Dependencies {
         })
     }
 
-    async fn open_custom_view(item_id: String) -> Result<CustomView, String> {
-        Err(format!("unknown view: {item_id}"))
-    }
 }

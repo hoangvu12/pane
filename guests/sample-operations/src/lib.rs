@@ -20,8 +20,8 @@
 use pane_extension::alloc::{format, string::String, string::ToString, vec, vec::Vec};
 use pane_extension::operations::call;
 use pane_extension::{
-    Choice, Command, CustomView, Field, FieldKind, FieldValue, Form, FormError, Item, List,
-    NoCustomView, TextField, publish, settings,
+    Choice, Command, Field, FieldKind, FieldValue, Form, FormError, Item, List,
+    NoTextField, publish, settings,
 };
 use serde_json::{Value, json};
 
@@ -101,7 +101,6 @@ fn form_error(message: String) -> FormError {
 }
 
 impl Command for Operations {
-    type CustomView = NoCustomView;
     type DesignedView = pane_extension::view::NoDesignedView;
 
     async fn render() -> Result<List, String> {
@@ -148,9 +147,6 @@ impl Command for Operations {
         greet(source, name).await.map_err(form_error)
     }
 
-    async fn open_custom_view(item_id: String) -> Result<CustomView, String> {
-        Err(format!("unknown view: {item_id}"))
-    }
 }
 
 /// The operations the package publishes: `greet` and `wait`.

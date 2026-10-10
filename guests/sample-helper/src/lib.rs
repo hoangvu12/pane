@@ -32,7 +32,7 @@ use pane_extension::alloc::{format, string::String, vec::Vec};
 use pane_extension::feedback::{Toast, show_toast};
 use pane_extension::helpers::{self, HelperError};
 use pane_extension::{
-    Command, CustomView, FieldValue, FormError, Item, List, NoCustomView, settings,
+    Command, FieldValue, FormError, Item, List, settings,
 };
 
 /// The helper's name in the package's `pane.json`.
@@ -124,7 +124,6 @@ async fn outcome(item_id: &str) -> Result<String, String> {
 }
 
 impl Command for HelperSample {
-    type CustomView = NoCustomView;
     type DesignedView = pane_extension::view::NoDesignedView;
 
     async fn render() -> Result<List, String> {
@@ -174,7 +173,4 @@ impl Command for HelperSample {
         })
     }
 
-    async fn open_custom_view(item_id: String) -> Result<CustomView, String> {
-        Err(format!("unknown view: {item_id}"))
-    }
 }

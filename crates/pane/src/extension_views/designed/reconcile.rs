@@ -384,6 +384,7 @@ impl KeyedState {
     pub(super) fn focus_handle(&self) -> Option<FocusHandle> {
         match &self.held {
             Held::Focus(focus) => Some(focus.clone()),
+            Held::Canvas { focus, .. } => Some(focus.clone()),
             Held::Field { focus, .. } => Some(focus.clone()),
             Held::Select { focus, .. } => Some(focus.clone()),
             Held::Scroll(_) => None,
@@ -406,6 +407,8 @@ pub(crate) struct Watching {
 pub(super) enum HeldKind {
     /// A focusable control with no state of its own: its focus.
     Focus,
+    /// A canvas.
+    Canvas,
     /// A text field, password field or text area.
     Field,
     /// A select.
@@ -418,6 +421,16 @@ pub(super) enum HeldKind {
 pub(super) enum Held {
     /// A focusable control: its focus handle.
     Focus(FocusHandle),
+    /// A canvas (#242): its focus handle, where its drawing area was last
+    /// laid out (to turn window positions into the canvas's own
+    /// coordinates), the drag a press over it holds, and the subscription
+    /// that ends one the window can no longer see the release of.
+    Canvas {
+        focus: FocusHandle,
+        bounds: std::rc::Rc<std::cell::Cell<gpui::Bounds<gpui::Pixels>>>,
+        drag: std::rc::Rc<std::cell::RefCell<CanvasDrag>>,
+        _deactivation: Subscription,
+    },
     /// A text field: GPUI CE's editing state — the text, the caret, the
     /// selection and the input method's composition, with undo and the
     /// clipboard — and its partially controlled bookkeeping.
@@ -451,6 +464,24 @@ impl Held {
     ) -> Held {
         match kind {
             HeldKind::Focus => Held::Focus(cx.focus_handle().tab_stop(true)),
+            HeldKind::Canvas => {
+                let focus = cx.focus_handle().tab_stop(true);
+                // A drag ends when the window is deactivated, since the
+                // release may then never reach it: the custom view's rule,
+                // kept (see `canvas`).
+                let path = path.to_owned();
+                let deactivation = cx.observe_window_activation(window, move |this, window, cx| {
+                    if !window.is_window_active() {
+                        this.designed_canvas_deactivated(&path, window, cx);
+                    }
+                });
+                Held::Canvas {
+                    focus,
+                    bounds: Default::default(),
+                    drag: Default::default(),
+                    _deactivation: deactivation,
+                }
+            }
             HeldKind::Field => {
                 let editing = cx.new(|cx| EditableTextState::new(StringStorage::default(), cx));
                 let focus = editing.read(cx).focus_handle(cx);
@@ -524,6 +555,7 @@ impl Held {
         matches!(
             (self, kind),
             (Held::Focus(_), HeldKind::Focus)
+                | (Held::Canvas { .. }, HeldKind::Canvas)
                 | (Held::Field { .. }, HeldKind::Field)
                 | (Held::Select { .. }, HeldKind::Select)
                 | (Held::Scroll(_), HeldKind::Scroll)
@@ -629,6 +661,9 @@ fn held(node: &Node) -> Option<HeldKind> {
             (!dropdown.items.is_empty()).then_some(HeldKind::Select)
         }
         NodeKind::Scroll { .. } => Some(HeldKind::Scroll),
+        NodeKind::Canvas(canvas) => {
+            (canvas.handlers.any() || node.on_key.is_some()).then_some(HeldKind::Canvas)
+        }
         _ if focusable(node)
             || node.on_focus.is_some()
             || node.on_blur.is_some()
@@ -653,6 +688,7 @@ pub(super) fn focusable(node: &Node) -> bool {
         NodeKind::Slider(slider) => slider.on_change.is_some(),
         NodeKind::TextInput(_) | NodeKind::PasswordInput(_) | NodeKind::TextArea(_) => true,
         NodeKind::Select(select) => !select.options.is_empty(),
+        NodeKind::Canvas(canvas) => canvas.handlers.any() || node.on_key.is_some(),
         _ => false,
     }
 }
@@ -676,4 +712,37 @@ fn select_label(node: &Node) -> Option<String> {
             })
             .or_else(|| select.options.first().map(|option| option.value.clone()))
     })
+}
+
+/// The drag a press over a canvas holds (#242, the custom view's): what
+/// the window keeps while the button pressed over the canvas may still be
+/// down. Moves are coalesced as the custom view's were: while one is in
+/// flight, only the latest further move waits, and it is sent when the
+/// moves in flight are answered.
+pub(crate) struct CanvasDrag {
+    /// Whether the primary button was pressed over the canvas and is
+    /// still held: pointer moves and the release are sent only while it
+    /// is.
+    pub pressed: bool,
+    /// Where the pointer was last seen during the press, in the canvas's
+    /// coordinates: where a drag the window can no longer see the release
+    /// of ends.
+    pub last: (f32, f32),
+    /// Pointer moves sent to the view and not answered yet.
+    pub in_flight: u32,
+    /// The latest move of a drag that has not been sent, with the
+    /// modifiers held when it happened: sent when the moves in flight are
+    /// answered.
+    pub waiting: Option<((f32, f32), gpui::Modifiers)>,
+}
+
+impl Default for CanvasDrag {
+    fn default() -> CanvasDrag {
+        CanvasDrag {
+            pressed: false,
+            last: (0., 0.),
+            in_flight: 0,
+            waiting: None,
+        }
+    }
 }

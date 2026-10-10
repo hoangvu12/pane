@@ -4,16 +4,18 @@
 // command's screen, a list view described as a versioned JSON tree (ADR
 // 0036's envelope: `render` and `handle-event`, see docs/list-tree.md),
 // forms with a text field and a choice, the operating systems an item's
-// action supports, and custom views the extension draws from rectangles and
-// text; a designed view, a screen the extension describes as a tree of
-// layout nodes and UI components Pane renders (`open-view`, its `view`
-// resource answering `rendered` trees, see docs/designed-tree.md); and the
-// run entry point of a command that opens no screen (ADR
+// action supports, and a designed view, a screen the extension describes as
+// a tree of layout nodes and UI components Pane renders (`open-view`, its
+// `view` resource answering `rendered` trees, see docs/designed-tree.md;
+// the custom view the extension drew from rectangles and text became one
+// of its leaf nodes, the canvas, #242); and the run entry point of a
+// command that opens no screen (ADR
 // 0037). Both receive the command's launch record (wit/commands.wit), and
 // every command may close the window and show toasts and HUDs
 // (wit/feedback.wit), use the clipboard, open things, reveal and
 // recycle them (wit/system.wit), and ask Pane to draw one of its open
-// designed views again (wit/view.wit, #243). This
+// designed views again or measure text for the drawing of one of its
+// canvases (wit/view.wit, #243 and #242). This
 // is not the full Pane SDK: the SDKs (`pane-extension`, `@pane-app/extension`) hide
 // the JSON and the callback ids.
 package pane:extension@0.1.0;
@@ -79,100 +81,7 @@ interface command {
     message: string,
   }
 
-  /// What Pane shows of an item's custom view besides the view's drawing. In
-  /// the tree, an item's `customView` carries it as JSON; choosing the item
-  /// calls `open-custom-view` with the item's id.
-  record custom-view-info {
-    /// The screen's title.
-    title: string,
-    /// Names the view to assistive technology.
-    label: string,
-    /// What kind of control the view is to assistive technology.
-    role: custom-view-role,
-  }
 
-  enum custom-view-role {
-    /// A color chooser. Its frame's value names the chosen color.
-    color-well,
-  }
-
-  /// A color as 0xRRGGBB.
-  type rgb = u32;
-
-  /// A filled rectangle. Coordinates are logical pixels from the view's
-  /// top-left corner.
-  record rect {
-    x: s32,
-    y: s32,
-    width: u32,
-    height: u32,
-    fill: rgb,
-  }
-
-  /// One line of text in Pane's font, its top-left corner at `x`, `y`.
-  record text {
-    x: s32,
-    y: s32,
-    content: string,
-    color: rgb,
-  }
-
-  variant shape {
-    rect(rect),
-    text(text),
-  }
-
-  /// What a custom view shows: `shapes` painted in order, later ones over
-  /// earlier ones, clipped to `width` x `height` logical pixels.
-  record frame {
-    width: u32,
-    height: u32,
-    shapes: list<shape>,
-    /// The view's current value for assistive technology, such as the
-    /// chosen color's name.
-    value: string,
-  }
-
-  /// A position in the view, in logical pixels from its top-left corner.
-  /// It can lie outside the view while a pointer drag continues outside it.
-  record point {
-    x: s32,
-    y: s32,
-  }
-
-  /// The keys a focused custom view receives. Tab, Enter and Escape stay
-  /// with Pane (focus, confirm and back).
-  enum key {
-    left,
-    right,
-    up,
-    down,
-    home,
-    end,
-  }
-
-  variant view-event {
-    /// A key was pressed while the view had keyboard focus.
-    key(key),
-    /// The primary pointer button was pressed over the view.
-    pointer-down(point),
-    /// The pointer moved while the button pressed over the view is held.
-    pointer-move(point),
-    /// That button was released, over the view or not.
-    pointer-up(point),
-  }
-
-  /// A custom view the user has open. The extension keeps the view's state
-  /// in it. Pane drops it when the view closes, and never uses it again.
-  resource custom-view {
-    /// Draws the view as it is now.
-    render: async func() -> frame;
-    /// Handles the user's input to the view. Pane then calls `render`. An
-    /// error is shown to the user; the view stays open.
-    handle-event: async func(event: view-event) -> result<_, string>;
-  }
-
-  /// A designed view the user has open: a screen the extension describes as
   /// a tree of layout nodes and UI components that Pane renders (ADR 0036;
   /// `docs/designed-tree.md` describes every node). The extension keeps the
   /// view's state in the resource. Pane drops it when the view leaves the
@@ -293,12 +202,6 @@ interface command {
   /// every field of the form, in order. The returned text is shown to the
   /// user as the result; an error is shown next to its field.
   submit-form: async func(item-id: string, values: list<field-value>) -> result<string, form-error>;
-
-  /// Open the custom view of the item with `item-id`. Each call opens a new
-  /// view with its own state. The canvas retires it (#242), which moves a
-  /// custom view's shapes onto the designed tree as one node among the
-  /// layout.
-  open-custom-view: async func(item-id: string) -> result<custom-view, string>;
 
   /// Opens the designed view of the command `command` (its id in
   /// `pane.json`, so one component can serve several commands), launched as

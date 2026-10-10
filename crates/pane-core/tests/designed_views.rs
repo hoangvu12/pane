@@ -460,6 +460,7 @@ fn kinds_of(node: &Node) -> Vec<String> {
             NodeKind::GridItem(_) => "grid-item".to_owned(),
             NodeKind::ListDropdown(_) => "list-dropdown".to_owned(),
             NodeKind::Detail(_) => "detail".to_owned(),
+            NodeKind::Canvas(_) => "canvas".to_owned(),
             NodeKind::Unknown(kind) => kind.to_owned(),
         }
     };

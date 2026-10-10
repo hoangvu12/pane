@@ -10,6 +10,13 @@
       "subtitle": "A designed view whose trees are written by hand",
       "component": "designed_fixture.wasm",
       "mode": "designed"
+    },
+    {
+      "id": "canvas",
+      "title": "Designed canvas fixture",
+      "subtitle": "A canvas that fills its space and draws what it receives",
+      "component": "designed_fixture.wasm",
+      "mode": "designed"
     }
   ]
 }

@@ -62,7 +62,7 @@
 // web for the selected text and says when nothing is selected. Where Pane
 // cannot do one yet, a failure toast says "Not available here yet" with
 // Pane's reason; a failure is an error the command answers with.
-import type { Action, Command, CustomView, Item, List, Shortcut } from "@pane-app/extension";
+import type { Action, Command, DesignedView, Item, List, Shortcut } from "@pane-app/extension";
 import {
   clearSearchBar,
   closeMainWindow,
@@ -675,7 +675,7 @@ export const command: Command = {
     throw new Error(`The actions sample has no forms: ${itemId}`);
   },
 
-  async openCustomView(itemId: string): Promise<CustomView> {
-    throw new Error(`The actions sample has no custom views: ${itemId}`);
+  async openView(itemId: string): Promise<DesignedView> {
+    throw new Error(`The actions sample opens no designed view: ${itemId}`);
   },
 };

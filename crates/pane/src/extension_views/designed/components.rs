@@ -526,7 +526,7 @@ fn link_of(
 /// The icon `icon` as the shared drawing draws it here, its tint corrected
 /// for contrast against the surface under it at the component set's own
 /// ratio.
-fn drawn(icon: &Icon, draw: &Draw) -> extension_icon::DrawnIcon {
+pub(super) fn drawn(icon: &Icon, draw: &Draw) -> extension_icon::DrawnIcon {
     icons::drawn_on(
         icon,
         draw.theme,
@@ -536,7 +536,7 @@ fn drawn(icon: &Icon, draw: &Draw) -> extension_icon::DrawnIcon {
 }
 
 /// One icon at `pixels`, drawn bare.
-fn icon_at(icon: &Icon, pixels: f32, path: &str, draw: &Draw) -> Stateful<Div> {
+pub(super) fn icon_at(icon: &Icon, pixels: f32, path: &str, draw: &Draw) -> Stateful<Div> {
     let theme = draw.theme;
     let drawn = drawn(icon, draw);
     let size = IconSize::small(px(pixels));

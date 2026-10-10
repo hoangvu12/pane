@@ -77,9 +77,9 @@ pub use launcher::clipboard_view;
 pub use launcher::search_files;
 pub use launcher::{
     AliasOutcome, ApplicationUpdate, BuildFailure, CommandPreferences, CommandRegistration,
-    ComputedAnswer, CustomViewSnapshot, DISMISS_NOTICE, DesignedDropdown, DesignedList,
-    DesignedRow, DesignedViewSnapshot, Development, ExtensionMark, ExtensionOperation, FormField,
-    FormView, GridShape, HotkeyOutcome, ItemAction, ItemActions, LOADING_MS, Launcher,
+    ComputedAnswer, DISMISS_NOTICE, DesignedDropdown, DesignedList, DesignedRow,
+    DesignedViewSnapshot, Development, ExtensionMark, ExtensionOperation, FormField, FormView,
+    GridShape, HotkeyOutcome, ItemAction, ItemActions, LOADING_MS, Launcher,
     LauncherView, ListPresentation, LogNotice, MANAGE_EXTENSIONS, OpenSubmenu, OperationKind,
     PackagePreferences, PinTarget, PreferenceField, PreferencesTarget, Presentation, Question,
     QuickSlot, ResultAction, ResultActionItem, ResultActions, Row, RowKind, RowPresentation,
@@ -112,25 +112,18 @@ pub use runtime::Timers;
 #[doc(hidden)]
 pub use runtime::memory_peak;
 pub use runtime::{
-    Action, ActionKind, ActionStyle, ActionSubmenu, Align, Answer, Badge, Border, Button,
-    ButtonTone, COMPONENT_SET, COMPUTE_LIMIT, CallError, Checkbox, Choice, CustomViewInfo,
-    CustomViewRole, DesignedEvent, DesignedHandler, DesignedNext, DesignedRendered, DesignedTree,
-    DropdownItem, EmptyState, Field, FieldKind, FieldValue, Finite, Fit, Form, FormError, Frame,
-    GRID_COLUMNS, GUEST_MEMORY, GridItem, IconExtent, IconNode, Image, Item, Justify, Key,
-    KeySequence, Keycap, Layout, Length, Link, ListAction, ListDropdown, ListItem, ListNode,
-    ListSection, Loading, MAX_DEPTH, MAX_FRAME_SHAPES, MAX_FRAME_SIZE, MAX_GRID_COLUMNS,
-    MAX_INLINE_IMAGE, MAX_MARKDOWN_CHARS, MAX_NAVIGATION_DEPTH, MAX_NODES, MAX_PAGE_SIZE, MAX_PX,
-    MAX_TREE_BYTES, Markdown, MetadataItem, MetadataList, Node, NodeKind, Offset, Orientation,
-    Padding, Paint, PathKind, Place, Point, Progress, RadiusLength, Rgb, RichRow, RowAccessory,
-    Runtime, RuntimeFailure, RuntimeStatus, SectionHeader, Segment, Segmented, Select, Shape,
-    Sizing, Slider, Space, Span, Style, SubmenuEntries, Surface, TREE_VERSION, Tag, Text,
-    TextContent, TextInput, TextLevel, TextStyle, Toggle, UNRESPONSIVE_LIMIT, View, ViewEvent,
-    ViewId, WARN_AFTER, key_problems,
+    ButtonTone, COMPONENT_SET, COMPUTE_LIMIT, CallError, Canvas, CanvasA11y, CanvasHandlers,
+    CanvasOp, CanvasRole, CanvasStroke, CanvasText, Checkbox, Choice, DesignedEvent,
+    DesignedHandler, DesignedNext, DesignedRendered, DesignedTree, DropdownItem, EmptyState, Field,
+    FieldKind, FieldValue, Finite, Fit, Form, FormError, GRID_COLUMNS, GUEST_MEMORY, GridItem,
+    IconExtent, IconNode, Image, Item, Justify, Key, KeySequence, Keycap, Layout, Length, Link,
+    ListAction, ListDropdown, ListItem, ListNode, ListSection, Loading, MAX_CANVAS_OPS,
+    MAX_CANVAS_TEXT_CHARS, MAX_DEPTH, MAX_GRID_COLUMNS, MAX_INLINE_IMAGE, MAX_MARKDOWN_CHARS,
+    MAX_NAVIGATION_DEPTH, MAX_NODES, MAX_PAGE_SIZE, MAX_PX, MAX_TREE_BYTES, Markdown, MetadataItem,
+    MetadataList, Node, NodeKind, Offset, Orientation, Padding, Paint, PathKind, Place, Progress,
+    RadiusLength, RichRow, RowAccessory, Runtime, RuntimeFailure, RuntimeStatus, SectionHeader,
+    Segment, Segmented, Select, Sizing, Slider, Space, Span, StrokeCap, StrokeJoin, Style,
+    SubmenuEntries, Surface, TREE_VERSION, Tag, Text, TextContent, TextInput, TextLevel, TextStyle,
+    Toggle, UNRESPONSIVE_LIMIT, View, ViewId, WARN_AFTER, key_problems,
 };
-pub use search::{SettingsEntry, settings_matches, title_matches};
-pub use tokens::{IconSize, Radius};
-// Icons, accessories and tooltips (#139).
-pub use icons::{Color, Icon, IconSource, Mask, Tint, Tone};
-
-pub use launcher::{AccessoryKind, ShownAccessory, absolute_date, relative_date};
 pub use runtime::{Accessory, AccessoryContent, ItemLook, MAX_ACCESSORIES};

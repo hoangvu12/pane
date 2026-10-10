@@ -15,7 +15,7 @@
 import { type FileEntry, search, status } from "pane:extension/file-index@0.1.0";
 import type {
   Command,
-  CustomView,
+  DesignedView,
   List,
   RootResult,
   RootResults,
@@ -58,11 +58,11 @@ async function submitForm(itemId: string): Promise<string> {
   throw { message: `unknown form: ${itemId}` };
 }
 
-async function openCustomView(itemId: string): Promise<CustomView> {
-  throw new Error(`unknown view: ${itemId}`);
+async function openView(itemId: string): Promise<DesignedView> {
+  throw new Error(`unknown designed view: ${itemId}`);
 }
 
-export const command: Command = { render, submitForm, openCustomView };
+export const command: Command = { render, submitForm, openView };
 
 // A command's own search is the designed List's search-text event now
 // (#240, `command-search` retired): root search still asks this sample for

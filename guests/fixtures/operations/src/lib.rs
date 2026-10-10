@@ -27,7 +27,7 @@ use pane_extension::alloc::{format, string::String, string::ToString, vec::Vec};
 use pane_extension::feedback::{Toast, show_toast};
 use pane_extension::operations::call;
 use pane_extension::{
-    Command, CustomView, FieldValue, FormError, Item, List, NoCustomView, publish, settings,
+    Command, FieldValue, FormError, Item, List, settings,
 };
 use serde_json::{Value, json};
 
@@ -201,7 +201,6 @@ async fn outcome(item_id: &str) -> Result<String, String> {
 }
 
 impl Command for Fixture {
-    type CustomView = NoCustomView;
     type DesignedView = pane_extension::view::NoDesignedView;
 
     async fn render() -> Result<List, String> {
@@ -218,9 +217,6 @@ impl Command for Fixture {
         })
     }
 
-    async fn open_custom_view(item_id: String) -> Result<CustomView, String> {
-        Err(format!("unknown view: {item_id}"))
-    }
 }
 
 impl publish::Guest for Fixture {
