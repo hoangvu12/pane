@@ -920,7 +920,9 @@ mod tests {
 
     #[test]
     fn images_read_with_their_sizes_and_titles() {
-        let blocks = parse("![Pane's mark](assets/mark.png =48x24 \"the mark\") and ![icon](https://pane.dev/logo.png).");
+        let blocks = parse(
+            "![Pane's mark](assets/mark.png =48x24 \"the mark\") and ![icon](https://pane.dev/logo.png).",
+        );
         let Block::Paragraph(runs) = &blocks[0] else {
             panic!("a paragraph: {blocks:?}");
         };

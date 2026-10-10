@@ -2076,9 +2076,7 @@ impl Launcher {
             }
             let last = rows - 1;
             let at = match state.view.selected {
-                Some(selected) => {
-                    (selected as isize + delta).clamp(0, last as isize) as usize
-                }
+                Some(selected) => (selected as isize + delta).clamp(0, last as isize) as usize,
                 // Down chooses the first, Up the last.
                 None => usize::from(delta > 0) * last,
             };

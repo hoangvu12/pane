@@ -472,11 +472,7 @@ pub(super) fn draw_node(
         NodeKind::List(_) | NodeKind::Grid(_) => {
             let own = path.clone();
             let children = children(node, path, inner, cx);
-            let div = apply(
-                div().id(own).flex().flex_col().min_w(px(0.)),
-                node,
-                &draw,
-            );
+            let div = apply(div().id(own).flex().flex_col().min_w(px(0.)), node, &draw);
             named(div, name.as_deref()).into_any_element()
         }
         NodeKind::ListSection(_) => {

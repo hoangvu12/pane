@@ -537,9 +537,7 @@ impl Launcher {
             if let Some(callback) = list.on_selection_change {
                 events.push((DesignedHandler::Selection, callback, value_payload(&key)));
             }
-            if more
-                && let Some(callback) = list.on_load_more
-            {
+            if more && let Some(callback) = list.on_load_more {
                 events.push((DesignedHandler::More, callback, "{}".to_owned()));
             }
             let key = (!list.key.is_empty()).then_some(list.key.clone());

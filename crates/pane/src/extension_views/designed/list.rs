@@ -230,6 +230,9 @@ impl LauncherWindow {
             .iter()
             .map(|row| (row.title.clone(), row.subtitle.clone()))
             .collect();
+        // The cells' titles and subtitles are the launcher's rows', which
+        // the designed rows sit beside.
+
         let mut sections = Vec::new();
         let mut at = 0;
         let mut rest = list.rows.len();
@@ -301,7 +304,14 @@ impl LauncherWindow {
                 .position(|held| held.key == row.key)
                 .unwrap_or(0);
             let selected = list.selected.as_deref() == Some(row.key.as_str());
-            cells.push(self.render_designed_cell(view, list, index, selected, cx));
+            cells.push(self.render_designed_cell(
+                view,
+                list,
+                &titles,
+                index,
+                selected,
+                cx,
+            ));
         }
         let shape = rows
             .first()
@@ -339,6 +349,7 @@ impl LauncherWindow {
         &mut self,
         view: &DesignedViewSnapshot,
         list: &DesignedList,
+        titles: &[(String, Option<String>)],
         index: usize,
         selected: bool,
         cx: &mut Context<Self>,
