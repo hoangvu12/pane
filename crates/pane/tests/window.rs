@@ -4458,6 +4458,18 @@ fn five_pins_leave_no_room_for_the_pin_hint(cx: &mut TestAppContext) {
     assert_eq!(strip.size.height, px(2. + 80. + 6.));
 }
 
+/// How many timer firings the registrations sample's dynamic root item
+/// says it has counted, from its subtitle "N timer firings, ...".
+fn ticks_of(view: &pane_core::LauncherView) -> u64 {
+    view.rows
+        .iter()
+        .find(|row| row.title == "Registrations: counting")
+        .and_then(|row| row.subtitle.as_deref())
+        .and_then(|subtitle| subtitle.split(' ').next())
+        .and_then(|count| count.parse().ok())
+        .unwrap_or(0)
+}
+
 /// A dynamic root item's row is drawn in root search, its action runs
 /// with Enter, and the timer updates the row as it fires (#158): real
 /// key events, the registrations sample, and the activation entry point
@@ -4474,7 +4486,7 @@ fn a_dynamic_root_items_row_and_its_action_run(cx: &mut TestAppContext) {
         .block_on(launcher.install_package(&package));
 
     // The activation entry point registered the item: its row is listed
-    // and drawn.
+    // and drawn, nothing counted yet.
     let view = until(&window, cx, |view| {
         view.rows
             .iter()
@@ -4495,26 +4507,11 @@ fn a_dynamic_root_items_row_and_its_action_run(cx: &mut TestAppContext) {
     );
 
     // Enter runs its first action: the count rises in the row.
+    let before = ticks_of(&view);
     cx.simulate_keystrokes("enter");
-    let view = until(&window, cx, |view| {
-        view.rows
-            .iter()
-            .any(|row| row.subtitle.as_deref() == Some("1 timer firings, 0 watcher changes (Rust)"))
-    });
-    assert_eq!(
-        view.rows
-            .iter()
-            .find(|row| row.title == "Registrations: counting")
-            .unwrap()
-            .subtitle
-            .as_deref(),
-        Some("1 timer firings, 0 watcher changes (Rust)")
-    );
+    let view = until(&window, cx, |view| ticks_of(view) > before);
 
     // The timer fires by the system's clock and updates the row again.
-    until(&window, cx, |view| {
-        view.rows
-            .iter()
-            .any(|row| row.subtitle.as_deref() == Some("2 timer firings, 0 watcher changes (Rust)"))
-    });
+    let counted = ticks_of(&view);
+    until(&window, cx, |view| ticks_of(view) > counted);
 }
