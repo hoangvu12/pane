@@ -337,11 +337,11 @@ An extension package distributed as a Git repository whose root holds its packag
 _Avoid_: Cloned extension, repository checkout (Pane keeps no repository)
 
 **Release revision**:
-A Git revision of a Git-distributed package whose commit holds the built components its manifest names, such as a release tag or a release branch its author commits the built files to; only a release revision can be installed. A revision holding only the source is a source-only package.
+A Git revision of a Git-distributed package whose commit holds the built components its manifest names, such as a release tag or a release branch its author commits the built files to; only a release revision can be installed. A repository of one extension tags its releases `v<semver>`, and a collection tags each extension's `<id>/v<semver>` (ADR 0044). A revision holding only the source is a source-only package.
 _Avoid_: Release (a Pane release), build
 
 **Tracked reference**:
-The branch a Git-distributed package was installed from (the repository's default branch when none was named): an update fetches that branch again, whatever commit it has moved to. A tag or a commit named by its id is a pinned revision instead, which an update keeps; naming another reference changes either.
+The branch a Git-distributed package was installed from (the repository's default branch when none was named): an update fetches that branch again, whatever commit it has moved to. A tag or a commit named by its id is a pinned revision instead, which an update keeps — an extension of a collection installed from its own release tag being the exception, its newer releases being followed; naming another reference changes either.
 _Avoid_: Channel, floating version
 
 **Pinned version**:

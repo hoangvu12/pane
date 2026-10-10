@@ -689,6 +689,35 @@ impl GitRevision {
             GitRef::Commit => format!("commit {}", self.short_commit()),
         }
     }
+
+    /// Whether this revision is installed from the release tag of the
+    /// extension `id` of a collection: `<id>/v<semver>`, naming one of its
+    /// releases (ADR 0044), which an update follows to the newest one
+    /// above the version installed, pinning that tag's commit — as a
+    /// default extension's release tag is followed — while any other tag,
+    /// and a commit, pins this revision as ever.
+    pub(crate) fn is_own_release_tag(&self, id: &str) -> bool {
+        self.own_release_version(id).is_some()
+    }
+
+    /// The version the release tag of the extension `id` of a collection
+    /// names: `1.2.0` of `refs/tags/clock/v1.2.0`, read as the version
+    /// installed when a manifest declares none; `None` when this is not
+    /// that tag.
+    pub(crate) fn own_release_version(&self, id: &str) -> Option<String> {
+        let GitRef::Tag(tag) = &self.reference else {
+            return None;
+        };
+        // `<id>/v` and a dotted-number version, the same grammar a
+        // release tag's listing takes: a prerelease's dash, a moving
+        // tag's name, another extension's tag — none names a release.
+        let version = tag
+            .strip_prefix(id)
+            .and_then(|rest| rest.strip_prefix('/'))
+            .and_then(|release| release.strip_prefix('v'))?;
+        release_version(version)?;
+        Some(version.to_owned())
+    }
 }
 
 /// Where a previewed or installed Git package was fetched from.
@@ -766,13 +795,14 @@ pub(crate) fn resolve_reference(
 }
 
 /// One release tag of a repository, as ADR 0044 writes one: `v` followed
-/// by dotted numbers, such as `v1.2.0`, with the commit it points to
-/// (peeled of any tag object, as `ls-refs` peels it). A tag whose name
-/// writes no version — `v1.2.0-beta.1`, `v-` — is not a release tag, as
+/// by dotted numbers, such as `v1.2.0` — or `<id>/v1.2.0`, one extension
+/// of a collection's — with the commit it points to (peeled of any tag
+/// object, as `ls-refs` peels it). A tag whose name writes no version —
+/// `v1.2.0-beta.1`, `v-`, `clock/wip` — is not a release tag, as
 /// [`crate::defaults::parse_pins`] says of a pin's.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ReleaseTag {
-    /// The tag's name, `v1.2.0`.
+    /// The tag's name, `v1.2.0` or `clock/v1.2.0`.
     pub tag: String,
     /// The commit the tag points to, which pins the bytes of the release
     /// it names (ADR 0021).
@@ -780,29 +810,42 @@ pub struct ReleaseTag {
 }
 
 impl ReleaseTag {
-    /// The version the tag's name writes after its `v`.
+    /// The version the tag's name writes after its `v`: `1.2.0` of
+    /// `v1.2.0`, and of `clock/v1.2.0`, one extension of a collection's
+    /// release (ADR 0044).
     pub fn version(&self) -> &str {
-        self.tag.strip_prefix('v').unwrap_or(&self.tag)
+        let name = self
+            .tag
+            .rsplit_once('/')
+            .map_or(&self.tag[..], |(_, release)| release);
+        name.strip_prefix('v').unwrap_or(name)
     }
 }
 
-/// The release tags of `repository`, newest first, with the commit each
-/// points to: the tags a default extension's repository offers as
-/// releases, which the updater of an installed default extension reads to
-/// find the newest one above the version installed
-/// ([`crate::defaults`]). Nothing is fetched. `None` when the listing is
+/// The release tags of `repository` whose names begin with `prefix`, the
+/// part after `refs/tags/` and before the version: `v` for a repository
+/// of one extension, whose releases are tagged `v<semver>`, and `<id>/v`
+/// for the extension `id` of a collection, whose are tagged
+/// `<id>/v<semver>` (ADR 0044) — the listings the updater of an
+/// installed default extension and of one extension of a collection
+/// installed from a release tag read to find the newest release above
+/// the version installed. Nothing is fetched. `None` when the listing is
 /// longer than the [`MAX_REFS`] Pane reads (as for a repository with very
 /// many tags). Blocks on the network.
-pub fn release_tags(repository: &Repository) -> Result<Option<Vec<ReleaseTag>>, String> {
+pub fn release_tags(
+    repository: &Repository,
+    prefix: &str,
+) -> Result<Option<Vec<ReleaseTag>>, String> {
     let remote = Remote::connect(repository)?;
-    let Some(listed) = remote.list_refs(&["refs/tags/v"])? else {
+    let listing = format!("refs/tags/{prefix}");
+    let Some(listed) = remote.list_refs(&[listing.as_str()])? else {
         return Ok(None);
     };
     let mut tags: Vec<(Vec<u64>, ReleaseTag)> = listed
         .into_iter()
         .filter_map(|(name, commit, _)| {
             let tag = name.strip_prefix("refs/tags/")?;
-            let version = release_version(tag.strip_prefix('v')?)?;
+            let version = release_version(tag.strip_prefix(prefix)?)?;
             Some((
                 version,
                 ReleaseTag {
@@ -2216,6 +2259,37 @@ mod tests {
             assert!(!is_newer_release(not, "1.0.0"), "{not}");
             assert!(!is_newer_release("2.0.0", not), "{not}");
         }
+    }
+
+    #[test]
+    fn one_extension_of_a_collection_s_own_release_tag_is_named() {
+        // A record's tag `<id>/v<semver>` names one extension's release
+        // (ADR 0044), which its updates follow; no other tag does.
+        let installed_from =
+            |tag: &str| GitRevision::from_record(Some(&format!("refs/tags/{tag}")), "ab", true);
+        let clock = installed_from("clock/v1.2.0");
+        assert!(clock.is_own_release_tag("clock"));
+        assert_eq!(clock.own_release_version("clock").as_deref(), Some("1.2.0"));
+        // Another extension's release, the repository's own tag, another
+        // extension's id spelled at the tag's start, a prerelease, a
+        // moving tag: none is this extension's release.
+        assert!(!clock.is_own_release_tag("timers"));
+        assert!(!installed_from("v1.2.0").is_own_release_tag("clock"));
+        assert!(!installed_from("clocks/v1.2.0").is_own_release_tag("clock"));
+        assert!(!installed_from("clock/v1.2.0-beta.1").is_own_release_tag("clock"));
+        assert!(!installed_from("clock/latest").is_own_release_tag("clock"));
+        // A tracked reference and a commit are no tag at all.
+        let branch = GitRevision::from_record(Some("refs/heads/main"), "ab", false);
+        assert!(!branch.is_own_release_tag("clock"));
+        let commit = GitRevision::from_record(None, "ab", true);
+        assert!(!commit.is_own_release_tag("clock"));
+        // A prefixed tag's version, as `ReleaseTag::version` names it.
+        let tag = ReleaseTag {
+            tag: "clock/v0.2.0".into(),
+            commit: "ab".into(),
+        };
+        assert_eq!(tag.version(), "0.2.0");
+        assert!(is_newer_release(tag.version(), "0.1.0"));
     }
 
     #[test]
