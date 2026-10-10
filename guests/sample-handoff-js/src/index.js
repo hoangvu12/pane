@@ -52,7 +52,11 @@ const DRAFT_FORM = {
   submitLabel: "Save",
 };
 
-/** `text` in quotes, or "nothing" for empty. */
+/**
+ * `text` in quotes, or "nothing" for empty.
+ * @param {string} text
+ * @returns {string}
+ */
 function quoted(text) {
   return text === "" ? "nothing" : `“${text}”`;
 }
