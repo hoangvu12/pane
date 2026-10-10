@@ -322,7 +322,8 @@ fn texts_of(tree: &pane_core::DesignedTree) -> Vec<String> {
 
 /// The error the field `key` of a Pane form's tree carries.
 fn field_error(launcher: &Launcher, key: &str) -> Option<String> {
-    let form = launcher.view().form()?;
+    let view = launcher.view();
+    let form = view.form()?;
     fn at(node: &pane_core::Node, key: &str) -> Option<String> {
         if node.key.as_deref() == Some(key) {
             return match &node.kind {

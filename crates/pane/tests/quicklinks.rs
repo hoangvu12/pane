@@ -75,8 +75,8 @@ fn launcher_with(links: &[(&str, &str)]) -> (Launcher, Changes, Arc<RecordingSys
         launcher.select(index);
         block_on(launcher.activate_selected());
         let values = vec![
-            ("name".to_owned(), pane_core::FormValue::Text(name.into())),
-            ("link".to_owned(), pane_core::FormValue::Text(link.into())),
+            ("name".to_owned(), pane_core::FormValue::Text((*name).into())),
+            ("link".to_owned(), pane_core::FormValue::Text((*link).into())),
         ];
         let submitting = launcher.submit_designed_form(None, values);
         block_on(submitting);
