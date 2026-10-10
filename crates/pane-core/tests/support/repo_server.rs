@@ -209,11 +209,7 @@ pub fn greeter_files(guests: &Path, built: bool) -> Vec<(&'static str, Vec<u8>)>
 /// package under `extensions/clock`, its titles saying the extension's id,
 /// with its built component only when `built` (else the revision holds the
 /// source only).
-pub fn collection_files(
-    guests: &Path,
-    index: &str,
-    built: bool,
-) -> Vec<(&'static str, Vec<u8>)> {
+pub fn collection_files(guests: &Path, index: &str, built: bool) -> Vec<(&'static str, Vec<u8>)> {
     let sample = guests.join("git/greeter");
     let read = |file: &str| {
         std::fs::read(sample.join(file)).unwrap_or_else(|error| {

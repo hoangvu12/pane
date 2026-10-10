@@ -145,13 +145,14 @@ impl Dirs {
             "Clock 0.1.0 source",
         );
         repo.git(&["switch", "--quiet", "-c", "release"]);
-        let release = repo.commit(
-            &collection_files(&guests(), INDEX, true),
-            "Release 0.1.0",
-        );
+        let release = repo.commit(&collection_files(&guests(), INDEX, true), "Release 0.1.0");
         repo.tag("v0.1.0");
         repo.git(&["switch", "--quiet", "main"]);
-        Tools { url, source, release }
+        Tools {
+            url,
+            source,
+            release,
+        }
     }
 
     /// The identity of the repository served as `name`.
@@ -1212,7 +1213,10 @@ fn an_extension_of_a_collection_is_previewed_installed_and_its_command_runs() {
     assert_eq!(launcher.view().title, "Clock from Git");
     let details = details(&launcher);
     let expected = [
-        format!("Source: Git repository {}#clock", &dirs.identity("tools")[4..]),
+        format!(
+            "Source: Git repository {}#clock",
+            &dirs.identity("tools")[4..]
+        ),
         "Extension: clock, one of the extensions its collection lists".into(),
         "Version: 0.1.0".into(),
         "Revision: tag v0.1.0, which you named: installing pins it to that revision".into(),
@@ -1441,7 +1445,10 @@ fn every_way_a_collection_index_is_refused_saying_what_is_wrong() {
     );
     // A root holding both manifests.
     let mut both = collection_files(&guests(), INDEX, true);
-    both.push(("pane.json", fs::read(guests().join("git/greeter/pane.json")).unwrap()));
+    both.push((
+        "pane.json",
+        fs::read(guests().join("git/greeter/pane.json")).unwrap(),
+    ));
     let commit = repo.commit(&both, "both");
     repo.tag("both");
     let error = refusal(&launcher, &format!("{url}#clock@both"));
@@ -1547,7 +1554,10 @@ fn the_local_folder_form_installs_one_extension_of_a_collection() {
         "{details:#?}"
     );
     assert!(
-        has(&details, "Extension: clock, one of the extensions its collection lists"),
+        has(
+            &details,
+            "Extension: clock, one of the extensions its collection lists"
+        ),
         "{details:#?}"
     );
     assert_eq!(titles(&launcher), ["Install"]);

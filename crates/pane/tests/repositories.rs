@@ -172,7 +172,10 @@ fn one_extension_of_a_collection_named_by_its_id_is_previewed_installed_and_run(
     let repos = tempfile::tempdir().unwrap();
     let index = r#"{ "extensions": [ { "id": "clock", "path": "extensions/clock" } ] }"#;
     let repo = Repo::init(&repos.path().join("tools"), server.home());
-    repo.commit(&collection_files(&guests, index, false), "Clock 0.1.0 source");
+    repo.commit(
+        &collection_files(&guests, index, false),
+        "Clock 0.1.0 source",
+    );
     repo.git(&["switch", "--quiet", "-c", "release"]);
     repo.commit(&collection_files(&guests, index, true), "Release 0.1.0");
     repo.tag("v0.1.0");

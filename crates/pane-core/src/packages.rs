@@ -124,7 +124,7 @@ impl PackageIdentity {
     /// extension's folder, names it, so moving the folder keeps the
     /// identity.
     pub fn local_extension(folder: &Path, id: &str) -> Result<PackageIdentity, PackageError> {
-        local_extension_of(PackageIdentity::local(folder)?, id)
+        Ok(local_extension_of(PackageIdentity::local(folder)?, id))
     }
 
     /// A stable key for this identity, for ids and records rather than for
@@ -1741,8 +1741,11 @@ impl SourcePackage {
                 Err(error) => return Err(error),
             };
             for (_, component) in manifest.components() {
-                let path =
-                    format!("{}/{}", entry.path, component.to_string_lossy().replace('\\', "/"));
+                let path = format!(
+                    "{}/{}",
+                    entry.path,
+                    component.to_string_lossy().replace('\\', "/")
+                );
                 if origin.lfs_pointers.contains(&path) {
                     return Err(PackageError::Git(format!(
                         "{revision} stores its component {path} with Git LFS, which Pane does not \
@@ -1935,7 +1938,10 @@ impl SourcePackage {
                 crate::collections::COLLECTION_FILE
             ))
         };
-        if crate::collections::read(&folder).map_err(invalid)?.is_some() {
+        if crate::collections::read(&folder)
+            .map_err(invalid)?
+            .is_some()
+        {
             let file = crate::collections::COLLECTION_FILE;
             if folder.join(MANIFEST_FILE).is_file() {
                 return Err(PackageError::Collection(format!(
@@ -1972,10 +1978,7 @@ impl SourcePackage {
     /// package is read: from the folder the collection's index names for
     /// it, self-contained, with the identity of the collection folder and
     /// the id (ADR 0044). Nothing in the folder runs.
-    pub(crate) fn read_collection(
-        folder: &Path,
-        id: &str,
-    ) -> Result<SourcePackage, PackageError> {
+    pub(crate) fn read_collection(folder: &Path, id: &str) -> Result<SourcePackage, PackageError> {
         if !crate::collections::is_id(id) {
             return Err(PackageError::Collection(format!(
                 "the extension id `{id}` of a collection must be lowercase letters, digits and \
@@ -1998,8 +2001,7 @@ impl SourcePackage {
         };
         let file = crate::collections::COLLECTION_FILE;
         let one_extension = root.join(MANIFEST_FILE).is_file();
-        let Some(collection) = crate::collections::read(&root).map_err(invalid)?
-        else {
+        let Some(collection) = crate::collections::read(&root).map_err(invalid)? else {
             if one_extension {
                 return Err(PackageError::Collection(format!(
                     "The folder {} is not a collection: its root holds {MANIFEST_FILE}, one \
@@ -3263,9 +3265,7 @@ impl Store {
         // Git fields, in the one shape; a default's own part of its record
         // is the version its manifest declares.
         let git = match (&package.git, &package.default) {
-            (Some(origin), _) => {
-                Some(GitRecordJson::of(origin, package.extension.as_deref()))
-            }
+            (Some(origin), _) => Some(GitRecordJson::of(origin, package.extension.as_deref())),
             (None, Some(origin)) => Some(GitRecordJson::of_revision(
                 &origin.repository,
                 &origin.revision,

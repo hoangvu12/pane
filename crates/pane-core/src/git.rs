@@ -344,8 +344,10 @@ impl GitSpec {
         };
         let extension = match extension {
             Some("") => {
-                return refused("a `#` names one extension of a collection by its id, which is \
-                 missing");
+                return refused(
+                    "a `#` names one extension of a collection by its id, which is \
+                     missing",
+                );
             }
             Some(extension) => {
                 if !crate::collections::is_id(extension) {
@@ -2097,7 +2099,9 @@ mod tests {
         // The repository is fetched as written, from its address, the id
         // naming no part of it.
         assert_eq!(
-            spec("https://github.com/owner/tools.git#clock@v1").repository.url(),
+            spec("https://github.com/owner/tools.git#clock@v1")
+                .repository
+                .url(),
             "https://github.com/owner/tools.git"
         );
         // Every address form names the extension, as every one names the
@@ -2122,7 +2126,10 @@ mod tests {
             "github.com/o/r#clock@",
         ] {
             let error = GitSpec::parse(bad).unwrap_err();
-            assert!(error.contains("is not a Git repository address"), "{bad}: {error}");
+            assert!(
+                error.contains("is not a Git repository address"),
+                "{bad}: {error}"
+            );
         }
         // A `#` inside a reference, which Git accepts of a branch or tag
         // name, still reads as part of the reference.

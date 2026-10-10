@@ -97,7 +97,10 @@ pub(crate) fn read(folder: &Path) -> Result<Option<Collection>, String> {
                 shown(&entry.id)
             ));
         }
-        if extensions.iter().any(|seen: &Extension| seen.id == entry.id) {
+        if extensions
+            .iter()
+            .any(|seen: &Extension| seen.id == entry.id)
+        {
             return Err(format!(
                 "the extension id `{}` is listed twice",
                 shown(&entry.id)
@@ -208,9 +211,18 @@ mod tests {
     fn every_way_an_index_cannot_be_taken_says_what_is_wrong() {
         for (index, why) in [
             (r#"{}"#, "missing field `extensions`"),
-            (r#"{"unknown": 1, "extensions": []}"#, "unknown field `unknown`"),
-            (r#"{"extensions": [{"id": "clock"}]}"#, "missing field `path`"),
-            (r#"{"extensions": [{"path": "clock"}]}"#, "missing field `id`"),
+            (
+                r#"{"unknown": 1, "extensions": []}"#,
+                "unknown field `unknown`",
+            ),
+            (
+                r#"{"extensions": [{"id": "clock"}]}"#,
+                "missing field `path`",
+            ),
+            (
+                r#"{"extensions": [{"path": "clock"}]}"#,
+                "missing field `id`",
+            ),
             (
                 r#"{"extensions": [{"id": "Clock", "path": "x"}]}"#,
                 "the extension id `Clock` must be lowercase letters, digits and `-`",
@@ -233,9 +245,18 @@ mod tests {
                 r#"{"extensions": [{"id": "clock", "path": "a\\b"}]}"#,
                 "a character Windows does not allow",
             ),
-            (r#"{"extensions": [{"id": "clock", "path": ""}]}"#, "an empty or `.` part"),
-            (r#"{"extensions": [{"id": "clock", "path": "a//b"}]}"#, "an empty or `.` part"),
-            (r#"{"extensions": [{"id": "clock", "path": "con"}]}"#, "a Windows device name"),
+            (
+                r#"{"extensions": [{"id": "clock", "path": ""}]}"#,
+                "an empty or `.` part",
+            ),
+            (
+                r#"{"extensions": [{"id": "clock", "path": "a//b"}]}"#,
+                "an empty or `.` part",
+            ),
+            (
+                r#"{"extensions": [{"id": "clock", "path": "con"}]}"#,
+                "a Windows device name",
+            ),
             (
                 r#"{"renamed": {"old": "Clock"}, "extensions": []}"#,
                 "the id `Clock` that `renamed` maps `old` to must be lowercase letters, \
