@@ -778,7 +778,14 @@ impl Launcher {
             let package = state.package(identity)?;
             match (package.identity.npm_name(), package.git.as_ref()) {
                 (Some(name), _) => Source::Npm(name.to_owned()),
-                (None, Some(git)) => Source::Git(git.url.clone()),
+                // One extension of a collection is checked as the extension
+                // it is, its id naming it after `#` in the repository's
+                // address (ADR 0044); the repository alone would be read
+                // as the collection it holds.
+                (None, Some(git)) => Source::Git(match package.identity.extension_id() {
+                    Some(id) => format!("{}#{id}", git.url),
+                    None => git.url.clone(),
+                }),
                 (None, None) => return None,
             }
         };

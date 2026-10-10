@@ -9,6 +9,7 @@ mod atomic;
 pub mod autostart;
 pub mod changes;
 pub mod clipboard;
+mod collections;
 pub mod defaults;
 mod dependencies;
 pub mod develop;

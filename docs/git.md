@@ -78,7 +78,8 @@ helper files into Pane, as for a folder, and records the package in
 `installed.json` as `"git": "<host>/<path>", "gitUrl": "<address fetched>",
 "gitRef": "refs/tags/v1.0.0", "gitCommit": "<id>", "pinned": true` (no
 `gitRef` for the default branch or a commit named by its id; `pinned` for a
-tag or a commit). Its commands then run like any other.
+tag or a commit; for one extension of a [collection](#one-extension-of-a-collection-307),
+`"gitExtension": "<id>"` beside them). Its commands then run like any other.
 
 The revision is written into a download folder of its own under the data
 folder's `extensions/downloads/`, the one npm downloads use, removed once the
@@ -101,6 +102,39 @@ offers **Update**. A copy of the same code from a folder or from npm is
 another package, installed beside it and never changed by it: Pane does not
 merge sources, move data between them or infer personal and project scopes.
 Moving a repository to another host or path makes another package.
+
+## One extension of a collection (#307)
+
+A repository whose root holds `pane-collection.json` rather than `pane.json`
+is a **collection** ([ADR 0044](adr/0044-a-git-repository-holds-one-extension-or-a-collection.md)):
+it lists the extensions it offers, each by an id (lowercase letters, digits
+and `-`) and the folder holding it, with an optional `renamed` map of ids it
+renamed or removed. `#<id>` after the repository names one of them, a
+reference following as a reference follows a repository
+(`git:github.com/owner/tools#clock@refs/tags/clock/v1.2.0`), and it
+installs as a package of its own: the identity is
+`git:github.com/owner/tools#clock`, and it gets its own preview (which
+names the extension), managed copy, record, disabled state, uninstall and
+data, as any installed package. A second install of the same identity is
+refused; another extension of the same collection, or the repository's own
+package were it one, installs beside it.
+
+Only the files under the extension's folder reach its managed copy, so it
+must be self-contained: a component outside the folder is missing, and the
+revision is explained as source-only. An index that cannot be taken is
+refused saying what is wrong: a root holding both manifests, an unknown
+field, a duplicate id or path, a malformed id, an id reused through
+`renamed`, a path that is not a plain relative folder, or a path naming no
+package.
+
+Naming a collection without an id, by address or by a picked folder, is
+explained as a collection whose extension must be named; the list to choose
+from comes with a later ticket. A `#<id>` on a one-extension repository is
+refused. A local folder takes `#<id>` the same way
+(`pane --install <folder>#<id>`; the part after the last `#` is the id),
+with the identity `local:<folder>#<id>`, and a dependency's `git:` or
+`local:` source may name one extension of a collection, following the
+conflict rules a dependency's source already follows.
 
 ## References, tracking and pins
 
@@ -221,7 +255,7 @@ installed or left in the downloads folder:
 
 | Case | Status |
 | --- | --- |
-| Not an address Pane fetches | "`ftp://…` is not a Git repository address: Pane fetches Git repositories over HTTPS, and does not use `ftp://`"; plain `http://` ("… only over HTTPS …"), credentials in the address, `?`, `#`, `%`, `..` |
+| Not an address Pane fetches | "`ftp://…` is not a Git repository address: Pane fetches Git repositories over HTTPS, and does not use `ftp://`"; plain `http://` ("… only over HTTPS …"), credentials in the address, `?`, `%`, `..` (a `#` after the repository path names one extension of a [collection](#one-extension-of-a-collection-307), so it is taken as the id rather than refused) |
 | No repository there | "There is no Git repository at https://…" |
 | A private repository | "The Git repository … asks to sign in (its server answered 401): Pane sends no credentials, so it installs only from public repositories" |
 | A redirect | "…/info/refs?service=git-upload-pack answered 301, sending Pane elsewhere: Pane follows no redirect, so name the repository by the address it moved to" |
@@ -312,10 +346,18 @@ yet.
   hooks, filters and install scripts never running
   and components taken as committed; missing repositories, references and
   commits, ambiguous names, redirects, sign-in, protocol version 0, a
-  `# service` line, an unreachable server; the form.
+  `# service` line, an unreachable server; the form; since #307, one
+  extension of a collection installed by its id (with the id recorded beside
+  the Git fields, only its folder's files in the managed copy, a duplicate
+  install refused and choosing it again offering Update), every way an
+  index is refused, a component outside the extension's folder explained as
+  source-only, the local-folder form, and a dependency's `git:` and `local:`
+  sources naming one extension of a collection.
 - [`crates/pane/tests/repositories.rs`](../crates/pane/tests/repositories.rs):
   the form, the source-only explanation, preview, Install in view below whole Git lines and the
-  command running in the native window at Pane's size.
+  command running in the native window at Pane's size; one extension of a
+  collection previewed by its id, installed and run, with its page in
+  Settings.
 - [`crates/pane-core/tests/update.rs`](../crates/pane-core/tests/update.rs)
   for the [automatic updates](#updating-by-itself) of Git packages, from
   the same server: a tracked branch that has moved updating by itself

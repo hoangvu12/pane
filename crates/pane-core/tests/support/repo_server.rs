@@ -204,6 +204,36 @@ pub fn greeter_files(guests: &Path, built: bool) -> Vec<(&'static str, Vec<u8>)>
     files
 }
 
+/// The files of a collection offering that sample as one extension,
+/// `clock` (ADR 0044): the index `index` at its root, and the sample's
+/// package under `extensions/clock`, its titles saying the extension's id,
+/// with its built component only when `built` (else the revision holds the
+/// source only).
+pub fn collection_files(guests: &Path, index: &str, built: bool) -> Vec<(&'static str, Vec<u8>)> {
+    let sample = guests.join("git/greeter");
+    let read = |file: &str| {
+        std::fs::read(sample.join(file)).unwrap_or_else(|error| {
+            panic!("{}: {error}; run `cargo xtask guests`", sample.display())
+        })
+    };
+    let manifest = String::from_utf8(read("pane.json"))
+        .unwrap()
+        .replace("Greeter from Git", "Clock from Git");
+    let mut files = vec![
+        ("pane-collection.json", index.as_bytes().to_vec()),
+        ("extensions/clock/pane.json", manifest.into_bytes()),
+        ("extensions/clock/src/lib.rs", read("src/lib.rs")),
+        ("README.md", b"The collection".to_vec()),
+    ];
+    if built {
+        files.push((
+            "extensions/clock/dist/git_greeter.wasm",
+            read("dist/git_greeter.wasm"),
+        ));
+    }
+    files
+}
+
 /// How the server answers.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Mode {

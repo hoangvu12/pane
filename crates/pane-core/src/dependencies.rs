@@ -631,7 +631,7 @@ impl<R: FnMut(&PackageIdentity, &str) -> Result<SourcePackage, PackageError>> Pl
                     }));
                 continue;
             }
-            let target = package.identity.dependency(&dependency.source);
+            let target = package.dependency_at(&dependency.source);
             if !dependency.required {
                 if is_requested {
                     let state = self.optional_state(target);
