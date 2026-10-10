@@ -2767,20 +2767,16 @@ impl GuestState {
             .expect("an instance with an owner has a generation");
         self.registrations
             .refuse_beyond(&owner, what, limit, &same)?;
-        eprintln!("pane-register: begin {what}");
         let installed = self.installed();
         let kind = make(self, &installed)?;
-        eprintln!("pane-register: made {what}");
-        let added = self.registrations.add(
+        Ok(self.registrations.add(
             &owner,
             &self.component,
             self.identity,
             &generation,
             what,
             kind,
-        );
-        eprintln!("pane-register: added {what}");
-        Ok(added)
+        ))
     }
 
     /// Registers a timer, one firing (`every` false) or one every

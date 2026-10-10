@@ -307,22 +307,13 @@ fn a_dynamic_root_item_appears_updates_and_disappears_in_root_search() {
         let (launcher, identity, _folder) = pane.installed(&sample);
         // The activation entry point registered the item: the row is
         // listed with nothing counted yet.
-        let began = Instant::now();
-        while !launcher
-            .view()
-            .rows
-            .iter()
-            .any(|row| row.id.ends_with(":counted"))
-        {
-            assert!(
-                began.elapsed() < PROMPTLY,
-                "the dynamic root item's row: undo list {:?}, log {:?}, status {:?}",
-                launcher.undo_list(&identity),
-                launcher.extension_log(&identity),
-                launcher.view().status
-            );
-            thread::sleep(Duration::from_millis(20));
-        }
+        pane.until("the dynamic root item's row", true, || {
+            launcher
+                .view()
+                .rows
+                .iter()
+                .any(|row| row.id.ends_with(":counted"))
+        });
         let row = dynamic_row(&launcher);
         assert_eq!(row.title, "Registrations: counting");
         assert_eq!(row.subtitle, Some(item_subtitle(&sample, 0, 0)));
@@ -331,16 +322,9 @@ fn a_dynamic_root_item_appears_updates_and_disappears_in_root_search() {
         // as the item is registered, before the activation has come to the
         // timer, so the timer is waited for.
         assert!(launcher.undo_list(&identity).contains(&"dynamic root item"));
-        let began = Instant::now();
-        while !launcher.undo_list(&identity).contains(&"timer") {
-            assert!(
-                began.elapsed() < PROMPTLY,
-                "the activation's timer: undo list {:?}, log {:?}",
-                launcher.undo_list(&identity),
-                launcher.extension_log(&identity)
-            );
-            thread::sleep(Duration::from_millis(20));
-        }
+        pane.until("the activation's timer", true, || {
+            launcher.undo_list(&identity).contains(&"timer")
+        });
         // The timer fires and updates the row: the thread has begun the
         // timer's interval where the clock stands.
         pane.timers_settled(&launcher);

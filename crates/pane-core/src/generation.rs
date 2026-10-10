@@ -154,7 +154,6 @@ impl Generation {
     /// [`Undo`] runs it, newest first, when it is dropped (or run), so a
     /// caller holding a lock can let it go first.
     pub fn end(&self, why: End) -> Undo {
-        eprintln!("pane-generation: ended {why:?}");
         let first = self.0.end.send_if_modified(|end| {
             let first = end.is_none();
             if first {
@@ -207,15 +206,13 @@ impl Generation {
     ) -> Registration {
         let mut list = self.list();
         if list.done {
-            eprintln!("pane-register: generation already done for {what}");
-            drop(list);
+                drop(list);
             undo_one(what, Box::new(undo));
             return Registration {
                 list: Weak::new(),
                 entry: 0,
             };
         }
-        eprintln!("pane-generation: on_end {what} on {:p}", Arc::as_ptr(&self.0));
         let entry = list.next;
         list.next += 1;
         list.entries.push((entry, what, Box::new(undo)));
@@ -228,11 +225,6 @@ impl Generation {
     /// What is on the undo list now, oldest first: what this generation
     /// still has set up. A diagnostic for tests.
     pub fn undo_list(&self) -> Vec<&'static str> {
-        eprintln!(
-            "pane-generation: list {:p} reads {:?}",
-            Arc::as_ptr(&self.0),
-            self.list().entries.iter().map(|(_, what, _)| *what).collect::<Vec<_>>()
-        );
         self.list()
             .entries
             .iter()
@@ -259,14 +251,6 @@ pub(crate) struct Registration {
 
 impl Drop for Registration {
     fn drop(&mut self) {
-        let frames: Vec<String> = std::backtrace::Backtrace::force_capture()
-            .to_string()
-            .lines()
-            .filter(|line| line.contains(" at ./"))
-            .take(6)
-            .map(str::to_owned)
-            .collect();
-        eprintln!("pane-generation: registration entry {} dropped from\n{}", self.entry, frames.join("\n"));
         let Some(shared) = self.list.upgrade() else {
             return;
         };
