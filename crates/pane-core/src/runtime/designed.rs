@@ -2414,6 +2414,9 @@ fn fit_of(value: Option<&Value>) -> Result<Fit, ReadError> {
             ))),
         },
         Some(_) => Err(unreadable("its fit is not a fit")),
+    }
+}
+
 /// The canvas a canvas node's properties give it: its operations, what it
 /// is to assistive technology, and the handlers its input names. Its size
 /// comes from its style's sizing, as any node's does.
