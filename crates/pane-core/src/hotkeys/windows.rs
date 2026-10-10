@@ -1365,7 +1365,7 @@ fn decide(event: &KBDLLHOOKSTRUCT) -> (bool, Option<u32>, bool) {
                     }
                     // The recording mode answers none of these.
                     _ => (false, None, false),
-                });
+                })
             } else {
                 Some(match state.recognizer.step(key) {
                     Decision::Fire(binding) => (true, Some(binding), false),
