@@ -50,13 +50,13 @@ pub(crate) mod material;
 pub(crate) mod motion;
 pub(crate) mod pinned;
 pub(crate) mod result_layouts;
-pub(crate) mod tokens;
 pub(crate) mod result_row;
 pub(crate) mod select;
 pub(crate) mod settings_shell;
 pub(crate) mod shell;
 pub(crate) mod split_view;
 pub(crate) mod theme;
+pub(crate) mod tokens;
 pub(crate) mod tooltip;
 pub(crate) mod virtual_list;
 

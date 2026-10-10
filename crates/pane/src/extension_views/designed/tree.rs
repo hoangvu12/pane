@@ -8,8 +8,8 @@ use std::collections::HashMap;
 
 use gpui::prelude::*;
 use gpui::{
-    AnyElement, Context, Div, FocusHandle, Hsla, Length as GpuiLength, Pixels, Role, Stateful,
-    relative, px,
+    AnyElement, Context, Div, FocusHandle, Hsla, Length as GpuiLength, Pixels, Role, Stateful, px,
+    relative,
 };
 
 use pane_core::{
@@ -129,12 +129,18 @@ pub(super) fn node(
             draw,
             components::button(node, button, path, &draw, cx).into_any_element(),
         ),
-        NodeKind::Link(link) => {
-            styled(node, path, draw, components::link(link, path, &draw, cx).into_any_element())
-        }
-        NodeKind::Icon(icon) => {
-            styled(node, path, draw, components::icon(icon, path, &draw).into_any_element())
-        }
+        NodeKind::Link(link) => styled(
+            node,
+            path,
+            draw,
+            components::link(link, path, &draw, cx).into_any_element(),
+        ),
+        NodeKind::Icon(icon) => styled(
+            node,
+            path,
+            draw,
+            components::icon(icon, path, &draw).into_any_element(),
+        ),
         NodeKind::IconTile(icon) => styled(
             node,
             path,
@@ -387,9 +393,7 @@ fn container(column: bool, layout: &NodeLayout, children: Vec<AnyElement>) -> Di
     let div = div
         .when_some(padding.top, |div, top| div.pt(tokens::space(top)))
         .when_some(padding.right, |div, right| div.pr(tokens::space(right)))
-        .when_some(padding.bottom, |div, bottom| {
-            div.pb(tokens::space(bottom))
-        })
+        .when_some(padding.bottom, |div, bottom| div.pb(tokens::space(bottom)))
         .when_some(padding.left, |div, left| div.pl(tokens::space(left)))
         .map(|div| match layout.align {
             Some(Align::Start) | None => div.items_start(),
@@ -421,9 +425,7 @@ fn card(layout: &NodeLayout, children: Vec<AnyElement>, theme: &Theme) -> Div {
         .when_some(layout.gap, |div, gap| div.gap(tokens::space(gap)))
         .when_some(padding.top, |div, top| div.pt(tokens::space(top)))
         .when_some(padding.right, |div, right| div.pr(tokens::space(right)))
-        .when_some(padding.bottom, |div, bottom| {
-            div.pb(tokens::space(bottom))
-        })
+        .when_some(padding.bottom, |div, bottom| div.pb(tokens::space(bottom)))
         .when_some(padding.left, |div, left| div.pl(tokens::space(left)))
         .map(|div| match layout.align {
             Some(Align::Start) | None => div.items_start(),
@@ -455,10 +457,7 @@ fn container_chrome(div: Div, children: Vec<AnyElement>, theme: &Theme) -> Div {
 /// A stack of children drawn over each other, each in the layer its
 /// place puts it in.
 fn stack(children: Vec<AnyElement>) -> Div {
-    div()
-        .relative()
-        .flex()
-        .children(children)
+    div().relative().flex().children(children)
 }
 
 /// A scrolling region, whose position Pane keeps by key: the element's
@@ -536,24 +535,18 @@ fn apply(div: Stateful<Div>, node: &Node, draw: &Draw) -> Stateful<Div> {
 /// The sizing a node asks for: how it takes space in its parent, and how
 /// big it is.
 fn sized<D: Styled>(div: D, sizing: &Sizing) -> D {
-    div.when_some(sizing.grow, |div, Finite(grow)| {
-        div.flex_grow(grow)
-    })
-    .when_some(sizing.shrink, |div, Finite(shrink)| {
-        div.flex_shrink(shrink)
-    })
-    .when_some(sizing.basis, |div, basis| {
-        div.flex_basis(length(basis))
-    })
-    .when_some(sizing.width, |div, width| div.w(length(width)))
-    .when_some(sizing.height, |div, height| div.h(length(height)))
-    .when_some(sizing.min_width, |div, width| div.min_w(length(width)))
-    .when_some(sizing.max_width, |div, width| div.max_w(length(width)))
-    .when_some(sizing.min_height, |div, height| div.min_h(length(height)))
-    .when_some(sizing.max_height, |div, height| div.max_h(length(height)))
-    .when_some(sizing.aspect_ratio, |div, Finite(ratio)| {
-        div.aspect_ratio(ratio)
-    })
+    div.when_some(sizing.grow, |div, Finite(grow)| div.flex_grow(grow))
+        .when_some(sizing.shrink, |div, Finite(shrink)| div.flex_shrink(shrink))
+        .when_some(sizing.basis, |div, basis| div.flex_basis(length(basis)))
+        .when_some(sizing.width, |div, width| div.w(length(width)))
+        .when_some(sizing.height, |div, height| div.h(length(height)))
+        .when_some(sizing.min_width, |div, width| div.min_w(length(width)))
+        .when_some(sizing.max_width, |div, width| div.max_w(length(width)))
+        .when_some(sizing.min_height, |div, height| div.min_h(length(height)))
+        .when_some(sizing.max_height, |div, height| div.max_h(length(height)))
+        .when_some(sizing.aspect_ratio, |div, Finite(ratio)| {
+            div.aspect_ratio(ratio)
+        })
 }
 
 /// One length, as GPUI takes it.
@@ -595,9 +588,7 @@ fn surface<D: Styled>(div: D, surface: &Surface, theme: &Theme) -> D {
     .when_some(surface.radius, |div, radius| {
         div.rounded(radius_pixels(radius, theme))
     })
-    .when_some(surface.opacity, |div, Finite(opacity)| {
-        div.opacity(opacity)
-    })
+    .when_some(surface.opacity, |div, Finite(opacity)| div.opacity(opacity))
 }
 
 /// A corner radius, as GPUI takes it.

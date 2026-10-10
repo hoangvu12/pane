@@ -75,12 +75,7 @@ pub(crate) fn drawn(icon: &Icon, theme: &Theme) -> DrawnIcon {
 /// drawn on. A designed view's icons draw through this with the
 /// component set's own ratio (`contrast::DESIGNED`) and the surface their
 /// node gave them (#237).
-pub(crate) fn drawn_on(
-    icon: &Icon,
-    theme: &Theme,
-    needed: f32,
-    surface: Hsla,
-) -> DrawnIcon {
+pub(crate) fn drawn_on(icon: &Icon, theme: &Theme, needed: f32, surface: Hsla) -> DrawnIcon {
     let dark = is_dark(theme);
     let tint = icon.tint.map(|tint| color_on(tint, theme, needed, surface));
     let fallback = icon

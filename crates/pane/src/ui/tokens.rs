@@ -68,7 +68,10 @@ pub(crate) fn icon_size(token: IconSize) -> Pixels {
 
 /// A text style's type: its size, weight and family, resolved onto the
 /// theme's typography.
-pub(crate) fn text_style(style: Option<TextStyle>, theme: &Theme) -> (Pixels, gpui::FontWeight, gpui::SharedString) {
+pub(crate) fn text_style(
+    style: Option<TextStyle>,
+    theme: &Theme,
+) -> (Pixels, gpui::FontWeight, gpui::SharedString) {
     let typography = &theme.typography;
     match style {
         None | Some(TextStyle::Body) => (

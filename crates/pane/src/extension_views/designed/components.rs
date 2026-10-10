@@ -29,12 +29,12 @@ use gpui::{
 
 use pane_core::{
     Badge as BadgeNode, Binding, Button as ButtonNode, Checkbox as CheckboxNode,
-    EmptyState as EmptyStateNode, Fit, Finite, Icon, IconExtent, IconNode, Image as ImageNode,
+    EmptyState as EmptyStateNode, Finite, Fit, Icon, IconExtent, IconNode, Image as ImageNode,
     Link as LinkNode, Loading as LoadingNode, Markdown as MarkdownNode,
     MetadataItem as MetadataItemNode, MetadataList as MetadataListNode, Node, Paint,
     Progress as ProgressNode, RichRow as RichRowNode, Segmented as SegmentedNode,
     Select as SelectNode, Slider as SliderNode, Span, Tag as TagNode, Text as TextNode,
-    TextInput as TextInputNode, TextContent, Toggle as ToggleNode,
+    TextContent, TextInput as TextInputNode, Toggle as ToggleNode,
 };
 use pane_core::{Space, TextLevel};
 
@@ -49,8 +49,8 @@ use crate::ui::tokens;
 
 use super::tree::{Draw, push};
 use super::{
-    BUTTON_CONTEXT, CHECKBOX_CONTEXT, Commit, INPUT_CONTEXT, Move, Press, SELECT_CONTEXT,
-    SEGMENTED_CONTEXT, SLIDER_CONTEXT, TOGGLE_CONTEXT, Toggle, plain_payload, payload,
+    BUTTON_CONTEXT, CHECKBOX_CONTEXT, Commit, INPUT_CONTEXT, Move, Press, SEGMENTED_CONTEXT,
+    SELECT_CONTEXT, SLIDER_CONTEXT, TOGGLE_CONTEXT, Toggle, payload, plain_payload,
 };
 
 /// The event a control's change carries: `{"value": …}` for whatever the
@@ -179,13 +179,7 @@ fn run(
 
 /// One span of a text: a run of its content, a link when it carries
 /// `onPress`.
-fn span_run(
-    span: &Span,
-    index: usize,
-    path: &str,
-    draw: &Draw,
-    truncate: bool,
-) -> AnyElement {
+fn span_run(span: &Span, index: usize, path: &str, draw: &Draw, truncate: bool) -> AnyElement {
     let path = format!("{path}/{index}");
     let debug = format!("designed-text-{}", short(&span.text));
     if span.on_press.is_none() {
@@ -220,7 +214,10 @@ fn span_run(
 /// The colors of a button's tone, resolved onto the theme: its fill, its
 /// 1px inner edge (a plain button's ring), and its label's ink. The
 /// mapping the public token layer holds (#235's, extracted).
-fn tone(tone: Option<pane_core::ButtonTone>, theme: &Theme) -> (gpui::Hsla, Option<gpui::Hsla>, gpui::Hsla) {
+fn tone(
+    tone: Option<pane_core::ButtonTone>,
+    theme: &Theme,
+) -> (gpui::Hsla, Option<gpui::Hsla>, gpui::Hsla) {
     match tone {
         // The plain pill a Settings button draws.
         None | Some(pane_core::ButtonTone::Default) => (
@@ -385,11 +382,7 @@ pub(super) fn keycap(keycap: &pane_core::Keycap, path: &str, theme: &Theme) -> A
 }
 
 /// A key sequence: the keys its caps show, one cap per key.
-pub(super) fn key_sequence(
-    keys: &KeySequenceNode,
-    path: &str,
-    theme: &Theme,
-) -> AnyElement {
+pub(super) fn key_sequence(keys: &KeySequenceNode, path: &str, theme: &Theme) -> AnyElement {
     let sequence = keys_of(&keys.keys);
     let name = sequence.name();
     div()
@@ -689,7 +682,11 @@ pub(super) fn rich_row(
     let geometry = &theme.geometry;
     let pressable = row.on_press.is_some();
     let title: SharedString = row.title.clone().into();
-    let subtitle: SharedString = row.subtitle.clone().map(SharedString::from).unwrap_or_default();
+    let subtitle: SharedString = row
+        .subtitle
+        .clone()
+        .map(SharedString::from)
+        .unwrap_or_default();
     let debug = format!("designed-row-{}", row.title);
     let icon = row
         .icon
@@ -776,8 +773,7 @@ pub(super) fn rich_row(
     row_element
         .key_context(BUTTON_CONTEXT)
         .when_some(draw.focus.get(path).cloned(), |row, focus| {
-            row.track_focus(&focus)
-                .focus(move |row| row.shadow(ring))
+            row.track_focus(&focus).focus(move |row| row.shadow(ring))
         })
         .on_action(press)
         .on_click(click)
@@ -1076,7 +1072,9 @@ pub(super) fn segmented(
         .key_context(SEGMENTED_CONTEXT)
         .role(Role::RadioGroup)
         .map(|group| {
-            group.when_some(segmented.label.clone(), |group, label| group.aria_label(label))
+            group.when_some(segmented.label.clone(), |group, label| {
+                group.aria_label(label)
+            })
         });
     for (index, option) in segmented.options.iter().enumerate() {
         let label: SharedString = option
@@ -1153,10 +1151,12 @@ pub(super) fn segmented(
 
 /// Where the chosen option of a segmented control or select sits.
 fn position_of(chosen: &SegmentedNode) -> Option<usize> {
-    chosen
-        .value
-        .as_deref()
-        .and_then(|value| chosen.options.iter().position(|option| option.value == value))
+    chosen.value.as_deref().and_then(|value| {
+        chosen
+            .options
+            .iter()
+            .position(|option| option.value == value)
+    })
 }
 
 /// The option `step` places from `current` in `options`, wrapping.
@@ -1189,12 +1189,8 @@ pub(super) fn slider(
         on_change,
         label,
     } = slider;
-    let (Finite(min), Finite(max), Finite(value), Finite(by)) = (
-        min.0,
-        max.0,
-        value.0,
-        by.0.abs().max(f32::EPSILON),
-    );
+    let (Finite(min), Finite(max), Finite(value), Finite(by)) =
+        (min.0, max.0, value.0, by.0.abs().max(f32::EPSILON));
     let span = (max - min).abs().max(f32::EPSILON);
     let fraction = ((value - min) / span).clamp(0., 1.);
     let Some(callback) = on_change else {
@@ -1245,9 +1241,7 @@ pub(super) fn slider(
         .cursor_pointer()
         .key_context(SLIDER_CONTEXT)
         .role(Role::Slider)
-        .map(|slider| {
-            slider.when_some(label.clone(), |slider, label| slider.aria_label(label))
-        })
+        .map(|slider| slider.when_some(label.clone(), |slider, label| slider.aria_label(label)))
         .aria_numeric_value(value as f64)
         .aria_min_numeric_value(min as f64)
         .aria_max_numeric_value(max as f64)
@@ -1296,12 +1290,10 @@ fn knob_of(theme: &Theme) -> Div {
         .size(px(12.))
         .rounded_full()
         .bg(theme.controls.toggle_knob)
-        .shadow(vec![gpui::BoxShadow::new(
-            px(0.),
-            px(1.),
-            theme.controls.toggle_knob_shadow,
-        )
-        .blur_radius(px(2.))])
+        .shadow(vec![
+            gpui::BoxShadow::new(px(0.), px(1.), theme.controls.toggle_knob_shadow)
+                .blur_radius(px(2.)),
+        ])
 }
 
 /// One progress bar: how far along it is, 0 to 1.
@@ -1686,12 +1678,10 @@ pub(super) fn text_input(
             cx,
         );
     });
-    let label = input.label.clone().unwrap_or_else(|| {
-        input
-            .placeholder
-            .clone()
-            .unwrap_or_else(|| "field".into())
-    });
+    let label = input
+        .label
+        .clone()
+        .unwrap_or_else(|| input.placeholder.clone().unwrap_or_else(|| "field".into()));
     div()
         .id(path.to_owned())
         .flex()

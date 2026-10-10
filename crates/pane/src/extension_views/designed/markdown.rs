@@ -12,7 +12,7 @@
 use gpui::prelude::*;
 use gpui::{AnyElement, Div, Role, TextAlign, div, px};
 
-use pane_core::markdown::{Alignment, Block, Inline, Item};
+
 use pane_core::Space;
 
 use crate::ui::theme::Theme;
@@ -106,11 +106,7 @@ fn block_element(block: &Block, path: &str, draw: &Draw) -> AnyElement {
             .h(px(1.))
             .bg(theme.hairline_soft)
             .into_any_element(),
-        Block::Table {
-            aligns,
-            head,
-            rows,
-        } => table(aligns, head, rows, path, draw),
+        Block::Table { aligns, head, rows } => table(aligns, head, rows, path, draw),
     }
 }
 
@@ -199,13 +195,7 @@ fn table(
                     .zip(aligns.iter().chain(std::iter::repeat(&no_align)))
                     .enumerate()
                     .map(|(at, (cell, align))| {
-                        cell_element(
-                            cell,
-                            *align,
-                            true,
-                            &format!("{path}/head/{at}"),
-                            draw,
-                        )
+                        cell_element(cell, *align, true, &format!("{path}/head/{at}"), draw)
                     })
                     .collect::<Vec<AnyElement>>(),
             ),
@@ -223,13 +213,7 @@ fn table(
                         .zip(aligns.iter().chain(std::iter::repeat(&no_align)))
                         .enumerate()
                         .map(|(at, (cell, align))| {
-                            cell_element(
-                                cell,
-                                *align,
-                                false,
-                                &format!("{path}/{index}/{at}"),
-                                draw,
-                            )
+                            cell_element(cell, *align, false, &format!("{path}/{index}/{at}"), draw)
                         })
                         .collect::<Vec<AnyElement>>(),
                 ),
