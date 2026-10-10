@@ -603,6 +603,14 @@ impl ViewId {
     pub(crate) fn thread(&self) -> u64 {
         self.thread
     }
+
+    /// The view's id, as its render context names it and
+    /// `pane:extension/view`'s `ask-to-render` asks for (#243): a number
+    /// shared by every thread the runtime started, so it names this view
+    /// alone.
+    pub(crate) fn number(&self) -> u64 {
+        self.id
+    }
 }
 
 /// A form an item opens, as produced by the guest.

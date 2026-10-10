@@ -106,14 +106,14 @@ impl DesignedStack {
     /// The id of the top view, as its render context named it: the view
     /// the refresh thread draws a pushed drawing for (#243).
     pub(super) fn top_id(&self) -> u64 {
-        self.top().id.id
+        self.top().id.number()
     }
 
     /// Whether the view `view` — the id its render context named — is one
     /// of the stack's, so an ask for it is one to hold; one for any other
     /// view is dropped.
     pub(super) fn holds(&self, view: u64) -> bool {
-        self.views.iter().any(|open| open.id.id == view)
+        self.views.iter().any(|open| open.id.number() == view)
     }
 
     /// The screen of the top view: its snapshot, and its navigation title
