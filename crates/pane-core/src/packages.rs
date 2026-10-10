@@ -725,7 +725,7 @@ struct OperationJson {
 }
 
 #[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct ProvidesJson {
     capability: String,
     component: String,

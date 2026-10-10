@@ -360,19 +360,31 @@ fn coalesced(root: &Path, paths: Vec<PathBuf>, rescan: bool) -> WatcherChanges {
     if rescan {
         return WatcherChanges::Rescan;
     }
-    let mut seen: Vec<PathBuf> = Vec::new();
+    // The paths inside the watched folder, relative to it, come first,
+    // sorted; the rest — renamed into or out of the folder, say — keep
+    // their full paths, after them.
+    let mut inside: Vec<PathBuf> = Vec::new();
+    let mut outside: Vec<PathBuf> = Vec::new();
     for path in paths {
-        let relative = path
-            .strip_prefix(root)
-            .map(Path::to_path_buf)
-            .unwrap_or(path);
-        if !seen.contains(&relative) {
-            seen.push(relative);
+        match path.strip_prefix(root).map(Path::to_path_buf) {
+            Ok(relative) => {
+                if !inside.contains(&relative) {
+                    inside.push(relative);
+                }
+            }
+            Err(_) => {
+                if !outside.contains(&path) {
+                    outside.push(path);
+                }
+            }
         }
     }
-    seen.sort();
+    inside.sort();
+    outside.sort();
     WatcherChanges::Paths(
-        seen.into_iter()
+        inside
+            .into_iter()
+            .chain(outside)
             .map(|path| path.display().to_string())
             .collect(),
     )

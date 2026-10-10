@@ -223,6 +223,7 @@ impl Pane {
         fs::write(folder.join("pane.json"), manifest).unwrap();
         for (key, value) in settings {
             let file = self.data.path().join("extensions/settings.json");
+            fs::create_dir_all(file.parent().unwrap()).unwrap();
             let mut saved: serde_json::Value = match fs::read_to_string(&file) {
                 Ok(text) => serde_json::from_str(&text).unwrap(),
                 Err(_) => serde_json::json!({ "packages": {} }),
@@ -397,7 +398,7 @@ fn a_folder_watcher_delivers_coalesced_changes() {
     let watched = tempfile::tempdir().unwrap();
     // The sample watches the folder its settings name: saved before the
     // package is installed, so its activation reads it.
-    let folder = pane.sources.path().join("sample-registrations");
+    let folder = pane.package(&SAMPLES[0]);
     let identity = PackageIdentity::local(&folder).unwrap();
     let file = pane.data.path().join("extensions/settings.json");
     fs::create_dir_all(file.parent().unwrap()).unwrap();

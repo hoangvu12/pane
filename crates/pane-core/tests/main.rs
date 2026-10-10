@@ -41,6 +41,7 @@ mod feedback;
 mod file_actions;
 mod file_index;
 mod files;
+mod handoff;
 mod helpers;
 mod hotkeys;
 mod icons;

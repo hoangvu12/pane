@@ -347,6 +347,9 @@ fn saving_builds_and_reloads_only_that_package() {
 
     save(&folder, "sample_ts");
     dev.finished(&identity, 1);
+    // The reload's outcome is kept while the reopened command screen
+    // shows, and appears when the author leaves it.
+    to_root(&dev.launcher);
     assert_eq!(
         dev.launcher.view().status,
         Status::Result("Reloaded Dev".into())
