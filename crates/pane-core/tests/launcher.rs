@@ -485,18 +485,21 @@ fn send_key(launcher: &Launcher, key: &str) {
 }
 
 /// Sends a key event to the open designed view's canvas, unawaited.
-fn send_right_like(launcher: &Launcher, key: &str) -> impl Future<Output = ()> {
+fn send_right_like(
+    launcher: &Launcher,
+    key: &str,
+) -> std::pin::Pin<Box<dyn Future<Output = ()> + Send>> {
     let (canvas, on_key, render) = canvas_of(launcher);
     let callback = on_key.expect("the canvas takes keys");
-    let named: Option<&str> = (!canvas.is_empty()).then_some(canvas.as_str());
-    let payload = format!("{{\"key\":\"{}\"}}", named.unwrap_or_default());
-    launcher.send_designed_seen(
+    let payload = format!("{{\"key\":\"{key}\"}}");
+    let pending = launcher.send_designed_seen(
         pane_core::DesignedHandler::Key,
         callback,
-        named,
+        (!canvas.is_empty()).then_some(canvas.as_str()),
         Some(render),
         payload,
-    )
+    );
+    Box::pin(pending)
 }
 
 #[test]

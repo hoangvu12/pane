@@ -203,7 +203,8 @@ fn the_canvas_is_one_node_with_a_role_a_label_and_a_value(cx: &mut TestAppContex
     // The canvas, the menu button, the status line, the announcer and the
     // window: the drawing adds no nodes of its own.
     assert_eq!(roles.len(), 5, "{roles:?}");
-    let value: Option<String> =
-        cx.update(|_, cx| window.read(cx, |window| canvas_value_of(&window.launcher().view().screen)));
+    let value: Option<String> = cx.update(|_, cx| {
+        canvas_value_of(&window.read(cx).launcher().view().screen)
+    });
     assert!(value.is_some(), "the canvas names its value");
 }
