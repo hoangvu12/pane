@@ -75,11 +75,15 @@ fn prepared(name: &str) -> PathBuf {
     copy_folder(&content(), &folder);
     copy_folder(&repository().join("guests/js"), &parent.join("js"));
     let package = fs::read_to_string(folder.join("package.json")).unwrap();
-    let cli_dep = "    \"@pane-app/cli\": \"0.1.0\",\n";
-    let sdk_dep = r#""@pane-app/extension": "0.1.0""#;
+    // The line is dropped whole, whatever the checkout's line
+    // endings are: the Windows runner's text files are CRLF.
     let package = package
-        .replace(cli_dep, "")
-        .replace(sdk_dep, r#""@pane-app/extension": "file:../js""#);
+        .lines()
+        .filter(|line| !line.contains("\"@pane-app/cli\":"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let sdk_dep = r#""@pane-app/extension": "0.1.0""#;
+    let package = package.replace(sdk_dep, r#""@pane-app/extension": "file:../js""#);
     fs::write(folder.join("package.json"), package).unwrap();
     let npm = if cfg!(windows) { "npm.cmd" } else { "npm" };
     let output = Command::new(npm)

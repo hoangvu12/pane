@@ -974,7 +974,9 @@ mod tests {
         scaffold(folder.path(), &name, Language::TypeScript, Kind::List).unwrap();
         let entry = folder.path().join("src/index.ts");
         let source = fs::read_to_string(&entry).unwrap();
-        let marker = "pane-ext new command adds a view command's arm here.\n";
+        // The marker alone, so the erase holds whatever line endings the
+        // scaffolded file carries.
+        let marker = "pane-ext new command adds a view command's arm here.";
         let without = source.replace(marker, "");
         fs::write(&entry, without).unwrap();
         let note = NewCommand::parse(Some("note"), None).unwrap();

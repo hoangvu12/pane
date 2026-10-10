@@ -105,9 +105,12 @@ fn install_cli(node_modules: &Path) {
 }
 
 /// Runs the create package's bin with `args`, returning whether it
-/// succeeded and what it printed.
-fn create(create_js: &Path, args: &[&str]) -> (bool, String) {
+/// succeeded and what it printed. `path` is the PATH the bin sees, so a
+/// test can keep pane-ext off it (cargo puts the target folder, where the
+/// workspace's pane-ext sits, on the PATH tests run with).
+fn create_with_path(create_js: &Path, path: &str, args: &[&str]) -> (bool, String) {
     let output = Command::new("node")
+        .env("PATH", path)
         .arg(create_js)
         .args(args)
         .output()
@@ -118,6 +121,12 @@ fn create(create_js: &Path, args: &[&str]) -> (bool, String) {
         String::from_utf8_lossy(&output.stderr)
     );
     (output.status.success(), printed)
+}
+
+/// Runs the create package's bin with `args` and the test's own PATH.
+fn create(create_js: &Path, args: &[&str]) -> (bool, String) {
+    let path = std::env::var("PATH").unwrap_or_default();
+    create_with_path(create_js, &path, args)
 }
 
 #[test]
@@ -172,9 +181,16 @@ fn the_create_bin_says_how_to_get_pane_ext_when_it_finds_none() {
     let unpacked = work.path().join("create");
     unpack(&tarball, &unpacked);
     // No @pane-app/cli platform package beside it, and no pane-ext on the
-    // PATH the test runs with.
-    let (passed, printed) = create(
+    // PATH the bin sees — the system's own folders only, none of the
+    // build's.
+    let path = if cfg!(windows) {
+        "C:\\Windows\\System32"
+    } else {
+        "/usr/bin:/bin"
+    };
+    let (passed, printed) = create_with_path(
         &unpacked.join("create.js"),
+        path,
         &[work.path().join("nowhere").to_str().unwrap()],
     );
     assert!(!passed, "{printed}");
