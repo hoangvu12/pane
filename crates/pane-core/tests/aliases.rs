@@ -187,7 +187,8 @@ fn form_value(launcher: &Launcher, key: &str) -> String {
         }
         node.children.iter().find_map(|child| at(child, key))
     }
-    let form = launcher.view().form().expect("a form is open");
+    let view = launcher.view();
+    let form = view.form().expect("a form is open");
     at(&form.tree.root, key).expect("the field")
 }
 
@@ -618,7 +619,7 @@ fn an_alias_that_is_not_one_word_or_is_another_commands_is_refused() {
                 .into()
         )
     );
-    assert!(form_error(launcher, "alias").is_some(), "the form stays");
+    assert!(form_error(&launcher, "alias").is_some(), "the form stays");
 
     let status = set_alias(&launcher, "e c");
     assert_eq!(

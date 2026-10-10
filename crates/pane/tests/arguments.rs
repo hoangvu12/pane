@@ -128,9 +128,7 @@ fn launch(
 /// The value the open form's field keyed `id` holds: the keyed state's
 /// live text, what the user typed (#241).
 fn field_value(window: &Entity<LauncherWindow>, cx: &mut VisualTestContext, id: &str) -> String {
-    window.update(cx, |window, _| {
-        window.designed_field_text(id, cx).expect("the field exists")
-    })
+    window.update(cx, |window, cx| window.designed_field_text(id, cx).expect("the field exists"))
 }
 
 #[gpui::test]

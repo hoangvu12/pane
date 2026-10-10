@@ -116,8 +116,8 @@ impl Sample {
         let submitting = launcher.submit_designed_form(
             None,
             vec![
-                ("name".to_owned(), name.to_owned()),
-                ("greeting".to_owned(), greeting.to_owned()),
+                ("name".to_owned(), FormValue::Text(name.to_owned())),
+                ("greeting".to_owned(), FormValue::Text(greeting.to_owned())),
             ],
         );
         block_on(submitting);
