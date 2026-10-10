@@ -55,7 +55,6 @@ fn opened(
         subtitle: None,
         component,
         takes_query: false,
-        search: false,
     };
     let system = Arc::new(RecordingSystem::default());
     let launcher = Launcher::new(Runtime::start(), vec![command]).with_system(system.clone());

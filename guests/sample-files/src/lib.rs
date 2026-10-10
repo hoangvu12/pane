@@ -16,13 +16,11 @@
 use pane_extension::alloc::{format, string::String, vec::Vec};
 use pane_extension::file_index::{self, FileEntry, IndexState, SearchOptions};
 use pane_extension::root::{RootAction, RootResult};
-use pane_extension::search::SearchResult;
 use pane_extension::{Command, CustomView, FieldValue, FormError, Item, List, NoCustomView};
 
 struct Sample;
 pane_extension::export!(Sample);
 pane_extension::root::export!(Sample);
-pane_extension::search::export!(Sample);
 
 /// The most entries one query lists.
 const MAX_RESULTS: u32 = 20;
@@ -70,19 +68,6 @@ impl Command for Sample {
     }
 }
 
-impl pane_extension::search::Guest for Sample {
-    async fn search(_command: String, query: String) -> Result<Vec<SearchResult>, String> {
-        Ok(found(&query)?
-            .into_iter()
-            .map(|entry| SearchResult {
-                title: entry.name,
-                id: entry.path,
-                subtitle: None,
-                file: Some(entry.id),
-            })
-            .collect())
-    }
-}
 
 impl pane_extension::root::Guest for Sample {
     async fn results_for(query: String) -> Result<Vec<RootResult>, String> {

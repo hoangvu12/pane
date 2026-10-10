@@ -395,7 +395,6 @@ pub(in crate::launcher) fn selected_action(state: &State) -> SelectedAction {
         // ellipsis menu entry and the local shortcut do (the window, not
         // the launcher, acts; see [`Launcher::selected_opens_settings`]).
         (_, Some(Entry::Settings)) => acting("Open settings"),
-        (_, Some(Entry::Run(_))) => acting("Run item"),
         // An item of a command's list: its primary action, by the title the
         // extension gave it (#137).
         (_, Some(Entry::Actions(listed))) => acting(&listed.primary()),

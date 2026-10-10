@@ -42,12 +42,17 @@
 //! its view, and the whole screen is redrawn from the answer.
 
 mod components;
+mod list;
 mod markdown;
 mod reconcile;
 mod tree;
 
+use std::time::{Duration, Instant};
+
+use gpui::AnimationExt as _;
+use gpui::Focusable as _;
 use gpui::prelude::*;
-use gpui::{App, Context, KeyBinding, actions, div, px};
+use gpui::{AnyElement, App, Context, KeyBinding, actions, div, px};
 
 use gpui_elements::editable_text::EditableTextState;
 use pane_core::{DesignedHandler, DesignedViewSnapshot};
@@ -113,6 +118,158 @@ pub(crate) fn bind_keys(cx: &mut App) {
 }
 
 impl LauncherWindow {
+    /// Opens `url` with the system's handler, as a Markdown link of the
+    /// open designed view is (#240): the status line says what it did.
+    fn designed_open_link(&mut self, url: &str, window: &mut gpui::Window, cx: &mut Context<Self>) {
+        let pending = self.launcher.open_link(url.to_owned());
+        self.show_until_done(pending, window, cx);
+    }
+
+    /// The designed view's search header (#240): the navigation title
+    /// above the search field (which the List's field owns — the footer
+    /// title was the interim, #239), the list's search-bar dropdown
+    /// beside the field, and the loading bar under it once the list's
+    /// loading has run past its threshold (300 ms; the bar's look is the
+    /// launcher polish's, #248 — this is the flag it rides), above
+    /// `body` (the rows list, the Grid's cells, the empty view).
+    pub(crate) fn render_designed_search(
+        &mut self,
+        view: &DesignedViewSnapshot,
+        list: &pane_core::DesignedList,
+        title: String,
+        body: impl gpui::IntoElement,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let input = self.query.entity().clone();
+        let visuals = crate::settings::launcher_visuals(cx);
+        let theme = visuals.theme;
+        let placeholder: gpui::SharedString = list
+            .placeholder
+            .clone()
+            .unwrap_or_else(|| "Search".into())
+            .into();
+        let geometry = theme.geometry.clone();
+        let dropdown = self.render_designed_dropdown(view, cx);
+        // The navigation title, above the field: a screen's title row.
+        let heading = (!title.is_empty()).then(|| {
+            div()
+                .id("designed-title")
+                .flex_none()
+                .h(px(28.))
+                .flex()
+                .items_end()
+                .px(geometry.search_padding_x)
+                .child(
+                    div()
+                        .min_w(px(0.))
+                        .truncate()
+                        .text_size(theme.typography.section_size)
+                        .font_weight(theme.typography.medium)
+                        .text_color(theme.text_muted)
+                        .child(title.clone()),
+                )
+        });
+        let field = div()
+            .flex()
+            .flex_1()
+            .min_w(px(0.))
+            .items_center()
+            .gap(geometry.search_gap)
+            .child(
+                div()
+                    .window_control_area(gpui::WindowControlArea::Drag)
+                    .flex_none()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .size(px(44.))
+                    .mx(px(-12.))
+                    .child(crate::ui::icon::glyph(
+                        crate::ui::icon::Glyph::Search,
+                        geometry.search_glyph_size,
+                        theme.text_muted,
+                    )),
+            )
+            .child(
+                gpui_elements::editable_text::text_input("query")
+                    .state(input.downgrade())
+                    .placeholder(placeholder.clone())
+                    .placeholder_color(theme.text_placeholder)
+                    .caret_color(theme.accent_text)
+                    .selection_color(theme.row_selected)
+                    .marked_color(theme.accent_text)
+                    .text_size(theme.typography.search_size)
+                    .text_color(theme.text_query)
+                    .font_family(theme.typography.family.clone())
+                    .font_features(theme.typography.features.clone())
+                    .w_full()
+                    .min_w(px(0.))
+                    .whitespace_nowrap()
+                    .overflow_x_scroll(),
+            )
+            .when_some(dropdown, |field, dropdown| field.child(dropdown));
+        let header = div()
+            .flex_none()
+            .flex()
+            .h(geometry.search_height)
+            .px(geometry.search_padding_x)
+            .border_b_1()
+            .border_color(theme.hairline_soft)
+            .child(field);
+        // The loading bar: drawn once the list's loading has run past its
+        // threshold (300 ms), so a list that answers quickly shows none.
+        let loading = list
+            .loading
+            .filter(|since| self.launcher.now_ms().saturating_sub(*since) >= pane_core::LOADING_MS);
+        let bar = loading.map(|_| {
+            let width = geometry.search_text_inset * 40.;
+            div()
+                .id("designed-loading")
+                .flex_none()
+                .overflow_hidden()
+                .h(px(2.))
+                .w_full()
+                .bg(theme.hairline_soft)
+                .child(
+                    div()
+                        .id("designed-loading-highlight")
+                        .h(px(2.))
+                        .w(width)
+                        .bg(theme.accent)
+                        .with_animation(
+                            String::from("designed-loading-sweep"),
+                            gpui::Animation::new(std::time::Duration::from_millis(1200))
+                                .repeat()
+                                .with_max_fps(60.),
+                            move |highlight, phase| {
+                                let span =
+                                    geometry.search_text_inset.as_f32() * 40. + width.as_f32();
+                                let at = phase * span - width.as_f32();
+                                highlight.ml(px(at))
+                            },
+                        ),
+                )
+        });
+        div()
+            .id("designed-search")
+            .debug_selector(|| "search".into())
+            .key_context(crate::features::root_search::CONTEXT)
+            .track_focus(&self.query.entity().focus_handle(cx))
+            .role(gpui::Role::EditableComboBox)
+            .aria_label("Search")
+            .aria_value(list.search.clone())
+            .aria_placeholder(placeholder)
+            .flex_1()
+            .min_h(px(0.))
+            .flex()
+            .flex_col()
+            .when_some(heading, |search, heading| search.child(heading))
+            .child(header)
+            .when_some(bar, |search, bar| search.child(bar))
+            .child(body)
+            .into_any_element()
+    }
+
     /// Creates or drops the designed view's controls to match the
     /// launcher's screen, and reconciles the keyed state with the tree it
     /// now shows: a newly opened view takes the keyboard on its first
@@ -648,41 +805,157 @@ impl LauncherWindow {
             pane_core::Screen::DesignedView(view) => Some(view.tree),
             _ => None,
         };
-        let select = tree
+        // The choices and the one chosen, read from the node at `path`: a
+        // select's, or a List's search-bar dropdown's (#240), whose items
+        // are the choices and whose value the one chosen.
+        let read = tree
             .as_ref()
             .and_then(|tree| tree::node_at(tree, path))
             .and_then(|node| match &node.kind {
-                pane_core::NodeKind::Select(select) => Some(select),
-                _ => None,
-            });
-        let (choices, committed) = select
-            .map(|select| {
-                (
+                pane_core::NodeKind::Select(select) => Some((
                     select
                         .options
                         .iter()
-                        .map(|option| crate::ui::select::Choice {
-                            id: option.value.clone().into(),
-                            label: option
-                                .label
-                                .clone()
-                                .unwrap_or_else(|| option.value.clone())
-                                .into(),
-                            subtitle: None,
-                            keywords: Vec::new(),
-                            unavailable_reason: None,
+                        .map(|option| {
+                            (
+                                option.value.clone(),
+                                option.label.clone().unwrap_or_else(|| option.value.clone()),
+                            )
                         })
                         .collect::<Vec<_>>(),
-                    select.value.clone().map(gpui::SharedString::from),
-                )
-            })
-            .unwrap_or_default();
+                    select.value.clone(),
+                )),
+                pane_core::NodeKind::ListDropdown(dropdown) => Some((
+                    dropdown
+                        .items
+                        .iter()
+                        .map(|item| {
+                            (
+                                item.value.clone(),
+                                item.label.clone().unwrap_or_else(|| item.value.clone()),
+                            )
+                        })
+                        .collect::<Vec<_>>(),
+                    dropdown.value.clone(),
+                )),
+                _ => None,
+            });
+        let (choices, committed) = read.unwrap_or_default();
         crate::ui::select::Model {
             theme: visuals.theme,
             material: visuals.material,
-            choices,
-            committed,
+            choices: choices
+                .into_iter()
+                .map(|(value, label)| crate::ui::select::Choice {
+                    id: value.into(),
+                    label: label.into(),
+                    subtitle: None,
+                    keywords: Vec::new(),
+                    unavailable_reason: None,
+                })
+                .collect(),
+            committed: committed.map(gpui::SharedString::from),
         }
+    }
+}
+
+/// The least time between the search events of a designed List whose view
+/// handles the search itself, as the fields' input events are throttled:
+/// Raycast's default.
+const SEARCH_THROTTLE: Duration = Duration::from_millis(250);
+
+/// The bookkeeping of the designed list's search field's changes: the
+/// text waiting to be told to the view, one event in flight at a time,
+/// and when the last was sent — the fields' input events' rules (#238)
+/// for the header's field (#240).
+#[derive(Default)]
+pub(crate) struct SearchEvents {
+    pending: Option<String>,
+    in_flight: bool,
+    sent: Option<Instant>,
+    armed: bool,
+}
+
+impl LauncherWindow {
+    /// Whether the open designed view's List handles the search itself:
+    /// its field's changes are throttled, not sent as they are typed.
+    pub(crate) fn designed_list_searches(&self) -> bool {
+        match self.launcher.screen() {
+            pane_core::Screen::DesignedView(view) => {
+                view.list.as_ref().is_some_and(|list| list.searching)
+            }
+            _ => false,
+        }
+    }
+
+    /// The designed list's search field changed to `text`, as the user
+    /// typed it: the text waits to be told to the view, one event in
+    /// flight at a time and none before the throttle's time has passed.
+    pub(crate) fn designed_search_typed(&mut self, text: &str, cx: &mut Context<Self>) {
+        self.designed_search.pending = Some(text.to_owned());
+        self.designed_search_flush(cx);
+    }
+
+    /// Sends the search text waiting to be told to the view, if its state
+    /// allows one now: none while another is in flight (the waiting text
+    /// replaces whatever waited before, and goes out when the in-flight
+    /// event's answer lands), and none before the throttle's time has
+    /// passed since the last.
+    fn designed_search_flush(&mut self, cx: &mut Context<Self>) {
+        let send = {
+            let events = &mut self.designed_search;
+            if events.in_flight {
+                None
+            } else if let (Some(sent), true) = (events.sent, true) {
+                let elapsed = cx.background_executor().now().duration_since(sent);
+                if elapsed < SEARCH_THROTTLE {
+                    if !events.armed {
+                        events.armed = true;
+                        let waits = SEARCH_THROTTLE - elapsed;
+                        cx.spawn(async move |this, cx| {
+                            cx.background_executor().timer(waits).await;
+                            let _ = this.update(cx, |this, cx| {
+                                this.designed_search_timer(cx);
+                            });
+                        })
+                        .detach();
+                    }
+                    None
+                } else {
+                    events.pending.take()
+                }
+            } else {
+                events.pending.take()
+            }
+        };
+        let Some(text) = send else {
+            return;
+        };
+        self.designed_search.in_flight = true;
+        self.designed_search.sent = Some(cx.background_executor().now());
+        let pending = self.launcher.set_query(&text);
+        cx.spawn(async move |this, cx| {
+            pending.await;
+            let _ = this.update(cx, |this, cx| {
+                this.designed_search_answered(cx);
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
+    /// The throttle's time passed: whatever text was held goes out now.
+    fn designed_search_timer(&mut self, cx: &mut Context<Self>) {
+        self.designed_search.armed = false;
+        self.designed_search_flush(cx);
+    }
+
+    /// The in-flight search event was answered: the tree its answer drew
+    /// is shown, and the text waiting behind it goes out now.
+    fn designed_search_answered(&mut self, cx: &mut Context<Self>) {
+        self.designed_search.in_flight = false;
+        cx.notify();
+        self.designed_search_flush(cx);
     }
 }
 

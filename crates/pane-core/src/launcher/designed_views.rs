@@ -72,7 +72,7 @@ const POP_CALLBACK: u32 = 0;
 /// The designed views the open command shows: the navigation stack, the
 /// root view the command opened first and each view a push added above
 /// it, the top of the stack on screen.
-pub(super) struct DesignedStack {
+pub(crate) struct DesignedStack {
     /// The stack's views, the root first and the top last; it always holds
     /// the root.
     views: Vec<OpenDesignedView>,
@@ -100,6 +100,7 @@ impl DesignedStack {
                 loading,
                 refresh_after_ms,
                 tree,
+                list: super::designed_list::ListHeld::default(),
             }],
         }
     }
@@ -110,7 +111,7 @@ impl DesignedStack {
     }
 
     /// The top view, changed.
-    fn top_mut(&mut self) -> &mut OpenDesignedView {
+    pub(super) fn top_mut(&mut self) -> &mut OpenDesignedView {
         self.views.last_mut().expect("the stack holds the root")
     }
 
@@ -128,7 +129,9 @@ impl DesignedStack {
     }
 
     /// The screen of the top view: its snapshot, and its navigation title
-    /// as the screen's title.
+    /// as the screen's title. The snapshot's list is filled by
+    /// [`super::Launcher::present_designed_list`], which every path that
+    /// shows a screen follows.
     fn shown(&self) -> (super::DesignedViewSnapshot, String) {
         let top = self.top();
         (
@@ -136,6 +139,7 @@ impl DesignedStack {
                 id: top.id,
                 render: top.rendered,
                 tree: top.tree.clone(),
+                list: None,
             },
             top.tree.navigation_title().unwrap_or_default().to_owned(),
         )
@@ -143,9 +147,9 @@ impl DesignedStack {
 }
 
 /// One view of the stack, as the launcher holds it.
-struct OpenDesignedView {
+pub(crate) struct OpenDesignedView {
     /// The view in the runtime; closed when the view leaves the screen.
-    id: ViewId,
+    pub(super) id: ViewId,
     /// The package the view's command belongs to: whose identity its
     /// web images and system icons load under, and whose folder its
     /// packaged images resolved in.
@@ -171,6 +175,10 @@ struct OpenDesignedView {
     /// The view's last good tree: what shows at once when the view above
     /// it pops, before the view re-renders.
     tree: DesignedTree,
+    /// The List or Grid this view's tree names: its search text and
+    /// selection, which Pane owns (#240), with the bookkeeping of the
+    /// events it raises. A tree that names no list holds it unused.
+    pub(super) list: super::designed_list::ListHeld,
 }
 
 /// One event sent to a designed view, with its reply: a user's event, or
@@ -313,10 +321,13 @@ impl Launcher {
                 state.open = Some(component);
                 state.launch = launch;
                 state.open_command = Some(command);
-                state.searching = None;
+                state.browsing = None;
                 state.designed_view = Some(stack);
                 state.next_screen();
                 state.view = view;
+                // The List or Grid the view's tree names is presented, its
+                // rows filling the view (#240).
+                self.present_designed_list(&mut *state);
                 // The first render's own ask schedules the view's refresh
                 // (see `refresh`).
                 self.view_refresh_asked(rendered.refresh_after_ms);
@@ -458,6 +469,8 @@ impl Launcher {
             DesignedHandler::Focus => "a focus",
             DesignedHandler::Blur => "a blur",
             DesignedHandler::Key => "a key",
+            DesignedHandler::Selection => "a selection",
+            DesignedHandler::More => "a load-more",
         };
         self.developing.logs.pane(
             &owner,
@@ -502,6 +515,9 @@ impl Launcher {
         state.view.screen = super::Screen::DesignedView(screen);
         state.view.title = title;
         state.view.status = Status::Idle;
+        // The view below's list, as it was when the view above it was
+        // pushed: shown again with its rows.
+        self.present_designed_list(&mut *state);
         let epoch = state.screen_epoch;
         self.deliver_designed_pop(state, epoch, None);
         true
@@ -629,6 +645,7 @@ impl Launcher {
                 state.view.screen = super::Screen::DesignedView(screen);
                 state.view.title = title;
                 state.view.status = Status::Idle;
+                self.present_designed_list(&mut *state);
                 // The answer's own ask paces the view's next refresh.
                 self.view_refresh_asked(rendered.refresh_after_ms);
             }
@@ -653,6 +670,7 @@ impl Launcher {
                 state.view.screen = super::Screen::DesignedView(screen);
                 state.view.title = title;
                 state.view.status = Status::Idle;
+                self.present_designed_list(&mut *state);
                 self.view_refresh_asked(ask);
             }
             Ok(DesignedNext::Replaced(opened, rendered)) => {
@@ -677,6 +695,7 @@ impl Launcher {
                 state.view.screen = super::Screen::DesignedView(screen);
                 state.view.title = title;
                 state.view.status = Status::Idle;
+                self.present_designed_list(&mut *state);
                 self.view_refresh_asked(ask);
             }
             Ok(DesignedNext::Popped { result }) => {
@@ -702,6 +721,7 @@ impl Launcher {
                     state.view.screen = super::Screen::DesignedView(screen);
                     state.view.title = title;
                     state.view.status = Status::Idle;
+                    self.present_designed_list(&mut *state);
                     // The popped view's ask went with it; the view below's
                     // own ask is live again.
                     self.view_refresh_asked(ask);
@@ -890,6 +910,7 @@ fn opened_view(
         loading,
         refresh_after_ms: rendered.refresh_after_ms,
         tree,
+        list: super::designed_list::ListHeld::default(),
     }
 }
 
@@ -945,10 +966,19 @@ fn landed(
 }
 
 /// Every icon `node` holds, resolved in `folder` (see [`Icon::resolved`]),
-/// and its children's and its `fallback`'s with it.
+/// and its children's and its `fallback`'s with it: a List item's and a
+/// Grid cell's, and a Markdown node's images, with the rest (#240).
 fn resolve_node(node: &mut Node, folder: &Path) {
     let of = |icon: &mut Option<Icon>| {
         *icon = icon.take().and_then(|icon| icon.resolved(folder));
+    };
+    let images = |blocks: &mut Vec<crate::markdown::Block>| {
+        crate::markdown::visit_images(blocks, &mut |held, source| {
+            if held.is_none() {
+                *held = markdown_icon(source);
+            }
+            of(held);
+        });
     };
     match &mut node.kind {
         NodeKind::Button(button) => of(&mut button.icon),
@@ -956,6 +986,9 @@ fn resolve_node(node: &mut Node, folder: &Path) {
         NodeKind::Image(image) => of(&mut image.image),
         NodeKind::RichRow(row) => of(&mut row.icon),
         NodeKind::EmptyState(empty) => of(&mut empty.icon),
+        NodeKind::ListItem(item) => of(&mut item.icon),
+        NodeKind::GridItem(item) => of(&mut item.image),
+        NodeKind::Markdown(markdown) => images(&mut markdown.blocks),
         _ => {}
     }
     if let Some(fallback) = &mut node.fallback {
@@ -964,6 +997,25 @@ fn resolve_node(node: &mut Node, folder: &Path) {
     for child in &mut node.children {
         resolve_node(child, folder);
     }
+    if let NodeKind::ListItem(item) = &mut node.kind
+        && let Some(detail) = &mut item.detail
+    {
+        resolve_node(detail, folder);
+    }
+}
+
+/// The icon a Markdown image's `source` reads as: a URL as a URL, anything
+/// else a packaged image's path.
+fn markdown_icon(source: &str) -> Option<Icon> {
+    let value = if source.starts_with("http://")
+        || source.starts_with("https://")
+        || source.starts_with("data:")
+    {
+        serde_json::json!({ "url": source })
+    } else {
+        serde_json::json!({ "path": source })
+    };
+    crate::icons::read(&value)
 }
 
 /// Whether any icon `node` or its descendants hold needs the host's loads,
@@ -980,12 +1032,21 @@ fn want_node(
             *wanted |= loads_icon(icon);
         }
     };
+    let images = |blocks: &[crate::markdown::Block], wanted: &mut bool| {
+        crate::markdown::each_image(blocks, &mut |icon: &Icon| {
+            loads.want(identity, icon);
+            *wanted |= loads_icon(icon);
+        });
+    };
     match &node.kind {
         NodeKind::Button(button) => want(button.icon.as_ref(), &mut wanted),
         NodeKind::Icon(icon) | NodeKind::IconTile(icon) => want(icon.icon.as_ref(), &mut wanted),
         NodeKind::Image(image) => want(image.image.as_ref(), &mut wanted),
         NodeKind::RichRow(row) => want(row.icon.as_ref(), &mut wanted),
         NodeKind::EmptyState(empty) => want(empty.icon.as_ref(), &mut wanted),
+        NodeKind::ListItem(item) => want(item.icon.as_ref(), &mut wanted),
+        NodeKind::GridItem(item) => want(item.image.as_ref(), &mut wanted),
+        NodeKind::Markdown(markdown) => images(&markdown.blocks, &mut wanted),
         _ => {}
     }
     if let Some(fallback) = node.fallback.as_deref() {
@@ -993,6 +1054,11 @@ fn want_node(
     }
     for child in &node.children {
         wanted |= want_node(child, identity, loads);
+    }
+    if let NodeKind::ListItem(item) = &node.kind
+        && let Some(detail) = item.detail.as_deref()
+    {
+        wanted |= want_node(detail, identity, loads);
     }
     wanted
 }
@@ -1028,12 +1094,24 @@ fn shown_node(node: &mut Node, owner: Option<&str>, loads: &super::icon_loads::I
             *icon = Some(shown);
         }
     };
+    let images = |blocks: &mut Vec<crate::markdown::Block>, changed: &mut bool| {
+        crate::markdown::visit_images(blocks, &mut |held, _| {
+            if let Some(icon) = held.as_ref() {
+                let shown = loads.shown(owner, icon);
+                *changed |= icon != &shown;
+                *held = Some(shown);
+            }
+        });
+    };
     match &mut node.kind {
         NodeKind::Button(button) => show(&mut button.icon, &mut changed),
         NodeKind::Icon(icon) | NodeKind::IconTile(icon) => show(&mut icon.icon, &mut changed),
         NodeKind::Image(image) => show(&mut image.image, &mut changed),
         NodeKind::RichRow(row) => show(&mut row.icon, &mut changed),
         NodeKind::EmptyState(empty) => show(&mut empty.icon, &mut changed),
+        NodeKind::ListItem(item) => show(&mut item.icon, &mut changed),
+        NodeKind::GridItem(item) => show(&mut item.image, &mut changed),
+        NodeKind::Markdown(markdown) => images(&mut markdown.blocks, &mut changed),
         _ => {}
     }
     if let Some(fallback) = &mut node.fallback {
@@ -1041,6 +1119,11 @@ fn shown_node(node: &mut Node, owner: Option<&str>, loads: &super::icon_loads::I
     }
     for child in &mut node.children {
         changed |= shown_node(child, owner, loads);
+    }
+    if let NodeKind::ListItem(item) = &mut node.kind
+        && let Some(detail) = &mut item.detail
+    {
+        changed |= shown_node(detail, owner, loads);
     }
     changed
 }

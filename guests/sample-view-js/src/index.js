@@ -28,14 +28,17 @@ import {
   Card,
   Checkbox,
   Column,
+  Detail,
   Divider,
   EmptyState,
+  Grid,
   Icon,
   IconTile,
   Image,
   KeySequence,
   Keycap,
   Link,
+  List,
   Loading,
   Markdown,
   MetadataList,
@@ -57,6 +60,7 @@ import {
   TextInput,
   Toggle,
   createView,
+  selectedKey,
   usePending,
   useState,
 } from "@pane-app/extension/view";
@@ -311,7 +315,203 @@ function LoadingView() {
   });
 }
 
-/** The command's views: the counter, the gallery, or the loading sample. */
+/** The List sample (#240): sections, keywords, accessories, a
+ * host-filtered search field, the empty view, the detail pane (built for
+ * the selected item, as the render context names it), the search-bar
+ * dropdown, the loading bar and pagination. The first item's press
+ * toggles the loading bar, so its 300 ms threshold can be seen. */
+function NotesView() {
+  const [listLoading, setListLoading] = useState(true);
+  const [pages, setPages] = useState(1);
+  const [pinned, setPinned] = useState(false);
+  const selected = selectedKey();
+  const note = (key, title, subtitle, keyword, tag, color) =>
+    jsxs(List.Item, {
+      key,
+      title,
+      subtitle,
+      icon: { builtin: "document" },
+      keywords: [keyword],
+      accessories: [{ tag, color }, { text: "1" }],
+      onClick: () => setListLoading(!listLoading),
+      actions: [{ title: "Copy", onClick: () => {} }],
+      detail:
+        selected === key
+          ? jsxs(Detail, {
+              children: [
+                jsxs(Markdown, {
+                  children: [
+                    `# ${title}\n\n*Selected:* ${key} \u2014 the pane's content is built for it alone.\n\n- [x] The render context names it\n- [ ] No other item's detail is built\n\n| Field | Value |\n| --- | --- |\n| key | ${key} |\n| title | ${title} |\n\n![Pane](data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 12'%3E%3Crect width='24' height='12' rx='3' fill='%233d5afe'/%3E%3C/svg%3E =48x24 "Pane's mark")\n\nSee [the tree](https://example.com/tree).`,
+                  ],
+                }),
+              ],
+            })
+          : undefined,
+    });
+  const sections = [
+    jsxs(List.Section, {
+      title: "Notes",
+      subtitle: "Three notes",
+      children: [
+        note("first", "First note", "The first of the notes", "opening", "new", "green"),
+        note("second", "Second note", "The second of the notes", "middle", "kept", "blue"),
+        note("third", "Third note", "The third of the notes", "closing", "done", "red"),
+      ],
+    }),
+  ];
+  if (pinned) {
+    sections.push(
+      jsxs(List.Section, {
+        title: "Pinned",
+        children: [note("pinned", "Pinned note", "The one that is pinned", "kept", "pinned", "yellow")],
+      }),
+    );
+  } else {
+    sections.push(
+      jsxs(List.Section, {
+        title: "More",
+        subtitle: "A page at a time",
+        children: Array.from({ length: pages * 6 }, (_, at) =>
+          jsxs(List.Item, {
+            key: `more-${at}`,
+            title: `More ${at}`,
+            subtitle: "One page of a longer list",
+            keywords: ["page"],
+            onClick: () => {},
+          }),
+        ),
+      }),
+    );
+  }
+  return jsxs(List, {
+    navigationTitle: "Notes",
+    searchPlaceholder: "Search notes…",
+    isLoading: listLoading,
+    isShowingDetail: true,
+    hasMore: pages < 3,
+    pageSize: 6,
+    onLoadMore: () => setPages(pages + 1),
+    children: [
+      jsxs(List.Dropdown, {
+        value: pinned ? "pinned" : "all",
+        onChange: () => setPinned(!pinned),
+        children: [
+          { value: "all", title: "All notes" },
+          { value: "pinned", title: "Pinned" },
+        ],
+      }),
+      ...sections,
+      jsxs(EmptyState, {
+        title: "No notes",
+        description: "Nothing matches the search.",
+        children: [jsxs(Button, { onClick: () => {}, children: ["Clear the search"] })],
+      }),
+    ],
+  });
+}
+
+/** The Grid sample (#240): cells of images and colours in two sections,
+ * each with its own columns, aspect ratio, fit and inset. */
+function CellsView() {
+  return jsxs(Grid, {
+    navigationTitle: "Cells",
+    searchPlaceholder: "Search cells…",
+    children: [
+      jsxs(Grid.Section, {
+        title: "Warm",
+        columns: 3,
+        aspectRatio: 2,
+        fit: "cover",
+        children: [
+          jsxs(Grid.Item, {
+            key: "warm-0",
+            title: "Amber",
+            subtitle: "A colour cell",
+            color: "#ffb300",
+            onClick: () => {},
+          }),
+          jsxs(Grid.Item, {
+            key: "warm-1",
+            title: "Coral",
+            subtitle: "A colour cell",
+            color: "#ff7043",
+            onClick: () => {},
+          }),
+          jsxs(Grid.Item, {
+            key: "warm-2",
+            title: "Document",
+            subtitle: "An image cell",
+            image: { builtin: "document" },
+            onClick: () => {},
+          }),
+        ],
+      }),
+      jsxs(Grid.Section, {
+        title: "Cool",
+        columns: 4,
+        aspectRatio: 1,
+        inset: true,
+        children: [
+          jsxs(Grid.Item, {
+            key: "cool-0",
+            title: "Indigo",
+            subtitle: "A colour cell",
+            color: "#3d5afe",
+            onClick: () => {},
+          }),
+          jsxs(Grid.Item, {
+            key: "cool-1",
+            title: "Teal",
+            subtitle: "A colour cell",
+            color: "#00897b",
+            onClick: () => {},
+          }),
+          jsxs(Grid.Item, {
+            key: "cool-2",
+            title: "Star",
+            subtitle: "An image cell",
+            image: { builtin: "star" },
+            onClick: () => {},
+          }),
+          jsxs(Grid.Item, {
+            key: "cool-3",
+            title: "Typed",
+            subtitle: "A subtree cell",
+            children: [jsxs(Text, { level: "secondary", children: ["A cell of the author's own"] })],
+            onClick: () => {},
+          }),
+        ],
+      }),
+    ],
+  });
+}
+
+/** The Detail sample (#240): Markdown with an image, a task list and a
+ * table, a metadata panel and actions. */
+function AboutView() {
+  return jsxs(Detail, {
+    navigationTitle: "About Pane",
+    children: [
+      jsxs(Markdown, {
+        children: [
+          "# Pane\n\nA screen an extension designs as a **tree** Pane renders.\n\n![Pane](data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 12'%3E%3Crect width='24' height='12' rx='3' fill='%233d5afe'/%3E%3C/svg%3E =48x24 \"Pane's mark\")\n\n- [x] Drawn by Pane\n- [ ] Drawn by the extension\n\n| Field | Value |\n| --- | --- |\n| version | 0.1 |\n| renderer | GPUI |\n\nSee [the tree](https://example.com/tree).",
+        ],
+      }),
+      jsxs(MetadataList, {
+        items: [
+          { label: "Version", value: "0.1.0" },
+          { label: "Tags", tags: ["designed", "tree"] },
+          { separator: true },
+          { label: "Repository", value: "pane", onClick: () => {} },
+        ],
+      }),
+      jsxs(Row, { gap: "s", children: [jsxs(Button, { onClick: () => {}, children: ["Done"] })] }),
+    ],
+  });
+}
+
+/** The command's views: the counter, the gallery, the loading sample, or
+ * one of the standard views (#240). */
 export const command = {
   async openView(commandId) {
     if (commandId === "sample") {
@@ -322,6 +522,15 @@ export const command = {
     }
     if (commandId === "loading") {
       return createView(LoadingView);
+    }
+    if (commandId === "list") {
+      return createView(NotesView);
+    }
+    if (commandId === "grid") {
+      return createView(CellsView);
+    }
+    if (commandId === "detail") {
+      return createView(AboutView);
     }
     throw new Error("this command opens no designed view");
   },

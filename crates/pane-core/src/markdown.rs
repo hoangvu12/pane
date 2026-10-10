@@ -2,11 +2,19 @@
 //! ADR 0036): enough of CommonMark for documentation — headings,
 //! paragraphs, fenced and indented code, block quotes, ordered and
 //! unordered lists with task-list checkboxes, thematic breaks, inline
-//! emphasis, strong emphasis, code and links, and GitHub's tables — read
-//! into typed blocks the host window draws with its own theme. LaTeX is
-//! out of scope, and so is the rest of CommonMark: no reference links, no
-//! footnotes, no HTML, no images (a designed tree shows images with its
-//! own `image` node; Markdown detail lands with the standard views).
+//! emphasis, strong emphasis, code, links and images, and GitHub's
+//! tables — read into typed blocks the host window draws with its own
+//! theme. LaTeX is out of scope, and so is the rest of CommonMark: no
+//! reference links, no footnotes, no HTML (a designed tree shows anything
+//! an image cannot with its own nodes; the Detail view is where Markdown
+//! images land, #240).
+//!
+//! An image reads `![alt](source "title")`, its source the icon model's
+//! (a packaged image's path, a web image's or an inline `data:` URL),
+//! with an optional size between the source and the title:
+//! `![alt](source =100x50)` (either number may be left out). The parser
+//! keeps the source as written; the icon it reads as is resolved by the
+//! host when the tree lands, as any icon of the tree is (`visit_images`).
 //!
 //! The parser is hand-written, deliberately: the tree's Markdown is a
 //! UI component's content, bounded by the document's limits, and adding
@@ -14,6 +22,8 @@
 //! file. What it does not understand it leaves as text, the way a lenient
 //! renderer degrades, and its reading is total: `parse` never fails, so a
 //! Markdown node never makes a tree unreadable.
+
+use crate::icons::Icon;
 
 /// One block of a Markdown document.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -62,10 +72,117 @@ pub enum Inline {
     Emphasis(Vec<Inline>),
     /// Strong emphasis: `**like this**`.
     Strong(Vec<Inline>),
-    /// A link: `[text](href)`. The host draws it as a link, not as prose.
+    /// A link: `[text](href)`. The host draws it as a link, not as prose;
+    /// the standard views open what it names (#240).
     Link { text: Vec<Inline>, href: String },
+    /// An image: `![alt](source "title")`, its source the icon model's,
+    /// with an optional size (`=100x50`, either number may be left out).
+    /// `icon` is the source read as the icon model reads one, resolved in
+    /// the open command's package folder by the host as any icon of the
+    /// tree is; the parser leaves it `None`, and the drawing falls back to
+    /// the source as written until it is resolved.
+    Image {
+        alt: String,
+        source: String,
+        title: Option<String>,
+        /// Its width in pixels, when the image's size names one.
+        width: Option<u32>,
+        /// Its height in pixels, when the image's size names one.
+        height: Option<u32>,
+        /// The source as the icon model reads it, resolved by the host;
+        /// `None` until the tree that holds it lands.
+        icon: Option<Icon>,
+    },
     /// A hard line break: two spaces at a line's end.
     Break,
+}
+
+/// Visits every image the blocks hold — the icon its source reads as,
+/// which the host resolves in the open command's package folder and
+/// starts the loads of, and the source itself — so Markdown images ride
+/// the icon machinery the tree's own icons do (#240).
+pub fn visit_images(blocks: &mut [Block], visit: &mut dyn FnMut(&mut Option<Icon>, &str)) {
+    for block in blocks {
+        match block {
+            Block::Heading { inlines, .. } | Block::Paragraph(inlines) => {
+                visit_inline_images(inlines, visit)
+            }
+            Block::Quote(inner) => visit_images(inner, visit),
+            Block::List { items, .. } => {
+                for item in items {
+                    visit_images(&mut item.blocks, visit)
+                }
+            }
+            Block::Table { head, rows, .. } => {
+                for cell in head {
+                    visit_inline_images(cell, visit)
+                }
+                for row in rows {
+                    for cell in row {
+                        visit_inline_images(cell, visit)
+                    }
+                }
+            }
+            Block::Code { .. } | Block::Rule => {}
+        }
+    }
+}
+
+/// The images of one run of inline content.
+fn visit_inline_images(inlines: &mut [Inline], visit: &mut dyn FnMut(&mut Option<Icon>, &str)) {
+    for inline in inlines {
+        match inline {
+            Inline::Emphasis(inner) | Inline::Strong(inner) => visit_inline_images(inner, visit),
+            Inline::Link { text: inner, .. } => visit_inline_images(inner, visit),
+            Inline::Image { source, icon, .. } => visit(icon, source),
+            Inline::Text(_) | Inline::Code(_) | Inline::Break => {}
+        }
+    }
+}
+
+/// Visits every resolved image the blocks hold, as they are: whose loads
+/// the host starts and whose arrivals it shows (#240).
+pub fn each_image(blocks: &[Block], visit: &mut dyn FnMut(&Icon)) {
+    for block in blocks {
+        match block {
+            Block::Heading { inlines, .. } | Block::Paragraph(inlines) => {
+                each_inline_image(inlines, visit)
+            }
+            Block::Quote(inner) => each_image(inner, visit),
+            Block::List { items, .. } => {
+                for item in items {
+                    each_image(&item.blocks, visit)
+                }
+            }
+            Block::Table { head, rows, .. } => {
+                for cell in head {
+                    each_inline_image(cell, visit)
+                }
+                for row in rows {
+                    for cell in row {
+                        each_inline_image(cell, visit)
+                    }
+                }
+            }
+            Block::Code { .. } | Block::Rule => {}
+        }
+    }
+}
+
+/// The resolved images of one run of inline content.
+fn each_inline_image(inlines: &[Inline], visit: &mut dyn FnMut(&Icon)) {
+    for inline in inlines {
+        match inline {
+            Inline::Emphasis(inner) | Inline::Strong(inner) => each_inline_image(inner, visit),
+            Inline::Link { text: inner, .. } => each_inline_image(inner, visit),
+            Inline::Image { icon, .. } => {
+                if let Some(icon) = icon {
+                    visit(icon)
+                }
+            }
+            Inline::Text(_) | Inline::Code(_) | Inline::Break => {}
+        }
+    }
 }
 
 /// One column's alignment in a table.
@@ -510,20 +627,20 @@ fn inlines(text: &str) -> Vec<Inline> {
                 continue;
             }
         }
-        // A link: `[text](href)`.
-        if character == '['
-            && let Some(end) = find_plain(&chars, at + 1, ']')
-            && chars.get(end + 1) == Some(&'(')
-            && let Some(close) = find_plain(&chars, end + 2, ')')
+        // A link: `[text](href)`, or an image: `![alt](source …)`.
+        if (character == '[' || (character == '!' && chars.get(at + 1) == Some(&'[')))
+            && let Some((inner, inside, close)) = linked(&chars, at)
         {
-            let inner: String = chars[at + 1..end].iter().collect();
-            let href: String = chars[end + 2..close].iter().collect();
             push_text(&mut runs, &plain);
             plain.clear();
-            runs.push(Inline::Link {
-                text: inlines(&inner),
-                href: href.trim().to_owned(),
-            });
+            if character == '!' {
+                runs.push(image(&inner, &inside));
+            } else {
+                runs.push(Inline::Link {
+                    text: inlines(&inner),
+                    href: inside.trim().to_owned(),
+                });
+            }
             at = close + 1;
             continue;
         }
@@ -563,6 +680,74 @@ fn emphasized(chars: &[char], open: usize, close: usize, character: char) -> boo
     }
     let word = |c: Option<&char>| c.is_some_and(|c| c.is_alphanumeric());
     !word(chars.get(open.wrapping_sub(1))) && !word(chars.get(close))
+}
+
+/// The bracketed link or image starting at `at`: its inner text, the
+/// content of its parentheses, and the index of its closing parenthesis;
+/// `None` when there is no `]…)` run there. An image starts `![`, a link
+/// `[`.
+fn linked(chars: &[char], at: usize) -> Option<(String, String, usize)> {
+    let start = at + usize::from(chars[at] == '!');
+    let end = find_plain(chars, start + 1, ']')?;
+    if chars.get(end + 1) != Some(&'(') {
+        return None;
+    }
+    let close = find_plain(chars, end + 2, ')')?;
+    let inner: String = chars[start + 1..end].iter().collect();
+    let inside: String = chars[end + 2..close].iter().collect();
+    Some((inner, inside, close))
+}
+
+/// One image: its `alt` text, and the content of its parentheses — its
+/// source, an optional `=WxH` size after it and an optional quoted title
+/// after that, either of which may be given alone.
+fn image(alt: &str, inside: &str) -> Inline {
+    let mut held = inside.trim();
+    let mut title = None;
+    if let (Some(open), Some(close)) = (held.find('"'), held.rfind('"'))
+        && open < close
+    {
+        title = Some(held[open + 1..close].to_owned());
+        held = held[..open].trim_end();
+    }
+    let mut source = held;
+    let mut width = None;
+    let mut height = None;
+    if let Some(at) = held.find(" =")
+        && let Some((given_width, given_height)) = size_of(held[at + 2..].trim())
+    {
+        width = given_width;
+        height = given_height;
+        source = held[..at].trim_end();
+    }
+    Inline::Image {
+        alt: alt.to_owned(),
+        source: source.to_owned(),
+        title,
+        width,
+        height,
+        icon: None,
+    }
+}
+
+/// `100x50`, `100x` or `x50` as the width and height it names, when it
+/// spells one of them.
+fn size_of(text: &str) -> Option<(Option<u32>, Option<u32>)> {
+    let (width, height) = text.split_once('x')?;
+    if width.is_empty() && height.is_empty() {
+        return None;
+    }
+    let read = |part: &str| {
+        (!part.is_empty())
+            .then(|| part.parse::<u32>().ok())
+            .flatten()
+    };
+    if (!width.is_empty() && read(width).is_none())
+        || (!height.is_empty() && read(height).is_none())
+    {
+        return None;
+    }
+    Some((read(width), read(height)))
 }
 
 /// `text` as one run of prose, when it says anything.
@@ -729,6 +914,45 @@ mod tests {
             matches!(&blocks[0], Block::Code { language: None, .. }),
             "{blocks:?}"
         );
+    }
+
+    #[test]
+    fn images_read_with_their_sizes_and_titles() {
+        let blocks = parse(
+            "![Pane's mark](assets/mark.png =48x24 \"the mark\") and ![icon](https://pane.dev/logo.png).",
+        );
+        let Block::Paragraph(runs) = &blocks[0] else {
+            panic!("a paragraph: {blocks:?}");
+        };
+        let Inline::Image {
+            alt,
+            source,
+            title,
+            width,
+            height,
+            icon,
+        } = &runs[0]
+        else {
+            panic!("an image: {runs:?}");
+        };
+        assert_eq!(alt, "Pane's mark");
+        assert_eq!(source, "assets/mark.png");
+        assert_eq!(title.as_deref(), Some("the mark"));
+        assert_eq!((*width, *height), (Some(48), Some(24)));
+        assert!(icon.is_none());
+        // A web image, and a size with one number left out.
+        let Inline::Image { source, .. } = &runs[2] else {
+            panic!("an image: {runs:?}");
+        };
+        assert_eq!(source, "https://pane.dev/logo.png");
+        let blocks = parse("![half](half.png =100x)");
+        let Block::Paragraph(runs) = &blocks[0] else {
+            panic!("a paragraph");
+        };
+        let Inline::Image { width, height, .. } = &runs[0] else {
+            panic!("an image: {runs:?}");
+        };
+        assert_eq!((*width, *height), (Some(100), None));
     }
 
     #[test]

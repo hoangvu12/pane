@@ -136,6 +136,7 @@ pub trait View: Sized + 'static {
 pub struct Cx<'a, V: View> {
     listeners: &'a mut Vec<Run<V>>,
     refreshed: bool,
+    selected: Option<String>,
 }
 
 impl<V: View> Cx<'_, V> {
@@ -452,6 +453,21 @@ pub enum NodeKind {
     TextInput(TextInput),
     PasswordInput(TextInput),
     TextArea(TextInput),
+    /// A standard List (#240): its items in sections, whose search field
+    /// and selection Pane owns.
+    List(ListNode),
+    /// A standard Grid (#240): a List's behaviour with cells.
+    Grid(ListNode),
+    /// A section of a List's or Grid's items.
+    ListSection(SectionNode),
+    /// One item of a List.
+    ListItem(ListItem),
+    /// One cell of a Grid.
+    GridItem(GridItem),
+    /// A List's search-bar dropdown.
+    ListDropdown(DropdownNode),
+    /// A Detail (#240): a scrolled column of what a record is.
+    Detail(Layout),
 }
 
 /// The layout of a `column`, `row` or `card`: its gap, padding,
@@ -1485,6 +1501,474 @@ pub fn text_area(value: impl Into<String>) -> TextInput {
     })))
 }
 
+/// A standard List (#240): its items in sections — [`item`] and
+/// [`section`] children, a [`dropdown`] child its search-bar dropdown,
+/// an [`empty_state`] child its empty view — whose search field and
+/// selection Pane owns. Pane filters the items by the text typed in the
+/// field with the root-search matcher, unless `on_search_text` handles
+/// the search itself (then the events are throttled);
+/// `on_selection_change` hears the selection move, told the selected
+/// item's key, and `on_load_more` is raised as the selection nears the
+/// end while `has_more` says more is there.
+pub fn list() -> List {
+    List(Node::of(NodeKind::List(ListNode::default())))
+}
+
+/// A standard Grid (#240): a List's behaviour with cells — [`cell`]
+/// children in [`section`]s, each section with its own columns (1–8,
+/// 5 by default), aspect ratio, fit and inset. The arrows move the
+/// selection by cell and row, Ctrl+Up and Ctrl+Down by section.
+pub fn grid() -> Grid {
+    Grid(Node::of(NodeKind::Grid(ListNode::default())))
+}
+
+/// One section of a List's or Grid's items, titled `title`, with an
+/// optional `subtitle` beside it.
+pub fn section(title: impl Into<String>) -> Section {
+    Section(Node::of(NodeKind::ListSection(SectionNode {
+        title: Some(title.into()),
+        ..SectionNode::default()
+    })))
+}
+
+/// One item of a List, titled `title` (#240): the List document's
+/// vocabulary — a subtitle, keywords, an icon, accessories and the
+/// actions that activate it — and the detail pane's content when it is
+/// selected. Its children are its own row subtree, drawn in the place of
+/// the standard row while Pane still selects and activates it.
+pub fn item(title: impl Into<String>) -> Item {
+    Item(Node::of(NodeKind::ListItem(ListItem {
+        title: title.into(),
+        ..ListItem::default()
+    })))
+}
+
+/// One cell of a Grid (#240): an image, a colour or a subtree, with a
+/// title and a subtitle under it.
+pub fn cell() -> GridCell {
+    GridCell(Node::of(NodeKind::GridItem(GridItem::default())))
+}
+
+/// The search-bar dropdown of a List (#240): its items and the one
+/// chosen, changed by the user's choice, which the list's `on_change`
+/// hears. A child of the list.
+pub fn dropdown() -> Dropdown {
+    Dropdown(Node::of(NodeKind::ListDropdown(DropdownNode::default())))
+}
+
+/// A Detail (#240): a scrolled column of what a record or an article is
+/// — Markdown, a metadata panel, a loading state, actions, as children.
+pub fn detail() -> Detail {
+    Detail(Node::of(NodeKind::Detail(Layout::default())))
+}
+
+/// A List (see [`list`]).
+#[derive(Debug)]
+pub struct List(Node);
+
+/// A Grid (see [`grid`]).
+#[derive(Debug)]
+pub struct Grid(Node);
+
+/// A section of items (see [`section`]).
+#[derive(Debug)]
+pub struct Section(Node);
+
+/// An item of a List (see [`item`]).
+#[derive(Debug)]
+pub struct Item(Node);
+
+/// A cell of a Grid (see [`cell`]).
+#[derive(Debug)]
+pub struct GridCell(Node);
+
+/// A search-bar dropdown (see [`dropdown`]).
+#[derive(Debug)]
+pub struct Dropdown(Node);
+
+/// A Detail (see [`detail`]).
+#[derive(Debug)]
+pub struct Detail(Node);
+
+builder!(List);
+builder!(Grid);
+builder!(Section);
+builder!(Item);
+builder!(GridCell);
+builder!(Dropdown);
+builder!(Detail);
+
+impl List {
+    /// What names the view, when this node is the tree's root: shown where
+    /// a screen's title is (the header's title row, above the search
+    /// field, #240).
+    pub fn navigation_title(mut self, title: impl Into<String>) -> List {
+        self.0.navigation_title = Some(title.into());
+        self
+    }
+
+    /// The search field's placeholder.
+    pub fn search_placeholder(mut self, placeholder: impl Into<String>) -> List {
+        self.0.list_mut().search_placeholder = Some(placeholder.into());
+        self
+    }
+
+    /// The search text the view sets: the field's value, which wins
+    /// while the user has not typed a newer one.
+    pub fn search_text(mut self, text: impl Into<String>) -> List {
+        self.0.list_mut().search_text = Some(text.into());
+        self
+    }
+
+    /// The item the view selects, by its key.
+    pub fn selected_key(mut self, key: impl Into<String>) -> List {
+        self.0.list_mut().selected_key = Some(key.into());
+        self
+    }
+
+    /// The loading state: the loading bar, drawn once loading has run
+    /// past its threshold (300 ms).
+    pub fn is_loading(mut self, loading: bool) -> List {
+        self.0.list_mut().is_loading = loading;
+        self
+    }
+
+    /// Whether the detail pane shows beside the items.
+    pub fn is_showing_detail(mut self, showing: bool) -> List {
+        self.0.list_mut().is_showing_detail = showing;
+        self
+    }
+
+    /// Whether more items follow the ones shown, whose loading the list
+    /// asks for as the selection nears the end.
+    pub fn has_more(mut self, has_more: bool) -> List {
+        self.0.list_mut().has_more = has_more;
+        self
+    }
+
+    /// How many items a page holds.
+    pub fn page_size(mut self, size: u64) -> List {
+        self.0.list_mut().page_size = Some(size);
+        self
+    }
+
+    /// The listener the search text runs on its every change: the list is
+    /// then not filtered by Pane, and the text is told to the view
+    /// (throttled).
+    pub fn on_search_text(mut self, listener: ValueListener) -> List {
+        self.0.list_mut().on_search_text = Some(listener);
+        self
+    }
+
+    /// The listener the selection's change runs, told the selected item's
+    /// key.
+    pub fn on_selection_change(mut self, listener: ValueListener) -> List {
+        self.0.list_mut().on_selection_change = Some(listener);
+        self
+    }
+
+    /// The listener the load of the next page runs, as the selection
+    /// nears the end of what is shown.
+    pub fn on_load_more(mut self, listener: Listener) -> List {
+        self.0.list_mut().on_load_more = Some(listener);
+        self
+    }
+}
+
+impl Grid {
+    /// What names the view, when this node is the tree's root (see
+    /// [`List::navigation_title`]).
+    pub fn navigation_title(mut self, title: impl Into<String>) -> Grid {
+        self.0.navigation_title = Some(title.into());
+        self
+    }
+
+    /// The search field's placeholder (see [`List::search_placeholder`]).
+    pub fn search_placeholder(mut self, placeholder: impl Into<String>) -> Grid {
+        self.0.list_mut().search_placeholder = Some(placeholder.into());
+        self
+    }
+
+    /// The search text the view sets (see [`List::search_text`]).
+    pub fn search_text(mut self, text: impl Into<String>) -> Grid {
+        self.0.list_mut().search_text = Some(text.into());
+        self
+    }
+
+    /// The cell the view selects, by its key.
+    pub fn selected_key(mut self, key: impl Into<String>) -> Grid {
+        self.0.list_mut().selected_key = Some(key.into());
+        self
+    }
+
+    /// The loading state (see [`List::is_loading`]).
+    pub fn is_loading(mut self, loading: bool) -> Grid {
+        self.0.list_mut().is_loading = loading;
+        self
+    }
+
+    /// Whether more cells follow the ones shown (see
+    /// [`List::has_more`]).
+    pub fn has_more(mut self, has_more: bool) -> Grid {
+        self.0.list_mut().has_more = has_more;
+        self
+    }
+
+    /// How many cells a page holds (see [`List::page_size`]).
+    pub fn page_size(mut self, size: u64) -> Grid {
+        self.0.list_mut().page_size = Some(size);
+        self
+    }
+
+    /// The listener the search text runs on its every change (see
+    /// [`List::on_search_text`]).
+    pub fn on_search_text(mut self, listener: ValueListener) -> Grid {
+        self.0.list_mut().on_search_text = Some(listener);
+        self
+    }
+
+    /// The listener the selection's change runs (see
+    /// [`List::on_selection_change`]).
+    pub fn on_selection_change(mut self, listener: ValueListener) -> Grid {
+        self.0.list_mut().on_selection_change = Some(listener);
+        self
+    }
+
+    /// The listener the load of the next page runs (see
+    /// [`List::on_load_more`]).
+    pub fn on_load_more(mut self, listener: Listener) -> Grid {
+        self.0.list_mut().on_load_more = Some(listener);
+        self
+    }
+}
+
+impl Node {
+    /// The list node of a List or Grid, changed.
+    fn list_mut(&mut self) -> &mut ListNode {
+        match &mut self.kind {
+            NodeKind::List(list) | NodeKind::Grid(list) => list,
+            _ => unreachable!("a list or grid node"),
+        }
+    }
+}
+
+impl Section {
+    /// The section's second line, beside its title.
+    pub fn subtitle(mut self, subtitle: impl Into<String>) -> Section {
+        match &mut self.0.kind {
+            NodeKind::ListSection(section) => section.subtitle = Some(subtitle.into()),
+            _ => unreachable!("a section node"),
+        }
+        self
+    }
+
+    /// How many columns the section's cells sit in (a Grid's), 1–8.
+    pub fn columns(mut self, columns: u64) -> Section {
+        match &mut self.0.kind {
+            NodeKind::ListSection(section) => section.columns = Some(columns),
+            _ => unreachable!("a section node"),
+        }
+        self
+    }
+
+    /// The section's cells' width over their height (a Grid's).
+    pub fn aspect_ratio(mut self, ratio: f32) -> Section {
+        match &mut self.0.kind {
+            NodeKind::ListSection(section) => section.aspect_ratio = Some(ratio),
+            _ => unreachable!("a section node"),
+        }
+        self
+    }
+
+    /// How the section's images fit their cells (a Grid's).
+    pub fn fit(mut self, fit: Fit) -> Section {
+        match &mut self.0.kind {
+            NodeKind::ListSection(section) => section.fit = fit,
+            _ => unreachable!("a section node"),
+        }
+        self
+    }
+
+    /// Whether the section's cells sit inset from the grid's edges (a
+    /// Grid's).
+    pub fn inset(mut self, inset: bool) -> Section {
+        match &mut self.0.kind {
+            NodeKind::ListSection(section) => section.inset = inset,
+            _ => unreachable!("a section node"),
+        }
+        self
+    }
+}
+
+impl Item {
+    /// The item's second line, under its title.
+    pub fn subtitle(mut self, subtitle: impl Into<String>) -> Item {
+        self.0.item_mut().subtitle = Some(subtitle.into());
+        self
+    }
+
+    /// The item's icon (`crate::icon`).
+    pub fn icon(mut self, icon: Icon) -> Item {
+        self.0.item_mut().look.icon = Some(icon);
+        self
+    }
+
+    /// The item's accessory, after its accessories (see
+    /// `crate::icon::Accessory`).
+    pub fn accessory(mut self, accessory: crate::icon::Accessory) -> Item {
+        self.0.item_mut().look.accessories.push(accessory);
+        self
+    }
+
+    /// The tooltip shown while the pointer rests on the item's title.
+    pub fn title_tooltip(mut self, tooltip: impl Into<String>) -> Item {
+        self.0.item_mut().look.title_tooltip = Some(tooltip.into());
+        self
+    }
+
+    /// The tooltip shown while the pointer rests on the item's subtitle.
+    pub fn subtitle_tooltip(mut self, tooltip: impl Into<String>) -> Item {
+        self.0.item_mut().look.subtitle_tooltip = Some(tooltip.into());
+        self
+    }
+
+    /// A word the search matches as the item's subtitle is, after its
+    /// keywords.
+    pub fn keyword(mut self, keyword: impl Into<String>) -> Item {
+        self.0.item_mut().keywords.push(keyword.into());
+        self
+    }
+
+    /// The listener that activates the item (its primary action).
+    pub fn on_press(mut self, listener: Listener) -> Item {
+        self.0.item_mut().on_press = Some(listener);
+        self
+    }
+
+    /// The item's action, after its actions: the second is its secondary
+    /// action.
+    pub fn action(mut self, action: ListAction) -> Item {
+        self.0.item_mut().actions.push(action);
+        self
+    }
+
+    /// The detail pane's content when this item is selected and the list
+    /// shows its detail — built for the selected item through the render
+    /// context's `selected`.
+    pub fn detail(mut self, detail: impl IntoNode) -> Item {
+        self.0.item_mut().detail = Some(detail.into_node());
+        self
+    }
+}
+
+impl Node {
+    /// The item node of an item, changed.
+    fn item_mut(&mut self) -> &mut ListItem {
+        match &mut self.kind {
+            NodeKind::ListItem(item) => item,
+            _ => unreachable!("an item node"),
+        }
+    }
+}
+
+impl GridCell {
+    /// The cell's title, under it.
+    pub fn title(mut self, title: impl Into<String>) -> GridCell {
+        self.0.cell_mut().title = Some(title.into());
+        self
+    }
+
+    /// The cell's subtitle, under its title.
+    pub fn subtitle(mut self, subtitle: impl Into<String>) -> GridCell {
+        self.0.cell_mut().subtitle = Some(subtitle.into());
+        self
+    }
+
+    /// The cell's image.
+    pub fn image(mut self, image: Icon) -> GridCell {
+        self.0.cell_mut().image = Some(image);
+        self
+    }
+
+    /// The colour the cell fills with.
+    pub fn color(mut self, color: impl Into<Paint>) -> GridCell {
+        self.0.cell_mut().color = Some(color.into());
+        self
+    }
+
+    /// The listener that activates the cell.
+    pub fn on_press(mut self, listener: Listener) -> GridCell {
+        self.0.cell_mut().on_press = Some(listener);
+        self
+    }
+}
+
+impl Node {
+    /// The cell node of a grid cell, changed.
+    fn cell_mut(&mut self) -> &mut GridItem {
+        match &mut self.kind {
+            NodeKind::GridItem(cell) => cell,
+            _ => unreachable!("a grid cell node"),
+        }
+    }
+}
+
+impl Dropdown {
+    /// The item chosen, by its id.
+    pub fn value(mut self, value: impl Into<String>) -> Dropdown {
+        match &mut self.0.kind {
+            NodeKind::ListDropdown(dropdown) => dropdown.value = Some(value.into()),
+            _ => unreachable!("a dropdown node"),
+        }
+        self
+    }
+
+    /// The dropdown's placeholder, shown while no choice is made.
+    pub fn placeholder(mut self, placeholder: impl Into<String>) -> Dropdown {
+        match &mut self.0.kind {
+            NodeKind::ListDropdown(dropdown) => dropdown.placeholder = Some(placeholder.into()),
+            _ => unreachable!("a dropdown node"),
+        }
+        self
+    }
+
+    /// The listener the choice's change runs, told the chosen item's id.
+    pub fn on_change(mut self, listener: ValueListener) -> Dropdown {
+        match &mut self.0.kind {
+            NodeKind::ListDropdown(dropdown) => dropdown.on_change = Some(listener),
+            _ => unreachable!("a dropdown node"),
+        }
+        self
+    }
+
+    /// The dropdown's item, after its items.
+    pub fn item(mut self, item: DropdownItem) -> Dropdown {
+        match &mut self.0.kind {
+            NodeKind::ListDropdown(dropdown) => dropdown.items.push(item),
+            _ => unreachable!("a dropdown node"),
+        }
+        self
+    }
+}
+
+impl Detail {
+    /// What names the view, when this node is the tree's root (see
+    /// [`List::navigation_title`]).
+    pub fn navigation_title(mut self, title: impl Into<String>) -> Detail {
+        self.0.navigation_title = Some(title.into());
+        self
+    }
+}
+
+/// `fit`'s name, as the tree writes it.
+fn fit_name(fit: Fit) -> &'static str {
+    match fit {
+        Fit::Contain => "contain",
+        Fit::Cover => "cover",
+        Fit::Fill => "fill",
+    }
+}
+
 /// The payload the icon and icon-tile kinds read.
 #[derive(Debug)]
 struct IconNodePayload {
@@ -2380,10 +2864,12 @@ impl<V: View> GuestView for Open<V> {
         // the drawing pending data asked for itself (see `Pending`):
         // which is where an interval's work runs.
         let refreshed = why_of(&context) == Why::Refresh;
+        let selected = selected_of(&context);
         let answer = {
             let mut cx = Cx {
                 listeners: &mut listeners,
                 refreshed,
+                selected,
             };
             self.state.borrow_mut().render(&mut cx).into_answer()
         };
@@ -2626,6 +3112,41 @@ enum Why {
 /// JSON, `{"render": N, "view": V, "why": "refresh", "ui": "1.1"}`, read
 /// without parsing the whole document, so a context that grew a field
 /// still gives its why.
+/// The selected item's key of the view's List or Grid, as the render's
+/// context names it (#240); `None` when it says none. The context is
+/// JSON, `{"render": N, "view": V, "why": "open", "selected": "…", "ui":
+/// "1.3"}`, read without parsing the whole document, as its other fields
+/// are.
+fn selected_of(context: &str) -> Option<String> {
+    let at = context.find("\"selected\"")? + 10;
+    let value = context[at..].trim_start().strip_prefix(':')?.trim_start();
+    let value = value.strip_prefix('"')?;
+    // The key runs to the quote that closes it, an escaped one skipped.
+    let mut end = value.len();
+    let mut chars = value.char_indices();
+    while let Some((at, character)) = chars.next() {
+        if character == '\\' {
+            let _ = chars.next();
+            continue;
+        }
+        if character == '"' {
+            end = at;
+            break;
+        }
+    }
+    let raw = &value[..end];
+    let mut selected = String::new();
+    let mut chars = raw.chars();
+    while let Some(character) = chars.next() {
+        if character == '\\' {
+            selected.push(chars.next().unwrap_or('\\'));
+        } else {
+            selected.push(character);
+        }
+    }
+    Some(selected)
+}
+
 fn why_of(context: &str) -> Why {
     let Some(at) = context.find("\"why\"") else {
         return Why::Open;
@@ -3096,6 +3617,170 @@ fn write_node(tree: &mut String, node: &Node) -> Result<(), String> {
                 let _ = write!(tree, "{ms}");
             }
         }
+        NodeKind::List(list) | NodeKind::Grid(list) => {
+            if let Some(placeholder) = &list.search_placeholder {
+                tree.push_str(",\"searchPlaceholder\":");
+                string(tree, placeholder)?;
+            }
+            if let Some(text) = &list.search_text {
+                tree.push_str(",\"searchText\":");
+                string(tree, text)?;
+            }
+            if let Some(key) = &list.selected_key {
+                tree.push_str(",\"selectedKey\":");
+                string(tree, key)?;
+            }
+            if list.is_loading {
+                tree.push_str(",\"isLoading\":true");
+            }
+            if list.is_showing_detail {
+                tree.push_str(",\"isShowingDetail\":true");
+            }
+            if list.has_more {
+                tree.push_str(",\"hasMore\":true");
+            }
+            if let Some(size) = list.page_size {
+                tree.push_str(",\"pageSize\":");
+                let _ = write!(tree, "{size}");
+            }
+            if let Some(ValueListener(id)) = &list.on_search_text {
+                tree.push_str(",\"onSearchText\":");
+                let _ = write!(tree, "{id}");
+            }
+            if let Some(ValueListener(id)) = &list.on_selection_change {
+                tree.push_str(",\"onSelectionChange\":");
+                let _ = write!(tree, "{id}");
+            }
+            if let Some(Listener(id)) = &list.on_load_more {
+                tree.push_str(",\"onLoadMore\":");
+                let _ = write!(tree, "{id}");
+            }
+        }
+        NodeKind::ListSection(section) => {
+            if let Some(title) = &section.title {
+                tree.push_str(",\"title\":");
+                string(tree, title)?;
+            }
+            if let Some(subtitle) = &section.subtitle {
+                tree.push_str(",\"subtitle\":");
+                string(tree, subtitle)?;
+            }
+            if let Some(columns) = section.columns {
+                tree.push_str(",\"columns\":");
+                let _ = write!(tree, "{columns}");
+            }
+            if let Some(ratio) = section.aspect_ratio {
+                tree.push_str(",\"aspectRatio\":");
+                let _ = write!(tree, "{ratio}");
+            }
+            if section.fit != Fit::Contain {
+                tree.push_str(",\"fit\":");
+                string(tree, fit_name(section.fit))?;
+            }
+            if section.inset {
+                tree.push_str(",\"inset\":true");
+            }
+        }
+        NodeKind::ListItem(item) => {
+            tree.push_str(",\"title\":");
+            string(tree, &item.title)?;
+            if let Some(subtitle) = &item.subtitle {
+                tree.push_str(",\"subtitle\":");
+                string(tree, subtitle)?;
+            }
+            crate::icon::write_look(tree, &item.look);
+            if !item.keywords.is_empty() {
+                tree.push_str(",\"keywords\":[");
+                for (index, keyword) in item.keywords.iter().enumerate() {
+                    if index > 0 {
+                        tree.push(',');
+                    }
+                    string(tree, keyword)?;
+                }
+                tree.push(']');
+            }
+            if let Some(Listener(id)) = &item.on_press {
+                tree.push_str(",\"onPress\":");
+                let _ = write!(tree, "{id}");
+            }
+            if !item.actions.is_empty() {
+                tree.push_str(",\"actions\":[");
+                for (index, action) in item.actions.iter().enumerate() {
+                    if index > 0 {
+                        tree.push(',');
+                    }
+                    tree.push('{');
+                    if let Some(title) = &action.title {
+                        tree.push_str("\"title\":");
+                        string(tree, title)?;
+                        tree.push(',');
+                    }
+                    let Listener(id) = action.on_press;
+                    tree.push_str("\"onPress\":");
+                    let _ = write!(tree, "{id}");
+                    tree.push('}');
+                }
+                tree.push(']');
+            }
+            if let Some(detail) = &item.detail {
+                tree.push_str(",\"detail\":");
+                write_node(tree, detail)?;
+            }
+        }
+        NodeKind::GridItem(item) => {
+            if let Some(title) = &item.title {
+                tree.push_str(",\"title\":");
+                string(tree, title)?;
+            }
+            if let Some(subtitle) = &item.subtitle {
+                tree.push_str(",\"subtitle\":");
+                string(tree, subtitle)?;
+            }
+            if let Some(image) = &item.image {
+                tree.push_str(",\"image\":");
+                icon::write_icon(tree, image)?;
+            }
+            if let Some(color) = &item.color {
+                tree.push_str(",\"color\":");
+                write_paint(tree, color)?;
+            }
+            if let Some(Listener(id)) = &item.on_press {
+                tree.push_str(",\"onPress\":");
+                let _ = write!(tree, "{id}");
+            }
+        }
+        NodeKind::ListDropdown(dropdown) => {
+            if let Some(value) = &dropdown.value {
+                tree.push_str(",\"value\":");
+                string(tree, value)?;
+            }
+            if let Some(placeholder) = &dropdown.placeholder {
+                tree.push_str(",\"placeholder\":");
+                string(tree, placeholder)?;
+            }
+            if let Some(ValueListener(id)) = &dropdown.on_change {
+                tree.push_str(",\"onChange\":");
+                let _ = write!(tree, "{id}");
+            }
+            if !dropdown.items.is_empty() {
+                tree.push_str(",\"items\":[");
+                for (index, held) in dropdown.items.iter().enumerate() {
+                    if index > 0 {
+                        tree.push(',');
+                    }
+                    tree.push('{');
+                    tree.push_str("\"value\":");
+                    string(tree, &held.value)?;
+                    if let Some(label) = &held.label {
+                        tree.push_str(",\"title\":");
+                        string(tree, label)?;
+                    }
+                    tree.push('}');
+                }
+                tree.push(']');
+            }
+        }
+        NodeKind::Detail(_) => {}
     }
     if !node.children.is_empty() {
         tree.push_str(",\"children\":[");

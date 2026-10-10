@@ -65,7 +65,6 @@ fn a_command_that_grows_to_just_under_the_cap_completes() {
             subtitle: None,
             component: guest("faulty"),
             takes_query: false,
-            search: false,
         }],
     );
 

@@ -150,12 +150,13 @@ pub struct ListPresentation {
     pub shows_a_date: bool,
 }
 
-/// Whether `state`'s rows are an opened command's own list, whose items'
-/// looks are projected (#139).
+/// Whether `state`'s rows are an opened command's own list or a designed
+/// view's List (#240), whose items' looks are projected (#139).
 fn listed(state: &State) -> bool {
     match &state.view.screen {
         Screen::Command => true,
         Screen::CommandSearch { query } => query.trim().is_empty(),
+        Screen::DesignedView(view) => view.list.is_some(),
         _ => false,
     }
 }
@@ -280,9 +281,15 @@ pub(super) fn want_row_icons(state: &State, index: usize) {
     }
 }
 
-/// Root search's section labels over `state`'s rows; none on another
+/// The section labels over `state`'s rows: root search's, and a designed
+/// view's List's (#240, the snapshot's presentation); none on another
 /// screen.
 fn sections(state: &State) -> Vec<Section> {
+    if let Screen::DesignedView(view) = &state.view.screen
+        && let Some(list) = view.list.as_ref()
+    {
+        return list.sections.clone();
+    }
     let Screen::Root { query } = &state.view.screen else {
         return Vec::new();
     };

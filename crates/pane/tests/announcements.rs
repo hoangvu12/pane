@@ -343,7 +343,6 @@ fn open_actions_sample(
         subtitle: None,
         component,
         takes_query: false,
-        search: false,
     };
     let (window, cx) = open_launcher(cx, Launcher::new(Runtime::start(), vec![command]));
     cx.simulate_input("actions sample");

@@ -11,9 +11,21 @@
 // stopped where it waits; an unreachable or failing service is an error
 // shown in place of results, not a crash. Items, toasts and errors match
 // the Rust sample (guests/sample-search) and the JavaScript one.
-import type { Command, CommandSearch, FieldValue, Form, SearchResult } from "@pane-app/extension";
+import type { Command } from "@pane-app/extension";
 import { showToast } from "@pane-app/extension/feedback";
 import { get as fetchUrl } from "@pane-app/extension/http";
+import {
+  Button,
+  Column,
+  EmptyState,
+  List,
+  TextInput,
+  Push,
+  createView,
+  pop,
+  useRef,
+  useState,
+} from "@pane-app/extension/view";
 import { get, set } from "pane:extension/settings@0.1.0";
 
 /** The address used until the user sets another. */
@@ -74,21 +86,11 @@ async function fetchJson<T>(path: string): Promise<T> {
   }
 }
 
-const SERVICE_FORM: Form = {
-  title: "Service address",
-  fields: [{ id: "address", label: "Address", kind: { tag: "text", val: { placeholder: DEFAULT_SERVICE } } }],
-  submitLabel: "Save",
-};
-
 /**
  * Runs the action `itemId`: the "about" item's, or a search result's
  * ("package:<name>"), which fetches that package's details; it shows a
  * toast with what it found.
  */
-async function act(itemId: string): Promise<void> {
-  showToast({ title: await outcome(itemId) });
-}
-
 /** The text the action `itemId`'s toast shows. */
 async function outcome(itemId: string): Promise<string> {
   if (itemId === "about") {
@@ -102,49 +104,102 @@ async function outcome(itemId: string): Promise<string> {
   return `${details.name} ${details.version} (${details.license}): ${details.summary}`;
 }
 
-export const command: Command = {
-  async render() {
-    return {
-      title: "Package search",
-      items: [
-        {
-          id: "about",
-          title: "Type to search the package registry",
-          subtitle: "Results come from the service as you type; Enter shows a package's details",
-          onAction: () => act("about"),
-        },
-        { id: "service", title: "Service address", subtitle: service(), form: SERVICE_FORM },
-      ],
-    };
-  },
-  // A search result's id ("package:<name>") names the package to show.
-  async runSearchResult(id: string) {
-    await act(id);
-  },
-  async submitForm(itemId: string, values: FieldValue[]) {
-    if (itemId !== "service") {
-      throw { message: `unknown form: ${itemId}` };
-    }
-    const address = (values.find(({ id }) => id === "address")?.value ?? "").trim().replace(/\/+$/, "");
-    if (!(address.startsWith("http://") || address.startsWith("https://"))) {
-      throw { field: "address", message: "Enter an address starting with http:// or https://" };
-    }
-    host(() => set(SERVICE, address));
-    return `Searching ${address} from now on`;
-  },
-  async openCustomView() {
-    throw new Error("Package search has no custom views");
-  },
-};
+/** Searches `query` with the service, as the view's List asks for it. */
+async function search(query: string): Promise<Found> {
+  return fetchJson<Found>(`/search?q=${encodeURIComponent(query)}`);
+}
 
-export const commandSearch: CommandSearch = {
-  async search(command: string, query: string): Promise<SearchResult[]> {
-    if (command !== COMMAND) throw new Error(`unknown command: ${command}`);
-    const found = await fetchJson<Found>(`/search?q=${encodeURIComponent(query)}`);
-    return found.results.map((pkg) => ({
-      id: `package:${pkg.name}`,
-      title: pkg.name,
-      subtitle: pkg.summary,
-    }));
+/** The search view: a List that handles its search itself (#240), the
+ * service's answers as its items. The search the text starts runs in the
+ * event that hears it, and the results are drawn the moment they land;
+ * the loading state shows while it runs. The "Service address" item
+ * pushes a view of a text field and a Save button, the modern replacement
+ * for the typed form the List document carried. */
+function Packages() {
+  const [results, setResults] = useState<{ name: string; summary: string }[]>([]);
+  const [failed, setFailed] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const searching = useRef<{ run: Promise<Found> } | null>(null);
+  const onSearchText = async (text: string) => {
+    if (!text.trim()) {
+      setResults([]);
+      setFailed(null);
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    const run = search(text);
+    const held = { run };
+    searching.current = held;
+    try {
+      const found = await run;
+      if (searching.current !== held) return;
+      setResults(found.results);
+      setFailed(null);
+    } catch (error) {
+      if (searching.current !== held) return;
+      setResults([]);
+      setFailed(String((error as Error).message ?? error));
+    } finally {
+      if (searching.current === held) setLoading(false);
+    }
+  };
+  return (
+    <List
+      navigationTitle="Package search"
+      searchPlaceholder="Search the registry…"
+      isLoading={loading}
+      onSearchText={onSearchText}
+    >
+      {results.map((pkg) => (
+        <List.Item
+          key={`package:${pkg.name}`}
+          title={pkg.name}
+          subtitle={pkg.summary}
+          onClick={async () => {
+            showToast({ title: await outcome(`package:${pkg.name}`) });
+          }}
+        >
+          {pkg.name}
+        </List.Item>
+      ))}
+      <EmptyState
+        title={failed ?? "Type to search the package registry"}
+        description="Results come from the service as you type; Enter shows a package's details"
+      >
+        <Button onClick={Push(<AddressView />)}>Service address</Button>
+      </EmptyState>
+    </List>
+  );
+}
+
+/** The service address view, pushed above the list: a text field and a
+ * Save button. */
+function AddressView() {
+  const [address, setAddress] = useState(service());
+  return (
+    <Column navigationTitle="Service address" gap="m">
+      <TextInput
+        key="address"
+        label="Address"
+        placeholder={DEFAULT_SERVICE}
+        value={address}
+        onInput={(value: string) => setAddress(value)}
+      >
+        {address}
+      </TextInput>
+      <Button onClick={() => pop(`Searching ${address.trim().replace(/\/+$/, "")} from now on`)}>
+        Save
+      </Button>
+    </Column>
+  );
+}
+
+export const command: Command = {
+  async openView(commandId: string) {
+    if (commandId !== COMMAND) {
+      throw new Error(`unknown command: ${commandId}`);
+    }
+    return createView(Packages);
   },
 };

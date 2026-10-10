@@ -43,7 +43,9 @@ action by the item's id and its later ones by the id and their place
 drawing, and an instance that has not drawn the list yet draws it before it
 runs a callback it does not know. An id the list does
 not name goes to the command's `run_search_result` (`runSearchResult`), which
-is how a search result's id ([command search](command-search.md)) is run.
+a designed List that handles its own search runs for its items' presses
+(#240; the `command-search` export it once answered is retired —
+[designed-tree.md](designed-tree.md), the "standard views" section).
 
 An action may open a submenu instead (#140): in Rust
 `Action::submenu("Open With…", Submenu::new("Open With").entries([..]))`, or

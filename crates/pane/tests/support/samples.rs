@@ -43,7 +43,6 @@ pub fn sample_commands() -> Vec<CommandRegistration> {
             subtitle: Some(subtitle.into()),
             component: dir.join(file),
             takes_query: false,
-            search: false,
         })
         .collect()
 }

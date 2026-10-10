@@ -554,11 +554,6 @@ pub struct ManifestCommand {
     /// into root search that Pane sends it when the user invokes it through
     /// its alias or as a fallback, as its launch record's fallback text.
     pub takes_query: bool,
-    /// Whether the command searches as the user types into its own search
-    /// field once it is open (`"search": true`), such as a command searching
-    /// an online service; root search never asks it. Its component then
-    /// also exports `pane:extension/command-search`.
-    pub search: bool,
     /// The scheduled work the command declares (`"schedule"`), if any:
     /// every `schedule.every_seconds` seconds while the package's code may
     /// run, Pane runs the action of `schedule.item` (a view command) or the
@@ -676,8 +671,6 @@ struct CommandJson {
     indexed_results: bool,
     #[serde(default)]
     takes_query: bool,
-    #[serde(default)]
-    search: bool,
     #[serde(default)]
     schedule: Option<ScheduleJson>,
     #[serde(default)]
@@ -837,7 +830,6 @@ impl Manifest {
         Exports {
             root_results: commands().any(|command| command.root_results),
             indexed_results: commands().any(|command| command.indexed_results),
-            search: commands().any(|command| command.search),
             service: commands().any(|command| command.service),
             operations: self
                 .operations
@@ -907,10 +899,6 @@ impl Manifest {
                 .map(|icon| icons::parse_manifest_icon(icon, &format!("command `{}`", command.id)))
                 .transpose()
                 .map_err(invalid)?;
-            // A command may both search inside itself and answer root
-            // search (Search Files, #150): root search still never asks one
-            // that searches unless its manifest says `rootResults` too, so
-            // what is typed there reaches only a command that asks for it.
             let mode = match command.mode.as_deref() {
                 None | Some("view") => CommandMode::View,
                 Some("no-view") => CommandMode::NoView,
@@ -965,7 +953,6 @@ impl Manifest {
                 root_results: command.root_results,
                 indexed_results: command.indexed_results,
                 takes_query: command.takes_query,
-                search: command.search,
                 schedule,
                 service,
                 preferences: own,
@@ -1085,9 +1072,6 @@ fn check_provider(command: &CommandJson) -> Result<(), PackageError> {
              `rootResults` nor `indexedResults`: a provider only answers root search, so it \
              needs one of them, or another mode (\"view\" or \"no-view\")"
         )));
-    }
-    if command.search {
-        return refused("search as the user types into its own field (`search`)");
     }
     if command.takes_query {
         return refused("take a query (`takesQuery`)");
@@ -1984,7 +1968,6 @@ impl InstalledPackage {
                         .or_else(|| Some(manifest.title.clone())),
                     component: self.location.join(&command.component),
                     takes_query: command.accepts_fallback_text(),
-                    search: command.search,
                 };
                 let unavailable = package.clone().or_else(|| {
                     platform::unavailable(command.platforms.as_deref(), "this command")

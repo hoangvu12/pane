@@ -437,9 +437,10 @@ export interface Command {
    */
   run?(command: string, launch: LaunchRecord): Promise<void>;
   /**
-   * Runs the search result with id `id` the user chose, for a command that
-   * searches as the user types ({@link CommandSearch}); throwing shows the
-   * error as a failure toast. Without it, choosing a result is an error.
+   * Runs the search result with id `id` the user chose, for a command whose
+   * List handles its search itself (#240: the List's search-text event, the
+   * `command-search` export retired); throwing shows the error as a failure
+   * toast. Without it, choosing a result is an error.
    */
   runSearchResult?(id: string): Promise<void>;
   /**
@@ -534,63 +535,6 @@ export interface RootResults {
 }
 
 
-/** One thing a command's search found, listed as a row of the command. */
-export interface SearchResult {
-  /**
-   * Passed to the command's `runSearchResult` when the user activates the
-   * row, so it should say which result it is (the instance may have been
-   * replaced meanwhile).
-   */
-  id: string;
-  title: string;
-  subtitle?: string;
-  /**
-   * An entry of Pane's file index, by the `id` `search()` of
-   * "pane:extension/file-index@0.1.0" gave it, or a file of the folder
-   * granted to the command's package, by the `id` `listFolder()` gave it,
-   * when the result is that file (as Search Files' are): Pane lists it
-   * with the file's own name and folder, and gives it
-   * Pane's own file actions (Open, Reveal, Open With…, Copy Path, Copy
-   * File, Move to Recycle Bin; for a program, Enter reveals it and only
-   * Run runs it), which Pane performs without calling the command.
-   */
-  file?: string;
-}
-
-/**
- * A command that searches as the user types into its own search field
- * (`pane:extension/command-search` in wit/search.wit), such as one
- * searching an online service. Pane asks it only once the user has opened
- * it, never while they type in root search. It sets `"search": true` on its
- * entry in `pane.json`, and `"pane": { "search": true }` in its
- * `package.json` so that it is built with the interface; its module exports
- * it as `commandSearch`:
- *
- * ```ts
- * import { get } from "@pane-app/extension/http";
- *
- * export const commandSearch: CommandSearch = {
- *   async search(command, query) {
- *     const response = await get(`https://example.com/search?q=${encodeURIComponent(query)}`);
- *     return response.json().results.map((r: { id: string; name: string }) => ({ id: r.id, title: r.name }));
- *   },
- * };
- * ```
- */
-export interface CommandSearch {
-  /**
-   * Searches for `query`, the text in the search field of the command with
-   * id `command` (its id in `pane.json`), trimmed and never empty. The
-   * results replace the command's list while the text stays; activating one
-   * calls the command's `runSearchResult` with its id. Throwing shows the error in place of
-   * results; it does not count against the extension, so a service that is
-   * down or unreachable is an expected error. Pane stops a search it no
-   * longer needs (the text changed again, the user left) where it waits,
-   * dropping the instance: code after that `await` never runs, and the
-   * instance's memory is lost.
-   */
-  search(command: string, query: string): Promise<SearchResult[]>;
-}
 
 /**
  * What invoking an indexed result does; Pane performs it.

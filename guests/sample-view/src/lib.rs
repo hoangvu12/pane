@@ -21,12 +21,14 @@ use core::future::Future;
 
 use pane_extension::alloc::string::String;
 use pane_extension::icon::Tone as Colour;
+use pane_extension::icon::Accessory;
 use pane_extension::view::{
-    Cx, Color, Fit, Icon, IconSize, IntoAnswer, IntoNode, Length, Paint, Pending, Place, Radius,
-    Space, TextLevel, TextStyle, Tone, View, badge, button, card, checkbox, choice, column,
-    divider, empty_state, icon, icon_tile, image, key_sequence, keycap, link, loading, markdown,
-    metadata_list, metadata, metadata_separator, metadata_tags, password_input, progress, rich_row,
-    row, scroll, section_header, segmented, select, slider, spacer, span, spans, stack, tag, text,
+    Cx, Color, DropdownItem, Fit, Icon, IconSize, IntoAnswer, IntoNode, Length, ListAction,
+    Paint, Pending, Place, Radius, Space, TextLevel, TextStyle, Tone, View, badge, button, card,
+    cell, checkbox, choice, column, detail, divider, dropdown, empty_state, grid, icon, icon_tile,
+    image, item, key_sequence, keycap, link, list, loading, markdown, metadata_list, metadata,
+    metadata_separator, metadata_tags, password_input, progress, rich_row, row, scroll,
+    section, section_header, segmented, select, slider, spacer, span, spans, stack, tag, text,
     text_area, text_input, toggle,
 };
 use pane_extension::{Command, LaunchRecord};
@@ -48,6 +50,13 @@ struct Screen {
     /// The loading sample's data, on its way when the view opens
     /// (`Pending`, #243).
     loading: Pending<String>,
+    /// The List sample's state (#240): whether its loading bar is on
+    /// (its first item's action toggles it), how many pages of its "More"
+    /// section are shown (a load-more appends one), and which of the
+    /// dropdown's choices filters it.
+    list_loading: Cell<bool>,
+    pages: Cell<usize>,
+    pinned: Cell<bool>,
 }
 
 /// Which of the package's screens a view is.
@@ -55,6 +64,10 @@ enum Which {
     Counter,
     Components,
     Loading,
+    /// The standard views (#240): a List, a Grid and a Detail.
+    List,
+    Grid,
+    Detail,
 }
 
 impl View for Screen {
@@ -70,6 +83,15 @@ impl View for Screen {
                     .into_answer(),
                 None => loading(text("Loading…").level(TextLevel::Secondary)),
             };
+        }
+        if matches!(self.which, Which::List) {
+            return self.list_tree(cx);
+        }
+        if matches!(self.which, Which::Grid) {
+            return self.grid_tree(cx);
+        }
+        if matches!(self.which, Which::Detail) {
+            return self.detail_tree(cx);
         }
         if matches!(self.which, Which::Counter) {
             return column()
@@ -311,6 +333,237 @@ impl Screen {
     }
 }
 
+impl Screen {
+    /// The List sample's tree (#240): sections, keywords, accessories,
+    /// a host-filtered search field, the empty view, the detail pane
+    /// (built for the selected item, as the render context names it), the
+    /// search-bar dropdown, the loading bar and pagination. The first
+    /// item's action toggles the loading bar, so its 300 ms threshold can
+    /// be seen.
+    fn list_tree(&mut self, cx: &mut Cx<Self>) -> impl IntoAnswer {
+        // The detail pane's content: only the selected item's is built,
+        // as the context's `selected` names it — the lazy detail.
+        let selected = cx.selected().unwrap_or_default().to_owned();
+        let detail = |key: &str, title: &str| {
+            if key != selected {
+                return None;
+            }
+            Some(
+                detail().child(
+                    markdown(format!(
+                        "# {title}\n\n*Selected:* {key} \u{2014} the pane's content is \
+                         built for it alone.\n\n- [x] The render context names it\n- [ ] No \
+                         other item's detail is built\n\n| Field | Value |\n| --- | --- |\n|                          key | {key} |\n| title | {title} |\n\n![Pane](data:image/svg+xml,                         %3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 12'%3E%3C                         rect width='24' height='12' rx='3' fill='%233d5afe'/%3E%3C/svg%3E =48x24 \"Pane's mark\")\n\nSee [the tree](https://example.com/tree)."
+                    ))
+                    .into_node(),
+                ),
+            )
+        };
+        let note = |cx: &mut Cx<Self>,
+                    key: &str,
+                    title: &str,
+                    subtitle: &str,
+                    keyword: &str,
+                    tag: &str,
+                    colour: Colour| {
+            let mut held = item(key)
+                .title(title)
+                .subtitle(subtitle)
+                .icon(Icon::builtin("document"))
+                .keyword(keyword)
+                .accessory(Accessory::tag(tag).color(colour))
+                .accessory(Accessory::text("1"))
+                .on_press(cx.listener(move |this: &mut Self| {
+                    // The first item's press toggles the loading bar.
+                    this.list_loading.set(!this.list_loading.get());
+                }))
+                .action(ListAction::new("Copy", cx.listener(|_: &mut Self| {})));
+            if let Some(detail) = detail(key, title) {
+                held = held.detail(detail);
+            }
+            held
+        };
+        let mut list = list()
+            .search_placeholder("Search notes…")
+            .is_loading(self.list_loading.get())
+            .is_showing_detail(true)
+            .has_more(self.pages.get() < 3)
+            .page_size(6)
+            .on_load_more(cx.listener(|this: &mut Self| {
+                this.pages.set(this.pages.get() + 1);
+            }))
+            .child(
+                dropdown()
+                    .value(if self.pinned.get() { "pinned" } else { "all" })
+                    .on_change(cx.value_listener(|this: &mut Self, value: &str| {
+                        this.pinned.set(value == "pinned");
+                    }))
+                    .item(DropdownItem::new("all").label("All notes"))
+                    .item(DropdownItem::new("pinned").label("Pinned")),
+            )
+            .child(
+                section("Notes")
+                    .subtitle("Three notes")
+                    .child(note(
+                        cx,
+                        "first",
+                        "First note",
+                        "The first of the notes",
+                        "opening",
+                        "new",
+                        Colour::Green,
+                    ))
+                    .child(note(
+                        cx,
+                        "second",
+                        "Second note",
+                        "The second of the notes",
+                        "middle",
+                        "kept",
+                        Colour::Blue,
+                    ))
+                    .child(note(
+                        cx,
+                        "third",
+                        "Third note",
+                        "The third of the notes",
+                        "closing",
+                        "done",
+                        Colour::Red,
+                    )),
+            );
+        if !self.pinned.get() {
+            list = list.child(
+                section("More")
+                    .subtitle("A page at a time")
+                    .children((0..self.pages.get() * 6).map(|at| {
+                        item(format!("more-{at}"))
+                            .title(format!("More {at}"))
+                            .subtitle("One page of a longer list")
+                            .keyword("page")
+                            .on_press(cx.listener(|_: &mut Self| {}))
+                    })),
+            );
+        } else {
+            list = list.child(
+                section("Pinned").child(note(
+                    cx,
+                    "pinned",
+                    "Pinned note",
+                    "The one that is pinned",
+                    "kept",
+                    "pinned",
+                    Colour::Yellow,
+                )),
+            );
+        }
+        list.child(
+            empty_state("No notes")
+                .description("Nothing matches the search.")
+                .child(button("Clear the search").on_click(cx.listener(|_: &mut Self| {}))),
+        )
+        .navigation_title("Notes")
+        .into_answer()
+    }
+
+    /// The Grid sample's tree (#240): cells of images and colours in two
+    /// sections, each with its own columns, aspect ratio, fit and inset.
+    fn grid_tree(&mut self, cx: &mut Cx<Self>) -> impl IntoAnswer {
+        grid()
+            .search_placeholder("Search cells…")
+            .child(
+                section("Warm")
+                    .columns(3)
+                    .aspect_ratio(2.)
+                    .fit(Fit::Cover)
+                    .children([
+                        cell()
+                            .key("warm-0")
+                            .title("Amber")
+                            .subtitle("A colour cell")
+                            .color(Paint::from(Color::hex(0xffb300)))
+                            .on_press(cx.listener(|_: &mut Self| {})),
+                        cell()
+                            .key("warm-1")
+                            .title("Coral")
+                            .subtitle("A colour cell")
+                            .color(Paint::from(Color::hex(0xff7043)))
+                            .on_press(cx.listener(|_: &mut Self| {})),
+                        cell()
+                            .key("warm-2")
+                            .title("Document")
+                            .subtitle("An image cell")
+                            .image(Icon::builtin("document"))
+                            .on_press(cx.listener(|_: &mut Self| {})),
+                    ]),
+            )
+            .child(
+                section("Cool")
+                    .columns(4)
+                    .aspect_ratio(1.)
+                    .inset(true)
+                    .children([
+                        cell()
+                            .key("cool-0")
+                            .title("Indigo")
+                            .subtitle("A colour cell")
+                            .color(Paint::from(Color::hex(0x3d5afe)))
+                            .on_press(cx.listener(|_: &mut Self| {})),
+                        cell()
+                            .key("cool-1")
+                            .title("Teal")
+                            .subtitle("A colour cell")
+                            .color(Paint::from(Color::hex(0x00897b)))
+                            .on_press(cx.listener(|_: &mut Self| {})),
+                        cell()
+                            .key("cool-2")
+                            .title("Star")
+                            .subtitle("An image cell")
+                            .image(Icon::builtin("star"))
+                            .on_press(cx.listener(|_: &mut Self| {})),
+                        cell()
+                            .key("cool-3")
+                            .title("Typed")
+                            .subtitle("A subtree cell")
+                            .child(text("A cell of the author's own").level(TextLevel::Secondary))
+                            .on_press(cx.listener(|_: &mut Self| {})),
+                    ]),
+            )
+            .navigation_title("Cells")
+            .into_answer()
+    }
+
+    /// The Detail sample's tree (#240): Markdown with an image, a task
+    /// list and a table, a metadata panel and actions.
+    fn detail_tree(&mut self, cx: &mut Cx<Self>) -> impl IntoAnswer {
+        detail()
+            .child(
+                markdown(
+                    "# Pane\n\nA screen an extension designs as a **tree** Pane renders.\n\n\
+                     ![Pane](data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'                      viewBox='0 0 24 12'%3E%3Crect width='24' height='12' rx='3' fill='%23                     3d5afe'/%3E%3C/svg%3E =48x24 \"Pane's mark\")\n\n- [x] Drawn by Pane\n- [ ]                      Drawn by the extension\n\n| Field | Value |\n| --- | --- |\n| version | 0.1 \
+                     |\n| renderer | GPUI |\n\nSee [the tree](https://example.com/tree).",
+                ),
+            )
+            .child(
+                metadata_list()
+                    .child(metadata("Version", "0.1.0"))
+                    .child(metadata_tags("Tags", ["designed", "tree"]))
+                    .child(metadata_separator())
+                    .child(
+                        metadata("Repository", "pane")
+                            .on_click(cx.listener(|_: &mut Self| {})),
+                    ),
+            )
+            .child(
+                row()
+                    .gap(Space::S)
+                    .children([button("Done").on_click(cx.listener(|_: &mut Self| {}))]),
+            )
+            .navigation_title("About Pane")
+            .into_answer()
+    }
+}
+
 struct Sample;
 pane_extension::export!(Sample);
 
@@ -326,6 +579,9 @@ impl Command for Sample {
             "sample" => Which::Counter,
             "components" => Which::Components,
             "loading" => Which::Loading,
+            "list" => Which::List,
+            "grid" => Which::Grid,
+            "detail" => Which::Detail,
             _ => return Err("this command opens no designed view".into()),
         };
         let mut screen = Screen::opening(which);

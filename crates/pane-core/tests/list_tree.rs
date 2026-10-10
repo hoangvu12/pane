@@ -50,7 +50,6 @@ impl Pane {
                 subtitle: None,
                 component: component(),
                 takes_query: false,
-                search: false,
             }],
         );
         Pane { runtime, launcher }

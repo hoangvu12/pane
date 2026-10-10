@@ -48,7 +48,6 @@ fn command(id: &str, title: &str) -> CommandRegistration {
             .join("../../target/guests")
             .join("sample_rust.wasm"),
         takes_query: false,
-        search: false,
     }
 }
 

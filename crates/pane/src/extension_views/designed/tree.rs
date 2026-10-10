@@ -94,8 +94,23 @@ pub(super) fn place_child(
     index: usize,
     duplicates: &HashSet<&str>,
 ) {
-    let key = child.key.as_deref().filter(|key| !duplicates.contains(key));
-    push(path, key, index);
+    let held = child.key.as_deref().filter(|key| !duplicates.contains(key));
+    push(path, held, index);
+}
+
+/// As [`place_child`], for a set of owned keys (the designed list's
+/// presentation holds its own).
+pub(super) fn place_child_owned(
+    path: &mut String,
+    child: &Node,
+    index: usize,
+    duplicates: &std::collections::HashSet<String>,
+) {
+    let held = child
+        .key
+        .as_deref()
+        .filter(|key| !duplicates.contains(*key));
+    push(path, held, index);
 }
 
 /// The keys `parent`'s children share with a sibling: those children are
@@ -112,6 +127,81 @@ pub(super) fn duplicate_keys(parent: &Node) -> HashSet<&str> {
         .filter(|(_, count)| *count > 1)
         .map(|(key, _)| key)
         .collect()
+}
+
+/// The first list or grid in `tree`, with its path by the walk's grammar
+/// (the root's segment first, every child's after): the view's list, whose
+/// search field, selection, rows, dropdown, empty view and detail pane the
+/// window draws (#240). `None` on a tree that names none.
+pub(super) fn find_list(tree: &DesignedTree) -> Option<(String, &Node)> {
+    fn held<'a>(node: &'a Node, path: &mut String) -> Option<(String, &'a Node)> {
+        let start = path.len();
+        let found = match &node.kind {
+            NodeKind::List(_) | NodeKind::Grid(_) => Some(node),
+            _ => None,
+        };
+        if let Some(found) = found {
+            return Some((path.clone(), found));
+        }
+        let duplicates = duplicate_keys(node);
+        for (index, child) in node.children.iter().enumerate() {
+            place_child(path, child, index, &duplicates);
+            if let Some(found) = held(child, path) {
+                return Some(found);
+            }
+            path.truncate(start);
+        }
+        if let Some(fallback) = node.fallback.as_deref() {
+            path.push_str("/fallback");
+            if let Some(found) = held(fallback, path) {
+                return Some(found);
+            }
+            path.truncate(start);
+        }
+        None
+    }
+    let mut path = String::new();
+    push(&mut path, tree.root.key.as_deref(), 0);
+    held(&tree.root, &mut path)
+}
+
+/// The paths of every item of the list or grid at `list_path` (its
+/// sections' children and its own, by the walk's grammar), and the path
+/// of its search-bar dropdown and its empty view: keyed by the item's
+/// key, as the presentation's rows name them.
+pub(super) fn list_paths(
+    node: &Node,
+    list_path: &str,
+) -> (Vec<(String, String)>, Option<String>, Option<String>) {
+    let mut items = Vec::new();
+    let mut dropdown = None;
+    let mut empty = None;
+    let duplicates = duplicate_keys(node);
+    for (index, child) in node.children.iter().enumerate() {
+        let mut path = list_path.to_owned();
+        place_child(&mut path, child, index, &duplicates);
+        match &child.kind {
+            NodeKind::ListSection(_) => {
+                let inner = duplicate_keys(child);
+                for (at, item) in child.children.iter().enumerate() {
+                    let mut item_path = path.clone();
+                    place_child(&mut item_path, item, at, &inner);
+                    if let Some(key) = item.key.clone() {
+                        items.push((key, item_path));
+                    } else {
+                        items.push((at.to_string(), item_path));
+                    }
+                }
+            }
+            NodeKind::ListItem(_) | NodeKind::GridItem(_) => {
+                let key = child.key.clone().unwrap_or_else(|| index.to_string());
+                items.push((key, path));
+            }
+            NodeKind::ListDropdown(_) => dropdown = Some(path),
+            _ => empty = Some(path),
+        }
+    }
+    (items, dropdown, empty)
 }
 
 /// The node `path` names in `tree`, reached by the tree walk's grammar:
@@ -327,7 +417,7 @@ pub(super) fn draw_node(
             node,
             path,
             draw,
-            components::markdown(markdown, path, &draw).into_any_element(),
+            components::markdown(markdown, path, &draw, cx).into_any_element(),
         ),
         NodeKind::SectionHeader(header) => styled(
             node,
@@ -372,6 +462,64 @@ pub(super) fn draw_node(
             draw,
             components::select(select, path, &draw).into_any_element(),
         ),
+        // A List or Grid the launcher does not present — a second one in
+        // the tree, under the first, which the screen presents (#240) —
+        // draws its rows as a plain column, the launcher's own rows list
+        // carrying the presented one.
+        NodeKind::List(_) | NodeKind::Grid(_) => {
+            let own = path.clone();
+            let drawn = children(node, path, inner, cx);
+            let div =
+                apply(div().id(own).flex().flex_col().min_w(px(0.)), node, &draw).children(drawn);
+            named(div, name.as_deref()).into_any_element()
+        }
+        NodeKind::ListSection(_) => {
+            let own = path.clone();
+            let drawn = children(node, path, inner, cx);
+            let div = apply(
+                div()
+                    .id(own)
+                    .flex()
+                    .flex_col()
+                    .min_w(px(0.))
+                    .gap(tokens::space(pane_core::Space::Xs)),
+                node,
+                &draw,
+            )
+            .children(drawn);
+            named(div, name.as_deref()).into_any_element()
+        }
+        NodeKind::ListItem(item) => styled(
+            node,
+            path,
+            draw,
+            components::list_item(node, item, path, &draw, cx).into_any_element(),
+        ),
+        NodeKind::GridItem(item) => styled(
+            node,
+            path,
+            draw,
+            components::grid_item(item, path, &draw, cx).into_any_element(),
+        ),
+        NodeKind::ListDropdown(_) => {
+            // The presented list's dropdown draws in its header; one
+            // nested elsewhere draws its choices as a plain column.
+            let own = path.clone();
+            let drawn = children(node, path, inner, cx);
+            let div =
+                apply(div().id(own).flex().flex_col().min_w(px(0.)), node, &draw).children(drawn);
+            named(div, name.as_deref()).into_any_element()
+        }
+        NodeKind::Detail(_) => {
+            let own = path.clone();
+            let children = children(node, path, inner, cx);
+            let div = apply(
+                scroll(Orientation::Vertical, children, own, None),
+                node,
+                &draw,
+            );
+            div.into_any_element()
+        }
     };
     path.truncate(start);
     drawn

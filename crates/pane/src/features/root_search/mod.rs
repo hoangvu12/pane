@@ -94,6 +94,16 @@ impl QueryField {
         let input = cx.new(|cx| EditableTextState::new(StringStorage::default(), cx));
         input.focus_handle(cx).tab_stop(true);
         let changes = cx.subscribe(&input, |this, input, _: &TextChanged, cx| {
+            // A designed view's List whose view handles the search itself
+            // (#240): the field's changes are throttled, one event in
+            // flight, so fast typing asks only for the text the user
+            // stops at.
+            if this.designed_list_searches() {
+                let typed = input.read(cx).as_str().to_owned();
+                this.designed_search_typed(&typed, cx);
+                cx.notify();
+                return;
+            }
             // Results computed from the query (the calculator's answer)
             // arrive later, without holding up typing. The announcer waits
             // for them before it says the selected row (#132).
@@ -115,6 +125,12 @@ impl QueryField {
             shown: true,
             _changes: changes,
         }
+    }
+
+    /// The field's editing state, which the window's other search headers
+    /// build theirs from (a designed List's, #240).
+    pub(crate) fn entity(&self) -> &Entity<EditableTextState> {
+        &self.input
     }
 
     pub(crate) fn focus(&self, window: &mut Window, cx: &mut App) {
