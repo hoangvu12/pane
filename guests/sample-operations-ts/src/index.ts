@@ -146,8 +146,7 @@ async function submitForm(itemId: string, values: FieldValue[]): Promise<string>
 }
 
 async function openView(itemId: string): Promise<DesignedView> {
-  throw new Error(`unknown designed view: ${itemId;
-}`);
+  throw new Error(`unknown designed view: ${itemId}`);
 }
 
 async function runOperation(operation: string, input: string): Promise<string> {

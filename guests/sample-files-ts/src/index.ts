@@ -61,8 +61,7 @@ async function submitForm(itemId: string): Promise<string> {
 }
 
 async function openView(itemId: string): Promise<DesignedView> {
-  throw new Error(`unknown designed view: ${itemId;
-}`);
+  throw new Error(`unknown designed view: ${itemId}`);
 }
 
 export const command: Command = { render, submitForm, openView };

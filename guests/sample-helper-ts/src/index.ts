@@ -117,7 +117,6 @@ export const command: Command = {
   },
 
   async openView(itemId: string): Promise<DesignedView> {
-    throw new Error(`unknown designed view: ${itemId;
-  }`);
+    throw new Error(`unknown designed view: ${itemId}`);
   },
 };

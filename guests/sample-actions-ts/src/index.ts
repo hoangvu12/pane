@@ -676,7 +676,6 @@ export const command: Command = {
   },
 
   async openView(itemId: string): Promise<DesignedView> {
-    throw new Error(`The actions sample opens no designed view: ${itemId;
-  }`);
+    throw new Error(`The actions sample opens no designed view: ${itemId}`);
   },
 };
