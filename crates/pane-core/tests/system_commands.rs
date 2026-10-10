@@ -1345,6 +1345,23 @@ mod extension {
     }
 
     /// The confirmation the launcher shows, once the command asked for it.
+    /// The confirmation the launcher shows, once the command asked for
+    /// it.
+    ///
+    /// This wait has hung on some CI runners — every try, exactly its
+    /// 60 s deadline, the view at the root search with the command's row
+    /// still selected and no toast — while the same code passed on other
+    /// runs of the same branch, and the neighboring tests of this module
+    /// (the same fixture, the same component, some of them runs of the
+    /// same commands) pass in fractions of a second. Nothing in the
+    /// asking path touches the system, so elevation is not it; the
+    /// component is warm by then, so its first compile is not it; and no
+    /// change to the asking path has ever accompanied a run that flipped
+    /// from passing to hanging. What is left is a scheduling-sensitive
+    /// race around the first confirm of an acquired default extension —
+    /// `confirmations.rs` drives the same threaded wait against a
+    /// locally installed package and never hangs — which needs a Windows
+    /// machine to catch in the act (#270's hand-check is the chance).
     fn asked(launcher: &Launcher) -> Confirmation {
         let started = Instant::now();
         loop {
