@@ -71,7 +71,7 @@ fn canvas_value_of(screen: &Screen) -> Option<String> {
             _ => node.children.iter().find_map(value),
         }
     }
-    value(&view.tree)
+    value(&view.tree.root)
 }
 
 /// Waits until the canvas's value is `expected`.

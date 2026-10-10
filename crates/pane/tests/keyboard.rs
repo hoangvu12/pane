@@ -110,7 +110,7 @@ fn canvas_value(window: &LauncherWindow) -> Option<String> {
             _ => node.children.iter().find_map(value),
         }
     }
-    value(&view.tree)
+    value(&view.tree.root)
 }
 
 /// The launcher window over `launcher`, with the record of `data` in

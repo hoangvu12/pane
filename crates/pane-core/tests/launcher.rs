@@ -456,7 +456,7 @@ fn view_value(launcher: &Launcher) -> String {
             _ => node.children.iter().find_map(value),
         }
     }
-    value(&view.tree).expect("the view draws a canvas")
+    value(&view.tree.root).expect("the view draws a canvas")
 }
 
 /// The open designed view's canvas node: its key, its key handler, and the
@@ -474,7 +474,7 @@ fn canvas_of(launcher: &Launcher) -> (String, Option<u32>, u64) {
             _ => node.children.iter().find_map(of),
         }
     }
-    let (key, on_key) = of(&view.tree).expect("the view draws a canvas");
+    let (key, on_key) = of(&view.tree.root).expect("the view draws a canvas");
     (key, on_key, view.render)
 }
 
@@ -491,7 +491,7 @@ fn send_right_like(launcher: &Launcher, key: &str) -> impl Future<Output = ()> {
     launcher.send_designed_seen(
         pane_core::DesignedHandler::Key,
         callback,
-        (!canvas.is_empty()).then_some(canvas),
+        (!canvas.is_empty()).then_some(canvas.as_str()),
         Some(render),
         format!("{{\"key\":\"{key}\"}}"),
     )

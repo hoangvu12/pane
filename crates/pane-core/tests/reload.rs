@@ -463,7 +463,7 @@ fn color(launcher: &Launcher) -> String {
             _ => node.children.iter().find_map(value),
         }
     }
-    value(&view.tree).expect("the view draws a canvas")
+    value(&view.tree.root).expect("the view draws a canvas")
 }
 
 /// Sends a right-arrow key event to the open color view's canvas.
@@ -480,7 +480,7 @@ fn send_right(launcher: &Launcher) {
             _ => node.children.iter().find_map(of),
         }
     }
-    let (key, on_key) = of(&view.tree).expect("the view draws a canvas");
+    let (key, on_key) = of(&view.tree.root).expect("the view draws a canvas");
     block_on(launcher.send_designed_seen(
         pane_core::DesignedHandler::Key,
         on_key.expect("the canvas takes keys"),
