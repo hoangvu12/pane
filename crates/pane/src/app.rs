@@ -782,6 +782,20 @@ impl LauncherWindow {
         self.show_until_done(pending, window, cx);
     }
 
+    /// Reads and shows the extension `id` of the collection in `folder`, as
+    /// [`LauncherWindow::preview_package`] shows a folder.
+    pub fn preview_collection(
+        &mut self,
+        folder: &Path,
+        id: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.motion.pointer_open();
+        let pending = self.launcher.preview_collection(folder, id);
+        self.show_until_done(pending, window, cx);
+    }
+
     /// Asks for the folder to grant the package with `identity` with the
     /// platform's folder picker, then has Pane check and record it.
     /// Cancelling changes nothing. A debug build run by the native smokes

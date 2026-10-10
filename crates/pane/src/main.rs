@@ -13,17 +13,23 @@ enum ToPreview {
     Folder(PathBuf),
     /// `npm:<name>` or `npm:<name>@<version>`.
     Npm(String),
-    /// `git:<repository>` or `git:<repository>@<branch, tag or commit>`.
+    /// `git:<repository>[@<reference>]`, with `#<id>` naming one extension
+    /// of a collection the repository holds.
     Git(String),
+    /// One extension of a collection in a folder: `<folder>#<id>`.
+    Collection(PathBuf, String),
 }
 
-/// `pane [--install <folder> | --install npm:<package>[@<version>] |
-/// --install git:<repository>[@<reference>]]`: `--install` opens with the
-/// package in `<folder>` shown for installation, as if chosen with the
-/// folder picker, the npm package, as if named in "Install extension from
-/// npm…", or the Git repository, as if named in "Install extension from
-/// Git…". `pane --version` prints Pane's version and exits without opening
-/// a window, so an installation can check what it installed.
+/// `pane [--install <folder> | --install <folder>#<id> | --install
+/// npm:<package>[@<version>] | --install git:<repository>[@<reference>]]`:
+/// `--install` opens with the package in `<folder>` shown for installation,
+/// as if chosen with the folder picker, the npm package, as if named in
+/// "Install extension from npm…", or the Git repository, as if named in
+/// "Install extension from Git…". A `#<id>` names one extension of a
+/// collection (ADR 0044): a local folder's, after the last `#` of its path,
+/// or a repository's, before any `@<reference>`. `pane --version` prints
+/// Pane's version and exits without opening a window, so an installation
+/// can check what it installed.
 fn package_to_preview() -> Option<ToPreview> {
     let mut args = std::env::args_os().skip(1);
     while let Some(arg) = args.next() {
@@ -39,6 +45,12 @@ fn package_to_preview() -> Option<ToPreview> {
             }
             if let Some(spec) = text.and_then(|s| s.strip_prefix("git:")) {
                 return Some(ToPreview::Git(spec.to_owned()));
+            }
+            // A folder path may name one extension of a collection at it:
+            // the part after the last `#` is the id (a folder name may hold
+            // a `#` of its own, so an id is named after the last one).
+            if let Some((folder, id)) = text.and_then(|text| text.rsplit_once('#')) {
+                return Some(ToPreview::Collection(PathBuf::from(folder), id.to_owned()));
             }
             return Some(ToPreview::Folder(PathBuf::from(source)));
         }
@@ -349,6 +361,9 @@ fn main() {
                     match &preview {
                         Some(ToPreview::Folder(folder)) => {
                             launcher.preview_package(folder, window, cx)
+                        }
+                        Some(ToPreview::Collection(folder, id)) => {
+                            launcher.preview_collection(folder, id, window, cx)
                         }
                         Some(ToPreview::Npm(spec)) => launcher.preview_npm(spec, window, cx),
                         Some(ToPreview::Git(spec)) => launcher.preview_git(spec, window, cx),

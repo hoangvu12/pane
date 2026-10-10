@@ -209,18 +209,29 @@ fn ignores_case(host: &str, port: Option<u16>) -> bool {
 /// A Git package to install, as the user or a dependency names it: a
 /// repository and optionally a reference after `@` (a branch, a tag, a full
 /// commit id, or `refs/heads/<branch>` or `refs/tags/<tag>`); without one,
-/// the repository's default branch.
+/// the repository's default branch. A `#<id>` after the repository path
+/// names one extension of a collection the repository holds (ADR 0044),
+/// and a reference follows the id as it follows the repository
+/// (`git:github.com/owner/tools#clock@refs/tags/clock/v1.2.0`).
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct GitSpec {
     pub repository: Repository,
     pub reference: Option<String>,
+    /// The id of one extension of a collection the repository holds, when
+    /// the address names one with `#<id>`. The repository is still fetched
+    /// as one revision, whole; the id picks the extension's folder in it.
+    pub extension: Option<String>,
 }
 
 impl fmt::Display for GitSpec {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.repository.name())?;
+        if let Some(extension) = &self.extension {
+            write!(f, "#{extension}")?;
+        }
         match &self.reference {
-            Some(reference) => write!(f, "{}@{reference}", self.repository.name),
-            None => f.write_str(&self.repository.name),
+            Some(reference) => write!(f, "@{reference}"),
+            None => Ok(()),
         }
     }
 }
@@ -239,8 +250,10 @@ impl GitSpec {
     ///
     /// Equivalent forms name one repository: the host is compared in
     /// lowercase, a trailing `.git` or `/` and HTTPS's port are ignored; the
-    /// path keeps its case. Credentials in the address, `?`, `#`, `%` and
-    /// other schemes are refused.
+    /// path keeps its case. Credentials in the address, `?`, `%` and other
+    /// schemes are refused; a `#` after the repository path names one
+    /// extension of a collection the repository may hold (ADR 0044), so it
+    /// is taken as the id rather than refused of the path.
     pub fn parse(text: &str) -> Result<GitSpec, String> {
         let text = text.trim();
         let written = text;
@@ -319,6 +332,31 @@ impl GitSpec {
             Some((path, reference)) => (path, Some(reference)),
             None => (path, None),
         };
+        // A `#` after the repository path names one extension of a
+        // collection the repository may hold (ADR 0044), and a reference
+        // follows the id as it follows the repository. The repository path
+        // itself holds no `#` (the check below refuses one), so the first
+        // begins the id; an id holds no `@`, so a reference after it reads
+        // as one does after the repository.
+        let (path, extension) = match path.split_once('#') {
+            Some((path, extension)) => (path, Some(extension)),
+            None => (path, None),
+        };
+        let extension = match extension {
+            Some("") => {
+                return refused("a `#` names one extension of a collection by its id, which is \
+                 missing");
+            }
+            Some(extension) => {
+                if !crate::collections::is_id(extension) {
+                    return refused(&format!(
+                        "the extension id `{extension}` must be lowercase letters, digits and `-`"
+                    ));
+                }
+                Some(extension.to_owned())
+            }
+            None => None,
+        };
         let path = path.trim_matches('/');
         let folded = ignores_case(&host, port);
         // `.git` as written, kept in the address fetched; in any case where
@@ -367,6 +405,7 @@ impl GitSpec {
                 ssh,
             },
             reference,
+            extension,
         })
     }
 }
@@ -2037,6 +2076,59 @@ mod tests {
             let error = GitSpec::parse(bad).unwrap_err();
             assert!(error.contains("is not a branch, a tag"), "{bad}: {error}");
         }
+    }
+
+    #[test]
+    fn a_hash_names_one_extension_of_a_collection() {
+        let parsed = spec("https://github.com/owner/tools#clock");
+        assert_eq!(parsed.repository.name(), "github.com/owner/tools");
+        assert_eq!(parsed.extension.as_deref(), Some("clock"));
+        assert_eq!(parsed.reference, None);
+        assert_eq!(parsed.to_string(), "github.com/owner/tools#clock");
+        // A reference follows the id as it follows the repository.
+        let parsed = spec("git:github.com/owner/tools#clock@refs/tags/clock/v1.2.0");
+        assert_eq!(parsed.repository.name(), "github.com/owner/tools");
+        assert_eq!(parsed.extension.as_deref(), Some("clock"));
+        assert_eq!(parsed.reference.as_deref(), Some("refs/tags/clock/v1.2.0"));
+        assert_eq!(
+            parsed.to_string(),
+            "github.com/owner/tools#clock@refs/tags/clock/v1.2.0"
+        );
+        // The repository is fetched as written, from its address, the id
+        // naming no part of it.
+        assert_eq!(
+            spec("https://github.com/owner/tools.git#clock@v1").repository.url(),
+            "https://github.com/owner/tools.git"
+        );
+        // Every address form names the extension, as every one names the
+        // repository.
+        for form in [
+            "https://github.com/Owner/Tools#clock",
+            "git+https://github.com/Owner/Tools.git#clock",
+            "git@github.com:Owner/Tools.git#clock",
+            "ssh://git@github.com/Owner/Tools#clock",
+        ] {
+            let parsed = spec(form);
+            assert_eq!(parsed.extension.as_deref(), Some("clock"), "{form}");
+            assert_eq!(parsed.repository.name(), "github.com/owner/tools", "{form}");
+        }
+        // An id that is not lowercase letters, digits and `-` is refused.
+        for bad in [
+            "github.com/o/r#",
+            "github.com/o/r#Clock",
+            "github.com/o/r#a_b",
+            "github.com/o/r#a b",
+            "github.com/o/r#clock/timer",
+            "github.com/o/r#clock@",
+        ] {
+            let error = GitSpec::parse(bad).unwrap_err();
+            assert!(error.contains("is not a Git repository address"), "{bad}: {error}");
+        }
+        // A `#` inside a reference, which Git accepts of a branch or tag
+        // name, still reads as part of the reference.
+        let parsed = spec("github.com/o/r@v1.0#clock");
+        assert_eq!(parsed.extension, None);
+        assert_eq!(parsed.reference.as_deref(), Some("v1.0#clock"));
     }
 
     #[test]

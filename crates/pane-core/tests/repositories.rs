@@ -26,7 +26,7 @@ use std::time::{Duration, Instant};
 
 use futures::executor::block_on;
 use pane_core::clipboard::{Clock as _, ManualClock, SystemClock};
-use pane_core::{Launcher, Runtime, SavedData, Screen, Status};
+use pane_core::{Launcher, PackageIdentity, Runtime, SavedData, Screen, Status};
 use serde_json::{Value, json};
 use tempfile::TempDir;
 
@@ -35,7 +35,7 @@ mod repo_server;
 #[path = "support/unreachable.rs"]
 mod unreachable;
 
-use repo_server::{Mode, Repo, Server, greeter_files};
+use repo_server::{Mode, Repo, Server, collection_files, greeter_files};
 
 #[path = "support/feedback.rs"]
 mod feedback;
@@ -54,6 +54,17 @@ struct Greeter {
     /// The address it is served at, `http://127.0.0.1:<port>/greeter.git`.
     url: String,
     /// `main`: the source only.
+    source: String,
+    /// `release`, tagged `v0.1.0`: with the built component.
+    release: String,
+}
+
+/// The controlled collection's commits: the Git sample as one extension,
+/// `clock`, of the repository served as `tools`.
+struct Tools {
+    /// The address it is served at, `http://127.0.0.1:<port>/tools.git`.
+    url: String,
+    /// `main`: the extension's source only.
     source: String,
     /// `release`, tagged `v0.1.0`: with the built component.
     release: String,
@@ -123,6 +134,26 @@ impl Dirs {
         }
     }
 
+    /// The controlled collection, served as `tools`: the Git sample as its
+    /// extension `clock` (ADR 0044), `main` holding the extension's source
+    /// only and the branch `release`, tagged `v0.1.0`, adding its built
+    /// component.
+    fn collection(&self) -> Tools {
+        let (repo, url) = self.repo("tools");
+        let source = repo.commit(
+            &collection_files(&guests(), INDEX, false),
+            "Clock 0.1.0 source",
+        );
+        repo.git(&["switch", "--quiet", "-c", "release"]);
+        let release = repo.commit(
+            &collection_files(&guests(), INDEX, true),
+            "Release 0.1.0",
+        );
+        repo.tag("v0.1.0");
+        repo.git(&["switch", "--quiet", "main"]);
+        Tools { url, source, release }
+    }
+
     /// The identity of the repository served as `name`.
     fn identity(&self, name: &str) -> String {
         let host = self.server.url().trim_start_matches("http://");
@@ -131,16 +162,48 @@ impl Dirs {
 
     /// The record of the package from the repository served as `name`.
     fn record(&self, name: &str) -> Value {
+        self.record_of(&self.identity(name)["git:".len()..])
+    }
+
+    /// The record of the extension `id` of the collection served as `name`.
+    fn collection_record(&self, name: &str, id: &str) -> Value {
+        self.record_of(&format!("{}#{id}", &self.identity(name)["git:".len()..]))
+    }
+
+    /// The record of the package whose Git source is `git`, as
+    /// `installed.json` writes it.
+    fn record_of(&self, git: &str) -> Value {
         let text = fs::read_to_string(self.packages_dir().join("installed.json")).unwrap();
         let registry: Value = serde_json::from_str(&text).unwrap();
-        let git = self.identity(name)["git:".len()..].to_owned();
         registry["packages"]
             .as_array()
             .unwrap()
             .iter()
-            .find(|record| record["git"] == git.as_str())
+            .find(|record| record["git"] == git)
             .cloned()
             .unwrap_or_else(|| panic!("no record of {git} in {registry:#}"))
+    }
+
+    /// The record of the local package at `folder`, as `installed.json`
+    /// writes it (the folder as Pane resolves it: macOS reports
+    /// `/private/var/...` for `/var/...`).
+    fn local_record(&self, folder: &Path) -> Value {
+        let local = PackageIdentity::local(folder)
+            .unwrap()
+            .local_folder()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_owned();
+        let text = fs::read_to_string(self.packages_dir().join("installed.json")).unwrap();
+        let registry: Value = serde_json::from_str(&text).unwrap();
+        registry["packages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|record| record["local"] == local.as_str())
+            .cloned()
+            .unwrap_or_else(|| panic!("no record of {local} in {registry:#}"))
     }
 
     /// Writes package "Caller" in source folder `caller`, calling `greet`
@@ -183,6 +246,19 @@ impl Dirs {
 
 fn details(launcher: &Launcher) -> Vec<String> {
     launcher.view().details().to_vec()
+}
+
+/// The index of the controlled collection (ADR 0044): one extension,
+/// `clock`, at `extensions/clock`.
+const INDEX: &str = r#"{ "extensions": [ { "id": "clock", "path": "extensions/clock" } ] }"#;
+
+/// Writes a local collection at `folder` from the files `files`.
+fn write_collection(folder: &Path, files: Vec<(&'static str, Vec<u8>)>) {
+    for (path, contents) in files {
+        let path = folder.join(path);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, contents).unwrap();
+    }
 }
 
 fn has(details: &[String], line: &str) -> bool {
@@ -1099,4 +1175,530 @@ fn the_form_in_root_search_asks_for_the_repository() {
     assert_eq!(dirs.record("greeter")["pinned"], true);
     launcher.back();
     assert!(matches!(launcher.view().screen, Screen::Root { .. }));
+}
+
+// ------------------------------------------------------- collections (#307)
+
+/// One extension of a collection, end to end: the preview names the id and
+/// everything else a Git package's does, Install records the id beside the
+/// Git source fields, only the extension's files reach its managed copy,
+/// its command runs, and a second install of the same identity is refused
+/// while choosing it again offers Update.
+#[test]
+fn an_extension_of_a_collection_is_previewed_installed_and_its_command_runs() {
+    let dirs = Dirs::new();
+    let tools = dirs.collection();
+    let launcher = dirs.launcher();
+    let asked = format!("{}#clock@v0.1.0", tools.url);
+
+    // The default branch holds the extension's source only.
+    let error = refusal(&launcher, &format!("{}#clock", tools.url));
+    assert_eq!(
+        error,
+        format!(
+            "The default branch, main (commit {}) of the Git repository {} holds only the \
+             source of \"Clock from Git\", the extension `clock` of the collection: its built \
+             component dist/git_greeter.wasm is not in it. Pane does not build packages from Git \
+             or run anything in a repository; install a release revision whose commit includes \
+             the built components (its author's release tag or branch), or build it yourself \
+             and install the folder",
+            short(&tools.source),
+            &dirs.identity("tools")[4..]
+        )
+    );
+
+    block_on(launcher.preview_git(&asked));
+
+    assert_eq!(launcher.view().title, "Clock from Git");
+    let details = details(&launcher);
+    let expected = [
+        format!("Source: Git repository {}#clock", &dirs.identity("tools")[4..]),
+        "Extension: clock, one of the extensions its collection lists".into(),
+        "Version: 0.1.0".into(),
+        "Revision: tag v0.1.0, which you named: installing pins it to that revision".into(),
+        format!(
+            "Fetched: commit {} “Release 0.1.0”, served at {}; each object checked against its id",
+            tools.release, tools.url
+        ),
+        "Pane builds nothing and runs no repository hooks, scripts or submodules".into(),
+        "Commands: Clock from Git".into(),
+        "Operations: greet (version 1)".into(),
+    ];
+    for line in &expected {
+        assert!(has(&details, line), "{line:?} not in {details:#?}");
+    }
+    assert_eq!(titles(&launcher), ["Install"]);
+    assert!(launcher.packages().is_empty());
+    dirs.wait_for_no_downloads();
+
+    block_on(launcher.activate_selected());
+
+    assert_eq!(
+        launcher.view().status,
+        Status::Result("Installed Clock from Git".into())
+    );
+    let package = &launcher.packages()[0];
+    assert_eq!(
+        package.identity.key(),
+        format!("{}#clock", dirs.identity("tools"))
+    );
+    assert_eq!(package.identity.extension_id(), Some("clock"));
+    // The id is recorded beside the Git source fields, and the repository
+    // is recorded as the plain address it was fetched from.
+    let record = dirs.collection_record("tools", "clock");
+    assert_eq!(
+        record["git"],
+        format!("{}#clock", &dirs.identity("tools")[4..]).as_str()
+    );
+    assert_eq!(record["gitUrl"], tools.url.as_str());
+    assert_eq!(record["gitRef"], "refs/tags/v0.1.0");
+    assert_eq!(record["gitCommit"], tools.release.as_str());
+    assert_eq!(record["pinned"], true);
+    assert_eq!(record["gitExtension"], "clock");
+    assert_eq!(
+        run(&launcher, "Clock from Git", "Say hello"),
+        Status::Result(HELLO.into())
+    );
+    // Only the files under the extension's folder reach its managed copy:
+    // neither the collection's own files nor the extension's source.
+    dirs.wait_for_no_downloads();
+    let mut files: Vec<String> = Vec::new();
+    for entry in walk(&package.location) {
+        files.push(
+            entry
+                .strip_prefix(&package.location)
+                .unwrap()
+                .to_string_lossy()
+                .replace('\\', "/"),
+        );
+    }
+    files.sort();
+    assert_eq!(files, ["dist/git_greeter.wasm", "pane.json"]);
+
+    // After a restart it is listed from its managed copy, with nothing
+    // fetched again, the server gone.
+    let requests = dirs.server.requests().len();
+    drop(launcher);
+    let launcher = dirs.launcher();
+    assert_eq!(installed(&launcher), ["Clock from Git"]);
+    assert_eq!(
+        run(&launcher, "Clock from Git", "Say hello"),
+        Status::Result(HELLO.into())
+    );
+    assert_eq!(dirs.server.requests().len(), requests);
+
+    // A second install of the same identity is refused, as today.
+    block_on(launcher.install_git(&asked));
+    assert_eq!(
+        error_of(&launcher),
+        format!(
+            "Already installed from Git repository {}#clock; use Update to replace the \
+             installed copy",
+            &dirs.identity("tools")[4..]
+        )
+    );
+    // Choosing it again, without a reference, keeps the revision the
+    // extension is installed from, as a repository's own package does.
+    block_on(launcher.preview_git(&format!("{}#clock", tools.url)));
+    assert_eq!(titles(&launcher), ["Update"]);
+}
+
+#[test]
+fn a_hash_id_on_a_one_extension_repository_is_refused_and_a_collection_without_one_is_explained() {
+    let dirs = Dirs::new();
+    let greeter = dirs.greeter();
+    let tools = dirs.collection();
+    let launcher = dirs.launcher();
+
+    // The greeter repository is one extension, with `pane.json` at its
+    // root: `#<id>` names no extension of it.
+    let error = refusal(&launcher, &format!("{}#anything@v0.1.0", greeter.url));
+    assert_eq!(
+        error,
+        format!(
+            "Tag v0.1.0 (commit {}) of the Git repository {} is not a collection: its root \
+             holds pane.json, one extension, and no pane-collection.json; `#<id>` names one \
+             extension of a collection",
+            short(&greeter.release),
+            &dirs.identity("greeter")[4..]
+        )
+    );
+    // A repository holding neither file is explained as today.
+    let (repo, neither) = dirs.repo("empty");
+    repo.commit(&[("README.md", b"nothing".to_vec())], "Nothing");
+    let error = refusal(&launcher, &format!("{neither}#anything"));
+    assert!(
+        error.contains("is not a Pane extension: it has no pane.json at the repository's root"),
+        "{error}"
+    );
+
+    // The collection, without an id, is explained as a collection whose
+    // extension must be named (#308 shows the choice list).
+    let error = refusal(&launcher, &format!("{}@v0.1.0", tools.url));
+    assert_eq!(
+        error,
+        format!(
+            "Tag v0.1.0 (commit {}) of the Git repository {} is a collection, not one \
+             extension: its root holds pane-collection.json, which lists the extensions it \
+             offers by id; name the one to install after `#` in the address, as {}#<id>",
+            short(&tools.release),
+            &dirs.identity("tools")[4..],
+            &dirs.identity("tools")[4..]
+        )
+    );
+    assert!(launcher.packages().is_empty());
+    dirs.wait_for_no_downloads();
+}
+
+#[test]
+fn every_way_a_collection_index_is_refused_saying_what_is_wrong() {
+    let dirs = Dirs::new();
+    let (repo, url) = dirs.repo("tools");
+    let launcher = dirs.launcher();
+    // One tag per way an index cannot be taken, each holding the
+    // collection with its extension's package built, so the index is the
+    // only thing wrong with the revision.
+    let cases = [
+        (
+            "unknown-field",
+            r#"{ "extensions": [ { "id": "clock", "path": "extensions/clock",
+                                   "title": "Clock" } ] }"#,
+            "unknown field `title`, expected `id` or `path`",
+        ),
+        (
+            "no-extensions",
+            r#"{ "renamed": {} }"#,
+            "missing field `extensions`",
+        ),
+        (
+            "duplicate-id",
+            r#"{ "extensions": [ { "id": "clock", "path": "extensions/clock" },
+                                 { "id": "clock", "path": "extensions/other" } ] }"#,
+            "the extension id `clock` is listed twice",
+        ),
+        (
+            "duplicate-path",
+            r#"{ "extensions": [ { "id": "clock", "path": "extensions/clock" },
+                                 { "id": "timer", "path": "extensions/clock" } ] }"#,
+            "the path `extensions/clock` is listed twice",
+        ),
+        (
+            "malformed-id",
+            r#"{ "extensions": [ { "id": "Clock", "path": "extensions/clock" } ] }"#,
+            "the extension id `Clock` must be lowercase letters, digits and `-`",
+        ),
+        (
+            "reused-id",
+            r#"{ "extensions": [ { "id": "clock", "path": "extensions/clock" } ],
+                 "renamed": { "clock": "timer" } }"#,
+            "the extension id `clock` is in its `renamed` map, so it is not one: an id is \
+             never reused",
+        ),
+        (
+            "climbing-path",
+            r#"{ "extensions": [ { "id": "clock", "path": "../escaped" } ] }"#,
+            "the path `../escaped` of `clock` which climbs out with `..`",
+        ),
+        (
+            "backslash-path",
+            r#"{ "extensions": [ { "id": "clock", "path": "extensions\\clock" } ] }"#,
+            "the path `extensions\\clock` of `clock` whose name holds `/` or `\\`, which \
+             would put it in another folder",
+        ),
+        (
+            "device-name",
+            r#"{ "extensions": [ { "id": "clock", "path": "con" } ] }"#,
+            "the path `con` of `clock` which is a Windows device name",
+        ),
+    ];
+    for (tag, index, why) in cases {
+        let commit = repo.commit(&collection_files(&guests(), index, true), tag);
+        repo.tag(tag);
+        let error = refusal(&launcher, &format!("{url}#clock@{tag}"));
+        assert_eq!(
+            error,
+            format!(
+                "Tag {tag} (commit {}) of the Git repository {} is a collection whose \
+                 pane-collection.json is invalid: {why}",
+                short(&commit),
+                &dirs.identity("tools")[4..]
+            )
+        );
+    }
+    // A path naming no package.
+    let index = r#"{ "extensions": [ { "id": "clock", "path": "extensions/none" } ] }"#;
+    let commit = repo.commit(&collection_files(&guests(), index, true), "no-package");
+    repo.tag("no-package");
+    let error = refusal(&launcher, &format!("{url}#clock@no-package"));
+    assert_eq!(
+        error,
+        format!(
+            "Tag no-package (commit {}) of the Git repository {} lists its extension \
+             `clock` at `extensions/none`, which is not a package: it has no pane.json",
+            short(&commit),
+            &dirs.identity("tools")[4..]
+        )
+    );
+    // A root holding both manifests.
+    let mut both = collection_files(&guests(), INDEX, true);
+    both.push(("pane.json", fs::read(guests().join("git/greeter/pane.json")).unwrap()));
+    let commit = repo.commit(&both, "both");
+    repo.tag("both");
+    let error = refusal(&launcher, &format!("{url}#clock@both"));
+    assert_eq!(
+        error,
+        format!(
+            "Tag both (commit {}) of the Git repository {} holds both pane.json and \
+             pane-collection.json: a repository is one extension or a collection, never both",
+            short(&commit),
+            &dirs.identity("tools")[4..]
+        )
+    );
+    // An id only the `renamed` map names is not one the collection lists
+    // as an extension; following it is #310's.
+    let index = r#"{ "extensions": [ { "id": "clock", "path": "extensions/clock" } ],
+        "renamed": { "old-clock": "clock", "retired": null } }"#;
+    let commit = repo.commit(&collection_files(&guests(), index, true), "renamed");
+    repo.tag("renamed");
+    let error = refusal(&launcher, &format!("{url}#old-clock@renamed"));
+    assert_eq!(
+        error,
+        format!(
+            "Tag renamed (commit {}) of the Git repository {} lists no extension \
+             `old-clock` in its pane-collection.json",
+            short(&commit),
+            &dirs.identity("tools")[4..]
+        )
+    );
+    assert!(launcher.packages().is_empty());
+    dirs.wait_for_no_downloads();
+}
+
+#[test]
+fn a_component_outside_the_extension_s_folder_is_explained_as_source_only() {
+    let dirs = Dirs::new();
+    let (repo, url) = dirs.repo("tools");
+    // The built component sits at the collection's root, not under the
+    // extension's folder: only the files under that folder are the
+    // extension's, so the component it names is missing from it.
+    let mut files = collection_files(&guests(), INDEX, false);
+    files.push((
+        "dist/git_greeter.wasm",
+        fs::read(guests().join("git/greeter/dist/git_greeter.wasm")).unwrap(),
+    ));
+    let release = repo.commit(&files, "Release 0.1.0");
+    repo.tag("v0.1.0");
+    let launcher = dirs.launcher();
+
+    let error = refusal(&launcher, &format!("{url}#clock@v0.1.0"));
+    assert_eq!(
+        error,
+        format!(
+            "Tag v0.1.0 (commit {}) of the Git repository {} holds only the source of \
+             \"Clock from Git\", the extension `clock` of the collection: its built component \
+             dist/git_greeter.wasm is not in it. Pane does not build packages from Git or run \
+             anything in a repository; install a release revision whose commit includes the \
+             built components (its author's release tag or branch), or build it yourself and \
+             install the folder",
+            short(&release),
+            &dirs.identity("tools")[4..]
+        )
+    );
+    assert!(launcher.packages().is_empty());
+    dirs.wait_for_no_downloads();
+}
+
+#[test]
+fn the_local_folder_form_installs_one_extension_of_a_collection() {
+    let dirs = Dirs::new();
+    let tools = dirs.sources.path().join("tools");
+    write_collection(&tools, collection_files(&guests(), INDEX, true));
+    let folder = PackageIdentity::local(&tools)
+        .unwrap()
+        .local_folder()
+        .unwrap()
+        .to_path_buf();
+    let launcher = dirs.launcher();
+
+    // A collection folder picked (or named without an id) is explained as
+    // a collection whose extension must be named (#308 shows the choice).
+    block_on(launcher.preview_package(&tools));
+    assert_eq!(
+        error_of(&launcher),
+        format!(
+            "The folder {} is a collection, not one extension: its root holds \
+             pane-collection.json, which lists the extensions it offers by id; name the one to \
+             install after `#`, as {}#<id>",
+            folder.display(),
+            folder.display()
+        )
+    );
+    assert!(titles(&launcher).is_empty());
+
+    // An id after the last `#` of the path names one extension of it.
+    block_on(launcher.preview_collection(&tools, "clock"));
+    assert_eq!(launcher.view().title, "Clock from Git");
+    let details = details(&launcher);
+    assert!(
+        has(
+            &details,
+            &format!("Source: local folder {}#clock", folder.display())
+        ),
+        "{details:#?}"
+    );
+    assert!(
+        has(&details, "Extension: clock, one of the extensions its collection lists"),
+        "{details:#?}"
+    );
+    assert_eq!(titles(&launcher), ["Install"]);
+    block_on(launcher.activate_selected());
+    assert_eq!(
+        launcher.view().status,
+        Status::Result("Installed Clock from Git".into())
+    );
+    // Its identity is the collection folder's, with the id.
+    let identity = PackageIdentity::local_extension(&tools, "clock").unwrap();
+    let package = &launcher.packages()[0];
+    assert_eq!(package.identity, identity);
+    let text = fs::read_to_string(dirs.packages_dir().join("installed.json")).unwrap();
+    let registry: Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(
+        registry["packages"][0]["local"],
+        format!("{}#clock", folder.display()).as_str()
+    );
+    // Only the files under the extension's folder reach its managed copy.
+    let mut files: Vec<String> = Vec::new();
+    for entry in walk(&package.location) {
+        files.push(
+            entry
+                .strip_prefix(&package.location)
+                .unwrap()
+                .to_string_lossy()
+                .replace('\\', "/"),
+        );
+    }
+    files.sort();
+    assert_eq!(files, ["dist/git_greeter.wasm", "pane.json"]);
+    assert_eq!(
+        run(&launcher, "Clock from Git", "Say hello"),
+        Status::Result(HELLO.into())
+    );
+    // Choosing it again offers Update, as for any installed package.
+    block_on(launcher.preview_collection(&tools, "clock"));
+    assert_eq!(titles(&launcher), ["Update"]);
+    // A folder that is not a collection refuses the id; one whose root
+    // holds `pane.json` says what is wrong.
+    let plain = dirs.sources.path().join("plain");
+    fs::create_dir_all(plain.join("dist")).unwrap();
+    fs::copy(
+        guest("git/greeter/dist/git_greeter.wasm"),
+        plain.join("dist/git_greeter.wasm"),
+    )
+    .unwrap();
+    fs::write(
+        plain.join("pane.json"),
+        fs::read_to_string(guests().join("git/greeter/pane.json"))
+            .unwrap()
+            .replace("Greeter from Git", "Plain"),
+    )
+    .unwrap();
+    let resolved_plain = PackageIdentity::local(&plain)
+        .unwrap()
+        .local_folder()
+        .unwrap()
+        .to_path_buf();
+    block_on(launcher.preview_collection(&plain, "clock"));
+    assert_eq!(
+        error_of(&launcher),
+        format!(
+            "The folder {} is not a collection: its root holds pane.json, one extension, and \
+             no pane-collection.json; `#` names one extension of a collection",
+            resolved_plain.display()
+        )
+    );
+}
+
+#[test]
+fn a_dependency_naming_one_extension_of_a_collection_installs_it_and_is_called_by_id() {
+    let dirs = Dirs::new();
+    let tools = dirs.collection();
+    let source = format!("git:{}#clock@v0.1.0", tools.url);
+    let folder = dirs.caller(&format!(
+        r#"{{ "id": "greeter", "source": "{source}",
+              "operations": [{{ "id": "greet", "version": 1 }}] }}"#
+    ));
+    let launcher = dirs.launcher();
+
+    block_on(launcher.preview_package(&folder));
+    let details = details(&launcher);
+    assert!(
+        has(
+            &details,
+            &format!("Requires: Clock from Git, installed with it from {source}")
+        ),
+        "{details:#?}"
+    );
+    block_on(launcher.activate_selected());
+    assert_eq!(installed(&launcher), ["Clock from Git", "Caller"]);
+    let record = dirs.collection_record("tools", "clock");
+    assert_eq!(record["gitExtension"], "clock");
+    assert_eq!(record["pinned"], true);
+    // The dependency is recorded by the identity it resolved to, with the
+    // id, and a call through it reaches the extension.
+    let caller = dirs.local_record(&folder);
+    assert_eq!(
+        caller["dependencies"][0],
+        json!({ "id": "greeter", "git": format!("{}#clock", &dirs.identity("tools")[4..]) })
+    );
+    assert_eq!(
+        run(
+            &launcher,
+            "Greet through dependencies",
+            "Greet through the required greeter"
+        ),
+        Status::Result("Hello, Pane, from the Git repository".into())
+    );
+    dirs.wait_for_no_downloads();
+}
+
+#[test]
+fn a_local_dependency_naming_one_extension_of_a_collection_installs_it() {
+    let dirs = Dirs::new();
+    let tools = dirs.sources.path().join("tools");
+    write_collection(&tools, collection_files(&guests(), INDEX, true));
+    let resolved = PackageIdentity::local(&tools)
+        .unwrap()
+        .local_folder()
+        .unwrap()
+        .to_path_buf();
+    let folder = dirs.caller(
+        r#"{ "id": "greeter", "source": "local:../tools#clock",
+            "operations": [{ "id": "greet", "version": 1 }] }"#,
+    );
+    let launcher = dirs.launcher();
+
+    block_on(launcher.preview_package(&folder));
+    let details = details(&launcher);
+    assert!(
+        has(
+            &details,
+            "Requires: Clock from Git, installed with it from local:../tools#clock"
+        ),
+        "{details:#?}"
+    );
+    block_on(launcher.activate_selected());
+    assert_eq!(installed(&launcher), ["Clock from Git", "Caller"]);
+    let caller = dirs.local_record(&folder);
+    assert_eq!(
+        caller["dependencies"][0],
+        json!({ "id": "greeter", "local": format!("{}#clock", resolved.display()) })
+    );
+    assert_eq!(
+        run(
+            &launcher,
+            "Greet through dependencies",
+            "Greet through the required greeter"
+        ),
+        Status::Result("Hello, Pane, from the Git repository".into())
+    );
 }

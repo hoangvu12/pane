@@ -20,7 +20,7 @@ use serde::{Deserialize, Serialize};
 use crate::arguments::{self, ManifestArgument};
 use crate::atomic::{Readers, write_atomically};
 use crate::defaults::InstalledDefault;
-use crate::git::{GitOrigin, GitRevision, GitSpec, InstalledGit, Repository};
+use crate::git::{GitOrigin, GitRevision, GitSpec, InstalledGit, Repository, shown};
 use crate::helpers::runner;
 use crate::icons::{self, Icon};
 use crate::launcher::CommandRegistration;
@@ -118,6 +118,15 @@ impl PackageIdentity {
         }))
     }
 
+    /// The identity of the extension `id` of the collection at `folder`:
+    /// the folder's resolved path with the id after `#`, as a Git
+    /// repository's is with its extension's (ADR 0044). The id, not the
+    /// extension's folder, names it, so moving the folder keeps the
+    /// identity.
+    pub fn local_extension(folder: &Path, id: &str) -> Result<PackageIdentity, PackageError> {
+        local_extension_of(PackageIdentity::local(folder)?, id)
+    }
+
     /// A stable key for this identity, for ids and records rather than for
     /// people to read: `local:` followed by the folder's resolved path. The
     /// [`Display`](fmt::Display) form is the wording shown to users.
@@ -148,7 +157,28 @@ impl PackageIdentity {
         })
     }
 
-    /// The host and path of a Git package's repository.
+    /// The identity of the extension `id` of the collection at the Git
+    /// repository `repository`, whatever the revision: `git:`, its host and
+    /// path, and the id after `#` (ADR 0044). The id, not the extension's
+    /// folder, names it, so moving the folder keeps the identity.
+    pub fn git_extension(repository: &Repository, id: &str) -> PackageIdentity {
+        PackageIdentity(Source::Git {
+            git: format!("{}#{id}", repository.name()),
+        })
+    }
+
+    /// The id of the extension of a collection this package is, if it is
+    /// one: the part of its Git repository after `#` (a repository path
+    /// holds no `#`, so the first one begins the id).
+    pub fn extension_id(&self) -> Option<&str> {
+        match &self.0 {
+            Source::Git { git } => git.split_once('#').map(|(_, id)| id),
+            _ => None,
+        }
+    }
+
+    /// The host and path of a Git package's repository, with the id of its
+    /// extension of a collection after `#` where it is one.
     pub fn git_repository(&self) -> Option<&str> {
         match &self.0 {
             Source::Git { git } => Some(git),
@@ -220,23 +250,54 @@ impl PackageIdentity {
     ///
     /// An `npm:` source is the npm package it names, whatever its version,
     /// and a `git:` source the repository it names, whatever its revision.
-    /// A package from npm or Git cannot name a `local:` folder: its folder is
-    /// on its author's computer, not the user's.
+    /// A `git:` or `local:` source may name one extension of a collection
+    /// with `#<id>` (ADR 0044): where a whole path names a folder it is that
+    /// folder, and the part after the last `#` is the id. A package from npm
+    /// or Git cannot name a `local:` folder: its folder is on its author's
+    /// computer, not the user's.
     pub(crate) fn dependency(&self, source: &str) -> Result<PackageIdentity, PathBuf> {
+        self.dependency_at(self.local_folder(), source)
+    }
+
+    /// Like [`PackageIdentity::dependency`], resolving `local:` sources
+    /// against `folder`: the declaring package's own source folder as Pane
+    /// resolved it — for one extension of a local collection, that
+    /// extension's folder, not the collection's root. `None` where the
+    /// package is published, which cannot name a local folder at all.
+    pub(crate) fn dependency_at(
+        &self,
+        folder: Option<&Path>,
+        source: &str,
+    ) -> Result<PackageIdentity, PathBuf> {
         let path = match SourceSpec::parse(source) {
             Ok(SourceSpec::Npm(spec)) => return Ok(PackageIdentity::npm(&spec.name)),
-            Ok(SourceSpec::Git(spec)) => return Ok(PackageIdentity::git(&spec.repository)),
+            Ok(SourceSpec::Git(spec)) => {
+                return match spec.extension.as_deref() {
+                    Some(id) => Ok(PackageIdentity::git_extension(&spec.repository, id)),
+                    None => Ok(PackageIdentity::git(&spec.repository)),
+                };
+            }
             Ok(SourceSpec::Local(path)) => path,
             Err(_) => return Err(PathBuf::from(source)),
         };
-        let folder = match &self.0 {
-            Source::Local { local } => Path::new(local).join(&path),
-            Source::Npm { .. } | Source::Git { .. } | Source::Default { .. } => {
-                return Err(PathBuf::from(path));
-            }
+        // A `#` names one extension of a collection at the folder the source
+        // names: the part after the last `#` is the id (a folder name may
+        // hold a `#` of its own).
+        let (path, extension) = match path.rsplit_once('#') {
+            Some((path, id)) => (path.to_owned(), Some(id.to_owned())),
+            None => (path, None),
+        };
+        let folder = match folder {
+            // A local package's own folder.
+            Some(folder) if matches!(self.0, Source::Local { .. }) => folder.join(&path),
+            // A package from npm or Git cannot name a local folder.
+            _ => return Err(PathBuf::from(path)),
         };
         if let Ok(identity) = PackageIdentity::local(&folder) {
-            return Ok(identity);
+            return Ok(match extension {
+                Some(id) => local_extension_of(identity, &id),
+                None => identity,
+            });
         }
         let mut spelled = PathBuf::new();
         for part in folder.components() {
@@ -270,9 +331,17 @@ impl PackageIdentity {
         };
         let resolved = without_verbatim_prefix(resolved);
         match resolved.to_str() {
-            Some(text) if resolved.is_absolute() => Ok(PackageIdentity(Source::Local {
-                local: text.to_owned(),
-            })),
+            Some(text) if resolved.is_absolute() => Ok(match extension {
+                Some(id) => local_extension_of(
+                    PackageIdentity(Source::Local {
+                        local: text.to_owned(),
+                    }),
+                    &id,
+                ),
+                None => PackageIdentity(Source::Local {
+                    local: text.to_owned(),
+                }),
+            }),
             _ => Err(resolved),
         }
     }
@@ -285,6 +354,18 @@ impl PackageIdentity {
         let resolved = PackageIdentity::local(self.local_folder()?).ok()?;
         (resolved != *self).then_some(resolved)
     }
+}
+
+/// The local identity `of`, with the extension id `id` of the collection
+/// at its folder after `#` (see [`PackageIdentity::local_extension`]).
+fn local_extension_of(of: PackageIdentity, id: &str) -> PackageIdentity {
+    let PackageIdentity(source) = of;
+    let Source::Local { local } = source else {
+        unreachable!("a local identity is a local folder");
+    };
+    PackageIdentity(Source::Local {
+        local: format!("{local}#{id}"),
+    })
 }
 
 /// The installed package with `identity` among `packages`.
@@ -1230,6 +1311,17 @@ fn check_source(source: &str, id: &str) -> Result<(), PackageError> {
              share, so that every system reads it alike (such as `local:../greeter`)",
         );
     }
+    // A `#` may name one extension of a collection at the folder the source
+    // names (ADR 0044): the part after the last `#` is the id, as it is in
+    // an install command's path and a `git:` source.
+    if let Some((_, id)) = path.rsplit_once('#')
+        && !crate::collections::is_id(id)
+    {
+        return invalid(&format!(
+            "names the extension id `{id}` of a collection, which must be lowercase letters, \
+             digits and `-`"
+        ));
+    }
     Ok(())
 }
 
@@ -1389,6 +1481,10 @@ pub enum PackageError {
     /// A package from Git cannot be fetched, written out or installed; the
     /// message says why.
     Git(String),
+    /// A collection (ADR 0044) cannot be read, its index is invalid, or the
+    /// id the address names is not one of its extensions; the message says
+    /// why.
+    Collection(String),
     /// A default extension's pinned revision cannot be fetched or
     /// installed; the message says why.
     Defaults(String),
@@ -1452,6 +1548,7 @@ impl fmt::Display for PackageError {
             }
             PackageError::Npm(message)
             | PackageError::Git(message)
+            | PackageError::Collection(message)
             | PackageError::Defaults(message) => f.write_str(message),
         }
     }
@@ -1476,6 +1573,11 @@ pub(crate) struct SourcePackage {
     /// Where a default extension's pinned revision was fetched from;
     /// `None` otherwise.
     pub default: Option<crate::defaults::DefaultOrigin>,
+    /// The id of the extension of a collection this package is, when it is
+    /// one (ADR 0044): named by `#<id>` in the address or dependency source
+    /// it was read from, and recorded beside its Git source fields.
+    /// `None` otherwise.
+    pub extension: Option<String>,
     /// For a package from npm or Git, its download, removed from the
     /// downloads folder once the last copy of this package is dropped.
     _download: Option<std::sync::Arc<crate::downloads::Download>>,
@@ -1494,6 +1596,15 @@ impl SourcePackage {
     pub(crate) fn note_imports(&mut self, checked: crate::runtime::Checked) {
         self.network = checked.network;
         self.programs = checked.programs;
+    }
+
+    /// The identity of the package this one names with the dependency
+    /// source `source`: `local:` paths relative to its own folder as Pane
+    /// resolved it — a local package's, or one extension of a local
+    /// collection's own folder, not the collection's root.
+    pub(crate) fn dependency_at(&self, source: &str) -> Result<PackageIdentity, PathBuf> {
+        let folder = (!self.identity.is_published()).then_some(self.folder.as_path());
+        self.identity.dependency_at(folder, source)
     }
 
     /// Reads the npm package that Pane downloaded and unpacked, as the
@@ -1543,6 +1654,7 @@ impl SourcePackage {
             npm: Some(origin),
             git: None,
             default: None,
+            extension: None,
             _download: Some(std::sync::Arc::new(download)),
             network: false,
             programs: false,
@@ -1554,7 +1666,18 @@ impl SourcePackage {
     /// folder, a revision without `pane.json` at the repository's root and
     /// one without its built components (a source-only revision), and a
     /// component stored with Git LFS.
-    pub(crate) fn read_git(fetched: crate::git::Fetched) -> Result<SourcePackage, PackageError> {
+    ///
+    /// A root holding `pane-collection.json` is a **collection** (ADR 0044):
+    /// `extension` names the one extension of it to read, by the id the
+    /// address gave after `#`; without one, the revision is explained as a
+    /// collection whose extension must be named. The extension's folder,
+    /// as the index names it, is read as a local package's is: only the
+    /// files under it reach the managed copy, so a component outside it is
+    /// missing and the revision is explained as source-only.
+    pub(crate) fn read_git(
+        fetched: crate::git::Fetched,
+        extension: Option<&str>,
+    ) -> Result<SourcePackage, PackageError> {
         let crate::git::Fetched { download, origin } = fetched;
         let folder = download.folder().to_path_buf();
         let revision = format!(
@@ -1564,6 +1687,93 @@ impl SourcePackage {
             origin.repository.name()
         );
         let revision = capitalized(&revision);
+        let one_extension = folder.join(MANIFEST_FILE).is_file();
+        let invalid = |why: String| {
+            PackageError::Git(format!(
+                "{revision} is a collection whose {} is invalid: {why}",
+                crate::collections::COLLECTION_FILE
+            ))
+        };
+        if let Some(collection) = crate::collections::read(&folder).map_err(invalid)? {
+            if one_extension {
+                return Err(PackageError::Git(format!(
+                    "{revision} holds both {MANIFEST_FILE} and {}: a repository is one \
+                     extension or a collection, never both",
+                    crate::collections::COLLECTION_FILE
+                )));
+            }
+            let name = origin.repository.name();
+            let Some(id) = extension else {
+                return Err(PackageError::Git(format!(
+                    "{revision} is a collection, not one extension: its root holds {}, which \
+                     lists the extensions it offers by id; name the one to install after `#` in \
+                     the address, as {name}#<id>",
+                    crate::collections::COLLECTION_FILE
+                )));
+            };
+            let Some(entry) = collection.find(id) else {
+                return Err(PackageError::Git(format!(
+                    "{revision} lists no extension `{id}` in its {}",
+                    crate::collections::COLLECTION_FILE
+                )));
+            };
+            let subfolder = folder.join(&entry.path);
+            let (manifest, manifest_text) = match Manifest::read_text(&subfolder) {
+                Ok(read) => read,
+                Err(PackageError::NoManifest(_)) => {
+                    return Err(PackageError::Git(format!(
+                        "{revision} lists its extension `{id}` at `{}`, which is not a package: \
+                         it has no {MANIFEST_FILE}",
+                        shown(&entry.path)
+                    )));
+                }
+                Err(PackageError::MissingComponent { command, component }) => {
+                    return Err(PackageError::Git(format!(
+                        "{revision} holds only the source of \"{command}\", the extension `{id}` \
+                         of the collection: its built component {} is not in it. Pane does not \
+                         build packages from Git or run anything in a repository; install a \
+                         release revision whose commit includes the built components (its \
+                         author's release tag or branch), or build it yourself and install the \
+                         folder",
+                        component.display()
+                    )));
+                }
+                Err(error) => return Err(error),
+            };
+            for (_, component) in manifest.components() {
+                let path =
+                    format!("{}/{}", entry.path, component.to_string_lossy().replace('\\', "/"));
+                if origin.lfs_pointers.contains(&path) {
+                    return Err(PackageError::Git(format!(
+                        "{revision} stores its component {path} with Git LFS, which Pane does not \
+                         fetch: its author must commit the built component itself in a release \
+                         revision"
+                    )));
+                }
+            }
+            return Ok(SourcePackage {
+                identity: PackageIdentity::git_extension(&origin.repository, id),
+                folder: subfolder,
+                manifest,
+                manifest_text,
+                npm: None,
+                git: Some(origin),
+                default: None,
+                extension: Some(id.to_owned()),
+                _download: Some(std::sync::Arc::new(download)),
+                network: false,
+                programs: false,
+            });
+        }
+        // One extension at the root, or none: `#<id>` names no extension of
+        // a repository that is not a collection.
+        if extension.is_some() && one_extension {
+            return Err(PackageError::Git(format!(
+                "{revision} is not a collection: its root holds {MANIFEST_FILE}, one extension, \
+                 and no {}; `#<id>` names one extension of a collection",
+                crate::collections::COLLECTION_FILE
+            )));
+        }
         let (manifest, manifest_text) = match Manifest::read_text(&folder) {
             Ok(read) => read,
             Err(PackageError::NoManifest(_)) => {
@@ -1603,6 +1813,7 @@ impl SourcePackage {
             npm: None,
             git: Some(origin),
             default: None,
+            extension: None,
             _download: Some(std::sync::Arc::new(download)),
             network: false,
             programs: false,
@@ -1665,6 +1876,7 @@ impl SourcePackage {
             npm: None,
             git: None,
             default: Some(origin),
+            extension: None,
             _download: Some(std::sync::Arc::new(download)),
             network: false,
             programs: false,
@@ -1699,6 +1911,7 @@ impl SourcePackage {
             npm: None,
             git: None,
             default: None,
+            extension: None,
             _download: None,
             network: false,
             programs: false,
@@ -1711,6 +1924,34 @@ impl SourcePackage {
             .local_folder()
             .expect("a local identity has a folder")
             .to_path_buf();
+        // A root holding `pane-collection.json` is a collection (ADR 0044):
+        // one of its extensions must be named by its id, after `#` in the
+        // address — [`SourcePackage::read_collection`] reads one. A root
+        // holding both files is refused.
+        let invalid = |why: String| {
+            PackageError::Collection(format!(
+                "The folder {} is a collection whose {} is invalid: {why}",
+                folder.display(),
+                crate::collections::COLLECTION_FILE
+            ))
+        };
+        if crate::collections::read(&folder).map_err(invalid)?.is_some() {
+            let file = crate::collections::COLLECTION_FILE;
+            if folder.join(MANIFEST_FILE).is_file() {
+                return Err(PackageError::Collection(format!(
+                    "The folder {} holds both {MANIFEST_FILE} and {file}: a folder is one \
+                     extension or a collection, never both",
+                    folder.display()
+                )));
+            }
+            return Err(PackageError::Collection(format!(
+                "The folder {} is a collection, not one extension: its root holds {file}, which \
+                 lists the extensions it offers by id; name the one to install after `#`, as \
+                 {}#<id>",
+                folder.display(),
+                folder.display()
+            )));
+        }
         let (manifest, manifest_text) = Manifest::read_text(&folder)?;
         Ok(SourcePackage {
             identity,
@@ -1720,6 +1961,93 @@ impl SourcePackage {
             npm: None,
             git: None,
             default: None,
+            extension: None,
+            _download: None,
+            network: false,
+            programs: false,
+        })
+    }
+
+    /// Reads the extension `id` of the collection at `folder`, as a local
+    /// package is read: from the folder the collection's index names for
+    /// it, self-contained, with the identity of the collection folder and
+    /// the id (ADR 0044). Nothing in the folder runs.
+    pub(crate) fn read_collection(
+        folder: &Path,
+        id: &str,
+    ) -> Result<SourcePackage, PackageError> {
+        if !crate::collections::is_id(id) {
+            return Err(PackageError::Collection(format!(
+                "the extension id `{id}` of a collection must be lowercase letters, digits and \
+                 `-`"
+            )));
+        }
+        // The collection's folder, resolved as any local package's folder
+        // is, and the identity of the extension of it that `id` names.
+        let identity = PackageIdentity::local_extension(folder, id)?;
+        let root = PackageIdentity::local(folder)?
+            .local_folder()
+            .expect("a local identity has a folder")
+            .to_path_buf();
+        let invalid = |why: String| {
+            PackageError::Collection(format!(
+                "The collection at {} holds an invalid {}: {why}",
+                root.display(),
+                crate::collections::COLLECTION_FILE
+            ))
+        };
+        let file = crate::collections::COLLECTION_FILE;
+        let one_extension = root.join(MANIFEST_FILE).is_file();
+        let Some(collection) = crate::collections::read(&root).map_err(invalid)?
+        else {
+            if one_extension {
+                return Err(PackageError::Collection(format!(
+                    "The folder {} is not a collection: its root holds {MANIFEST_FILE}, one \
+                     extension, and no {file}; `#` names one extension of a collection",
+                    root.display()
+                )));
+            }
+            return Err(PackageError::Collection(format!(
+                "The folder {} is not a collection: it holds no {file}; `#` names one \
+                 extension of a collection",
+                root.display()
+            )));
+        };
+        if one_extension {
+            return Err(PackageError::Collection(format!(
+                "The folder {} holds both {MANIFEST_FILE} and {file}: a folder is one extension \
+                 or a collection, never both",
+                root.display()
+            )));
+        }
+        let Some(entry) = collection.find(id) else {
+            return Err(PackageError::Collection(format!(
+                "The collection at {} lists no extension `{id}` in its {file}",
+                root.display()
+            )));
+        };
+        let subfolder = root.join(&entry.path);
+        let (manifest, manifest_text) = match Manifest::read_text(&subfolder) {
+            Ok(read) => read,
+            Err(PackageError::NoManifest(_)) => {
+                return Err(PackageError::Collection(format!(
+                    "The collection at {} lists its extension `{id}` at `{}`, which is not a \
+                     package: it has no {MANIFEST_FILE}",
+                    root.display(),
+                    shown(&entry.path)
+                )));
+            }
+            Err(error) => return Err(error),
+        };
+        Ok(SourcePackage {
+            identity,
+            folder: subfolder,
+            manifest,
+            manifest_text,
+            npm: None,
+            git: None,
+            default: None,
+            extension: Some(id.to_owned()),
             _download: None,
             network: false,
             programs: false,
@@ -2318,13 +2646,15 @@ impl NpmRecordJson {
 /// "https://github.com/o/r.git", "gitRef": "refs/tags/v1.0.0",
 /// "gitCommit": "<id>", "pinned": true`. `gitRef` is absent for the default
 /// branch and for a commit named by its id; `pinned` is set for a tag and a
-/// commit. A default extension's record writes the same fields beside its
-/// default identity and `defaultVersion`: where the release tag it was
-/// acquired from was fetched from, and the tag and commit of the revision
-/// installed, which its updates read to find the repository's newer
-/// release tags (#269). For a default, `pinned` records what first setup
-/// installed (the release tag this Pane release pinned), never a choice
-/// of the user's: a default extension's updates do not read it.
+/// commit. For one extension of a collection (ADR 0044), the repository its
+/// source records carries the id after `#`, and `gitExtension` records the
+/// id beside the rest. A default extension's record writes the same fields
+/// beside its default identity and `defaultVersion`: where the release tag
+/// it was acquired from was fetched from, and the tag and commit of the
+/// revision installed, which its updates read to find the repository's
+/// newer release tags (#269). For a default, `pinned` records what first
+/// setup installed (the release tag this Pane release pinned), never a
+/// choice of the user's: a default extension's updates do not read it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 struct GitRecordJson {
     #[serde(rename = "gitUrl")]
@@ -2335,22 +2665,37 @@ struct GitRecordJson {
     commit: String,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pinned: bool,
+    /// The id of the extension of a collection this package is (ADR 0044),
+    /// when it is one: absent for a package that is a whole repository's,
+    /// for an older Pane's records, and for a default extension's.
+    #[serde(
+        rename = "gitExtension",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    extension: Option<String>,
 }
 
 impl GitRecordJson {
-    fn of(origin: &GitOrigin) -> GitRecordJson {
-        GitRecordJson::of_revision(&origin.repository, &origin.revision)
+    fn of(origin: &GitOrigin, extension: Option<&str>) -> GitRecordJson {
+        GitRecordJson {
+            url: origin.repository.url().to_owned(),
+            reference: origin.revision.ref_name(),
+            commit: origin.revision.commit.clone(),
+            pinned: origin.revision.pinned(),
+            extension: extension.map(ToOwned::to_owned),
+        }
     }
 
     /// The Git fields of the revision `revision`, fetched from
-    /// `repository`, as a Git package's or a default extension's record
-    /// writes them.
+    /// `repository`, as a default extension's record writes them.
     fn of_revision(repository: &Repository, revision: &GitRevision) -> GitRecordJson {
         GitRecordJson {
             url: repository.url().to_owned(),
             reference: revision.ref_name(),
             commit: revision.commit.clone(),
             pinned: revision.pinned(),
+            extension: None,
         }
     }
 
@@ -2407,7 +2752,7 @@ fn resolved_dependencies(package: &SourcePackage) -> Vec<ResolvedJson> {
         .dependencies
         .iter()
         .filter_map(|dependency| {
-            let PackageIdentity(source) = package.identity.dependency(&dependency.source).ok()?;
+            let PackageIdentity(source) = package.dependency_at(&dependency.source).ok()?;
             Some(ResolvedJson {
                 id: dependency.id.clone(),
                 source,
@@ -2918,7 +3263,9 @@ impl Store {
         // Git fields, in the one shape; a default's own part of its record
         // is the version its manifest declares.
         let git = match (&package.git, &package.default) {
-            (Some(origin), _) => Some(GitRecordJson::of(origin)),
+            (Some(origin), _) => {
+                Some(GitRecordJson::of(origin, package.extension.as_deref()))
+            }
             (None, Some(origin)) => Some(GitRecordJson::of_revision(
                 &origin.repository,
                 &origin.revision,
@@ -3277,6 +3624,45 @@ mod tests {
                 "local": "/src/a", "dir": "1", "dependencies": [{ "id": "b", "local": "/src/b" }]
             })
         );
+    }
+
+    #[test]
+    fn an_extension_of_a_collection_s_record_is_read_back_with_its_id() {
+        // As an install by its id writes it (#307): the repository with the
+        // id after `#`, and the id beside the Git source fields — the
+        // repository's own address fetched as written.
+        let dir = tempfile::tempdir().unwrap();
+        let text = r#"{ "version": 1, "next": 2, "packages": [
+            { "git": "github.com/owner/tools#clock",
+              "gitUrl": "https://github.com/owner/tools.git",
+              "gitRef": "refs/tags/clock/v1.2.0",
+              "gitCommit": "6e07ce96ea361661f2a63eaac8bd3b135c76b012",
+              "pinned": true, "gitExtension": "clock", "dir": "1" } ] }"#;
+        fs::write(dir.path().join(REGISTRY_FILE), text).unwrap();
+        let store = Store::open(dir.path().to_path_buf());
+        let installed = store.installed();
+        let [package] = installed.as_slice() else {
+            panic!("one installed package")
+        };
+        let repository = crate::git::GitSpec::parse("https://github.com/owner/tools")
+            .unwrap()
+            .repository;
+        assert_eq!(
+            package.identity,
+            PackageIdentity::git_extension(&repository, "clock")
+        );
+        assert_eq!(
+            package.identity.extension_id(),
+            Some("clock"),
+            "the id, read from the repository it records"
+        );
+        let git = package.git.as_ref().expect("the Git source");
+        assert_eq!(git.url, "https://github.com/owner/tools.git");
+        assert_eq!(
+            git.revision.ref_name().as_deref(),
+            Some("refs/tags/clock/v1.2.0")
+        );
+        assert!(git.revision.pinned(), "the tag's revision, as ever");
     }
 
     #[test]

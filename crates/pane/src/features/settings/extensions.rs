@@ -515,7 +515,12 @@ pub(crate) fn source_line(package: &InstalledPackage) -> String {
         };
     }
     if let Some(git) = &package.git {
-        return format!("Git · {}", git.url);
+        // One extension of a collection is named by its id, after `#` in
+        // the repository's address (ADR 0044).
+        return match identity.extension_id() {
+            Some(id) => format!("Git · {}#{id}", git.url),
+            None => format!("Git · {}", git.url),
+        };
     }
     match identity.local_folder() {
         Some(folder) => format!("Folder · {}", folder.display()),

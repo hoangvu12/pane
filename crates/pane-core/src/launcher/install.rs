@@ -41,10 +41,14 @@ use crate::{helpers, operations};
 pub(in crate::launcher) enum Request {
     /// A local package folder.
     Folder(PathBuf),
+    /// One extension of a collection in a local folder, named by its id
+    /// (ADR 0044): the folder holds `pane-collection.json` at its root.
+    Collection(PathBuf, String),
     /// A package from npm, at the version named or else the latest.
     Npm(NpmSpec),
     /// A package from a Git repository, at the reference named or else its
-    /// default branch.
+    /// default branch — or, with `#<id>`, one extension of a collection
+    /// the repository holds.
     Git(GitSpec),
     /// A default extension's revision, from its repository at the commit
     /// its release tag points to — first setup's acquisition of a pin
@@ -61,6 +65,10 @@ impl Request {
         match self {
             Request::Folder(folder) => (
                 format!("Folder: {}", folder.display()),
+                crate::packages::folder_name(folder),
+            ),
+            Request::Collection(folder, id) => (
+                format!("Collection: {}#{id}", folder.display()),
                 crate::packages::folder_name(folder),
             ),
             Request::Npm(spec) => (format!("npm package: {spec}"), spec.name.clone()),
@@ -93,6 +101,7 @@ impl Sources {
     pub fn read(&self, request: &Request) -> Result<SourcePackage, PackageError> {
         match request {
             Request::Folder(folder) => SourcePackage::read(folder),
+            Request::Collection(folder, id) => SourcePackage::read_collection(folder, id),
             Request::Npm(spec) => self.fetch(spec),
             Request::Git(spec) => self.fetch_git(spec),
             Request::Default(pin) => self.fetch_default(pin),
@@ -101,13 +110,28 @@ impl Sources {
 
     /// Reads the package with `identity`, a dependency declared with the
     /// source `source` (for npm, possibly naming a version; for Git, a
-    /// reference).
+    /// reference, and an extension of a collection with `#<id>`).
     pub fn read_dependency(
         &self,
         identity: &PackageIdentity,
         source: &str,
     ) -> Result<SourcePackage, PackageError> {
         match (identity.local_folder(), SourceSpec::parse(source)) {
+            (Some(folder), Ok(SourceSpec::Local(_))) => {
+                // A local source may name one extension of a collection at
+                // its folder with `#<id>` (ADR 0044): the identity resolved
+                // the collection's folder, with the id after `#`. A `#`
+                // above the last one belongs to a folder name, and its tail
+                // is not an id: the whole path names the folder.
+                let named = folder
+                    .to_str()
+                    .and_then(|folder| folder.rsplit_once('#'))
+                    .filter(|(_, id)| crate::collections::is_id(id));
+                match named {
+                    Some((root, id)) => SourcePackage::read_collection(Path::new(root), id),
+                    None => SourcePackage::read(folder),
+                }
+            }
             (Some(folder), _) => SourcePackage::read(folder),
             (None, Ok(SourceSpec::Npm(spec))) => self.fetch(&spec),
             (None, Ok(SourceSpec::Git(spec))) => self.fetch_git(&spec),
@@ -137,7 +161,7 @@ impl Sources {
         };
         // As for npm, its download goes with the package read from it.
         let fetched = git_source::fetch(spec, downloads).map_err(PackageError::Git)?;
-        SourcePackage::read_git(fetched)
+        SourcePackage::read_git(fetched, spec.extension.as_deref())
     }
 
     /// Fetches the release tag's commit `pin` names and reads it as the
@@ -328,6 +352,18 @@ impl Launcher {
         self.preview(Ok(Request::Folder(folder.to_path_buf())))
     }
 
+    /// Reads the extension `id` of the collection in `folder` (whose root
+    /// holds `pane-collection.json`, ADR 0044) and shows it as
+    /// [`Launcher::preview_package`] shows a folder. Nothing in the folder
+    /// runs.
+    pub fn preview_collection(
+        &self,
+        folder: &Path,
+        id: &str,
+    ) -> impl Future<Output = ()> + Send + 'static {
+        self.preview(Ok(Request::Collection(folder.to_path_buf(), id.to_owned())))
+    }
+
     /// Downloads the npm package `spec` names (`name`, `@scope/name`, with
     /// an optional exact version: `name@1.2.3`) and shows it as
     /// [`Launcher::preview_package`] shows a folder, with the npm version it
@@ -348,7 +384,9 @@ impl Launcher {
     /// folder, with the revision it would install. Without a reference it is
     /// the default branch, tracked; a branch is tracked, a tag or a commit
     /// pinned. For an installed repository named without one, the installed
-    /// reference is kept. Nothing in the repository runs.
+    /// reference is kept. Nothing in the repository runs. A `#<id>` after
+    /// the repository path names one extension of a collection the
+    /// repository holds (ADR 0044), a reference following the id.
     pub fn preview_git(&self, spec: &str) -> impl Future<Output = ()> + Send + 'static {
         let asked = spec.trim().to_owned();
         let request = crate::git::GitSpec::parse(spec)
@@ -418,11 +456,17 @@ impl Launcher {
                 })
             }
             // A repository named without a reference keeps the one it is
-            // installed from: its branch, tag or commit.
+            // installed from: its branch, tag or commit — as one extension
+            // of a collection keeps the revision that extension is
+            // installed from.
             Request::Git(spec) if spec.reference.is_none() => {
                 let state = self.lock();
+                let identity = match spec.extension.as_deref() {
+                    Some(id) => PackageIdentity::git_extension(&spec.repository, id),
+                    None => PackageIdentity::git(&spec.repository),
+                };
                 let installed = state
-                    .package(&PackageIdentity::git(&spec.repository))
+                    .package(&identity)
                     .and_then(|package| package.git.as_ref())
                     .and_then(|git| git.revision.asked_as());
                 Request::Git(crate::git::GitSpec {
@@ -859,6 +903,13 @@ fn preview_view(
     };
     let manifest = &package.manifest;
     let mut details = vec![format!("Source: {}", package.identity)];
+    // One extension of a collection, named by its id (ADR 0044): said so,
+    // beside the source the identity spells.
+    if let Some(id) = &package.extension {
+        details.push(format!(
+            "Extension: {id}, one of the extensions its collection lists"
+        ));
+    }
     if let Some(version) = &manifest.version {
         details.push(format!("Version: {version}"));
     }

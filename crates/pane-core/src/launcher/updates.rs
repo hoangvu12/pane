@@ -723,9 +723,14 @@ impl Updates {
     ) {
         // The repository as the installed copy's record names it, fetched
         // from where it was fetched before; a record Pane cannot read
-        // names no repository.
+        // names no repository. One extension of a collection is fetched as
+        // the extension it is, by its id: the repository alone would be
+        // read as the collection it holds (ADR 0044).
         let spec = match git::GitSpec::parse(&git.url) {
-            Ok(spec) => spec,
+            Ok(spec) => git::GitSpec {
+                extension: package.identity.extension_id().map(ToOwned::to_owned),
+                ..spec
+            },
             Err(reason) => {
                 pass.failed(
                     package.identity.clone(),
