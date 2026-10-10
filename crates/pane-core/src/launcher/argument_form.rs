@@ -308,6 +308,8 @@ impl Launcher {
             form,
             title.clone(),
         );
+    }
+
     /// Submits the open argument form: with a required field empty, marks
     /// it and says so, and launches nothing; else returns to the screen
     /// the form was asked from and returns the launch with the form's

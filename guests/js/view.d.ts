@@ -562,7 +562,7 @@ export declare const Select: (props: SelectProps) => Element;
  * values the form was submitted with; Enter in a single-line field
  * submits, as Ctrl+Enter does in a text area and the submit button does.
  */
-export declare const Form: (props: FormProps) => Element & {
+export declare const Form: ((props: FormProps) => Element) & {
   TextField: (props: FieldProps & { placeholder?: string; onInput?: (value: string) => unknown; onChange?: (value: string) => unknown; throttleMs?: number }) => Element;
   PasswordField: (props: FieldProps & { placeholder?: string; onInput?: (value: string) => unknown; onChange?: (value: string) => unknown }) => Element;
   TextArea: (props: FieldProps & { placeholder?: string; onInput?: (value: string) => unknown; onChange?: (value: string) => unknown }) => Element;

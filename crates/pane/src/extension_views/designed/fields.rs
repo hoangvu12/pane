@@ -38,7 +38,7 @@ use super::{AREA_CONTEXT, DATE_CONTEXT, PATHS_CONTEXT, TAGS_CONTEXT, SubmitForm}
 
 /// One field's chrome: its title over `control`, and the note and error
 /// under it — the Settings board's field family, as the typed form's
-//! fields wore (#99). `key` is the field's key, `label` what names the
+/// fields wore (#99). `key` is the field's key, `label` what names the
 /// control to assistive technology when the title does not.
 pub(super) fn field_group(
     key: &str,

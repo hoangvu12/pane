@@ -326,14 +326,12 @@ fn field_error(launcher: &Launcher, key: &str) -> Option<String> {
     fn at(node: &pane_core::Node, key: &str) -> Option<String> {
         if node.key.as_deref() == Some(key) {
             return match &node.kind {
-                pane_core::NodeKind::TextInput(input) | pane_core::NodeKind::PasswordInput(input) => {
-                    input.field.error.clone()
-                }
+                pane_core::NodeKind::TextInput(input)
+                | pane_core::NodeKind::PasswordInput(input) => input.field.error.clone(),
                 pane_core::NodeKind::Select(select) => select.field.error.clone(),
                 pane_core::NodeKind::Checkbox(checkbox) => checkbox.field.error.clone(),
-                pane_core::NodeKind::FilePicker(picker) | pane_core::NodeKind::FolderPicker(picker) => {
-                    picker.field.error.clone()
-                }
+                pane_core::NodeKind::FilePicker(picker)
+                | pane_core::NodeKind::FolderPicker(picker) => picker.field.error.clone(),
                 _ => None,
             };
         }
