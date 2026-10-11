@@ -136,7 +136,7 @@ impl Calling {
 impl View for Calling {
     fn render(&mut self, cx: &mut Cx<Self>) -> impl IntoAnswer {
         let waiting = self.waiting;
-        let submit = cx.form_listener(|this, values| {
+        let submit = cx.form_listener(move |this, values| {
             let source = values.text("source").unwrap_or_default().trim().to_owned();
             let name = values.text("name").unwrap_or_default().to_owned();
             let times = values.text("times").unwrap_or("once").to_owned();
