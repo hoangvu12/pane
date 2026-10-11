@@ -27,9 +27,7 @@
 
 use pane_extension::alloc::{format, string::String, vec::Vec};
 use pane_extension::feedback::{Toast, show_toast};
-use pane_extension::{
-    Command, Item, List, cache, content, credentials, settings,
-};
+use pane_extension::{Command, Item, List, cache, content, credentials, settings};
 
 /// The settings key holding the chosen greeting style.
 const STYLE: &str = "greeting-style";
@@ -79,7 +77,8 @@ async fn outcome(id: &str) -> Result<String, String> {
             let greeting = match settings::get(STYLE)?.as_deref() {
                 Some("formal") => "Good day to you",
                 Some("casual") => "Hi there",
-                _ => return Err("No greeting style is saved yet; choose one first".into())};
+                _ => return Err("No greeting style is saved yet; choose one first".into()),
+            };
             cache::set(LAST_GREETING, greeting)?;
             Ok(greeting.into())
         }
@@ -95,7 +94,8 @@ async fn outcome(id: &str) -> Result<String, String> {
             let or_none = |value: Option<String>| value.unwrap_or_else(|| "none".into());
             let signed_in = match credentials::get(TOKEN)? {
                 Some(_) => "yes",
-                None => "no"};
+                None => "no",
+            };
             Ok(format!(
                 "Style: {} · Note: {} · Signed in: {signed_in} · Cached greeting: {}",
                 or_none(settings::get(STYLE)?),
@@ -116,7 +116,8 @@ async fn outcome(id: &str) -> Result<String, String> {
                 Some(count) => count
                     .parse::<u64>()
                     .map_err(|_| "the count is not a number")?,
-                None => 0} + 1;
+                None => 0,
+            } + 1;
             content::set(COUNT, &format!("{count}"))?;
             Ok(format!("Counted {count}"))
         }
@@ -150,7 +151,8 @@ async fn outcome(id: &str) -> Result<String, String> {
         // A panic traps the guest: Pane reports a crash, not an error
         // the extension answered with.
         "crash" => panic!("crashed on purpose"),
-        other => Err(format!("unknown item: {other}"))}
+        other => Err(format!("unknown item: {other}")),
+    }
 }
 
 impl Command for Greeting {
@@ -159,7 +161,8 @@ impl Command for Greeting {
     async fn render() -> Result<List, String> {
         let title = match settings::get(STYLE)? {
             Some(style) => format!("Greeting: {style}"),
-            None => "Greeting".into()};
+            None => "Greeting".into(),
+        };
         let item = |id: &'static str, title: &str, subtitle: &str| {
             Item::new(id, title)
                 .subtitle(subtitle)

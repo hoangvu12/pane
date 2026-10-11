@@ -35,6 +35,4 @@ impl Command for FailingStart {
     async fn run_search_result(id: String) -> Result<(), String> {
         act(&id).await
     }
-
-
 }

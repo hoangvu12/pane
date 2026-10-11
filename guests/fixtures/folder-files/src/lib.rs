@@ -50,7 +50,8 @@ async fn act(item_id: &str) -> Result<(), String> {
             show_toast(Toast::success(policy()));
             Ok(())
         }
-        _ => Err(format!("unknown item: {item_id}"))}
+        _ => Err(format!("unknown item: {item_id}")),
+    }
 }
 
 /// The files of the granted folder `query` finds, best first, each as the
@@ -61,7 +62,8 @@ fn found(query: &str) -> Result<Vec<(String, String)>, String> {
         .map_err(|problem| format!("cannot search the granted folder: {problem}"))?
     {
         FolderState::Ready(listing) => listing,
-        FolderState::NotGranted | FolderState::Listing => return Ok(Vec::new())};
+        FolderState::NotGranted | FolderState::Listing => return Ok(Vec::new()),
+    };
     Ok(matching::matching(&listing.files, query)
         .into_iter()
         .map(|file| (file.id.clone(), file.relative.clone()))
@@ -78,8 +80,6 @@ impl Command for Files {
                 .on_action(|| act("policy")),
         ))
     }
-
-
 }
 
 impl pane_extension::root::Guest for Files {
@@ -94,7 +94,8 @@ impl pane_extension::root::Guest for Files {
                 title: matching::last_name(&relative).into(),
                 id: relative,
                 subtitle: None,
-                action: RootAction::OpenFile(id)})
+                action: RootAction::OpenFile(id),
+            })
             .collect())
     }
 }

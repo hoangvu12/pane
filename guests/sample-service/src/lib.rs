@@ -29,9 +29,7 @@ use core::sync::atomic::{AtomicU64, Ordering};
 
 use pane_extension::alloc::{format, string::String, vec::Vec};
 use pane_extension::feedback::{Toast, show_toast};
-use pane_extension::{
-    Command, Item, List, content, settings,
-};
+use pane_extension::{Command, Item, List, content, settings};
 
 /// The content key holding how many cycles the service has run, ever.
 const CYCLES: &str = "cycles";
@@ -123,7 +121,8 @@ fn outcome(item_id: &str) -> Result<String, String> {
             settings::set(MODE, "far")?;
             Ok("The next cycle will answer 31 days".into())
         }
-        other => Err(format!("unknown item: {other}"))}
+        other => Err(format!("unknown item: {other}")),
+    }
 }
 
 impl Command for Watching {
@@ -210,7 +209,8 @@ impl pane_extension::service::Guest for Watching {
                 status: format!(
                     "Watching: {events} events (cycle {cycles}, {this_run} this run){wait}"
                 ),
-                next_seconds: next})
+                next_seconds: next,
+            })
         };
         match mode.as_str() {
             "slow" => {
@@ -241,6 +241,7 @@ impl pane_extension::service::Guest for Watching {
             // again.
             "fast" => status(false, AT_ONCE),
             "far" => status(false, TOO_FAR),
-            _ => status(false, EVERY)}
+            _ => status(false, EVERY),
+        }
     }
 }

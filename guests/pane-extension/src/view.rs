@@ -92,8 +92,8 @@ use core::time::Duration;
 use crate::exports::pane::extension::command as wit;
 use crate::icon;
 pub use crate::icon::{Color, Icon};
-use crate::pane::extension::view::measure_text as wit_measure_text;
 use crate::pane::extension::view::ask_to_render;
+use crate::pane::extension::view::measure_text as wit_measure_text;
 use wit::{GuestView, Outcome, Rendered, UiEvent};
 use wit_bindgen::spawn_local;
 
@@ -404,7 +404,8 @@ impl Node {
 
     /// The children of this node's, after its children.
     pub fn children(mut self, children: impl IntoIterator<Item = impl IntoNode>) -> Node {
-        self.children.extend(children.into_iter().map(IntoNode::into_node));
+        self.children
+            .extend(children.into_iter().map(IntoNode::into_node));
         self
     }
 
@@ -1099,7 +1100,12 @@ impl Draw {
     /// This text or image's top-left corner.
     pub fn at(mut self, x: f32, y: f32) -> Draw {
         match &mut self {
-            Draw::Text { x: own, y: own_y, .. } | Draw::Image { x: own, y: own_y, .. } => {
+            Draw::Text {
+                x: own, y: own_y, ..
+            }
+            | Draw::Image {
+                x: own, y: own_y, ..
+            } => {
                 *own = x;
                 *own_y = y;
             }
@@ -1166,8 +1172,14 @@ impl Draw {
     pub fn width(mut self, width: f32) -> Draw {
         match &mut self {
             Draw::Stroke { stroke } => stroke.width = width,
-            Draw::Rect { stroke: Some(stroke), .. }
-            | Draw::Circle { stroke: Some(stroke), .. } => stroke.width = width,
+            Draw::Rect {
+                stroke: Some(stroke),
+                ..
+            }
+            | Draw::Circle {
+                stroke: Some(stroke),
+                ..
+            } => stroke.width = width,
             _ => {}
         }
         self
@@ -1177,8 +1189,14 @@ impl Draw {
     pub fn cap(mut self, cap: Cap) -> Draw {
         match &mut self {
             Draw::Stroke { stroke } => stroke.cap = Some(cap),
-            Draw::Rect { stroke: Some(stroke), .. }
-            | Draw::Circle { stroke: Some(stroke), .. } => stroke.cap = Some(cap),
+            Draw::Rect {
+                stroke: Some(stroke),
+                ..
+            }
+            | Draw::Circle {
+                stroke: Some(stroke),
+                ..
+            } => stroke.cap = Some(cap),
             _ => {}
         }
         self
@@ -1188,8 +1206,14 @@ impl Draw {
     pub fn join(mut self, join: Join) -> Draw {
         match &mut self {
             Draw::Stroke { stroke } => stroke.join = Some(join),
-            Draw::Rect { stroke: Some(stroke), .. }
-            | Draw::Circle { stroke: Some(stroke), .. } => stroke.join = Some(join),
+            Draw::Rect {
+                stroke: Some(stroke),
+                ..
+            }
+            | Draw::Circle {
+                stroke: Some(stroke),
+                ..
+            } => stroke.join = Some(join),
             _ => {}
         }
         self
@@ -1639,10 +1663,7 @@ macro_rules! styled {
             }
 
             /// The children of this node's, after its children.
-            pub fn children(
-                self,
-                children: impl IntoIterator<Item = impl IntoNode>,
-            ) -> Self {
+            pub fn children(self, children: impl IntoIterator<Item = impl IntoNode>) -> Self {
                 let node = self.0;
                 $builder(node.children(children))
             }
@@ -1716,10 +1737,7 @@ macro_rules! styled {
             }
 
             /// This node's border: how wide, and in which colour.
-            pub fn border(
-                mut self,
-                border: Border,
-            ) -> Self {
+            pub fn border(mut self, border: Border) -> Self {
                 self.0.style.surface.border = Some(border);
                 self
             }
@@ -2150,7 +2168,9 @@ pub fn text_input(value: impl Into<String>) -> TextInput {
 
 /// One password field, starting empty (see [`text_input`]).
 pub fn password_input() -> TextInput {
-    TextInput(Node::of(NodeKind::PasswordInput(TextInputPayload::default())))
+    TextInput(Node::of(NodeKind::PasswordInput(
+        TextInputPayload::default(),
+    )))
 }
 
 /// One text area, starting at `value` (see [`text_input`]); its Enter
@@ -4139,7 +4159,10 @@ fn text_of(payload: &str) -> String {
 /// its result.
 fn pop_result_of(payload: &str) -> Option<String> {
     let at = payload.find("\"pop\"")?;
-    let rest = payload[at + 5..].trim_start().strip_prefix(':')?.trim_start();
+    let rest = payload[at + 5..]
+        .trim_start()
+        .strip_prefix(':')?
+        .trim_start();
     if rest.starts_with("null") {
         return None;
     }
@@ -4696,9 +4719,7 @@ fn write_node(tree: &mut String, node: &Node) -> Result<(), String> {
                 icon::write_icon(tree, icon)?;
             }
         }
-        NodeKind::TextInput(input)
-        | NodeKind::PasswordInput(input)
-        | NodeKind::TextArea(input) => {
+        NodeKind::TextInput(input) | NodeKind::PasswordInput(input) | NodeKind::TextArea(input) => {
             tree.push_str(",\"value\":");
             string(tree, &input.value)?;
             if let Some(default) = &input.default {

@@ -8,10 +8,10 @@
 //! of its own.
 #![no_std]
 
+use pane_extension::Command;
 use pane_extension::alloc::{string::String, vec::Vec};
 use pane_extension::applications::{self, Application};
 use pane_extension::indexed::{IndexedAction, IndexedResult};
-use pane_extension::Command;
 
 struct Applications;
 pane_extension::export!(Applications);
@@ -49,7 +49,8 @@ impl pane_extension::indexed::Guest for Applications {
                         .unwrap_or_else(|| "Application".into()),
                 ),
                 alternate_titles: application.alternate_titles,
-                keywords: application.keywords})
+                keywords: application.keywords,
+            })
             .collect())
     }
 }

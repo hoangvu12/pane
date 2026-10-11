@@ -7,9 +7,9 @@
 
 mod expression;
 
+use pane_extension::Command;
 use pane_extension::alloc::{format, string::String, vec, vec::Vec};
 use pane_extension::root::{RootAction, RootResult};
-use pane_extension::Command;
 
 use expression::Outcome;
 
@@ -38,6 +38,7 @@ impl pane_extension::root::Guest for Calculator {
                 "{} = {answer} · Enter copies the answer",
                 query.trim()
             )),
-            action: RootAction::Copy(answer)}])
+            action: RootAction::Copy(answer),
+        }])
     }
 }

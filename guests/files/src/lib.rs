@@ -55,7 +55,8 @@ fn status() -> String {
             "{} files and folders of your home folder are indexed{reason}",
             status.entries
         ),
-        IndexState::Stopped => format!("File search stopped{reason}")}
+        IndexState::Stopped => format!("File search stopped{reason}"),
+    }
 }
 
 /// Runs the action of the item `item_id`: a toast saying what is searched.
@@ -65,7 +66,8 @@ async fn act(item_id: &str) -> Result<(), String> {
             show_toast(Toast::success(status()));
             Ok(())
         }
-        _ => Err(format!("unknown item: {item_id}"))}
+        _ => Err(format!("unknown item: {item_id}")),
+    }
 }
 
 /// The entries `query` finds, best first, at most `limit`.
@@ -87,9 +89,7 @@ impl Command for Files {
                 .on_action(|| act("status")),
         ))
     }
-
 }
-
 
 impl pane_extension::root::Guest for Files {
     /// The best few entries the query typed in root search finds, each
@@ -104,7 +104,8 @@ impl pane_extension::root::Guest for Files {
                 title: entry.name,
                 id: entry.path,
                 subtitle: None,
-                action: RootAction::OpenFile(entry.id)})
+                action: RootAction::OpenFile(entry.id),
+            })
             .collect())
     }
 }

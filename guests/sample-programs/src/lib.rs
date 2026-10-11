@@ -84,7 +84,8 @@ fn explain(error: ProgramError) -> String {
 fn code(exit: Option<i32>) -> String {
     match exit {
         Some(code) => format!("{code}"),
-        None => "none".into()}
+        None => "none".into(),
+    }
 }
 
 /// Runs `pane-echo` with `args` and `input`.
@@ -210,7 +211,8 @@ async fn outcome(item_id: &str) -> Result<String, String> {
                 Err(error) if error.kind == ProgramErrorKind::TimedOut => {
                     Ok(format!("The timeout ended it: {}", error.message))
                 }
-                Err(error) => Err(explain(error))}
+                Err(error) => Err(explain(error)),
+            }
         }
         "descendant" => {
             let process = programs::spawn(ECHO, &["--parent", "30"], Options::default())
@@ -236,7 +238,8 @@ async fn outcome(item_id: &str) -> Result<String, String> {
                 }),
                 // The run was dropped when the timer won: Pane ended the
                 // program and its descendant.
-                Err(()) => Ok("Gave up after a second".into())}
+                Err(()) => Ok("Gave up after a second".into()),
+            }
         }
         "leave" => {
             let output = echo(&["--leave", "30"], b"", Options::default()).await?;
@@ -282,7 +285,8 @@ async fn outcome(item_id: &str) -> Result<String, String> {
                 Err(error) if error.kind == ProgramErrorKind::NotFound => {
                     programs::cmd(script, Options::default()).await
                 }
-                ran => ran}
+                ran => ran,
+            }
             .map_err(explain)?;
             Ok(format!("The script said {}", output.stdout_text().trim()))
         }
@@ -290,14 +294,16 @@ async fn outcome(item_id: &str) -> Result<String, String> {
             let path = echo_path().await?;
             let folder = match path.rfind(['/', '\\']) {
                 Some(end) => String::from(&path[..end]),
-                None => return Err(format!("{path} is in no folder"))};
+                None => return Err(format!("{path} is in no folder")),
+            };
             let options = Options::default()
                 .in_folder(folder)
                 .with_env("PANE_SAMPLE_VALUE", "set by the sample");
             let output = echo(&["--context", "PANE_SAMPLE_VALUE"], b"", options).await?;
             Ok(String::from(output.stdout_text().trim()))
         }
-        other => Err(format!("unknown item: {other}"))}
+        other => Err(format!("unknown item: {other}")),
+    }
 }
 
 impl Command for ProgramsSample {
@@ -391,6 +397,7 @@ impl Command for ProgramsSample {
                 show_toast(Toast::success(done));
                 Ok(())
             }
-            other => Err(format!("`{other}` opens a screen"))}
+            other => Err(format!("`{other}` opens a screen")),
+        }
     }
 }

@@ -20,9 +20,7 @@
 
 use pane_extension::alloc::{format, string::String, vec::Vec};
 use pane_extension::feedback::{Toast, show_toast};
-use pane_extension::{
-    Command, Item, List, content, settings,
-};
+use pane_extension::{Command, Item, List, content, settings};
 
 /// The content key holding how many runs the command counted.
 const COUNT: &str = "count";
@@ -95,7 +93,8 @@ async fn outcome(item_id: &str) -> Result<String, String> {
             while now() < end {}
             Ok(format!("Ran {runs} times"))
         }
-        other => Err(format!("unknown item: {other}"))}
+        other => Err(format!("unknown item: {other}")),
+    }
 }
 
 impl Command for Counting {

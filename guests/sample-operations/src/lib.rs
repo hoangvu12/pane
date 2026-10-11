@@ -23,10 +23,7 @@ use pane_extension::alloc::{format, string::String, string::ToString, vec, vec::
 use pane_extension::form::{self, FormValues};
 use pane_extension::operations::call;
 use pane_extension::view::{Cx, IntoAnswer, Pending, View};
-use pane_extension::{
-    Command, Item, LaunchRecord, List, publish, settings,
-
-};
+use pane_extension::{Command, Item, LaunchRecord, List, publish, settings};
 use serde_json::{Value, json};
 
 struct Operations;
@@ -43,7 +40,8 @@ async fn greet(source: &str, name: &str) -> Result<String, String> {
     let result: Value = serde_json::from_str(&result).map_err(|error| format!("{error}"))?;
     match result.get("greeting").and_then(Value::as_str) {
         Some(greeting) => Ok(greeting.into()),
-        None => Err("the answer has no greeting".into())}
+        None => Err("the answer has no greeting".into()),
+    }
 }
 
 impl Command for Operations {
@@ -60,10 +58,7 @@ impl Command for Operations {
         ]))
     }
 
-    async fn open_designed_view(
-        command: String,
-        _launch: LaunchRecord,
-    ) -> Result<Calling, String> {
+    async fn open_designed_view(command: String, _launch: LaunchRecord) -> Result<Calling, String> {
         match command.as_str() {
             "greet" | "wait" => Ok(Calling::new(command == "wait")),
             _ => Err("this command opens no designed view".into()),
@@ -144,8 +139,7 @@ impl View for Calling {
             let name = values.text("name").unwrap_or_default().to_owned();
             let times = values.text("times").unwrap_or("once").to_owned();
             if source.is_empty() {
-                *this.error.borrow_mut() =
-                    ("source".into(), "Enter the package's source".into());
+                *this.error.borrow_mut() = ("source".into(), "Enter the package's source".into());
                 return;
             }
             *this.error.borrow_mut() = (String::new(), String::new());
@@ -197,9 +191,9 @@ impl View for Calling {
                 .into_answer();
         }
         if self.pending.is_some() {
-            return pane_extension::view::loading(
-                pane_extension::view::text("Calling the other extension…"),
-            );
+            return pane_extension::view::loading(pane_extension::view::text(
+                "Calling the other extension…",
+            ));
         }
         form_of(self, submit, String::new()).into_answer()
     }
@@ -215,7 +209,9 @@ fn form_of(
     let _ = answer;
     let error = |field: &str| {
         let error = view.error.borrow();
-        (error.0 == field).then(|| error.1.clone()).unwrap_or_default()
+        (error.0 == field)
+            .then(|| error.1.clone())
+            .unwrap_or_default()
     };
     let mut form = form::Form::new()
         .key("form")

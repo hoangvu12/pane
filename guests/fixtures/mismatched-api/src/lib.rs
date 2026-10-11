@@ -12,7 +12,6 @@ extern crate alloc;
 use alloc::string::String;
 use alloc::vec::Vec;
 
-
 wit_bindgen::generate!({ path: "wit", world: "extension" });
 
 use alloc::string::String;
