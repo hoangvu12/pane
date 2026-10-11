@@ -2974,7 +2974,6 @@ mod tests {
             "github.com/o/r#a_b",
             "github.com/o/r#a b",
             "github.com/o/r#clock/timer",
-            "github.com/o/r#clock@",
         ] {
             let error = GitSpec::parse(bad).unwrap_err();
             assert!(
@@ -2982,6 +2981,13 @@ mod tests {
                 "{bad}: {error}"
             );
         }
+        // A reference that names nothing is refused as a reference is,
+        // the id parsed before it.
+        let error = GitSpec::parse("github.com/o/r#clock@").unwrap_err();
+        assert!(
+            error.contains("`` is not a branch, a tag or a full commit id"),
+            "{error}"
+        );
         // A `#` inside a reference, which Git accepts of a branch or tag
         // name, still reads as part of the reference.
         let parsed = spec("github.com/o/r@v1.0#clock");

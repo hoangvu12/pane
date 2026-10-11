@@ -190,7 +190,9 @@ impl Listed {
                 origin: origin.clone(),
                 partial,
             },
-            title: repository.to_owned(),
+            // The repository's own name, as a local collection's title is
+            // its folder's: the details say where the collection is.
+            title: crate::packages::folder_name(std::path::Path::new(repository)),
             details,
             extensions: extensions_of(&folder, collection),
         }
@@ -335,9 +337,19 @@ impl Launcher {
         // While the run installs one extension, its preview is on show
         // under the title; the collection's own lines show before it
         // begins, and the last preview the run showed stays once it ends.
+        // The rows say what came of each extension as the run came to it,
+        // from its first refusal — one refused before its preview shows,
+        // with no preview lines — as from its installs.
         let (outcomes, details) = match &choice.run {
-            Some(run) if !run.details.is_empty() => (run.outcomes.clone(), run.details.clone()),
+            Some(run) => (run.outcomes.clone(), run.details.clone()),
             _ => (vec![None; choice.extensions.len()], choice.details.clone()),
+        };
+        // Before the run has shown a preview, the collection's own lines
+        // stay under the title.
+        let details = if details.is_empty() {
+            choice.details.clone()
+        } else {
+            details
         };
         let selected = state
             .view
@@ -604,9 +616,10 @@ impl Launcher {
             // The run shows each extension's plan as it installs it, so
             // there is no plan to have changed from; the arm cannot be
             // reached, but a run never panics over one that somehow is.
-            Err(install::Stopped::Changed(_)) => Step::Refused(format!(
+            Err(install::Stopped::Changed(_)) => Step::Refused(
                 "What installing it needs changed; check it again and choose Install once more"
-            )),
+                    .into(),
+            ),
         }
     }
 

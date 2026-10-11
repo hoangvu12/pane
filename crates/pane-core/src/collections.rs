@@ -366,7 +366,7 @@ mod tests {
             ),
             (
                 r#"{"extensions": [{"id": "clock", "path": "a\\b"}]}"#,
-                "a character Windows does not allow",
+                "which would put it in another folder",
             ),
             (
                 r#"{"extensions": [{"id": "clock", "path": ""}]}"#,

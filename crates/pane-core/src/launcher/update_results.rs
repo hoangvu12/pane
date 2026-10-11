@@ -111,6 +111,10 @@ fn ending_toast(updated: usize, failed: usize, removed: usize) -> Toast {
             ToastStyle::Failure,
             format!("{}, {removed} no longer offered", failure_title(failed)),
         ),
+        (updated, failed, 0) => (
+            ToastStyle::Failure,
+            format!("Updated {updated} {}, {failed} failed", extensions(updated)),
+        ),
         (updated, failed, removed) => (
             ToastStyle::Failure,
             format!(

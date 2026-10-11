@@ -174,8 +174,9 @@ mod tests {
     #[test]
     fn one_extension_of_a_collection_is_developed_in_its_own_folder() {
         let dir = tempfile::tempdir().unwrap();
-        let root = resolved(&dir.path().join("tools"));
-        collection(&root);
+        let folder = dir.path().join("tools");
+        collection(&folder);
+        let root = resolved(&folder);
         let clock = target(&root, Some("clock")).unwrap();
         assert_eq!(
             clock.identity,
@@ -204,8 +205,9 @@ mod tests {
     #[test]
     fn a_collection_without_an_id_is_explained() {
         let dir = tempfile::tempdir().unwrap();
-        let root = resolved(&dir.path().join("tools"));
-        collection(&root);
+        let folder = dir.path().join("tools");
+        collection(&folder);
+        let root = resolved(&folder);
         assert_eq!(
             target(&root, None).unwrap_err(),
             format!(
@@ -253,6 +255,7 @@ mod tests {
         // A `#<id>` on a folder that is one extension, and on one that is
         // neither.
         let one = dir.path().join("one");
+        std::fs::create_dir_all(&one).unwrap();
         manifest(&one, "command.wasm");
         assert_eq!(
             target(&one, Some("clock")).unwrap_err(),

@@ -800,7 +800,7 @@ impl Launcher {
                     // repository's address (ADR 0044); the repository
                     // alone would be read as the collection it holds.
                     Some(id) if git.revision.is_own_release_tag(id) => Source::Release {
-                        url: format!("{}#{id}", git.url),
+                        url: git.url.clone(),
                         id: id.to_owned(),
                         // The version installed, as the updater's check of
                         // a release tag reads it.

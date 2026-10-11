@@ -109,9 +109,11 @@ impl Request {
 
 /// What reading a request for the choice (#308) found: one package, read
 /// as the ordinary preview reads it, or a collection's extensions listed.
+/// The package is boxed: it is by far the larger of the two, and the
+/// choice's reads hand it around by the enum.
 pub(in crate::launcher) enum ChoiceRead {
     /// One package, read and checked.
-    Package(SourcePackage),
+    Package(Box<SourcePackage>),
     /// A collection, its extensions listed for the choice: where it is,
     /// how each of them is read and installed, and what each row shows.
     Choice(choice::Listed),
@@ -200,7 +202,8 @@ impl Sources {
                             &collection,
                         )))
                     }
-                    None => SourcePackage::read(folder).map(ChoiceRead::Package),
+                    None => SourcePackage::read(folder)
+                        .map(|package| ChoiceRead::Package(Box::new(package))),
                 }
             }
             Request::Git(spec) if spec.extension.is_none() => {
@@ -247,10 +250,12 @@ impl Sources {
                     // A repository that is no collection is one extension
                     // as today, read from the revision fetched above.
                     None => SourcePackage::read_git_revision(download, origin, None)
-                        .map(ChoiceRead::Package),
+                        .map(|package| ChoiceRead::Package(Box::new(package))),
                 }
             }
-            _ => self.read(request).map(ChoiceRead::Package),
+            _ => self
+                .read(request)
+                .map(|package| ChoiceRead::Package(Box::new(package))),
         }
     }
 
@@ -604,7 +609,7 @@ impl Launcher {
                 }
                 return;
             }
-            Ok(ChoiceRead::Package(package)) => Ok(self.plan_dependencies(package).await),
+            Ok(ChoiceRead::Package(package)) => Ok(self.plan_dependencies(*package).await),
             Err(error) => Err(error),
         };
         let mut state = self.lock();

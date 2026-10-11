@@ -2664,7 +2664,8 @@ fn a_collection_folder_chosen_from_the_plus_menu_opens_the_choice(cx: &mut TestA
     // The pointer ticks two by their check marks.
     click_row(&mut settings_cx, "extension-tick-Clock from Git");
     click_row(&mut settings_cx, "extension-tick-Timers from Git");
-    until_text(&mut settings_cx, "Copy the 2 ticked extensions into Pane");
+    until_text(&mut settings_cx, "Untick Clock from Git");
+    until_text(&mut settings_cx, "Untick Timers from Git");
 
     // A row previews its extension, as Enter does in the launcher window,
     // and the page's Back returns to the choice.

@@ -1470,7 +1470,7 @@ fn every_way_a_collection_index_is_refused_saying_what_is_wrong() {
             "unknown-field",
             r#"{ "extensions": [ { "id": "clock", "path": "extensions/clock",
                                    "title": "Clock" } ] }"#,
-            "unknown field `title`, expected `id` or `path`",
+            "unknown field `title`, expected `id` or `path` at line 2 column 42",
         ),
         (
             "no-extensions",
@@ -2505,6 +2505,10 @@ fn a_filter_capable_server_serves_the_choice_and_the_chosen_files_only() {
     .map(|(id, file)| format!("want {}", wants(&format!("extensions/{id}/{file}"))))
     .collect();
     chosen.sort();
+    // The extensions share the contents of their source and component
+    // files, so one blob serves both: each id is wanted once, the pack
+    // holding it once.
+    chosen.dedup();
     assert_eq!(wants_of(&fetches[5]), chosen);
     assert_eq!(installed(&launcher), ["Clock from Git", "Notes from Git"]);
     assert_eq!(
@@ -2596,10 +2600,15 @@ fn one_extension_installed_by_its_id_from_a_filter_capable_server() {
         wants_of(&fetches[1]),
         vec![format!("want {}", wants("pane-collection.json"))]
     );
-    let mut clock: Vec<String> = ["pane.json", "src/lib.rs", "dist/git_greeter.wasm"]
-        .iter()
-        .map(|file| format!("want {}", wants(&format!("extensions/clock/{file}"))))
-        .collect();
+    let mut clock: Vec<String> = [
+        "icon.svg",
+        "pane.json",
+        "src/lib.rs",
+        "dist/git_greeter.wasm",
+    ]
+    .iter()
+    .map(|file| format!("want {}", wants(&format!("extensions/clock/{file}"))))
+    .collect();
     clock.sort();
     assert_eq!(wants_of(&fetches[2]), clock);
     // The repository's own file and the other extensions' were never
