@@ -32,6 +32,7 @@ use gpui_elements::editable_text::{EditableTextState, StringStorage, TextChanged
 use pane_core::{Keyboard, KeyboardAction, Screen};
 
 use crate::app::LauncherWindow;
+use crate::features::loading;
 use crate::ui::icon::{Glyph, glyph};
 use crate::ui::input::TextEditingKeys;
 use crate::ui::theme::Theme;
@@ -233,7 +234,9 @@ impl LauncherWindow {
     /// argument fields show after the query (#205) — above `list`, the
     /// results — the content that arrives with a view transition, wrapped
     /// by the caller (see [`crate::app::LauncherWindow::render`]); the field
-    /// above it is the shell's search header and never moves.
+    /// above it is the shell's search header and never moves. `loading` is
+    /// what the loading bar draws along the header's rule while waited-for
+    /// work has outlasted its threshold (#248).
     ///
     /// The field's chrome is the reference's search header: a 64px row with
     /// the magnifier, 20px padding, a 14px gap and a hairline below — no
@@ -244,6 +247,7 @@ impl LauncherWindow {
         &self,
         query: String,
         placeholder: &str,
+        loading: Option<loading::LoadingBar>,
         list: impl gpui::IntoElement,
         cx: &mut Context<Self>,
     ) -> AnyElement {
@@ -272,6 +276,7 @@ impl LauncherWindow {
                 input,
                 placeholder,
                 arguments,
+                loading,
                 &visuals.theme,
                 cx,
             ))
@@ -304,6 +309,11 @@ impl LauncherWindow {
 /// Over a background image (ADR 0028, `Theme::frost`) the same field is a
 /// frosted pill inside the 64px row, with no hairline below it.
 ///
+/// `loading` is the loading bar's frame (#248, ADR 0035): the line it
+/// says to draw lies along the header's rule — over the hairline, or
+/// along the frosted pill's bottom rim where there is no hairline —
+/// placed by [`loading::line`].
+///
 /// The launcher's search screens ([`LauncherWindow::render_search`])
 /// compose this header. The argument fields' keys are taken here, over
 /// the query and the fields both: the header is the ancestor of the one
@@ -312,6 +322,7 @@ pub(crate) fn search_header(
     input: &Entity<EditableTextState>,
     placeholder: &str,
     arguments: Option<AnyElement>,
+    loading: Option<loading::LoadingBar>,
     theme: &Theme,
     cx: &mut Context<LauncherWindow>,
 ) -> Div {
@@ -345,9 +356,9 @@ pub(crate) fn search_header(
                 text_input("query")
                     .state(input.downgrade())
                     .placeholder(placeholder)
-                    .placeholder_color(theme.text_placeholder)
+                    .placeholder_color(theme.query_placeholder)
                     .caret_color(theme.accent_text)
-                    .selection_color(theme.row_selected)
+                    .selection_color(theme.selection_wash)
                     .marked_color(theme.accent_text)
                     .text_size(typography.search_size)
                     .text_color(theme.text_query)
@@ -362,14 +373,31 @@ pub(crate) fn search_header(
         )
         .when_some(arguments, |row, arguments| row.child(arguments));
     match theme.frost {
-        None => field
+        // The header's own rule carries the loading bar: the wrapper holds
+        // the bordered row and the 1px line over its border — a child of
+        // the row itself would paint beneath the border, which the row
+        // paints after its children (#248).
+        None => div()
             .flex_none()
-            .h(geometry.search_height)
-            .px(geometry.search_padding_x)
-            .border_b_1()
-            .border_color(theme.hairline_soft),
+            .relative()
+            .flex()
+            .flex_col()
+            .child(
+                field
+                    .flex_none()
+                    .h(geometry.search_height)
+                    .px(geometry.search_padding_x)
+                    .border_b_1()
+                    .border_color(theme.separator),
+            )
+            .when_some(loading, |header, bar| {
+                header.child(loading::line(&bar, px(0.), theme))
+            }),
         // Over a background image (ADR 0028), the field is a frosted pill
-        // inside the header's row, with no hairline under it.
+        // inside the header's row, with no hairline under it. The loading
+        // bar lies along the pill's bottom rim, inset by its corner radius
+        // — the straight part of the rim — so it follows the pill's
+        // rounded shape (#248).
         Some(frost) => {
             let (top, bottom, side) = frost.pill_margin;
             div()
@@ -382,11 +410,15 @@ pub(crate) fn search_header(
                 .child(
                     field
                         .flex_1()
+                        .relative()
                         .px(frost.pill_padding_x)
                         .rounded(frost.pill_radius)
                         .backdrop_blur(frost.blur)
                         .bg(frost.tint)
-                        .shadow(frost.edges()),
+                        .shadow(frost.edges())
+                        .when_some(loading, |pill, bar| {
+                            pill.child(loading::line(&bar, frost.pill_radius, theme))
+                        }),
                 )
         }
     }

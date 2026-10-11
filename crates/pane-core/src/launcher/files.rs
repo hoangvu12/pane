@@ -13,6 +13,7 @@
 
 use std::future::Future;
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 
 use super::{Entry, Launcher, Row, State, Status, off_thread, owner, typed_query};
 use crate::files::FileAccess;
@@ -246,7 +247,9 @@ impl Launcher {
         let folder = folder.to_path_buf();
         let files = {
             let mut state = self.lock();
-            state.view.status = Status::Running;
+            state.view.status = Status::Running {
+                since: Instant::now(),
+            };
             state.files.clone()
         };
         async move {
@@ -278,7 +281,9 @@ impl Launcher {
     pub(super) async fn stop_sharing_folder(&self, identity: PackageIdentity) {
         let files = {
             let mut state = self.lock();
-            state.view.status = Status::Running;
+            state.view.status = Status::Running {
+                since: Instant::now(),
+            };
             state.files.clone()
         };
         let revoked = match files {

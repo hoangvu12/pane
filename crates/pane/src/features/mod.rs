@@ -10,6 +10,7 @@ pub(crate) mod footer_menu;
 pub(crate) mod held_keys;
 pub(crate) mod hud;
 pub(crate) mod icons;
+pub(crate) mod loading;
 pub(crate) mod number_hints;
 pub(crate) mod quick_slots;
 pub(crate) mod root_search;
