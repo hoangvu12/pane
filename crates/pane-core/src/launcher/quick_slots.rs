@@ -36,6 +36,7 @@
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 use serde_json::{Map, Value};
 
@@ -710,6 +711,8 @@ fn change(
             | ResultAction::Alias
             | ResultAction::ConfigureCommand
             | ResultAction::ConfigureExtension
+            | ResultAction::DismissNotice
+            | ResultAction::ResetRanking
     );
     if !quick_slot_action || !matches!(state.view.screen, Screen::Root { .. }) {
         return refused;
@@ -762,7 +765,9 @@ fn change(
         | ResultAction::Hotkey
         | ResultAction::Alias
         | ResultAction::ConfigureCommand
-        | ResultAction::ConfigureExtension => refused,
+        | ResultAction::ConfigureExtension
+        | ResultAction::DismissNotice
+        | ResultAction::ResetRanking => refused,
     }
 }
 
@@ -790,7 +795,7 @@ impl Launcher {
         if forgot {
             // Written now, once: the next start reads the slots without them.
             if let Err(problem) = self.write_quick_slots() {
-                eprintln!("Pane could not forget the pin of a root provider: {problem}");
+                crate::diagnostic!("Pane could not forget the pin of a root provider: {problem}");
             }
             let mut state = self.lock();
             self.show_provider_toast(&mut state);
@@ -816,51 +821,6 @@ impl Launcher {
         self.lock().quick_slots.unreadable.clone()
     }
 
-    /// Asks the enabled commands whose indexed results the quick slots pin
-    /// for those results, if they never answered — what a cold visit of
-    /// root search's home needs, since the indexed results are otherwise
-    /// asked for only once a query is typed. The query stays as it is and
-    /// nothing is searched; await the returned future to list them, which
-    /// resolves the slots holding them.
-    pub fn resolve_quick_slots(&self) -> impl Future<Output = ()> + Send + 'static {
-        let mut guard = self.lock();
-        let state = &mut *guard;
-        let pinned: Vec<String> = state
-            .quick_slots
-            .chosen
-            .iter()
-            .filter_map(|target| match target {
-                PinTarget::Indexed { command, .. } => Some(command.clone()),
-                // A dynamic root item's command is one of the package's
-                // (#158).
-                PinTarget::Dynamic { command, .. } => Some(command.clone()),
-                PinTarget::Command(_) => None,
-            })
-            .collect();
-        let commands: Vec<_> = state
-            .packages
-            .iter()
-            .filter(|package| state.runs(package))
-            .flat_map(|package| {
-                let data = self
-                    .installation
-                    .as_ref()
-                    .map(|installation| installation.data.owned_by(&package.identity));
-                package
-                    .indexed_result_commands()
-                    .into_iter()
-                    .map(move |command| (command, data.clone()))
-            })
-            .filter(|(command, _)| {
-                pinned.contains(&command.id) && !state.indexes.answered(&command.component)
-            })
-            .collect();
-        let asking = state.indexes.begin_asking(commands);
-        drop(guard);
-        let launcher = self.clone();
-        async move { launcher.show_indexed_results(asking).await }
-    }
-
     /// Invokes the quick slot at `index` from root search: its target is
     /// resolved again now and, when it can run, opened as its row would
     /// be — the command opens, the application is opened — in the
@@ -875,7 +835,7 @@ impl Launcher {
         // Only root search's slots, and never while an action already runs:
         // a second press or click during an opening invokes nothing.
         let ready = matches!(state.view.screen, Screen::Root { .. })
-            && state.view.status != Status::Running;
+            && !matches!(state.view.status, Status::Running { .. });
         let target = state.quick_slots.chosen.get(index).cloned();
         let entry = match target.filter(|_| ready) {
             Some(target) => match resolve(self, state, &target).outcome {
@@ -905,7 +865,9 @@ impl Launcher {
             Some(_) => {
                 // The status line is about this action from now on.
                 state.sent_from = None;
-                state.view.status = Status::Running;
+                state.view.status = Status::Running {
+                    since: Instant::now(),
+                };
             }
             None => {}
         }
@@ -915,8 +877,17 @@ impl Launcher {
             Some(Entry::DynamicAction(action)) => self.data_in(state, &action.component),
             _ => None,
         };
+        // Invoking a quick slot from the pinned home is a choice of its
+        // target (#199, see `learned`): a use with no query, once the
+        // target resolved and its action dispatches.
+        let used = entry
+            .is_some()
+            .then(|| state.quick_slots.chosen[index].key());
         let epoch = state.screen_epoch;
         drop(guard);
+        if let Some(target) = used {
+            self.record_use(&target, None);
+        }
         let launcher = self.clone();
         async move {
             match entry {
@@ -1008,7 +979,9 @@ impl Launcher {
         let (changed, said) = change(self, state, target, action);
         let save = match &changed {
             SlotChange::Changed(_) => {
-                state.view.status = Status::Running;
+                state.view.status = Status::Running {
+                    since: Instant::now(),
+                };
                 Some((state.screen_epoch, said))
             }
             SlotChange::AlreadyPinned(_) => {

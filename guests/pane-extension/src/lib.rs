@@ -21,16 +21,20 @@
 //! [`publish`], find and open installed
 //! applications with [`applications`], supply root results ahead of the
 //! query with [`indexed`], run its package's native helpers with
-//! [`helpers`] and the system's own programs with [`programs`], list the
-//! files of a folder with [`files`], search as the
+//! [`helpers`] and the system's own programs with [`programs`], what
+//! Windows' Run dialog runs, sharing its history, with [`run`], list the
+//! files of a folder with [`files`] and the entries of a folder the user
+//! typed with [`typed_folder`], search as the
 //! user types into its own search field with [`search`], make web
-//! requests with [`http`] and keep clipboard history with
-//! [`clipboard_history`]. It registers at run time what it owns and no
-//! declaration can name ([`registrations`], ADR 0041): dynamic root
-//! items, timers, folder watchers and run-time capabilities its package
-//! provides while it holds a provision for them — each a handle whose
-//! drop undoes it, undone too when the instance that made it goes or the
-//! package's code is replaced. A package whose `pane.json` declares
+//! requests with [`http`], keep clipboard history with
+//! [`clipboard_history`], and lock, log out, restart, shut down, sleep,
+//! hibernate, turn off the displays of or start the screen saver of the
+//! computer with [`system_commands`]. It registers at run time what it
+//! owns and no declaration can name ([`registrations`], ADR 0041): dynamic
+//! root items, timers, folder watchers and run-time capabilities its
+//! package provides while it holds a provision for them — each a handle
+//! whose drop undoes it, undone too when the instance that made it goes or
+//! the package's code is replaced. A package whose `pane.json` declares
 //! `"activate"` has that entry point called when its code may run
 //! ([`lifecycle`]), so its registrations exist without waiting for the
 //! user. It prints and logs to its package's extension log
@@ -401,6 +405,12 @@ pub mod publish {
 /// pane_extension::root::export!(Calculator);
 /// ```
 ///
+/// Pane asks with the query and when it was typed ([`root::WallTime`]), so a
+/// command can answer about the current date or time. A result that is an
+/// answer card can say more than its title and action in
+/// [`root::AnswerDetail`]: the section it sits under, a colour swatch, and
+/// further ways to copy it.
+///
 /// A command whose only job is this, as the calculator's, also says
 /// `"mode": "provider"` (a root provider): it has no row of its own and
 /// Pane never opens or runs it, so its [`Command`](crate::Command) keeps
@@ -413,7 +423,9 @@ pub mod root {
         default_bindings_module: "pane_extension::root",
     });
 
-    pub use exports::pane::extension::root_results::{Guest, RootAction, RootResult};
+    pub use exports::pane::extension::root_results::{
+        AnswerCopy, AnswerDetail, Guest, RootAction, RootResult, WallTime,
+    };
 }
 
 /// The applications installed on the system (`pane:extension/applications`),
@@ -578,6 +590,95 @@ pub mod clipboard_history {
     };
 }
 
+/// The session, power, audio and device commands
+/// (`pane:extension/system-commands`): locking the screen, logging out,
+/// restarting, shutting down, sleeping, hibernating, turning the displays
+/// off, starting the screen saver, the volume of the default output
+/// device and the microphones' mute, and the Recycle Bin (opening and
+/// emptying it), the system's appearance, HDR, the desktop, the file
+/// manager's hidden files, the removable drives and Bluetooth, which
+/// Pane asks the system for (a pure WASI guest cannot). Each answers
+/// what it ended in ([`system_commands::Outcome`]): the state the system
+/// is in now, or why nothing changed — an operation that cannot happen
+/// on this system, or failed, is an answer, never an error and never a
+/// reason to pause the extension. The System Commands default extension
+/// shows the text in a HUD ([`feedback::show_hud`]) and confirms the
+/// destructive ones first ([`feedback::confirm`]), as ADR 0040 records.
+pub mod system_commands {
+    wit_bindgen::generate!({
+        path: "wit",
+        world: "system-commands-user",
+        default_bindings_module: "pane_extension::system_commands",
+    });
+
+    pub use pane::extension::system_commands::{
+        Outcome, eject_removable_drives, empty_recycle_bin, hibernate, lock_screen, log_out,
+        open_recycle_bin, restart, set_volume, show_desktop, shut_down, sleep, start_screen_saver,
+        toggle_appearance, toggle_bluetooth, toggle_hdr, toggle_hidden_files,
+        toggle_microphone_mute, toggle_mute, turn_off_displays, volume_down, volume_up,
+    };
+
+    impl Outcome {
+        /// What it says, for a toast or a HUD: the state the system is in
+        /// now, or why nothing changed.
+        pub fn text(&self) -> &str {
+            match self {
+                Outcome::Done(text) | Outcome::Explained(text) => text,
+            }
+        }
+
+        /// Whether the command happened (it did not fail, and nothing was
+        /// explained).
+        pub fn done(&self) -> bool {
+            matches!(self, Outcome::Done(_))
+        }
+    }
+}
+
+/// The open windows (`pane:extension/windows`): the ones Windows' own
+/// Alt+Tab would show, which Pane lists for the command — each with its
+/// title, its application's name and icon, whether it is minimized,
+/// maximized, on another virtual desktop or elevated, in z-order with
+/// the front application's window first — and brings one of them to the
+/// front, restoring it first if it is minimized. A window's `id` is
+/// opaque and valid for the session alone: give it back to
+/// [`windows::activate`] to switch to that window. Windows only;
+/// elsewhere every call answers [`WindowsError::NotAvailable`], which is
+/// not a failure.
+///
+/// ```ignore
+/// use pane_extension::windows;
+///
+/// for window in windows::list_windows()? {
+///     if window.title.contains("todo") {
+///         windows::activate(&window.id)?;
+///     }
+/// }
+/// ```
+///
+/// The Switch Windows default extension (guests/switch-windows) is the
+/// one that lists them (ADR 0040); the windows samples are a Rust, a
+/// JavaScript and a TypeScript command answering the same.
+pub mod windows {
+    wit_bindgen::generate!({
+        path: "wit",
+        world: "windows-user",
+        default_bindings_module: "pane_extension::windows",
+    });
+
+    pub use pane::extension::windows::{Window, WindowsError, activate, list_windows};
+
+    impl WindowsError {
+        /// What it says, for the user: why the open windows are not
+        /// available here, or why the listing or activation went wrong.
+        pub fn message(&self) -> &str {
+            match self {
+                WindowsError::NotAvailable(why) | WindowsError::Failed(why) => why,
+            }
+        }
+    }
+}
+
 /// Native helpers (`pane:extension/helpers`): prebuilt programs the
 /// command's own package ships, one per system, which Pane runs for it with
 /// [`helpers::run`]. Declare them under `helpers` in `pane.json`. Dropping
@@ -664,6 +765,28 @@ pub mod file_index {
     }
 }
 
+/// The entries of a folder the user typed into root search
+/// (`pane:extension/typed-folder`, #204): Pane's host lists the folder for
+/// the command, within bounds like the granted folder's scan policy (the
+/// direct entries only, folders first and each in name order, at most 500,
+/// a partial listing saying so), since a pure WASI guest has no folders to
+/// read. No folder is granted: the user named it, so the command passes
+/// what the user typed and Pane resolves it (`~` to the home folder,
+/// `file://` taken off). [`typed_folder::list_entries`] answers the entries, each
+/// with the id Pane gave it, its name, whether it is a folder and whether
+/// opening it would run a program; a command answers `open-file` results
+/// ([`root::RootAction::OpenFile`]) with the ids, and Pane checks each
+/// entry again before acting on it.
+pub mod typed_folder {
+    wit_bindgen::generate!({
+        path: "wit",
+        world: "typed-folder-user",
+        default_bindings_module: "pane_extension::typed_folder",
+    });
+
+    pub use pane::extension::typed_folder::{FolderEntry, FolderListing, list_entries};
+}
+
 /// Root results a command supplies ahead of the query
 /// (`pane:extension/indexed-results`), such as the installed applications,
 /// which root search matches by title like commands, by each of an
@@ -747,6 +870,7 @@ pub mod service {
 pub mod http;
 pub mod log;
 pub mod programs;
+pub mod run;
 
 /// Logs a line at debug level to the package's extension log, formatted as
 /// [`alloc::format!`] formats (see [`log`]).

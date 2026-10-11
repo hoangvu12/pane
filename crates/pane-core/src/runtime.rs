@@ -55,13 +55,19 @@ pub(crate) mod deadlines;
 mod faults;
 mod host_functions;
 mod memory;
+mod run_functions;
 mod supervisor;
+mod system_command_functions;
 mod system_functions;
 mod tree;
+mod windows_functions;
 
 use deadlines::Doing;
 #[doc(hidden)]
 pub use deadlines::Limits;
+#[cfg(any(test, debug_assertions))]
+#[doc(hidden)]
+pub use deadlines::Timers;
 pub use deadlines::{COMPUTE_LIMIT, UNRESPONSIVE_LIMIT, WARN_AFTER};
 pub(crate) use deadlines::{HostCall, Hosted, Watch};
 #[cfg(any(test, debug_assertions))]
@@ -87,7 +93,7 @@ pub use tree::{
 pub(crate) mod bindings {
     wasmtime::component::bindgen!({
         path: "../../wit",
-        world: "extension-with-file-index",
+        world: "extension-with-typed-folder",
         with: {
             // The host type behind each owned registration resource: the
             // registration's id in the registry (see `registrations`).
@@ -112,6 +118,19 @@ pub(crate) mod bindings {
             // starting, the clipboard held by another program), off the
             // runtime thread, which awaits them.
             "pane:extension/system": async,
+            // Listing the folder the user typed reads the file system,
+            // which may block, off the runtime thread, which awaits it.
+            "pane:extension/typed-folder": async,
+            // What the Run dialog runs waits for the shell and Windows'
+            // elevation prompt, off the runtime thread, which awaits it.
+            "pane:extension/run": async,
+            // The session and power commands likewise wait for the system
+            // (the displays' power message, the session ending), off the
+            // runtime thread, which awaits them.
+            "pane:extension/system-commands": async,
+            // The open windows wait for their processes and the
+            // foreground, off the runtime thread, which awaits them.
+            "pane:extension/windows": async,
             // What a command registers at run time it owns as a resource:
             // interactions with the store's resource table can trap.
             "pane:extension/registrations": trappable,
@@ -195,7 +214,9 @@ use bindings::pane::extension::{
     applications, cache, clipboard_history, content, credentials, settings,
 };
 use bindings::pane::extension::{
-    feedback as feedback_host, system as system_host, window as window_host,
+    feedback as feedback_host, run as run_host, system as system_host,
+    system_commands as system_commands_host, typed_folder as typed_folder_host,
+    window as window_host, windows as windows_host,
 };
 use events_bindings::exports::pane::extension::events;
 use indexed_bindings::exports::pane::extension::indexed_results;
@@ -349,6 +370,45 @@ fn stoppable() -> (StopSearch, SearchStopped) {
 pub(crate) struct RootResult {
     pub listing: ResultListing,
     pub action: RootAction,
+    /// The answer's card, when the result is one: its own section, its
+    /// swatch and further ways to copy it (see [`AnswerDetail`]).
+    pub answer: Option<AnswerDetail>,
+}
+
+/// What a root result that is an answer's card says beyond its title and
+/// action: the section it sits under, the colour of its swatch and
+/// further ways to copy it, as the command answered (the calculator's
+/// colour and date answers, #196).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct AnswerDetail {
+    /// The section the answer is listed under, in place of the command's
+    /// title ("Color", "Date & Time").
+    pub section: String,
+    /// The colour of the card's swatch, as `#RRGGBB` or `#RRGGBBAA`;
+    /// `None` when the answer is not a colour.
+    pub swatch: Option<String>,
+    /// Further ways to copy the answer, each an entry of the Actions
+    /// panel, in order.
+    pub copies: Vec<AnswerCopy>,
+}
+
+/// One further way to copy a computed answer, as the Actions panel offers
+/// it: what the copy is called and the text it copies.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct AnswerCopy {
+    pub title: String,
+    pub text: String,
+}
+
+/// When a query is asked about: the moment the user stopped at it, in
+/// milliseconds since the Unix epoch, and how far the local time there
+/// is from UTC, by the clock root search's own dates are shown by (a
+/// test's, in a test).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct WallTime {
+    pub milliseconds: u64,
+    /// In milliseconds.
+    pub offset: i64,
 }
 
 /// What invoking a computed root result does; Pane performs it.
@@ -915,6 +975,7 @@ enum Request {
     RootResults {
         component: PathBuf,
         query: String,
+        at: WallTime,
         data: Option<PackageData>,
         reply: oneshot::Sender<Result<Vec<RootResult>, CallError>>,
     },
@@ -988,6 +1049,19 @@ impl Request {
             _ => None,
         }
     }
+}
+
+/// A request on its way to a runtime thread, with what counts it in flight
+/// there until it has been served or dropped (see [`Watch::call`]): the
+/// thread's epoch ticker and watchdog wait while none is. Every request
+/// sent through the runtime ([`Shared::send`]) is counted, whatever it is:
+/// guest calls of every kind, a custom view's destructor, and the host
+/// work that waits on guests (`Runtime::running`, `view_count`). The
+/// thread's own nudge to drop stopped instances runs no guest code and is
+/// not.
+struct Sent {
+    request: Request,
+    in_flight: Option<deadlines::InFlight>,
 }
 
 /// How a call into an installed package's code failed, for deciding
@@ -1102,6 +1176,16 @@ impl Runtime {
         self.shared.set_limits(limits);
     }
 
+    /// What the epoch ticker and the watchdog of the runtime thread serving
+    /// calls now are doing ([`Timers`]), so tests see them wait while no
+    /// call runs and wake for one; `None` while the runtime is stopped. For
+    /// tests only; debug builds only.
+    #[cfg(any(test, debug_assertions))]
+    #[doc(hidden)]
+    pub fn timers(&self) -> Option<Timers> {
+        self.shared.timers()
+    }
+
     /// The limits the runtime applies ([`Limits`]).
     pub(crate) fn limits(&self) -> Limits {
         self.shared.limits()
@@ -1180,7 +1264,9 @@ impl Runtime {
                         None => match parse_limits(text) {
                             Some(limits) => runtime.set_limits(limits),
                             None => {
-                                eprintln!("PANE_TEST_RUNTIME_FAULTS: unknown fault {text:?}")
+                                crate::diagnostic!(
+                                    "PANE_TEST_RUNTIME_FAULTS: unknown fault {text:?}"
+                                )
                             }
                         },
                     }
@@ -1443,6 +1529,15 @@ impl Runtime {
         self.shared.applications.on_change(Arc::new(changed));
     }
 
+    /// The components that asked for the installed applications and may
+    /// still run: what they supply ahead of the query may have changed
+    /// when the applications did, and is asked for again then (see
+    /// [`Runtime::on_applications_changed`]), so a show of root search
+    /// that changed nothing asks them for nothing (#202).
+    pub(crate) fn applications_askers(&self) -> Vec<PathBuf> {
+        self.shared.applications.askers()
+    }
+
     /// Has the runtime list granted folders through `folders` from now on,
     /// instead of this system's own ([`crate::files::native`]).
     pub fn set_folders(&self, folders: Arc<dyn Folders>) {
@@ -1481,12 +1576,13 @@ impl Runtime {
     }
 
     /// Asks the command in `component`, which computes root results, for
-    /// its results for `query`; the command reads and saves `data`.
-    /// Starts its instance if it has none.
+    /// its results for `query` at `at` (see [`WallTime`]); the command
+    /// reads and saves `data`. Starts its instance if it has none.
     pub(crate) async fn root_results_with(
         &self,
         component: &Path,
         query: &str,
+        at: WallTime,
         data: Option<PackageData>,
     ) -> Result<Vec<RootResult>, CallError> {
         let (reply, response) = oneshot::channel();
@@ -1494,6 +1590,7 @@ impl Runtime {
             Request::RootResults {
                 component: component.to_path_buf(),
                 query: query.to_owned(),
+                at,
                 data,
                 reply,
             },
@@ -1790,6 +1887,17 @@ impl Runtime {
     /// searching commands starts none; invoking a command starts its own.
     pub async fn running(&self) -> Vec<PathBuf> {
         self.try_running().await.unwrap_or_default()
+    }
+
+    /// How many times an instance of `component` was started: a diagnostic
+    /// for tests and logs, like [`Runtime::running`]. A cancelled call
+    /// drops its instance, so a call after it starts one again; root search
+    /// asks a provider once a burst of keystrokes has gone quiet (#202).
+    pub fn instance_starts(&self, component: &Path) -> u64 {
+        lock(&self.shared.starts)
+            .get(component)
+            .copied()
+            .unwrap_or(0)
     }
 
     /// The components with calls the user asked for that have not answered
@@ -3115,7 +3223,7 @@ impl WasiHttpView for GuestState {
 /// A running guest instance of one component.
 struct Instance {
     store: Store<GuestState>,
-    bindings: bindings::ExtensionWithFileIndex,
+    bindings: bindings::ExtensionWithTypedFolder,
     /// Its root results export, if it has one.
     root_results: Option<root_bindings::RootResultsProvider>,
     /// Its indexed results export, if it has one.
@@ -3253,12 +3361,15 @@ struct Host {
     next_chain: Cell<u64>,
     /// The next instance's serial.
     next_serial: Cell<u64>,
+    /// How many times each component was instantiated, shared with the
+    /// runtime's handles: a diagnostic for tests (#202).
+    starts: Arc<Mutex<HashMap<PathBuf, u64>>>,
     /// Woken whenever an instance taken out for a call comes back or goes.
     returned: tokio::sync::Notify,
     /// Where an instance's undo asks this thread to drop the instances of
     /// ended generations; weak, so that the thread still stops once every
     /// runtime handle is gone.
-    nudge: mpsc::WeakUnboundedSender<Request>,
+    nudge: mpsc::WeakUnboundedSender<Sent>,
     /// The installed packages operation calls are resolved against, and
     /// guests' helpers found in.
     directory: SharedDirectory,
@@ -3356,6 +3467,11 @@ impl Code {
             |state| state,
         )
         .expect("registering the file index in a fresh linker cannot conflict");
+        typed_folder_host::add_to_linker::<_, wasmtime::component::HasSelf<_>>(
+            &mut linker,
+            |state| state,
+        )
+        .expect("registering the typed folder listing in a fresh linker cannot conflict");
         launching::add_to_linker::<_, wasmtime::component::HasSelf<_>>(&mut linker, |state| state)
             .expect("registering launching commands in a fresh linker cannot conflict");
         window_host::add_to_linker::<_, wasmtime::component::HasSelf<_>>(&mut linker, |state| {
@@ -3370,6 +3486,17 @@ impl Code {
             state
         })
         .expect("registering the system functions in a fresh linker cannot conflict");
+        run_host::add_to_linker::<_, wasmtime::component::HasSelf<_>>(&mut linker, |state| state)
+            .expect("registering the Run dialog's work in a fresh linker cannot conflict");
+        system_commands_host::add_to_linker::<_, wasmtime::component::HasSelf<_>>(
+            &mut linker,
+            |state| state,
+        )
+        .expect("registering the system commands in a fresh linker cannot conflict");
+        windows_host::add_to_linker::<_, wasmtime::component::HasSelf<_>>(&mut linker, |state| {
+            state
+        })
+        .expect("registering the open windows in a fresh linker cannot conflict");
         preference_values::add_to_linker::<_, wasmtime::component::HasSelf<_>>(
             &mut linker,
             |state| state,
@@ -3539,7 +3666,7 @@ impl Code {
                 ))
             })?;
         }
-        bindings::ExtensionWithFileIndexPre::new(pre).map_err(interface)?;
+        bindings::ExtensionWithTypedFolderPre::new(pre).map_err(interface)?;
         Ok(Checked { network, programs })
     }
 }
@@ -3551,7 +3678,7 @@ impl Host {
         number: u64,
         faults: Arc<Faults>,
         watch: Arc<Watch>,
-        nudge: mpsc::WeakUnboundedSender<Request>,
+        nudge: mpsc::WeakUnboundedSender<Sent>,
     ) -> Host {
         Host {
             code,
@@ -3563,6 +3690,7 @@ impl Host {
             next_view: shared.next_view.clone(),
             next_chain: Cell::new(0),
             next_serial: Cell::new(0),
+            starts: shared.starts.clone(),
             returned: tokio::sync::Notify::new(),
             nudge,
             directory: shared.directory.clone(),
@@ -3592,7 +3720,7 @@ impl Host {
     /// user, a program, a helper, the network, a clock), the others run.
     /// Calls into one instance still run one after another ([`Host::turn`]).
     /// An injected [`Fault::Crash`] panics here, wherever the thread waits.
-    async fn serve(self, mut requests: mpsc::UnboundedReceiver<Request>) {
+    async fn serve(self, mut requests: mpsc::UnboundedReceiver<Sent>) {
         let host = &self;
         let mut tasks: Tasks<'_> = FuturesUnordered::new();
         let faults = self.faults.clone();
@@ -3617,16 +3745,19 @@ impl Host {
                 // Given up on, every handle gone, or Pane quitting: the work
                 // in progress is dropped with its instances, ending its
                 // waits (helpers, web requests) where they are.
-                None | Some(None) | Some(Some(Request::Quit)) => return,
-                Some(Some(request)) => host.dispatch(request, &mut tasks),
+                None | Some(None) => return,
+                Some(Some(sent)) if matches!(sent.request, Request::Quit) => return,
+                Some(Some(sent)) => host.dispatch(sent, &mut tasks),
             }
         }
     }
 
-    /// Starts serving `request`: what it changes at once (forgetting
+    /// Starts serving `sent`: what it changes at once (forgetting
     /// components, closing a view) is done here, in the order the requests
-    /// were sent, and its calls become a task in `tasks`.
-    fn dispatch<'a>(&'a self, request: Request, tasks: &mut Tasks<'a>) {
+    /// were sent, and its calls become a task in `tasks`, which holds it in
+    /// flight until it has been served.
+    fn dispatch<'a>(&'a self, sent: Sent, tasks: &mut Tasks<'a>) {
+        let Sent { request, in_flight } = sent;
         let watch = self.watch.clone();
         let _handling = watch.doing(Doing::Handling);
         self.drop_stopped();
@@ -3731,10 +3862,13 @@ impl Host {
             Request::RootResults {
                 component,
                 query,
+                at,
                 data,
                 mut reply,
             } => Box::pin(async move {
-                let result = self.root_results(&component, query, data, &mut reply).await;
+                let result = self
+                    .root_results(&component, query, at, data, &mut reply)
+                    .await;
                 let _ = reply.send(result);
             }),
 
@@ -3803,7 +3937,12 @@ impl Host {
                 let _ = reply.send(Ok(self.running()));
             }),
         };
-        tasks.push(task);
+        // In flight until it has been served, or dropped with the thread.
+        let served: Task<'a> = Box::pin(async move {
+            let _in_flight = in_flight;
+            task.await;
+        });
+        tasks.push(served);
     }
 
     /// A new chain, for a request.
@@ -4347,6 +4486,7 @@ impl Host {
         &self,
         path: &Path,
         query: String,
+        at: WallTime,
         data: Option<PackageData>,
         reply: &mut oneshot::Sender<Result<Vec<RootResult>, CallError>>,
     ) -> Result<Vec<RootResult>, CallError> {
@@ -4370,6 +4510,11 @@ impl Host {
             .ok_or_else(|| {
                 CallError::Interface(format!("it does not export {ROOT_RESULTS_INTERFACE}"))
             })?;
+        // The moment the query was asked about, as the interface carries it.
+        let at = root_results::WallTime {
+            milliseconds: at.milliseconds,
+            offset: at.offset,
+        };
         let result = self
             .run_guest_until(
                 path,
@@ -4377,7 +4522,9 @@ impl Host {
                 async |instance| {
                     instance
                         .store
-                        .run_concurrent(async |store| provider.call_results_for(store, query).await)
+                        .run_concurrent(async |store| {
+                            provider.call_results_for(store, query, at).await
+                        })
                         .await
                 },
                 reply.closed(),
@@ -4397,6 +4544,18 @@ impl Host {
                     root_results::RootAction::OpenUrl(url) => RootAction::OpenUrl(url),
                     root_results::RootAction::OpenFile(path) => RootAction::OpenFile(path),
                 },
+                answer: result.answer.map(|answer| AnswerDetail {
+                    section: answer.section,
+                    swatch: answer.swatch,
+                    copies: answer
+                        .copies
+                        .into_iter()
+                        .map(|copy| AnswerCopy {
+                            title: copy.title,
+                            text: copy.text,
+                        })
+                        .collect(),
+                }),
             })
             .collect())
     }
@@ -5034,7 +5193,7 @@ impl Host {
                     Halt::Cancelled => Err(CallError::Cancelled),
                     Halt::Unresponsive(why) => {
                         let error = CallError::Unresponsive(why);
-                        eprintln!("pane: {} stopped responding: {error}", path.display());
+                        crate::diagnostic!("pane: {} stopped responding: {error}", path.display());
                         self.report(path, data.as_ref(), Health::Unresponsive(error.clone()));
                         Err(error)
                     }
@@ -5436,9 +5595,21 @@ impl Host {
         let mut wasi = WasiCtx::builder();
         if let Some(data) = &data {
             let generation = data.generation().number();
+            // A development build of JavaScript or TypeScript keeps a
+            // source map beside its component: what the package writes has
+            // the frames of its stacks mapped back to the sources its
+            // bundle was built from as the lines are captured. Read once
+            // here, per instance, rather than per line: the file is small,
+            // and the instance runs beside it for its whole life.
+            let map = crate::source_map::SourceMap::beside(path).map(Arc::new);
             let output = |stream| {
-                self.logs
-                    .output(data.owner(), generation, stream, log_command.clone())
+                self.logs.output(
+                    data.owner(),
+                    generation,
+                    stream,
+                    log_command.clone(),
+                    map.clone(),
+                )
             };
             wasi.stdout(output(LogStream::Stdout))
                 .stderr(output(LogStream::Stderr));
@@ -5517,7 +5688,7 @@ impl Host {
             started => started?,
         };
         let bindings =
-            bindings::ExtensionWithFileIndex::new(&mut store, &instance).map_err(load)?;
+            bindings::ExtensionWithTypedFolder::new(&mut store, &instance).map_err(load)?;
         // Only a command that computes root results exports them.
         let root_results = root_bindings::RootResultsProvider::new(&mut store, &instance).ok();
         // Only a command that supplies results ahead of the query exports
@@ -5551,11 +5722,18 @@ impl Host {
             let nudge = self.nudge.clone();
             generation.on_end("extension instance", move || {
                 if let Some(requests) = nudge.upgrade() {
-                    let _ = requests.send(Request::DropStopped);
+                    let _ = requests.send(Sent {
+                        request: Request::DropStopped,
+                        in_flight: None,
+                    });
                 }
                 Ok(())
             })
         });
+        // Counted for the diagnostic of when a component starts again
+        // (#202): a cancelled call drops its instance, so the call after
+        // it starts one.
+        *lock(&self.starts).entry(path.to_path_buf()).or_insert(0) += 1;
         self.instances.borrow_mut().insert(
             path.to_path_buf(),
             Instance {
@@ -6047,12 +6225,15 @@ mod tests {
     /// Clipboard history's host calls (#35) are marked like every other
     /// host call: the slow host call computes inside the view's first one,
     /// so the view takes at least that long, yet the guest is never stopped
-    /// or blamed and the thread is never given up on.
+    /// or blamed and the thread is never given up on. The JavaScript
+    /// clipboard sample's view is the component: its render asks the
+    /// clipboard history's status first (the default extension's own
+    /// component lives in its repository, #285).
     #[test]
     fn a_guest_whose_clipboard_host_calls_are_slow_is_never_stopped_or_blamed() {
         let data = tempfile::tempdir().unwrap();
         let (packages, identity) = settings_package(&data);
-        let component = guest("clipboard_history.wasm");
+        let component = guest("sample_clipboard_js.wasm");
         let (runtime, reported) = watched_runtime();
         let slow = short_limits().compute * 3;
         assert!(slow > short_limits().unresponsive);
@@ -6061,7 +6242,10 @@ mod tests {
         let started = std::time::Instant::now();
         let view = block_on(runtime.render_with(&component, Some(packages.owned_by(&identity))));
 
-        assert_eq!(view.expect("the view is shown").title, "Clipboard History");
+        assert_eq!(
+            view.expect("the view is shown").title,
+            "Clipboard history (JavaScript)"
+        );
         assert!(
             started.elapsed() >= slow,
             "the slow host call was not one of clipboard history's: {:?}",

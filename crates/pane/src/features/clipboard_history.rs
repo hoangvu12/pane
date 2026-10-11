@@ -7,9 +7,12 @@
 //! is open on its own list; every other command, a similarly titled one
 //! included, keeps the generic list. The adapter owns what the user does
 //! in the view — the query, the type chosen and the selected record
-//! ([`ClipboardBrowse`]) — and reads the records anew each frame, so a
-//! record deleted or expired is gone from the list at once and a stale
-//! selection falls back to the first record listed.
+//! ([`ClipboardBrowse`]) — and reads the records each frame, so a record
+//! deleted or expired is gone from the list at once and a stale selection
+//! falls back to the first record listed. The records are shared, made
+//! again only when the history changed (#192), and the list's frame is
+//! made again only when they, the view's own state or the minute changed:
+//! a frame drawn with nothing changed copies nothing.
 //!
 //! - Typing filters the records by their text and source ("Type to filter
 //!   entries…"); the type dropdown at the search field's right keeps All
@@ -47,6 +50,7 @@
 use std::cell::Cell;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use std::sync::Arc;
 use std::time::Duration;
 
 use gpui::{
@@ -62,7 +66,8 @@ use pane_core::clipboard_view::{
 };
 use pane_core::{Binding, Keyboard, KeyboardAction, LauncherView, Screen, Status};
 
-use crate::app::{KEY_CONTEXT, LauncherWindow};
+use crate::app::{KEY_CONTEXT, LauncherWindow, Spot};
+use crate::features::announcer::{self, Listing, Noun, Opening, Selected, Target};
 use crate::ui::extension_icon::{self, IconSize};
 use crate::ui::footer::{self, ButtonWash};
 use crate::ui::icon::{Glyph, IconTone, TileSize};
@@ -88,6 +93,9 @@ pub(crate) const DELETE_BINDING: &str = "ctrl-d";
 
 /// The search field's placeholder, Raycast's.
 pub(crate) const PLACEHOLDER: &str = "Type to filter entries…";
+
+/// The search field's accessible name.
+pub(crate) const SEARCH_LABEL: &str = "Search clipboard history";
 
 /// The type dropdown's debug selector: its trigger is this, a choice's row
 /// `clipboard-type-<id>` (`all`, `text`, `images`, `files`, `links`,
@@ -232,6 +240,8 @@ pub(crate) struct ClipboardHistory {
 /// What a frame draws in the split view's list: its children are drawn
 /// from it as the list lays them out.
 struct ClipFrame {
+    /// What it was made from: drawn again over the same, it is kept.
+    made_from: FrameKey,
     /// The records listed, in order.
     rows: Vec<ClipFrameRow>,
     /// Their days' labels.
@@ -242,11 +252,42 @@ struct ClipFrame {
     selected: Option<usize>,
 }
 
+/// What a list's frame was made from (#192): it is made again only once
+/// one of these changed.
+struct FrameKey {
+    /// The records, shared by the launcher until the history changes.
+    records: Arc<[ClipboardRecord]>,
+    /// The query, the type and the record chosen.
+    browse: ClipboardBrowse,
+    /// The minute it was made in, since the Unix epoch: the rows tell the
+    /// time and the day to the minute.
+    minute: u64,
+    /// The local time's offset from UTC, in milliseconds.
+    offset: i64,
+}
+
+impl FrameKey {
+    /// Whether a frame made from this is the frame of `records` under
+    /// `browse` in `minute`, at `offset` from UTC.
+    fn holds(
+        &self,
+        records: &Arc<[ClipboardRecord]>,
+        browse: &ClipboardBrowse,
+        minute: u64,
+        offset: i64,
+    ) -> bool {
+        Arc::ptr_eq(&self.records, records)
+            && self.browse == *browse
+            && self.minute == minute
+            && self.offset == offset
+    }
+}
+
 /// A listed record as its row shows it.
 struct ClipFrameRow {
-    id: String,
-    title: String,
-    time: String,
+    id: SharedString,
+    title: SharedString,
+    time: SharedString,
     mark: ClipMark,
 }
 
@@ -254,31 +295,10 @@ struct ClipFrameRow {
 /// it: a copy kept, a record expired, recording changed from elsewhere
 /// (Settings). The history tells the window nothing itself, and a stale
 /// list or preview must not stay on screen (a stale selection never acts:
-/// the core revalidates every operation).
+/// the core revalidates every operation). The launcher shares the same
+/// records until the history changes (#192), so other records are another
+/// history.
 const REFRESH: Duration = Duration::from_secs(1);
-
-/// What of the history the view shows that can change behind it: how many
-/// records, the newest and the oldest, the recording, the retention and
-/// whether it reads.
-type Fingerprint = (
-    usize,
-    Option<String>,
-    Option<String>,
-    CaptureState,
-    u64,
-    bool,
-);
-
-fn fingerprint(view: &ClipboardHistoryView) -> Fingerprint {
-    (
-        view.records.len(),
-        view.records.first().map(|record| record.id.clone()),
-        view.records.last().map(|record| record.id.clone()),
-        view.capture,
-        view.retention_seconds,
-        view.unreadable.is_some(),
-    )
-}
 
 impl ClipboardHistory {
     fn new(window: &mut Window, cx: &mut Context<LauncherWindow>) -> ClipboardHistory {
@@ -331,15 +351,17 @@ impl ClipboardHistory {
             )
         });
         let watching = cx.spawn(async move |this, cx| {
-            let mut seen: Option<Fingerprint> = None;
+            let mut seen: Option<Arc<[ClipboardRecord]>> = None;
             loop {
                 cx.background_executor().timer(REFRESH).await;
                 let open = this.update(cx, |this, cx| {
-                    let now = this
-                        .launcher
-                        .clipboard_history()
-                        .map(|view| fingerprint(&view));
-                    if now != seen {
+                    let now = this.launcher.clipboard_history().map(|view| view.records);
+                    let same = match (&now, &seen) {
+                        (Some(now), Some(seen)) => Arc::ptr_eq(now, seen),
+                        (None, None) => true,
+                        _ => false,
+                    };
+                    if !same {
                         seen = now;
                         cx.notify();
                     }
@@ -386,6 +408,15 @@ impl LauncherWindow {
     #[doc(hidden)]
     pub fn clipboard_query(&self) -> Option<Entity<EditableTextState>> {
         self.clipboard.as_ref().map(|history| history.query.clone())
+    }
+
+    /// Whether the split view's own search field has the focus: it is
+    /// not one of the Back-a-level key's fields — the view keeps its own
+    /// Escape chain, and the field deletes its text (#258).
+    pub(crate) fn clipboard_query_focused(&self, window: &Window, cx: &App) -> bool {
+        self.clipboard
+            .as_ref()
+            .is_some_and(|history| history.query.focus_handle(cx).is_focused(window))
     }
 
     /// Test support: the type the split view's dropdown keeps.
@@ -471,6 +502,7 @@ impl LauncherWindow {
         if let Some(history) = self.clipboard.as_mut() {
             history.browse.step(&view.records, delta);
             history.moved();
+            self.announcer.user_moved();
             cx.notify();
         }
     }
@@ -672,59 +704,105 @@ impl LauncherWindow {
         let theme = visuals.theme;
         let now = history.now;
         let offset = local_offset_ms(now);
+        let minute = now / 60_000;
         let state = self.clipboard.as_mut()?;
         // The dropdown's choice, as its model reads it.
         state.chosen.set(state.browse.filter);
-        let listing = state.browse.listing(&history.records, now, offset);
-        let labels: Vec<SectionLabel> = listing
-            .sections
-            .iter()
-            .map(|section| SectionLabel {
-                first: section.first,
-                label: section.label.clone().into(),
-                note: None,
-            })
-            .collect();
         // The list's frame: what its children are drawn from as it lays
-        // them out (#165). The list is measured again, from its top, only
-        // when the records or their days changed, not as their times
-        // tick.
-        let frame = ClipFrame {
-            rows: listing
-                .records
-                .iter()
-                .map(|record| ClipFrameRow {
-                    id: record.id.clone(),
-                    title: record.title().into_owned(),
-                    time: time_label(record.copied_at, now, offset),
-                    mark: ClipMark::of(record),
-                })
-                .collect(),
-            children: virtual_list::children(false, listing.records.len(), &labels),
-            sections: labels,
-            selected: listing.selected,
-        };
-        let changed = state.frame.as_ref().is_none_or(|last| {
-            last.children != frame.children
-                || last.sections != frame.sections
-                || last.rows.len() != frame.rows.len()
-                || last.rows.iter().zip(&frame.rows).any(|(last, now)| {
-                    last.id != now.id || last.title != now.title || last.mark != now.mark
-                })
+        // them out (#165). It is kept while the records (shared until the
+        // history changes, #192), the query, the type, the record chosen and
+        // the minute stay the same, so a frame drawn again copies nothing.
+        let kept = state.frame.clone().filter(|frame| {
+            frame
+                .made_from
+                .holds(&history.records, &state.browse, minute, offset)
         });
+        let (frame, changed) = match kept {
+            Some(frame) => (frame, false),
+            None => {
+                let listing = state.browse.listing(&history.records, now, offset);
+                let labels: Vec<SectionLabel> = listing
+                    .sections
+                    .iter()
+                    .map(|section| SectionLabel {
+                        first: section.first,
+                        label: section.label.clone().into(),
+                        note: None,
+                    })
+                    .collect();
+                let frame = ClipFrame {
+                    made_from: FrameKey {
+                        records: history.records.clone(),
+                        browse: state.browse.clone(),
+                        minute,
+                        offset,
+                    },
+                    rows: listing
+                        .records
+                        .iter()
+                        .map(|record| ClipFrameRow {
+                            id: record.id.as_str().into(),
+                            title: record.title().into(),
+                            time: time_label(record.copied_at, now, offset).into(),
+                            mark: ClipMark::of(record),
+                        })
+                        .collect(),
+                    children: virtual_list::children(false, listing.records.len(), &labels),
+                    sections: labels,
+                    selected: listing.selected,
+                };
+                // The list is measured again, from its top, only when the
+                // records or their days changed, not as their times tick.
+                let changed = state.frame.as_ref().is_none_or(|last| {
+                    last.children != frame.children
+                        || last.sections != frame.sections
+                        || last.rows.len() != frame.rows.len()
+                        || last.rows.iter().zip(&frame.rows).any(|(last, now)| {
+                            last.id != now.id || last.title != now.title || last.mark != now.mark
+                        })
+                });
+                (Rc::new(frame), changed)
+            }
+        };
         if changed || state.list.count() != frame.children.len() {
             state.list.reset(frame.children.len());
         }
         if state.reveal || changed {
-            if let Some(selected) = listing.selected {
+            if let Some(selected) = frame.selected {
                 state
                     .list
                     .reveal(virtual_list::child_of_row(false, &frame.sections, selected));
             }
             state.reveal = false;
         }
-        state.frame = Some(Rc::new(frame));
-        let selected = listing.selected_record();
+        // The list as the window's announcer follows it (#132): opening
+        // with the command's title and count, its search the typing.
+        let chosen = frame
+            .selected
+            .and_then(|index| Some((index, frame.rows.get(index)?)));
+        let target = match chosen {
+            Some((index, record)) => Target::Row(Selected {
+                id: record.id.to_string(),
+                title: record.title.to_string(),
+                position: index + 1,
+                unavailable: false,
+                section: announcer::section_at(&frame.sections, index),
+            }),
+            None if frame.rows.is_empty() => Target::NoResults,
+            None => Target::Nothing,
+        };
+        let followed = Listing {
+            over: false,
+            key: format!("clipboard {}", history.title),
+            opening: Opening::Named(history.title.clone(), Noun::Results),
+            count: frame.rows.len(),
+            target,
+            query: Some(state.browse.query.clone()),
+            settled: true,
+        };
+        // The selected record, which the preview shows and Paste pastes.
+        let selected = chosen.and_then(|(_, row)| history.record(&row.id));
+        state.frame = Some(frame.clone());
         let show_outcome = state.outcome;
         let query = state.query.clone();
         let types = state.types.clone();
@@ -742,7 +820,20 @@ impl LauncherWindow {
                     this.back(&Back, window, cx);
                 }))
                 .into_any_element(),
-            split_view::search_field(&query, PLACEHOLDER, &theme).into_any_element(),
+            // The field's accessibility node, as root search's: it tracks
+            // the field's focus, which stays there while the selection
+            // moves (#132).
+            div()
+                .id("clipboard-search")
+                .flex_1()
+                .min_w(px(0.))
+                .track_focus(&query.focus_handle(cx))
+                .role(Role::EditableComboBox)
+                .aria_label(SEARCH_LABEL)
+                .aria_value(query.read(cx).as_str().to_owned())
+                .aria_placeholder(PLACEHOLDER)
+                .child(split_view::search_field(&query, PLACEHOLDER, &theme))
+                .into_any_element(),
             types.into_any_element(),
             &theme,
         );
@@ -753,7 +844,7 @@ impl LauncherWindow {
             .role(Role::ListBox)
             .aria_label("Clipboard history");
         let split = &theme.split;
-        let list = if listing.records.is_empty() {
+        let list = if frame.rows.is_empty() {
             let note = empty_note(
                 history.unreadable.as_deref(),
                 !history.records.is_empty(),
@@ -876,15 +967,24 @@ impl LauncherWindow {
             let (selector, color) = super::toast::style_look(shown.toast.style, &theme);
             (selector, shown.toast.text(), color)
         });
+        let outcome = super::announcer::says_message(&view.status, toast.is_some(), false);
         let status = match &view.status {
             _ if toast.is_some() => toast,
             Status::Idle => None,
-            Status::Running => Some(("status-running", "Running…".to_owned(), theme.warning)),
+            Status::Running { .. } => {
+                Some(("status-running", "Running…".to_owned(), theme.warning))
+            }
             Status::Progress(work) => Some(("status-progress", work.clone(), theme.warning)),
             Status::Result(answer) => Some(("status-result", answer.clone(), theme.success)),
             Status::Error(message) => Some(("status-error", message.clone(), theme.danger)),
         }
         .filter(|_| show_outcome);
+        // The window's announcer says it too (#132), when it is a toast or
+        // an outcome.
+        let said = status
+            .as_ref()
+            .filter(|_| outcome)
+            .map(|(_, text, _)| text.clone());
         let (selector, lead) = match &status {
             Some((selector, text, color)) => (
                 *selector,
@@ -906,6 +1006,10 @@ impl LauncherWindow {
             crate::keyboard::binding_keys(keyboard.binding(KeyboardAction::InvokeSelectedAction));
         let actions_keys =
             crate::keyboard::binding_keys(keyboard.binding(KeyboardAction::OpenActions));
+        // The footer buttons' hover washes, read as they are drawn and
+        // reported by the buttons themselves (#245).
+        let hover_now = cx.background_executor().now();
+        let look = |spot: Spot| self.motion.hover.look(spot, hover_now);
         // Paste (Enter) acts on the selected record: with none, there is no
         // primary action at all.
         let paste = selected.map(|_| {
@@ -914,13 +1018,18 @@ impl LauncherWindow {
                 "Paste",
                 &invoke,
                 CapStyle::Accent,
-                ButtonWash::Hover,
+                ButtonWash::Hover(look(Spot::Button("clipboard-paste"))),
                 &theme,
             )
             .role(Role::Button)
             .aria_label("Paste")
             .aria_keyshortcuts(invoke.name())
             .cursor_pointer()
+            .on_hover(cx.listener(move |this, over: &bool, _, cx| {
+                this.motion
+                    .hover
+                    .set(Spot::Button("clipboard-paste"), *over, cx);
+            }))
             .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
                 this.paste_selected_record(window, cx);
             }))
@@ -931,13 +1040,18 @@ impl LauncherWindow {
             "Actions",
             &actions_keys,
             CapStyle::Regular,
-            ButtonWash::Hover,
+            ButtonWash::Hover(look(Spot::Button("clipboard-actions"))),
             &theme,
         )
         .role(Role::Button)
         .aria_label("Actions")
         .aria_keyshortcuts(actions_keys.name())
         .cursor_pointer()
+        .on_hover(cx.listener(move |this, over: &bool, _, cx| {
+            this.motion
+                .hover
+                .set(Spot::Button("clipboard-actions"), *over, cx);
+        }))
         .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
             if this.actions_open() {
                 this.close_actions(window, cx);
@@ -968,6 +1082,10 @@ impl LauncherWindow {
         .key_context(CONTEXT)
         .on_action(cx.listener(Self::clipboard_delete))
         .on_action(cx.listener(Self::clipboard_copy));
+        // The window's live region (#132): the open Actions panel's list,
+        // else the history's.
+        let followed = self.panel_listing(cx).or(Some(followed));
+        let announcer = self.announce(followed, said.as_deref(), cx);
         let root = div()
             .key_context(KEY_CONTEXT)
             .on_action(cx.listener(Self::clipboard_next))
@@ -988,7 +1106,8 @@ impl LauncherWindow {
             .font_family(theme.typography.family.clone())
             .font_features(theme.typography.features.clone())
             .text_color(theme.text_title)
-            .child(content);
+            .child(content)
+            .child(announcer);
         Some(visuals.material.panel(&theme, root))
     }
 }
@@ -1053,9 +1172,13 @@ impl LauncherWindow {
                     split_view::clip_row(
                         ("clip", row),
                         ClipRow {
-                            title: title.clone().into(),
-                            time: record.time.clone().into(),
+                            title: title.clone(),
+                            time: record.time.clone(),
                             selected: on,
+                            hover: self
+                                .motion
+                                .hover
+                                .look(Spot::Clip(row), cx.background_executor().now()),
                         },
                         mark,
                         &theme,
@@ -1066,11 +1189,14 @@ impl LauncherWindow {
                     .aria_selected(on)
                     .aria_position_in_set(row + 1)
                     .aria_size_of_set(frame.rows.len())
-                    .when(on, |row| row.aria_active_descendant())
+                    .on_hover(cx.listener(move |this, over: &bool, _, cx| {
+                        this.motion.hover.set(Spot::Clip(row), *over, cx);
+                    }))
                     .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                         if let Some(history) = this.clipboard.as_mut() {
                             history.browse.select(id.clone());
                             history.outcome = false;
+                            this.announcer.user_moved();
                             cx.notify();
                         }
                     }))

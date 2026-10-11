@@ -95,7 +95,7 @@ What is **not** a failure of the package:
   paused** row. That opens the details: how it failed, its source and
   version, what is kept, and the full diagnostics (the last crash's message
   and backtrace), with Retry. The diagnostics of a reload that fails to
-  start also go to standard error.
+  start also go to standard error and [Pane's log](#when-pane-itself-ends-its-log-and-the-crash-notice).
 - Its settings, content, cache and credentials are kept. Clearing its cache,
   uninstalling it and the rest of Settings › Extensions work, since none of them
   runs it.
@@ -181,7 +181,7 @@ tell which extension, if any, caused it, so:
   (when Pane did not restart it) and **Why the extension runtime stopped**,
   whose screen says what happened and what Pane did, and shows the panic
   message ("Diagnostics"; the backtrace, if enabled, goes to standard error
-  with the rest of the report). Restarting forgets earlier crashes, so the
+  and Pane's log with the rest of the report). Restarting forgets earlier crashes, so the
   next one restarts it again by itself. The window redraws by itself when
   the crash is reported.
 
@@ -250,8 +250,9 @@ and a host call that never returns (see the limits below):
 How it works:
 
 - **Epochs.** Each runtime thread has a ticker thread advancing the
-  engine's epoch every 10 ms (`Config::epoch_interruption`), and every
-  store yields to the runtime thread at each one (an epoch-deadline
+  engine's epoch every 10 ms while a call is in flight on it (see the next
+  point; `Config::epoch_interruption`), and every store yields to the
+  runtime thread at each one (an epoch-deadline
   callback). So the runtime thread keeps looking at the call's generation
   and injected faults however busy a guest is: disabling, reloading,
   updating or pausing a package stops its computing guest within a tick
@@ -259,6 +260,29 @@ How it works:
   because it measures time, not instructions, and costs a check per loop
   and function rather than a count per instruction. The ticker ends with
   its thread.
+- **The timers sleep while no call runs** (#190). Every request sent to a
+  runtime thread is **in flight** there from when it is sent until it has
+  been served: any guest call (a command, root and indexed results, a
+  search, an action, a scheduled run, a service's cycle, setup and
+  preferences; an operation is served inside its caller's call), a custom
+  view's destructor, and host work that waits on guests
+  (`Runtime::running`, `view_count`). Guest code runs only meanwhile.
+  While nothing is in flight, the ticker waits without a timeout and does
+  not tick; the watchdog waits too while the thread is also outside any
+  poll of its work, so a thread working with nothing in flight (an
+  injected fault, a nudge to drop stopped instances) is still watched. A
+  request being sent wakes both, the thread starting a poll wakes the
+  watchdog, and the thread's end wakes both, for the ticker's last tick.
+  Each checks and waits under the lock that the count and the poll change
+  under, so a call that starts as a timer goes to wait still wakes it, and
+  no computing guest is left unticked. So while Pane is quiet, neither
+  thread wakes at all. While anything is in flight, both behave
+  exactly as below: a tick every 10 ms, a look every 100 ms, the compute
+  limit and the give-up. The watchdog does not count the time it waited:
+  it starts its count afresh as it wakes, and a "not responding yet" it
+  had said is withdrawn as it goes to wait, since the thread was then seen
+  outside any poll. Between a service's cycles, or a schedule's runs, both
+  wait.
 - **The meter** counts a call's compute time as the runtime thread's CPU
   time while it polls the call (`CLOCK_THREAD_CPUTIME_ID` on Linux and
   macOS, `GetThreadTimes` on Windows; wall time inside those polls where
@@ -287,7 +311,9 @@ How it works:
   thread waits for it. Its expiry runs on a thread of its own.
 - **The watchdog.** Each runtime thread has a heartbeat, bumped at each
   poll of its work, each epoch yield of a guest and as each host call
-  starts and ends. A watchdog thread looks every 100 ms. A thread waiting
+  starts and ends. A watchdog thread looks every 100 ms while a request
+  is in flight or the thread is inside a poll (it sleeps otherwise, see
+  above). A thread waiting
   for work, or awaiting a guest's host work, is not polled, so never quiet;
   one inside a host call is never given up on; one computing a guest
   beats at every tick (and is stopped by the meter). A thread inside one
@@ -401,6 +427,110 @@ Limits:
 - Stopping a computing guest drops its instance and what it keeps in
   memory, like any stopped call.
 
+## When Pane itself ends: its log and the crash notice
+
+A crash that ends Pane's process (an abort, a fault in native code, a panic
+outside the extension runtime's thread) is not recovered. Since #133 it at
+least leaves a trace on this computer, and the next start says so. Nothing
+is sent anywhere: there is no telemetry, no crash upload and no minidump.
+
+- **One diagnostic path.** Every message Pane writes to standard error, in
+  `pane-core` and in `pane`, goes through `pane_core::diagnostics::report`
+  (the `diagnostic!` macro): it still writes to standard error, so a
+  developer running Pane from a terminal sees no change, and it also
+  writes to Pane's log. On Windows a release build is a windowed program
+  whose standard error goes nowhere, so the log is where its runtime crash
+  details, pause reasons and failures to save are kept. An extension's own
+  output is not included. A unit test fails if a source file of either
+  crate writes to standard error by itself.
+- **Where.** `pane.log` in a logs folder in the system's place for logs:
+  `%LOCALAPPDATA%\Pane\logs` on Windows, `~/Library/Logs/Pane` on macOS
+  (where Console shows it), `$XDG_STATE_HOME/pane/logs` (by default
+  `~/.local/state/pane/logs`) on Linux, and `logs` inside `PANE_DATA_DIR`
+  when that is set (tests and smokes). The folder is readable by the user
+  only (mode 0700; on Windows a protected DACL for the user and SYSTEM).
+- **Size and rotation.** One log is appended to across starts. Past 2 MiB it
+  becomes `pane.1.log`, the older files shift, and at most 5 older files are
+  kept (6 in all, about 12 MiB at most). If `pane.log` cannot be moved (on
+  Windows another program may hold it open), no older file is shifted or
+  removed: Pane keeps appending to it and tries again once it has grown by
+  another 2 MiB. Each line starts with its UTC time
+  (`2026-10-08T05:06:07.089Z`); each run starts with a line naming Pane's
+  version and its process. A message of several lines (a panic's
+  backtrace) keeps them, indented.
+- **Rate limit.** One site — a message's fixed text, its format string,
+  before its values — writes at most 10 lines a minute. What it says beyond
+  that is held back, and the first line of its next minute is preceded by
+  one saying how many similar lines were left out ("5 similar lines were
+  left out: …"). A clean quit writes those counts too.
+- **Redaction.** At the log's writer, before anything is written: the home
+  folder's path becomes `~`, the user's name `<user>` and the computer's
+  name `<computer>`, each matched without regard to case (and with either
+  slash), only as a whole word or path component (a user called "admin"
+  leaves "administrator" alone), and only when it is at least 3 characters
+  long. A user or computer name that identifies nobody and is also a word
+  Pane's messages use ("admin", "administrator", "localhost", "pane",
+  "root", "user") is not replaced; a home folder named after one still
+  becomes `~`. Other paths are
+  kept, since a diagnosis needs them. Pane's own messages do not carry
+  extension data values, local credentials, clipboard history text, query
+  text or found file names: a web image that shows its fallback is named by
+  its address (`host:port`) only, since the rest of an extension's URL can
+  carry what the user typed, and any other URL its error names (escaped, or
+  one a redirect led to) is written as `<url>`. Standard error still gets
+  the message as it
+  was.
+- **Panics.** A panic hook writes the panic's thread, location, message and
+  any captured backtrace (`RUST_BACKTRACE`) to the log before the default
+  handling, which still prints it. A recovered [runtime crash](#when-the-extension-runtime-itself-crashes)
+  is logged like any other message.
+- **The marker.** At start Pane writes `running-<process id>.json` in the
+  logs folder, holding its process id, when the process started and Pane's
+  version. A clean quit removes it: the tray's or menu bar's Quit, closing
+  the launcher's window, and the system ending the session (GPUI's quit
+  hooks run for `WM_ENDSESSION` on Windows and the termination notification
+  on macOS; SIGTERM, SIGINT and SIGHUP on Linux and macOS). A clean quit
+  also writes the clipboard history that waits in a batch (#192,
+  [clipboard history](clipboard-history.md#ownership-and-deletion)). For
+  the signals, the handler only writes a byte to a pipe; the thread
+  `pane-signals`, woken by it, runs the clean quit on a thread of its own,
+  waits for it at most 2 seconds, removes the marker whether it ended or
+  not, and ends Pane with the signal's own default action, as it always
+  ended. A signal received meanwhile (the session's end sends SIGTERM and
+  SIGHUP together) changes nothing. Should the pipe or that thread not
+  exist, the handler removes the marker itself and ends Pane at once,
+  writing nothing of the batch. The signals run only that clean quit, not
+  the app's other quit hooks (the tray, the hotkeys, the runtime's
+  helpers). At the next start each marker found is
+  checked against the system's process table (on Windows the process's
+  exit code and creation time, on Linux `/proc/<id>/stat`, on macOS the
+  process's BSD information): a process that no longer runs, or a process
+  with the same id that started at another time, means that run ended
+  unexpectedly, and its marker goes; a process that still runs, started
+  when the marker says, is another Pane on the same folder, and its marker
+  is left alone. Where the system does not say when a process started, a
+  running process counts as the marker's. Each start writes its own.
+- **The notice.** After an unexpected end, root search lists one root
+  result, **Pane quit unexpectedly last time**, after the application
+  update's rows, whose action opens the logs folder with the system's file
+  manager, and the status line says it too; its Actions panel has
+  **Dismiss Notice**. Settings' About page shows the same notice in its
+  **Log** row, beside the diagnostics, with **Open log folder**, and
+  **Copy diagnostics** now includes the log's folder; the data and log
+  folders it copies are redacted as the log is (the home folder as `~`),
+  so the report can go into a public bug report. The notice goes when
+  the user dismisses it, opens the folder, or Pane next quits cleanly and
+  starts again.
+
+Checked by unit tests in `pane-core` (`diagnostics`: redaction, rotation,
+the rate limit, the marker's decisions over a fake process table, a panic in
+the log, the one diagnostic path; `clipboard/history` and
+`launcher/icon_loads`: a clipboard item and a query never reach the log),
+by `crates/pane/tests/crash_record.rs` (a start after a crash lists the
+notice, dismissing it removes it, and the About page shows it with the log's
+folder in the diagnostics) and by `crates/pane/tests/tray.rs` (the tray's
+Quit leaves no marker).
+
 ## Author example and tests
 
 - The Rust settings sample's **Count** adds one to a count in its content
@@ -500,7 +630,7 @@ Limits:
   generation ends.
 - The crash count is not kept across restarts; a package that crashes
   twice per session is never paused.
-- `pane_js.py`'s generated entry, which applies the JS adapter, is not part
+- The build's generated entry, which applies the JS adapter, is not part
   of the prebuilt components' input digest (the adapter itself is): a change
   to that template alone needs `cargo xtask js-guests` by hand.
 - Nothing here is platform-specific (it lives in `pane-core`); it has run on

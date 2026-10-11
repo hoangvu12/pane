@@ -19,6 +19,7 @@ use std::time::{Duration, Instant};
 
 use gpui::{AnyWindowHandle, TestAppContext, VisualTestContext, WindowHandle, prelude::*};
 use pane::{LauncherWindow, SettingsWindow};
+use pane_core::diagnostics::{CrashRecord, SystemProcesses};
 use pane_core::hotkeys::{HotkeyError, Hotkeys, Shortcut};
 use pane_core::tray::{Tray, TrayAction, TrayError};
 use pane_core::{Launcher, PackageIdentity, Runtime, Screen, Status};
@@ -109,6 +110,19 @@ struct FakeHotkeys {
 impl Hotkeys for FakeHotkeys {
     fn unavailable(&self) -> Option<String> {
         None
+    }
+
+    fn kind_unavailable(&self, shortcut: &Shortcut) -> Option<String> {
+        // This fake models a system without Pane's own keyboard hook, as
+        // macOS' and X11's adapters are: the kinds only the hook
+        // recognizes are explained (macOS stands in where the test
+        // binary runs on Windows, so a fresh data folder keeps today's
+        // Open Pane default rather than taking the Windows key).
+        let modeled = match pane_core::Platform::current() {
+            Some(pane_core::Platform::Windows) => Some(pane_core::Platform::Macos),
+            platform => platform,
+        };
+        pane_core::hotkeys::kinds_unavailable(shortcut, modeled)
     }
 
     fn register(&self, shortcut: &Shortcut) -> Result<(), HotkeyError> {
@@ -324,20 +338,36 @@ fn a_change_the_system_refuses_is_explained_and_saved_as_nothing(cx: &mut TestAp
 
     // The system refuses the hide: the reason is explained on the page,
     // the entry is unchanged, and nothing is kept or saved — the record
-    // file is not even made.
+    // file is not even made. The adapter is told the preference again
+    // (shown), so what it keeps for later is the preference, not the
+    // refused hide.
     system.refuse_next(TrayError::Refused("the notification area is full".into()));
     click(&mut settings_cx, "tray-visibility");
     until_diag(&mut settings_cx, |tree| {
         tree.contains("the system refused it: the notification area is full")
     });
-    assert_eq!(system.calls(), vec![true], "the entry was not hidden");
+    assert_eq!(
+        system.calls(),
+        vec![true, true],
+        "the entry was not hidden, and the preference was applied again"
+    );
     assert!(!data.path().join("settings.json").exists());
 
     // The toggle tries again and lands: the entry is hidden and the
     // choice saved, so the refusal did not leave the preference stuck.
     click(&mut settings_cx, "tray-visibility");
     settings_cx.run_until_parked();
-    assert_eq!(system.calls(), vec![true, false]);
+    assert_eq!(system.calls(), vec![true, true, false]);
+    until_record(&mut settings_cx, data.path(), false);
+
+    // A refused show is rolled back the same way: the adapter is told
+    // the preference (hidden) again, and the record still holds it.
+    system.refuse_next(TrayError::Refused("the notification area is full".into()));
+    click(&mut settings_cx, "tray-visibility");
+    until_diag(&mut settings_cx, |tree| {
+        tree.contains("the system refused it: the notification area is full")
+    });
+    assert_eq!(system.calls(), vec![true, true, false, false]);
     until_record(&mut settings_cx, data.path(), false);
 }
 
@@ -492,9 +522,15 @@ fn quit_from_the_tray_releases_the_entry_and_the_hotkey_registrations(cx: &mut T
 
     let hotkeys = Arc::new(FakeHotkeys::default());
     let system = tray();
+    // This run's crash record, as the binary opens it at start (#133): its
+    // marker says Pane is running until a clean quit removes it.
+    let record = CrashRecord::open(&data.path().join("logs"), "0.0.1", &SystemProcesses);
+    let marker = record.marker().to_path_buf();
+    assert!(marker.exists(), "the marker is written at start");
     let launcher =
         Launcher::with_packages(Runtime::start(), Vec::new(), data.path().join("extensions"))
-            .with_hotkeys(hotkeys.clone());
+            .with_hotkeys(hotkeys.clone())
+            .with_crash_record(Arc::new(record));
     init_settings(Some(data.path()), cx);
     cx.update(|cx| pane::settings::attach_tray(system.clone(), cx));
     cx.executor().allow_parking();
@@ -544,6 +580,9 @@ fn quit_from_the_tray_releases_the_entry_and_the_hotkey_registrations(cx: &mut T
         }),
         "the application's own binding is not registered"
     );
+    // And it was a clean quit: no marker is left for the next start to
+    // take for a crash.
+    assert!(!marker.exists(), "a clean quit leaves no marker");
 }
 
 #[gpui::test]

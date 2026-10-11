@@ -1,5 +1,6 @@
 //! File search over Pane's file index (#126, #175), through the launcher's
-//! public interface: the real Files default extension, the real index and
+//! public interface: the Rust files sample (the same contract the Files
+//! default extension holds, over the real index and
 //! the system's own change source, over a fixture folder standing for the
 //! home folder (named by the test) and a cache folder of the test's own,
 //! with a recording opener and system so that nothing opens or shows. The
@@ -10,8 +11,12 @@
 //! and a second Pane on it; and what the File search page (#176) reads and
 //! changes: the status, Rebuild index, turning off Search Files, every
 //! control applied without a restart, a folder taken out for churn included
-//! again, and a folder granted to Files under #29 kept in what is indexed. The coordinator's catch-up, live changes and
-//! fallbacks driven through the change source's seam are its unit tests
+//! again, and a folder granted to Files under #29 kept in what is indexed; and
+//! the ignore rules kept between batches of changes (#186): a `.gitignore`
+//! line added and removed, a repository made and deleted, its own
+//! `.git/info/exclude` changed, the user's patterns changed, each holding
+//! in later batches and at Enter. The coordinator's catch-up, live changes
+//! and fallbacks driven through the change source's seam are its unit tests
 //! (`pane_core::file_index::indexer`), and the actions on each row, in
 //! every language, `file_actions.rs`. The packages are the ones
 //! `cargo xtask guests` assembles in `target/guests/packages`.
@@ -23,7 +28,8 @@ use std::time::Duration;
 
 use futures::executor::block_on;
 use pane_core::file_index::{
-    CaughtUpBy, INDEX_DIR, IndexState, IndexerConfig, ProblemKind, UserRules, WalkOptions,
+    CaughtUpBy, INDEX_DIR, IndexState, IndexerConfig, ProblemKind, SearchOptions, UserRules,
+    WalkOptions,
 };
 use pane_core::{Launcher, LinkOpener, PackageIdentity, Runtime, Status, WindowPresence};
 use tempfile::TempDir;
@@ -189,7 +195,7 @@ impl Home {
     /// Starts Pane with Files installed and its index settled.
     fn with_files(&self) -> (Launcher, Runtime) {
         let (launcher, runtime) = self.start();
-        install(&launcher, &built("packages/files"));
+        install(&launcher, &built("packages/sample-files"));
         settle(&launcher);
         (launcher, runtime)
     }
@@ -231,8 +237,8 @@ fn files_identity(launcher: &Launcher) -> PackageIdentity {
     launcher
         .packages()
         .into_iter()
-        .find(|package| package.title() == "Files")
-        .expect("Files is installed")
+        .find(|package| package.title() == "Rust files sample")
+        .expect("the files sample is installed")
         .identity
 }
 
@@ -265,7 +271,7 @@ fn typing_a_files_name_lists_it_under_files_and_enter_opens_it() {
     // them all.
     assert_eq!(rows[0], "plan.txt", "{rows:?}");
     assert!(rows.len() <= 6, "{rows:?}");
-    assert_eq!(rows.last().unwrap(), "Search Files for “plan”");
+    assert_eq!(rows.last().unwrap(), "Find files (Rust) for “plan”");
     // Hidden, ignored, node_modules and cache-tagged entries are absent.
     for absent in [
         "hidden plan.txt",
@@ -330,15 +336,15 @@ fn case_accents_and_folder_words_find_files() {
 #[test]
 fn file_rows_come_after_commands_found_by_title() {
     let home = Home::new();
-    fs::write(home.file("Documents/search notes.txt"), "x").unwrap();
+    fs::write(home.file("Documents/find notes.txt"), "x").unwrap();
     let (launcher, _runtime) = home.with_files();
-    search(&launcher, "search");
+    search(&launcher, "find");
     let rows = titles(&launcher);
-    let command = rows.iter().position(|row| row == "Search Files").unwrap();
-    let file = rows
+    let command = rows
         .iter()
-        .position(|row| row == "search notes.txt")
+        .position(|row| row == "Find files (Rust)")
         .unwrap();
+    let file = rows.iter().position(|row| row == "find notes.txt").unwrap();
     assert!(command < file, "{rows:?}");
 }
 
@@ -387,7 +393,7 @@ fn an_entry_replaced_since_it_was_found_is_explained_not_opened() {
 fn the_first_walk_waits_until_the_launcher_is_shown() {
     let home = Home::new();
     let (launcher, _runtime) = home.start_in("data", true);
-    install(&launcher, &built("packages/files"));
+    install(&launcher, &built("packages/sample-files"));
     let deadline = std::time::Instant::now() + LIMIT;
     while !launcher.file_index_status().waiting {
         assert!(std::time::Instant::now() < deadline);
@@ -491,7 +497,7 @@ fn a_second_pane_on_the_same_cache_folder_says_file_search_is_in_use() {
     let home = Home::new();
     let (_first, _first_runtime) = home.with_files();
     let (second, _second_runtime) = home.start_in("other data", false);
-    install(&second, &built("packages/files"));
+    install(&second, &built("packages/sample-files"));
     settle(&second);
     let status = second.file_index_status();
     assert_eq!(status.state, IndexState::Stopped);
@@ -603,7 +609,7 @@ fn the_status_says_what_is_indexed_and_how_and_when_it_last_caught_up() {
     assert!(launcher.file_search_problems().is_empty());
     assert_eq!(
         launcher.file_search_packages(),
-        [("Files".to_owned(), None)]
+        [("Rust files sample".to_owned(), None)]
     );
     let (effective, rules) = launcher.file_search_rules().unwrap();
     assert_eq!(effective.roots, std::slice::from_ref(&home.home));
@@ -631,18 +637,22 @@ fn rebuilding_the_index_builds_it_again_from_every_folder() {
 fn turning_off_search_files_stops_the_index_as_disabling_files_does() {
     let home = Home::new();
     let (launcher, _runtime) = home.with_files();
-    let command = launcher
+    let commands: Vec<String> = launcher
         .packages()
         .into_iter()
-        .find(|package| package.title() == "Files")
+        .find(|package| package.title() == "Rust files sample")
         .unwrap()
         .listed_commands()
         .into_iter()
-        .next()
-        .expect("Search Files")
-        .registration
-        .id;
-    block_on(launcher.set_command_enabled(&command, false)).unwrap();
+        .map(|command| command.registration.id)
+        .collect();
+    // The index stops once every command is turned off, as the package's
+    // own switch does; one left on keeps it running. The Files extension's
+    // typed-path commands (#195) that made this more than one left with
+    // its sources (#285); the sample keeps one command.
+    for command in &commands {
+        block_on(launcher.set_command_enabled(command, false)).unwrap();
+    }
     let status = launcher.file_index_status();
     assert_eq!(status.state, IndexState::Off);
     assert_eq!(
@@ -652,13 +662,15 @@ fn turning_off_search_files_stops_the_index_as_disabling_files_does() {
     assert_eq!(
         launcher.file_search_packages(),
         [(
-            "Files".to_owned(),
+            "Rust files sample".to_owned(),
             Some("its commands are turned off".to_owned())
         )]
     );
     assert!(home.index_dir().exists(), "kept on disk while off");
 
-    block_on(launcher.set_command_enabled(&command, true)).unwrap();
+    for command in &commands {
+        block_on(launcher.set_command_enabled(command, true)).unwrap();
+    }
     settle(&launcher);
     assert_eq!(launcher.file_index_status().state, IndexState::Current);
     eventually(&launcher, "plan", lists("plan.txt"));
@@ -667,7 +679,10 @@ fn turning_off_search_files_stops_the_index_as_disabling_files_does() {
     block_on(launcher.set_enabled(&files, false));
     assert_eq!(
         launcher.file_search_packages(),
-        [("Files".to_owned(), Some("it is turned off".to_owned()))]
+        [(
+            "Rust files sample".to_owned(),
+            Some("it is turned off".to_owned())
+        )]
     );
 }
 
@@ -839,4 +854,146 @@ fn a_folder_granted_to_files_that_the_index_covers_is_simply_forgotten() {
         serde_json::from_str(&fs::read_to_string(record.join("folders.json")).unwrap()).unwrap();
     assert!(grants["folders"].get(&key).is_none(), "{grants}");
     eventually(&launcher, "plan", lists("plan.txt"));
+}
+
+// ------------------------------ the ignore rules kept between batches (#186)
+
+/// Writes `text` to `relative` in the fixture home, making its folders.
+fn write(home: &Home, relative: &str, text: &str) {
+    let path = home.file(relative);
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(path, text).unwrap();
+}
+
+#[test]
+fn a_gitignore_line_hides_what_it_matches_and_removing_it_shows_it_again() {
+    let home = Home::new();
+    let (launcher, _runtime) = home.with_files();
+    // Changes in the repository, each batch learning its rules.
+    write(&home, "Projects/app/src/trace.draft", "draft");
+    eventually(&launcher, "trace", lists("trace.draft"));
+    write(&home, "Projects/app/src/main.rs", "fn main() {}");
+    eventually(&launcher, "main", lists("main.rs"));
+
+    // A line added: what it matches goes, and stays out in later batches.
+    write(&home, "Projects/app/.gitignore", "build/\n*.draft\n");
+    eventually(&launcher, "trace", lacks("trace.draft"));
+    write(&home, "Projects/app/src/second.draft", "draft");
+    write(&home, "Projects/app/src/second.rs", "");
+    eventually(&launcher, "second", lists("second.rs"));
+    eventually(&launcher, "second", lacks("second.draft"));
+    eventually(&launcher, "main", lists("main.rs"));
+    eventually(&launcher, "plan output", lacks("plan output.txt"));
+
+    // The line removed: what it matched comes back, and later changes are
+    // admitted again.
+    write(&home, "Projects/app/.gitignore", "build/\n");
+    eventually(&launcher, "trace", lists("trace.draft"));
+    eventually(&launcher, "second", lists("second.draft"));
+    write(&home, "Projects/app/src/third.draft", "draft");
+    eventually(&launcher, "third", lists("third.draft"));
+    eventually(&launcher, "plan output", lacks("plan output.txt"));
+}
+
+#[test]
+fn a_new_repository_starts_applying_its_ignore_rules() {
+    let home = Home::new();
+    // Outside a repository Git reads no .gitignore.
+    write(&home, "Projects/site/.gitignore", "dist/\n");
+    write(&home, "Projects/site/dist/bundle.js", "js");
+    write(&home, "Projects/site/index.html", "html");
+    let (launcher, _runtime) = home.with_files();
+    eventually(&launcher, "bundle", lists("bundle.js"));
+    write(&home, "Projects/site/dist/chunk.js", "js");
+    eventually(&launcher, "chunk", lists("chunk.js"));
+
+    fs::create_dir_all(home.file("Projects/site/.git")).unwrap();
+    eventually(&launcher, "bundle", lacks("bundle.js"));
+    eventually(&launcher, "chunk", lacks("chunk.js"));
+    eventually(&launcher, "index", lists("index.html"));
+    // Later batches keep to it.
+    write(&home, "Projects/site/dist/later.js", "js");
+    write(&home, "Projects/site/page.html", "html");
+    eventually(&launcher, "page", lists("page.html"));
+    eventually(&launcher, "later", lacks("later.js"));
+
+    // The repository deleted: its .gitignore no longer applies.
+    fs::remove_dir_all(home.file("Projects/site/.git")).unwrap();
+    eventually(&launcher, "bundle", lists("bundle.js"));
+    eventually(&launcher, "later", lists("later.js"));
+    write(&home, "Projects/site/dist/last.js", "js");
+    eventually(&launcher, "last", lists("last.js"));
+}
+
+#[test]
+fn a_repositorys_own_exclude_file_applies_while_pane_runs() {
+    let home = Home::new();
+    // `.git` is never indexed: on Linux its `info` is watched apart.
+    write(&home, "Projects/tool/.git/info/exclude", "");
+    write(&home, "Projects/tool/notes.draft", "draft");
+    let (launcher, _runtime) = home.with_files();
+    eventually(&launcher, "notes", lists("notes.draft"));
+
+    write(&home, "Projects/tool/.git/info/exclude", "*.draft\n");
+    eventually(&launcher, "notes", lacks("notes.draft"));
+    write(&home, "Projects/tool/.git/info/exclude", "");
+    eventually(&launcher, "notes", lists("notes.draft"));
+}
+
+#[test]
+fn the_users_excluded_patterns_apply_without_a_restart_across_batches() {
+    let home = Home::new();
+    let (launcher, _runtime) = home.with_files();
+    write(&home, "Documents/report.bak", "old");
+    eventually(&launcher, "report", lists("report.bak"));
+
+    change_rules(&home, &launcher, |rules| {
+        rules.excluded_patterns.push("*.bak".into())
+    });
+    eventually(&launcher, "report", lacks("report.bak"));
+    write(&home, "Documents/later.bak", "old");
+    write(&home, "Documents/later.txt", "new");
+    eventually(&launcher, "later", lists("later.txt"));
+    eventually(&launcher, "later", lacks("later.bak"));
+
+    change_rules(&home, &launcher, |rules| rules.excluded_patterns.clear());
+    eventually(&launcher, "report", lists("report.bak"));
+    eventually(&launcher, "later", lists("later.bak"));
+    write(&home, "Documents/last.bak", "old");
+    eventually(&launcher, "last", lists("last.bak"));
+}
+
+#[test]
+fn a_file_an_ignore_file_hides_since_it_was_found_is_explained_not_opened() {
+    let home = Home::new();
+    let (launcher, _runtime) = home.with_files();
+    write(&home, "Projects/app/src/notes.draft", "draft");
+    eventually(&launcher, "notes", lists("notes.draft"));
+    select_title(&launcher, "notes.draft");
+
+    write(&home, "Projects/app/.gitignore", "build/\n*.draft\n");
+    // Waited for through the index itself, so that the row stays selected.
+    let indexer = launcher.file_indexer().unwrap();
+    let owner = files_identity(&launcher).key();
+    let deadline = std::time::Instant::now() + LIMIT;
+    loop {
+        settle(&launcher);
+        let found = indexer
+            .search(&owner, "notes", SearchOptions::default())
+            .unwrap();
+        if !found.iter().any(|entry| entry.name == "notes.draft") {
+            break;
+        }
+        assert!(std::time::Instant::now() < deadline, "{found:?}");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+
+    block_on(launcher.activate_selected());
+    assert!(home.opener.take().is_empty());
+    assert_eq!(
+        launcher.view().status,
+        Status::Error(
+            "Could not open notes.draft: it is no longer in the folders file search covers".into()
+        )
+    );
 }

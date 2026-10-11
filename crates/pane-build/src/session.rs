@@ -39,7 +39,7 @@ use notify::event::{EventKind, MetadataKind, ModifyKind};
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 
 use crate::build::{
-    Build, BuildJob, BuildOutcome, BuildOutput, BuildStop, Builder, first_error, is_save,
+    Build, BuildJob, BuildOutcome, BuildOutput, BuildStop, Builder, Echo, first_error, is_save,
     stage_package,
 };
 use crate::sources::Sources;
@@ -200,6 +200,7 @@ pub struct Prepared {
     signals: Sender<Signal>,
     received: Receiver<Signal>,
     work: PathBuf,
+    echo: Option<Echo>,
 }
 
 impl Prepared {
@@ -229,7 +230,17 @@ impl Prepared {
             signals,
             received,
             work,
+            echo: None,
         })
+    }
+
+    /// This package's session, showing each line its builds print with
+    /// `echo` as they print it, such as in `pane-ext`'s terminal.
+    pub fn echo(self, echo: Echo) -> Prepared {
+        Prepared {
+            echo: Some(echo),
+            ..self
+        }
     }
 
     /// The source folder watched, canonical.
@@ -271,6 +282,7 @@ impl Prepared {
             received: self.received,
             stop,
             work: self.work,
+            echo: self.echo,
         };
         (session, worker)
     }
@@ -317,6 +329,7 @@ pub struct Worker {
     received: Receiver<Signal>,
     stop: BuildStop,
     work: PathBuf,
+    echo: Option<Echo>,
 }
 
 impl Worker {
@@ -341,8 +354,10 @@ fn lock(report: &Mutex<Development>) -> MutexGuard<'_, Development> {
 /// Copies the components named by `from`'s `pane.json` from `from` to the
 /// same paths in `to`, replacing each file rather than writing through it
 /// (a Rust build's component is a hard link into `target`). Returns their
-/// paths, relative to both.
-fn copy_components(manifests: &dyn ManifestFiles, from: &Path, to: &Path) -> Vec<PathBuf> {
+/// paths, relative to both. The source map a development build of
+/// JavaScript or TypeScript keeps beside its component comes with it, so a
+/// later Reload of the same build keeps it (#214).
+pub fn copy_components(manifests: &dyn ManifestFiles, from: &Path, to: &Path) -> Vec<PathBuf> {
     let Ok(components) = manifests.components(from) else {
         return Vec::new();
     };
@@ -353,8 +368,22 @@ fn copy_components(manifests: &dyn ManifestFiles, from: &Path, to: &Path) -> Vec
         }
         let _ = std::fs::remove_file(&target);
         let _ = std::fs::copy(from.join(component), &target);
+        // The component's source map, when the build kept one.
+        let map = map_beside(&from.join(component));
+        if map.is_file() {
+            let beside = map_beside(&target);
+            let _ = std::fs::remove_file(&beside);
+            let _ = std::fs::copy(&map, &beside);
+        }
     }
     components
+}
+
+/// The path of the source map a development build may keep beside the
+/// component at `component`: its file name plus `.map` (#214).
+fn map_beside(component: &Path) -> PathBuf {
+    let name = component.file_name().unwrap_or_default().to_string_lossy();
+    component.with_file_name(format!("{name}.map"))
 }
 
 /// `path`, from an event of a watcher of `root` (canonical), relative to
@@ -504,7 +533,8 @@ impl<H: Host> Running<H> {
                 .work
                 .join("staging")
                 .join(format!("build-{}", self.builds));
-            let output = BuildOutput::new(Some(&self.worker.work.join(BUILD_LOG)));
+            let output = BuildOutput::new(Some(&self.worker.work.join(BUILD_LOG)))
+                .echoing(self.worker.echo.clone());
             let built = match stage_package(&*self.worker.manifests, &self.worker.folder, &staging)
             {
                 Ok(()) => self.build_once(&staging, &output),

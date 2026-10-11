@@ -25,9 +25,11 @@
 //! so nothing of a closed menu intercepts a click. Reopening during the
 //! exit retargets the same transition from the presentation on screen.
 //!
-//! While the menu is open its list holds focus (the selected item is its
-//! active descendant), so the launcher's keys — the query field's
-//! editing, the list's selection — stay inert behind it.
+//! While the menu is open its list holds focus, so the launcher's keys —
+//! the query field's editing, the list's selection — stay inert behind it.
+//! The list is what assistive technology reports as focused; its selected
+//! item is said by the window's announcer, "Settings, 1 of 1"
+//! ([`crate::features::announcer`], #132).
 
 use gpui::{
     AnyElement, App, BoxShadow, ClickEvent, Context, Div, FocusHandle, KeyBinding, MouseDownEvent,
@@ -35,7 +37,8 @@ use gpui::{
 };
 use pane_core::KeyboardAction;
 
-use crate::app::LauncherWindow;
+use crate::app::{HoverWashes, LauncherWindow, Spot};
+use crate::features::announcer::{Listing, Opening, Selected, Target};
 use crate::features::settings;
 use crate::ui;
 use crate::ui::footer;
@@ -178,6 +181,7 @@ impl LauncherWindow {
             && menu.selected + 1 < ITEMS.len()
         {
             menu.selected += 1;
+            self.announcer.user_moved();
             cx.notify();
         }
     }
@@ -187,8 +191,32 @@ impl LauncherWindow {
             && menu.selected > 0
         {
             menu.selected -= 1;
+            self.announcer.user_moved();
             cx.notify();
         }
+    }
+
+    /// The open menu as the window's announcer follows it (#132): over the
+    /// screen, saying only its selected item as it opens, since the screen
+    /// reader reads the menu's name as the menu takes the focus.
+    pub(crate) fn menu_listing(&self) -> Option<Listing> {
+        let menu = self.menu.as_ref()?;
+        let item = ITEMS.get(menu.selected)?;
+        Some(Listing {
+            over: true,
+            key: MENU_NAME.to_owned(),
+            opening: Opening::Selection,
+            count: ITEMS.len(),
+            target: Target::Row(Selected {
+                id: item.title.to_owned(),
+                title: item.title.to_owned(),
+                position: menu.selected + 1,
+                unavailable: false,
+                section: None,
+            }),
+            query: None,
+            settled: true,
+        })
     }
 
     /// Activates the menu's selected entry, closing the menu.
@@ -242,20 +270,34 @@ impl LauncherWindow {
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
         let open = self.menu.is_some();
+        // The button's hover wash, read as it is drawn and reported by the
+        // button itself (#245): it fades out once the pointer leaves.
+        let look = self
+            .motion
+            .hover
+            .look(Spot::Button("footer-menu"), cx.background_executor().now());
         footer::mark_button(theme)
             .id("footer-menu")
             .debug_selector(|| "footer-menu".into())
-            .when(open, |button| button.bg(theme.control_hover))
+            .when(open, |button| button.bg(theme.hover_wash))
             .key_context(BUTTON_CONTEXT)
             .track_focus(&self.menu_button)
             .role(Role::Button)
             .aria_label(MENU_NAME)
             .aria_expanded(open)
             .on_action(cx.listener(Self::press_menu_button))
-            // The footer buttons' washes (`.fbtn`), changing at once: the
-            // hover one, and the open one while pressed.
-            .hover(|button| button.bg(theme.control_hover))
+            // The footer buttons' washes (`.fbtn`): the hover one, fading
+            // out once the pointer leaves (#245), and the open one while
+            // pressed.
+            .when(look > 0., |button| {
+                button.bg(ui::theme::faded(theme.hover_wash, look))
+            })
             .active(|button| button.bg(theme.footer_button_open))
+            .on_hover(cx.listener(move |this, over: &bool, _, cx| {
+                this.motion
+                    .hover
+                    .set(Spot::Button("footer-menu"), *over, cx);
+            }))
             // Visible keyboard focus, the list's focus ring treatment.
             .focus(|button| {
                 button.shadow(vec![
@@ -283,7 +325,13 @@ impl LauncherWindow {
         let visuals = crate::settings::launcher_visuals(cx);
         match self.menu.as_ref() {
             Some(menu) => Some(menu_popup(
-                menu_list(Some(&menu.focus), menu.selected, &visuals.theme, cx),
+                menu_list(
+                    Some(&menu.focus),
+                    menu.selected,
+                    &self.motion.hover,
+                    &visuals.theme,
+                    cx,
+                ),
                 in_flight,
                 &visuals.theme,
                 visuals.material,
@@ -296,6 +344,7 @@ impl LauncherWindow {
                     menu_list(
                         None,
                         self.motion.menu_exit().unwrap_or(0),
+                        &self.motion.hover,
                         &visuals.theme,
                         cx,
                     ),
@@ -320,10 +369,12 @@ impl LauncherWindow {
 fn menu_list(
     focus: Option<&FocusHandle>,
     selected: usize,
+    hover: &HoverWashes,
     theme: &ui::theme::Theme,
     cx: &mut Context<LauncherWindow>,
 ) -> Stateful<Div> {
     let geometry = &theme.geometry.actions;
+    let now = cx.background_executor().now();
     let list = div()
         .id("menu")
         .debug_selector(|| "menu".into())
@@ -334,9 +385,10 @@ fn menu_list(
         .min_w(px(200.));
     let inert = focus.is_none();
     // The interactive list: the open menu's focus, semantics and
-    // handlers — its key context over the window's, the selected entry
-    // as the list's active descendant, and the outside dismissal that
-    // consumes the click so nothing underneath is activated.
+    // handlers — its key context over the window's, the focus that stays
+    // on it (the announcer says the selected entry, #132), and the outside
+    // dismissal that consumes the click so nothing underneath is
+    // activated.
     let list = match focus {
         Some(focus) => list
             .key_context(CONTEXT)
@@ -361,6 +413,11 @@ fn menu_list(
     };
     list.children(ITEMS.iter().enumerate().map(|(index, item)| {
         let item_selected = index == selected;
+        // The entry's hover wash strength as it is drawn: the menu's
+        // entries select with the keyboard and the click, never under a
+        // moving pointer, so an unselected entry under the pointer takes
+        // the fainter wash, fading out once it leaves (#245).
+        let look = hover.look(Spot::MenuItem(index), now);
         // The entry's shortcut hint, when it has one: the binding in
         // force for the action that opens it, in the shared keycap
         // chrome.
@@ -386,28 +443,32 @@ fn menu_list(
             .font_weight(theme.typography.action_weight)
             .text_color(theme.action_text)
             .when(!inert, |item| item.cursor_pointer())
-            .when(!inert && !item_selected, |item| {
-                item.hover(|item| item.bg(theme.control_hover))
+            .when(!inert && !item_selected && look > 0., |item| {
+                item.bg(ui::theme::faded(theme.hover_wash, look))
+            })
+            .when(!inert, |item| {
+                item.on_hover(cx.listener(move |this, over: &bool, _, cx| {
+                    this.motion.hover.set(Spot::MenuItem(index), *over, cx);
+                }))
             })
             // While held, a live entry takes the stronger wash of its
             // hover, or of its selected wash, at once.
             .when(!inert, |item| {
                 let press = ui::theme::pressed(if item_selected {
-                    theme.action_selected
+                    theme.selection_wash
                 } else {
-                    theme.control_hover
+                    theme.hover_wash
                 });
                 item.active(move |item| item.bg(press))
             })
-            .when(item_selected, |item| {
-                item.bg(theme.action_selected)
-                    .when(!inert, |item| item.aria_active_descendant())
-            })
+            .when(item_selected, |item| item.bg(theme.selection_wash))
             .when(!inert, |entry| {
                 entry
                     .role(Role::MenuItem)
                     .aria_label(item.title)
                     .aria_selected(item_selected)
+                    .aria_position_in_set(index + 1)
+                    .aria_size_of_set(ITEMS.len())
                     .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                         if let Some(item) = ITEMS.get(index) {
                             (item.activate)(this, window, cx);

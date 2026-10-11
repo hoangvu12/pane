@@ -45,8 +45,10 @@ for expiry [ADR 0023](adr/0023-host-expires-clipboard-history-by-its-own-clock.m
   the clipboard and keeps the history itself, so nothing of the extension
   runs while the clipboard changes, and the history is the package's
   [extension data](extension-data.md) whatever the extension does.
-- **Default extension**, [`guests/clipboard-history`](../guests/clipboard-history)
-  (Rust), package [`guests/packages/clipboard-history`](../guests/packages/clipboard-history):
+- **Default extension**, the
+  [Clipboard History repository](https://github.com/pane-app/clipboard-history)
+  (Rust; a Pane release pinning its release commits,
+  [`crates/pane/defaults.json`](../crates/pane/defaults.json)):
   its command, "Clipboard History", which Pane draws in its own split view
   ([Behavior](#behavior)); its own list (what a copy installed from
   another source shows) is Pause or Resume Recording and the kept items.
@@ -75,10 +77,11 @@ for expiry [ADR 0023](adr/0023-host-expires-clipboard-history-by-its-own-clock.m
   or on any other system one that says clipboard history is unavailable
   there.
 
-Acquiring the package automatically at setup is
-[#51](https://github.com/pane-app/pane/issues/51) to
-[#53](https://github.com/pane-app/pane/issues/53); until then it is
-installed from its folder (`pane --install target/guests/packages/clipboard-history`).
+First setup acquires the extension from the commit this Pane release pins
+([#278](https://github.com/pane-app/pane/issues/278),
+[#53](https://github.com/pane-app/pane/issues/53)); a user can also install
+it by hand from its repository
+(`pane --install git:https://github.com/pane-app/clipboard-history`).
 
 ## Behavior
 
@@ -267,12 +270,14 @@ keeps text only, `clipboard::accept`):
 - **Where the PNG is.** In the history's own folder,
   `clipboard-images/<owner>/<sha256>.png` beside `clipboard-history.json`,
   readable by the user only as the file is (ADR 0020's place for the
-  history, its saved data). It is written before its item, and every write
-  of the file then deletes the PNGs no item names any more: an image goes
-  with its item however the item goes — expired by the host's clock (ADR
+  history, its saved data). It is written before its item. Once an item
+  holding an image goes, however it goes — expired by the host's clock (ADR
   0023), deleted, cleared, dropped past 100 items, or its history removed
-  with the package's saved data — and one left behind by a stop between
-  the PNG and its item goes at the next sweep.
+  with the package's saved data — the next write of the file deletes the
+  PNGs no item names any more, so the image goes with its item; a write
+  that took no image away does not look at the folder (#192). One left
+  behind by a stop between the PNG and its item goes when Pane next
+  starts.
 - **Put back as what it was.** Copy writes an image as an image (Windows:
   the PNG and a 32-bit `CF_DIB`; macOS: `public.png` and `public.tiff`;
   Linux: `image/png`) and files as files (Windows: `CF_HDROP` with
@@ -408,10 +413,59 @@ capture stays local by default all the same.
   ids are never given twice (it counts as keeping nothing). A
   `retentionSeconds` outside 1 minute to 365 days, as only an edited file
   can hold, is taken as the nearest bound.
-- It is written after each change, outside the lock that captures and
-  commands share, so a copy never waits on another's write. A change is on
-  disk when the call that made it returns; a crash before that loses only
-  that change (the file is replaced atomically, never torn).
+- On Windows each item's text and files are encrypted on disk
+  ([#130](https://github.com/hoangvu12/pane/issues/130)) with the same
+  DPAPI protector as [local credentials](extension-data.md#protected-credentials),
+  for the current Windows user: the file is version 2, and an item holds
+  `"protected": {"dpapi": "<base64>"}` in place of `text` and `files`. Its
+  `id`, `copiedAt`, `source` and an image's `image` stay readable, so items
+  expire, are deleted and are counted without decrypting anything, and an
+  image's PNG goes with its item; the PNGs themselves are not encrypted
+  (readable by the user only, as before). An item is encrypted once, when it
+  is first written, and later writes reuse those bytes. An item Windows
+  cannot encrypt is never written as it is: it is left out of that write
+  (the log says so), kept in memory, and tried again at the next write,
+  while the rest of the change, deletions included, is written. A version-1
+  file is converted when Pane starts, every item kept, in one atomic write;
+  if that write fails, Pane reads it as it is and tries again at the next
+  start. An older Pane refuses a version-2 file and never overwrites it. An
+  item that
+  cannot be decrypted (the user's password reset by an administrator, a
+  folder from another user or computer, damaged bytes) is listed in its
+  place as "Pane cannot read this copy on this computer: Windows could not
+  decrypt it (<reason>)", is neither copied nor pasted, and is kept as it
+  was until it expires or is deleted; the others still read. Programs
+  running as the same user can decrypt the file as Pane does. On macOS and
+  Linux the file stays version 1, as before.
+- It is written outside the lock that captures and commands share, so a
+  copy never waits on another's write, compactly (one line, not
+  pretty-printed), and replaced atomically, so it holds the history before
+  or after a change, never a torn one. Writes are batched (#192): what a
+  copy keeps, and what expires, is written by the history's own thread
+  500 ms after the first change not written yet (`WRITE_DELAY`, proposed),
+  together with every change made meanwhile, so a burst of copies is one
+  write. A write that fails is reported in Pane's log and tried again by
+  that thread, 500 ms later, then after a pause that doubles with each
+  failure in a row, at most a minute, so a change is not left only in
+  memory; should that thread end (it panicked), every change is written at
+  once again. A change a command or the view makes (deleting, clearing, pausing
+  or resuming, a retention, the disabled applications) and the removal of
+  a package's history are written before the call returns, with whatever
+  waited, since a failure to write is reported to them. A clean quit (the
+  tray's or menu bar's Quit, closing the launcher's window) and the system
+  ending the session (`WM_ENDSESSION` on Windows, the termination
+  notification on macOS, SIGTERM, SIGHUP or SIGINT on Linux and macOS)
+  write what waits first, and so does counting the saved data for an
+  uninstall. A signal gives that write at most 2 seconds before Pane ends
+  ([pausing](pausing.md)). **A copy made less than 500 ms before a crash
+  can be lost**, and so can one made just before SIGKILL or a signal whose
+  clean quit did not end within those 2 seconds; what was written before
+  stays.
+- The Clipboard History view reads shared records (#192): the launcher
+  makes them from the history once per change of it — a copy kept, a
+  deletion, a choice changed, an expiry, each counted by the history — and
+  every frame the window draws and the Actions panel read the same records
+  until the next change, copying nothing of the history.
 - A command reaches it through Pane's extension runtime, like every other
   host interface ([#18](pausing.md#when-an-extension-stops-responding)):
   stopped code (its package disabled, paused, reloaded or uninstalled, or
@@ -444,6 +498,19 @@ capture stays local by default all the same.
 
 ## Checks
 
+- Protection on disk (#130): unit tests in
+  [`history.rs`](../crates/pane-core/src/clipboard/history.rs) for an item
+  written as the system protects it and encrypted once, an item that cannot
+  be decrypted explained and kept as it was, a version-1 file converted at
+  start (Windows) and a version-3 file refused and kept; and
+  [`clipboard.rs`](../crates/pane-core/tests/clipboard.rs)'s
+  `the_history_is_encrypted_on_disk_and_a_damaged_item_is_explained`
+  (Windows, with the recording clipboard): kept items read back, also after
+  a restart, with no plain text in the file; an earlier file converted at
+  start with every item kept; a damaged item listed as its explanation while
+  the others still read, and kept by a later write. The Windows smoke reads
+  the kept texts through `scripts/clipboard_history.py`, which decrypts them
+  as the same user.
 - Capture rules ([`clipboard.rs`](../crates/pane-core/src/clipboard.rs) unit
   tests): plain, marked, withheld, other, blank and long content; excluded
   programs; program names, lowercased also when read from the file; newest
@@ -469,10 +536,32 @@ capture stays local by default all the same.
   removing an item when a test's clock passes its time, with nothing
   reading the store, and ending with it. Tests wait for the expiry thread
   by its own word (a sweep begun after the last change ended), never by
-  sleeping or polling.
+  sleeping or polling, and for a batched write by the store's word that
+  nothing waits to be written (`Launcher::wait_for_clipboard_writes`).
+- Batched writes (#192): the history store's unit tests for a burst of
+  copies written once and read back by another store, a flush writing what
+  waits at once, the file written compactly, each item encrypted once over
+  several writes, and the images' folder pruned only when an image item
+  was deleted or expired (a PNG no item names, left there by the test,
+  shows which writes pruned). Through the launcher with the fake clipboard
+  ([`clipboard_view.rs`](../crates/pane-core/tests/clipboard_view.rs)):
+  several copies within the delay written once and all read back after a
+  restart; a clean quit writing the copy that waited; an image's PNG
+  deleted when its item is deleted or expires and not otherwise; on
+  Windows, items encrypted once each, however many writes follow (a test
+  hook counts them), and no copied text in the clear. The sample suites
+  ([`clipboard.rs`](../crates/pane-core/tests/clipboard.rs)) read the file
+  once the batch was written and restart after a clean quit. A window
+  test ([`window.rs`](../crates/pane/tests/window.rs)) draws the view again
+  after real key presses with nothing changed and the records are not made
+  again (a test hook counts them), while moving, searching and Ctrl+D
+  still work and a copy or a deletion makes them once more.
 - Pane's own Clipboard History through the launcher
   ([`crates/pane-core/tests/clipboard_view.rs`](../crates/pane-core/tests/clipboard_view.rs),
-  #166), acquired as the default extension over a fake system clipboard:
+  #166), acquired as the default extension from its pinned commit in a
+  repository served on this computer (the JavaScript clipboard sample's
+  component standing in for the extension's own, which lives in its
+  repository), over a fake system clipboard:
   a fresh data folder records the first copy with no turn-on, disabling
   stops it, and paused it stays paused across a restart; concealed copies
   and copies from a disabled application (by its file name or its path)

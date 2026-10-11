@@ -57,6 +57,7 @@ use serde::{Deserialize, Serialize};
 use crate::extension_data::{ExtensionData, PackageData};
 
 pub(crate) mod history;
+pub(crate) mod ignoring;
 #[cfg(target_os = "linux")]
 pub(crate) mod linux;
 #[cfg(target_os = "macos")]
@@ -65,6 +66,8 @@ pub(crate) mod macos;
 pub(crate) mod windows;
 
 pub use history::Item;
+#[doc(hidden)]
+pub use history::revealed as revealed_history;
 #[cfg(target_os = "linux")]
 pub use linux::LinuxClipboard;
 #[cfg(target_os = "linux")]
@@ -515,6 +518,15 @@ pub trait Clock: Send + Sync + 'static {
     /// Now, in milliseconds since the Unix epoch.
     fn now(&self) -> u64;
 
+    /// How far the local time at `at` (milliseconds since the Unix epoch)
+    /// is from UTC, in milliseconds: the system's, by its time zone
+    /// settings, so a guest answering a query about the local date or
+    /// time can (#196). A clock that says nothing answers 0.
+    fn local_offset(&self, at: u64) -> i64 {
+        let _ = at;
+        0
+    }
+
     /// Has `changed` called whenever this clock is set other than by time
     /// passing (the system's never is), so that expiry and due scheduled
     /// work are looked at again.
@@ -533,6 +545,10 @@ impl Clock for SystemClock {
             .map_or(0, |since| {
                 u64::try_from(since.as_millis()).unwrap_or(u64::MAX)
             })
+    }
+
+    fn local_offset(&self, at: u64) -> i64 {
+        crate::launcher::clipboard_view::local_offset_ms(at)
     }
 }
 
@@ -655,7 +671,7 @@ impl Sink for CaptureSink {
                     .then(|| match store.keep_image(&owner, image) {
                         Ok(kept) => Some(kept),
                         Err(error) => {
-                            eprintln!("Pane could not keep a copied image: {error}");
+                            crate::diagnostic!("Pane could not keep a copied image: {error}");
                             None
                         }
                     })
@@ -872,6 +888,10 @@ impl Commands<'_> {
             .into_iter()
             .find(|item| item.id.to_string() == id)
             .ok_or("That item is no longer kept")?;
+        // One that cannot be read on this computer (#130) says why.
+        if let Some(why) = item.unreadable {
+            return Err(why);
+        }
         if let Some(image) = &item.image {
             let path = self
                 .data

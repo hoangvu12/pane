@@ -22,11 +22,13 @@
 
 use std::future::Future;
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 
 use super::{
     Changing, Entry, FormField, FormPurpose, FormView, GIT_REPOSITORY_FIELD, Launcher,
     LauncherView, Mode, NPM_PACKAGE_FIELD, OpenForm, Row, Screen, State, Status, off_thread,
 };
+use crate::defaults::DefaultExtension;
 use crate::dependencies::{self, Assumptions, Plan, RequiredState};
 use crate::git::{self as git_source, GitSpec};
 use crate::npm::{self, NpmSpec, Registry};
@@ -45,6 +47,12 @@ pub(in crate::launcher) enum Request {
     /// A package from a Git repository, at the reference named or else its
     /// default branch.
     Git(GitSpec),
+    /// A default extension's revision, from its repository at the commit
+    /// its release tag points to — first setup's acquisition of a pin
+    /// ([`crate::defaults`]) and the updater's of a newer release tag
+    /// (#269), which read it with the default extension's identity. Never
+    /// previewed: only those two flows make one.
+    Default(DefaultExtension),
 }
 
 impl Request {
@@ -60,6 +68,10 @@ impl Request {
             Request::Git(spec) => (
                 format!("Git repository: {spec}"),
                 spec.repository.name().to_owned(),
+            ),
+            Request::Default(pin) => (
+                format!("Default extension: default:{}", pin.id),
+                pin.title.clone(),
             ),
         }
     }
@@ -84,6 +96,7 @@ impl Sources {
             Request::Folder(folder) => SourcePackage::read(folder),
             Request::Npm(spec) => self.fetch(spec),
             Request::Git(spec) => self.fetch_git(spec),
+            Request::Default(pin) => self.fetch_default(pin),
         }
     }
 
@@ -126,6 +139,21 @@ impl Sources {
         // As for npm, its download goes with the package read from it.
         let fetched = git_source::fetch(spec, downloads).map_err(PackageError::Git)?;
         SourcePackage::read_git(fetched)
+    }
+
+    /// Fetches the release tag's commit `pin` names and reads it as the
+    /// default extension's package — with the default extension's
+    /// identity and its Git source recorded — exactly as first setup
+    /// acquires one, retries included ([`crate::defaults::fetch`]).
+    fn fetch_default(&self, pin: &DefaultExtension) -> Result<SourcePackage, PackageError> {
+        let Some(downloads) = &self.downloads else {
+            return Err(PackageError::Storage(
+                "this launcher does not install packages".into(),
+            ));
+        };
+        let fetched = crate::defaults::fetch(pin, downloads)
+            .map_err(|why| PackageError::Defaults(why.to_string()))?;
+        SourcePackage::read_default(fetched)
     }
 }
 
@@ -282,6 +310,21 @@ pub(in crate::launcher) fn claim(
     Ok(identities)
 }
 
+/// Where the install preview of a local folder stands, for the local
+/// channel (`crate::local_channel`), which shows it when `pane-ext dev`
+/// first develops a folder Pane has not installed (#217).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum InstallPreview {
+    /// The package is installed.
+    Installed,
+    /// Its preview is on show, offering Install, or installing it.
+    Shown,
+    /// Its preview explains why it cannot be installed.
+    Refused(String),
+    /// Something else is on show.
+    Elsewhere,
+}
+
 /// The message when the plan changed since the preview.
 fn changed(title: &str) -> String {
     format!(
@@ -423,6 +466,38 @@ impl Launcher {
         state.entries = entries;
     }
 
+    /// Where the install preview of the local package with `identity`,
+    /// shown by [`Launcher::preview_package`] for its folder, stands.
+    pub(crate) fn previewing(&self, identity: &PackageIdentity) -> InstallPreview {
+        let state = self.lock();
+        if state.package(identity).is_some() {
+            return InstallPreview::Installed;
+        }
+        let (Screen::Package { details }, Some(folder)) =
+            (&state.view.screen, identity.local_folder())
+        else {
+            return InstallPreview::Elsewhere;
+        };
+        let offered = state.entries.iter().any(|entry| {
+            matches!(entry, Entry::Install(Request::Folder(shown), _, _) if shown == folder)
+        });
+        if offered {
+            return InstallPreview::Shown;
+        }
+        // A package that cannot be installed is explained, with nothing
+        // offered: its source, or the folder if it could not be read.
+        let named = [
+            format!("Source: {identity}"),
+            format!("Folder: {}", folder.display()),
+        ];
+        match &state.view.status {
+            Status::Error(why) if details.iter().any(|line| named.contains(line)) => {
+                InstallPreview::Refused(why.clone())
+            }
+            _ => InstallPreview::Elsewhere,
+        }
+    }
+
     /// Shows Pane's own form asking which npm package to install.
     pub(in crate::launcher) fn show_npm_form(&self, state: &mut State) {
         let form = FormView {
@@ -547,7 +622,9 @@ impl Launcher {
             // Planned again, the change is shown.
             Err(Refusal::Changed) => Vec::new(),
         };
-        state.view.status = Status::Running;
+        state.view.status = Status::Running {
+            since: Instant::now(),
+        };
         Some(Begun {
             request,
             mode,
@@ -570,10 +647,11 @@ impl Launcher {
             .await;
         // What the outcome asks once the state is let go: the command
         // screen to reopen on the new code and where its outcome belongs
-        // (ADR 0041). The state must be out of scope before the reopen's
-        // calls: a future that holds the launcher's lock is not Send, and
-        // this future is.
-        let reopen = {
+        // (ADR 0041), and the package Create Extension or Import Extension
+        // previewed, to develop once it is installed (see `create`). The
+        // state must be out of scope before either's calls: a future that
+        // holds the launcher's lock is not Send, and this future is.
+        let (reopen, developed) = {
             let mut state = self.lock();
             for identity in &claimed {
                 state.release(identity);
@@ -586,6 +664,12 @@ impl Launcher {
                         self.put_installed(&mut state, dependency.clone());
                     }
                     let package = outcome.package;
+                    // What Create Extension or Import Extension asked for:
+                    // the package they previewed is developed once it is
+                    // installed (see `create`).
+                    let develop_after = state
+                        .develop_after
+                        .take_if(|identity| *identity == package.identity);
                     let first = package.commands().first().map(|c| c.component.clone());
                     let was_open = self.put_installed(&mut state, package);
                     // A command screen of the replaced copy that was on
@@ -618,7 +702,7 @@ impl Launcher {
                         self.refresh(&mut state);
                         None
                     };
-                    match taken {
+                    let reopen = match taken {
                         Some(taken) => Some((state.screen_epoch, taken, message)),
                         None => {
                             if current || was_open {
@@ -626,7 +710,8 @@ impl Launcher {
                             }
                             None
                         }
-                    }
+                    };
+                    (reopen, develop_after)
                 }
                 Err(Stopped::Changed(changed_plan)) => {
                     let (package, plan) = *changed_plan;
@@ -635,14 +720,14 @@ impl Launcher {
                         self.show_preview(&mut state, &request, Ok((package, plan)));
                         state.view.status = Status::Error(changed(&title));
                     }
-                    None
+                    (None, None)
                 }
                 Err(Stopped::Failed(failure)) => {
                     let message = self.install_left_behind(&mut state, &failure);
                     if current {
                         state.view.status = Status::Error(message);
                     }
-                    None
+                    (None, None)
                 }
             }
         };
@@ -651,6 +736,18 @@ impl Launcher {
             let mut state = self.lock();
             if state.screen_epoch == at {
                 state.view.status = Status::Result(message);
+            }
+        }
+        // The package Create Extension or Import Extension previewed is
+        // developed as its own row would develop it: its folder is watched
+        // from now on, each save building and reloading it.
+        if let Some(identity) = developed {
+            let start = {
+                let mut state = self.lock();
+                self.begin_developing(&mut state, &identity)
+            };
+            if let Some(start) = start {
+                self.finish_developing(identity, start).await;
             }
         }
     }
@@ -897,6 +994,12 @@ fn preview_view(
     };
     let manifest = &package.manifest;
     let mut details = vec![format!("Source: {}", package.identity)];
+    // What the package does, in a sentence: the preview shows it beside
+    // the source, as the extension's page in Settings does under the
+    // title (#224).
+    if let Some(description) = &manifest.description {
+        details.push(description.clone());
+    }
     if let Some(version) = &manifest.version {
         details.push(format!("Version: {version}"));
     }

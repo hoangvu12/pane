@@ -13,11 +13,13 @@
 //! - Windows: `Shell_NotifyIcon` on a thread of Pane's own ([`windows`]):
 //!   the notification area holds the icon, whose menu a right click
 //!   opens and whose left click summons the launcher. No permission is
-//!   needed.
+//!   needed. The icon is added again when Explorer restarts, keeps one
+//!   identity per program path, and follows the taskbar's light or dark
+//!   theme.
 //! - macOS: an `NSStatusItem` in the system status area of the menu bar
-//!   ([`macos`]), whose menu AppKit shows when the item is clicked. It
-//!   must be made and changed on the main thread, as the hotkey adapter
-//!   must.
+//!   ([`macos`]), showing Pane's mark as a template image, whose menu
+//!   AppKit shows when the item is clicked. It must be made and changed
+//!   on the main thread, as the hotkey adapter must.
 //! - Linux: no entry yet. The desktop's tray speaks StatusNotifierItem
 //!   over DBus, which Pane does not speak yet, so there the adapter
 //!   explains that the entry is unavailable — the preference stays
@@ -105,6 +107,19 @@ pub trait Tray: Send + Sync + 'static {
     /// was, so a preference is kept only for a change that really
     /// happened. Repeating the state in effect succeeds.
     fn set_visible(&self, visible: bool) -> Result<(), TrayError>;
+
+    /// Says in the entry's tooltip whether Pane's hotkeys are paused for
+    /// a game in front (game mode, #125): the entry's tooltip says so
+    /// while they are, and says only the application again once they
+    /// return, so a press that does nothing while a game has the keys
+    /// is understood. Where the system's entry shows no tooltip, the
+    /// choice is accepted and shows nothing; game mode is Windows only,
+    /// so only Windows' entry says it. The window's thread, as showing
+    /// and hiding are. Repeating the state in effect succeeds.
+    fn set_hotkeys_paused(&self, paused: bool) -> Result<(), TrayError> {
+        let _ = paused;
+        Ok(())
+    }
 }
 
 /// Where an adapter reports the native menu's selections.
@@ -233,6 +248,17 @@ mod tests {
             TrayError::Refused("the tray is full".into()).to_string(),
             "the system refused it: the tray is full"
         );
+    }
+
+    #[test]
+    fn saying_the_hotkeys_are_paused_is_accepted_where_nothing_shows_it() {
+        // The pause is the launcher's to say (game mode, #125); the
+        // entry's tooltip says it where the system's entry has one,
+        // which is Windows' alone. Elsewhere the choice is accepted and
+        // shows nothing, as the trait's default does.
+        let tray = Unavailable("Not available here".into());
+        assert_eq!(tray.set_hotkeys_paused(true), Ok(()));
+        assert_eq!(tray.set_hotkeys_paused(false), Ok(()));
     }
 
     #[test]

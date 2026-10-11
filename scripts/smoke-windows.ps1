@@ -1,8 +1,11 @@
 # Native GUI smoke on Windows: launches Pane, drives it with real key events
 # and captures the screen. Pane keeps installed packages in <output-dir>\data,
 # not the user's data folder. Settings is driven through UI Automation (see
-# Press-Named). The clipboard phases serve the artifacts the #51 phase's
-# package build leaves in target\dist\artifacts, so they run after it.
+# Press-Named). The phases that set the default extensions up serve their
+# repositories (made from the packages `cargo xtask guests` assembles) on
+# 127.0.0.1, so they run after it. The update phases serve the artifacts
+# the #51 phase's package build leaves in target\dist\artifacts, so they
+# run after it too.
 # Usage: scripts/smoke-windows.ps1 -OutDir <output-dir>
 param([string]$OutDir = "smoke")
 $ErrorActionPreference = "Stop"
@@ -13,6 +16,15 @@ New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
 $data = Join-Path $OutDir "data"
 if (Test-Path $data) { Remove-Item -Recurse -Force $data }
 $env:PANE_DATA_DIR = $data
+# A development build takes its default extensions' pins from
+# PANE_DEFAULTS; without it, the committed pins point at the real
+# repositories, which no check may reach. Until a phase names its own
+# pins, the file names none: first setup adds nothing, which the phases
+# that install samples by hand need (the phase that checks first setup
+# points it at the repositories it serves).
+$NoDefaultPins = Join-Path $OutDir "no-default-pins.json"
+Set-Content -Path $NoDefaultPins -Value "[]"
+$env:PANE_DEFAULTS = $NoDefaultPins
 # The tested OS version and architecture
 "$([System.Environment]::OSVersion.VersionString) $env:PROCESSOR_ARCHITECTURE" | Set-Content (Join-Path $OutDir "system.txt")
 'theme=dark material=opaque (behavior smoke; not blur evidence)' | Add-Content (Join-Path $OutDir "system.txt")
@@ -28,6 +40,9 @@ public static class Win {
     [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
     [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int command);
     [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")] public static extern bool RegisterHotKey(IntPtr h, int id, uint modifiers, uint key);
+    [DllImport("user32.dll")] public static extern bool UnregisterHotKey(IntPtr h, int id);
+    [DllImport("user32.dll")] public static extern void keybd_event(byte key, byte scan, uint flags, UIntPtr extra);
 }
 "@
 # Screenshots, screen bounds and SetCursorPos then all use physical pixels,
@@ -78,6 +93,16 @@ function Capture-Until($name, $color, $seconds) {
         Start-Sleep -Milliseconds 250
     }
 }
+# Waits, for at most $seconds, until the file $path holds the text $text:
+# an update Pane applies by itself is quiet (#256), so its say is the
+# record it writes, not the status line.
+function Wait-Record($path, $text, $seconds) {
+    $deadline = (Get-Date).AddSeconds($seconds)
+    while (-not (Test-Path $path) -or -not (Select-String -Quiet -SimpleMatch $text $path)) {
+        if ((Get-Date) -gt $deadline) { throw "$path does not say $text" }
+        Start-Sleep -Milliseconds 100
+    }
+}
 # Waits, for at most $seconds, until the Pane window no longer shows text
 # in $color: a toast leaves 3 seconds after it shows (#141), but a slow
 # runner can still show it after a fixed wait, and the next answer's toast,
@@ -111,6 +136,15 @@ function Click-At($x, $y) {
     [Win]::mouse_event(0x4, 0, 0, 0, [UIntPtr]::Zero)   # left button up
 }
 function Send($keys) { [System.Windows.Forms.SendKeys]::SendWait($keys) }
+# Presses one key, as a tool that injects input does (#260): the Windows
+# key has no SendKeys form, and the binding kinds the hotkeys gain are
+# pressed with the key's own code. Injected and untagged: another tool's
+# keys, which the hook takes as the user's presses.
+function Press-Key([byte]$key) {
+    [Win]::keybd_event($key, 0, 0, [UIntPtr]::Zero) | Out-Null
+    Start-Sleep -Milliseconds 100
+    [Win]::keybd_event($key, 0, 2, [UIntPtr]::Zero) | Out-Null   # KEYEVENTF_KEYUP
+}
 # Brings Pane's window to the front, so that key events reach it.
 function Focus-Pane($process) {
     [Win]::SetForegroundWindow($process.MainWindowHandle) | Out-Null
@@ -295,11 +329,23 @@ function Stop-Pane($process) {
     if ($process.HasExited) { throw "Pane exited during the smoke" }
     Stop-Process -Id $process.Id
     $process.WaitForExit()
+    Remove-Crash-Marker $process.Id
+}
+# Stop-Process ends Pane as a crash would, so the marker its start wrote in
+# the logs folder stays (#133), and the next start on the same data would
+# list "Pane quit unexpectedly last time" in root search and say it in the
+# status line, shifting the rows and the outcome the phases check. A clean
+# quit removes the marker; after Stop-Process the smoke removes it. The
+# logs folder is `logs` in PANE_DATA_DIR when that is set, as Pane's own
+# logs_dir says, and %LOCALAPPDATA%\Pane\logs otherwise.
+function Remove-Crash-Marker($id) {
+    $logs = if ($env:PANE_DATA_DIR) { Join-Path $env:PANE_DATA_DIR "logs" } else { Join-Path $env:LOCALAPPDATA "Pane\logs" }
+    Remove-Item -Force -ErrorAction SilentlyContinue (Join-Path $logs "running-$id.json")
 }
 
 # Waits until $file contains $text ($present) or no longer does (-not
 # $present), trying $tries times (100 by default: 10 seconds; the first
-# setup of the installed Pane needs far more, as a payload's components
+# setup of the installed Pane needs far more, as a revision's components
 # are checked one at a time).
 function Wait-For($file, $text, [bool]$present, $tries = 100) {
     for ($i = 0; $i -lt $tries; $i++) {
@@ -501,28 +547,9 @@ Check "23-color-click.png" "1b5e20" 3000   # dark green
 Send "{ESC}{ESC}"; Start-Sleep -Seconds 1
 Stop-Pane $process
 
-# The calculator, a default extension: an expression typed into root search
-# lists its answer first, selected, and Enter copies it. Pasting the copy
-# over the query and typing on shows exactly the screen typing the whole
-# expression shows, so the clipboard held the answer.
-# SendKeys: {+} is a plus sign, ^ holds Ctrl.
-$process = Start-Pane "stderr-calculator.log" @("--install", "target/guests/packages/calculator")
-Send "{ENTER}"; Start-Sleep -Seconds 2   # Install
-Send "6*7"; Start-Sleep -Seconds 2
-Capture "27-answer.png"
-Check "27-answer.png" "answer"   # the selected answer card
-Send "{ENTER}"; Start-Sleep -Seconds 1
-Capture "28-copied.png"   # "Copied 42 to the clipboard"
-Send "^a"; Send "42{+}1"; Start-Sleep -Seconds 2
-Capture "29-typed.png"
-Send "^a"; Send "^v"; Send "{+}1"; Start-Sleep -Seconds 2
-Capture "30-pasted.png"
-$shots = "27-answer", "28-copied", "29-typed" | ForEach-Object { Join-Path $OutDir "$_.png" }
-python "$PSScriptRoot/check_screenshot.py" --distinct @shots
-if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: the calculator showed the same window twice" }
-python "$PSScriptRoot/check_screenshot.py" --same (Join-Path $OutDir "29-typed.png") (Join-Path $OutDir "30-pasted.png")
-if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: pasting did not give the copied answer" }
-Stop-Pane $process
+# The calculator's answer card is the installer phase's, from the
+# repository its pin names (#285: the extension's own sources live there,
+# and its arithmetic is its repository's to test).
 
 # Operations: install the JavaScript operations sample, then the Rust one,
 # whose command (Call from Rust, selected once installed) opens its form,
@@ -632,8 +659,19 @@ Capture "40-kept.png"
 Check "40-kept.png" "success"   # every value, the cached greeting included
 Send "{ESC}"; Start-Sleep -Seconds 1
 Stop-Pane $process
+# Whether the sign-in token is kept. It is kept encrypted (#130):
+# credentials.json, version 2, holds it under its key as {"dpapi": ...},
+# and its text is never in the file.
+function Token-Kept {
+    $path = Join-Path $data "extensions/credentials.json"
+    if (Select-String -Quiet -SimpleMatch 'sample-token' $path) { throw "the token is in credentials.json as text" }
+    $file = Get-Content -Raw $path | ConvertFrom-Json
+    if ($file.version -ne 2) { throw "credentials.json has version $($file.version), not 2" }
+    foreach ($package in $file.packages.PSObject.Properties) { if ($package.Value.token.dpapi) { return $true } }
+    return $false
+}
 if (-not (Select-String -Quiet -SimpleMatch '"note": "Water the plants"' (Join-Path $data "extensions/content.json"))) { throw "note not saved" }
-if (-not (Select-String -Quiet -SimpleMatch '"token": "sample-token"' (Join-Path $data "extensions/credentials.json"))) { throw "credential not saved" }
+if (-not (Token-Kept)) { throw "credential not saved" }
 if (-not (Select-String -Quiet -SimpleMatch '"last-greeting": "Good day to you"' (Join-Path $data "extensions/cache.json"))) { throw "greeting not cached" }
 
 # Clear the settings sample's cache from its page in Settings: Clear Cache,
@@ -661,10 +699,12 @@ Stop-Pane $process
 if (Select-String -Quiet -SimpleMatch 'Good day to you' (Join-Path $data "extensions/cache.json")) { throw "cache not cleared" }
 if (-not (Select-String -Quiet -SimpleMatch '"greeting-style": "formal"' (Join-Path $data "extensions/settings.json"))) { throw "setting lost" }
 if (-not (Select-String -Quiet -SimpleMatch '"note": "Water the plants"' (Join-Path $data "extensions/content.json"))) { throw "note lost" }
-if (-not (Select-String -Quiet -SimpleMatch '"token": "sample-token"' (Join-Path $data "extensions/credentials.json"))) { throw "credential lost" }
+if (-not (Token-Kept)) { throw "credential lost" }
 
-# Applications, a default extension: an installed application is found by
-# name in root search and Enter opens it. The application is a Start menu
+# Applications: an installed application is found by name in root search
+# and Enter opens it, through the JavaScript applications sample (the same
+# host import and results the Applications default extension holds). The
+# application is a Start menu
 # shortcut the smoke adds under an APPDATA of its own (for Pane only), to
 # cmd.exe writing a marker file, so nothing else is started; Pane still
 # searches the system's applications too.
@@ -680,7 +720,7 @@ $shortcut.WindowStyle = 7   # minimized, so it does not cover Pane
 $shortcut.Save()
 $appData = $env:APPDATA
 $env:APPDATA = Join-Path $apps "AppData"
-$process = Start-Pane "stderr-applications.log" @("--install", "target/guests/packages/applications")
+$process = Start-Pane "stderr-applications.log" @("--install", "target/guests/packages/sample-applications-js")
 $env:APPDATA = $appData
 Send "{ENTER}"; Start-Sleep -Seconds 2   # Install
 Send "pane smoke"; Start-Sleep -Seconds 3
@@ -689,7 +729,7 @@ Check "44-application.png" "selected" 3000   # the selected application row
 Send "{ENTER}"; Start-Sleep -Seconds 3
 Focus-Pane $process
 Capture "45-opened.png"
-Check "45-opened.png" "success"   # "Opened Pane Smoke App"
+Check "45-opened.png" "success"   # "Opened Launch Pane Smoke App"
 for ($i = 0; $i -lt 50 -and -not (Test-Path $launched); $i++) { Start-Sleep -Milliseconds 200 }
 if (-not (Test-Path $launched)) { throw "the application did not run" }
 $shots = "44-application", "45-opened" | ForEach-Object { Join-Path $OutDir "$_.png" }
@@ -697,30 +737,9 @@ python "$PSScriptRoot/check_screenshot.py" --distinct @shots
 if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: opening the application changed nothing" }
 Stop-Pane $process
 
-# Quicklinks, a default extension: installed, its Create Quicklink command,
-# found by typing its name, opens its form, which saves a quicklink and
-# returns to root search. After a restart, typing part of its name lists it,
-# selected. Enter would open the default browser, so this smoke stops there
-# (the Linux smoke opens it through a recording handler).
-$process = Start-Pane "stderr-quicklinks.log" @("--install", "target/guests/packages/quicklinks")
-Send "{ENTER}"; Start-Sleep -Seconds 2   # Install
-Send "create quicklink"; Start-Sleep -Seconds 2
-Send "{ENTER}"; Start-Sleep -Seconds 3   # open Create Quicklink's form
-Send "Pane issues"
-Send "{TAB}"
-Send "https://example.com/pane-issues"
-Send "{ENTER}"; Start-Sleep -Seconds 2
-Capture "46-quicklink-saved.png"
-Check "46-quicklink-saved.png" "success"   # "Created “Pane issues”"
-Stop-Pane $process
-$process = Start-Pane "stderr-quicklinks-restart.log"
-Send "pane iss"; Start-Sleep -Seconds 2
-Capture "47-quicklink-found.png"
-Check "47-quicklink-found.png" "selected" 3000   # the selected quicklink row
-$shots = "46-quicklink-saved", "47-quicklink-found" | ForEach-Object { Join-Path $OutDir "$_.png" }
-python "$PSScriptRoot/check_screenshot.py" --distinct @shots
-if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: the quicklink was not found" }
-Stop-Pane $process
+# Quicklinks' own behaviour is its repository's to test (#285, its sources
+# left this one); the web-link opening the Linux smoke checks reaches the
+# handler through the actions sample's "Open Website" there.
 
 # Uninstall the settings sample, keeping its saved data: Uninstall, the last
 # item of its page's Actions menu. Pane asks first, showing its saved data,
@@ -737,7 +756,7 @@ Wait-Shown "Uninstalled Settings sample" -Prefix   # "...; its settings and cont
 Capture "50-uninstalled.png"
 Stop-Pane $process
 if (-not (Select-String -Quiet -SimpleMatch '"retained"' (Join-Path $data "extensions/installed.json"))) { throw "kept data not recorded" }
-if (Select-String -Quiet -SimpleMatch 'sample-token' (Join-Path $data "extensions/credentials.json")) { throw "credential not removed" }
+if (Token-Kept) { throw "credential not removed" }
 if (-not (Select-String -Quiet -SimpleMatch '"greeting-style": "formal"' (Join-Path $data "extensions/settings.json"))) { throw "setting not kept" }
 if (-not (Select-String -Quiet -SimpleMatch '"note": "Water the plants"' (Join-Path $data "extensions/content.json"))) { throw "note not kept" }
 $process = Start-Pane "stderr-reinstall.log" @("--install", "target/guests/packages/sample-settings")
@@ -823,6 +842,140 @@ Capture "58-disabled-pressed.png"   # still root search: nothing opened
 $shots = "57-disabled", "58-disabled-pressed" | ForEach-Object { Join-Path $OutDir "$_.png" }
 python "$PSScriptRoot/check_screenshot.py" --same @shots
 if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: the released hotkey still did something" }
+Stop-Pane $process
+
+# A hook-dispatched binding: the smoke holds Ctrl+Alt+J from its own
+# process first, as another application would (RegisterHotKey from this
+# PowerShell thread), so Windows refuses the chord to Pane and Pane's own
+# low-level keyboard hook takes the binding instead (#252, ADR 0039):
+# assigning it to Greeting in Settings says so on the row ("Dispatched
+# through Pane's keyboard hook"), and pressing it with the launcher
+# unfocused opens Greeting exactly as the registered chord does. A data
+# folder of its own.
+$data = Join-Path $OutDir "hook-hotkeys-data"
+if (Test-Path $data) { Remove-Item -Recurse -Force $data }
+$env:PANE_DATA_DIR = $data
+# MOD_NOREPEAT 0x4000 | MOD_CONTROL 0x2 | MOD_ALT 0x1, 'J' 0x4A: an
+# unlikely combination, so the session's own shortcuts are not disturbed.
+if (-not [Win]::RegisterHotKey([IntPtr]::Zero, 0x5A4A, 0x4003, 0x4A)) { throw "the smoke could not hold the chord" }
+$process = Start-Pane "stderr-hook.log" @("--install", "target/guests/packages/sample-settings")
+Send "{ENTER}"; Start-Sleep -Seconds 2   # Install; Greeting is selected
+Open-Extension "Settings sample"
+Press-Named "Hotkey for Greeting:" -Prefix   # the recorder listens
+Send "^%j"
+# Evidence of where the phase stands before it waits: the recorder's row
+# says whether the keys were captured at all, and what a refusal answered.
+Capture "77-hook-recorder.png"
+Wait-For (Join-Path $data "extensions/hotkeys.json") '"ctrl+alt+j"' $true
+Wait-Shown "Dispatched through Pane's keyboard hook" -Prefix
+Capture "77-hook-assigned.png"   # the row says the binding's dispatch route
+Close-Settings   # root search
+Minimize-Pane $process
+Capture "78-hook-unfocused.png"   # evidence only: Pane is not on screen
+# SendKeys injects the keys, as a tool would: the hook recognizes the
+# chord of another tool's injected keys all the same.
+[System.Windows.Forms.SendKeys]::SendWait("^%j"); Start-Sleep -Seconds 3
+Check-Pane-In-Front $process
+Capture "79-hook-opened.png"
+Check "79-hook-opened.png" "selected" 3000   # Greeting's first item, selected
+$shots = "78-hook-unfocused", "79-hook-opened" | ForEach-Object { Join-Path $OutDir "$_.png" }
+python "$PSScriptRoot/check_screenshot.py" --distinct @shots
+if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: the hook-dispatched hotkey opened nothing" }
+Stop-Pane $process
+[void][Win]::UnregisterHotKey([IntPtr]::Zero, 0x5A4A)
+
+# A lone tap of the Windows key (#260): the recorder's session with the
+# hook holds the keys back from Windows while it listens, so the tap is
+# recorded without the Start menu opening — the session is what makes
+# the kinds no registration can express recordable — and the row says
+# the binding works through Pane's keyboard hook. Pressed with the
+# launcher unfocused, the tap opens Greeting: the Start-menu mask keeps
+# the Start menu closed, so Pane is what comes to the front. A data
+# folder of its own.
+$data = Join-Path $OutDir "tap-hotkeys-data"
+if (Test-Path $data) { Remove-Item -Recurse -Force $data }
+$env:PANE_DATA_DIR = $data
+$process = Start-Pane "stderr-tap.log" @("--install", "target/guests/packages/sample-settings")
+Send "{ENTER}"; Start-Sleep -Seconds 2   # Install; Greeting is selected
+Open-Extension "Settings sample"
+Press-Named "Hotkey for Greeting:" -Prefix   # the recorder listens, holding the keys back
+Wait-Shown "Recording; Hotkey for Greeting"
+Capture "80-tap-recording.png"
+# VK_LWIN, pressed and released alone: a lone tap, held back from Windows.
+Press-Key 0x5B
+Wait-For (Join-Path $data "extensions/hotkeys.json") '"tap:win"' $true
+Wait-Shown "through Pane's keyboard hook" -Prefix
+Capture "81-tap-assigned.png"   # the row says the binding's dispatch route
+Close-Settings   # root search
+Minimize-Pane $process
+Capture "82-tap-unfocused.png"   # evidence only: Pane is not on screen
+# The bound tap, pressed as a tool's keys are: the mask keeps the Start
+# menu closed, and Pane opens Greeting in front.
+Press-Key 0x5B
+Start-Sleep -Seconds 3
+Check-Pane-In-Front $process
+Capture "83-tap-opened.png"
+Check "83-tap-opened.png" "selected" 3000   # Greeting's first item, selected
+$shots = "82-tap-unfocused", "83-tap-opened" | ForEach-Object { Join-Path $OutDir "$_.png" }
+python "$PSScriptRoot/check_screenshot.py" --distinct @shots
+if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: the tapped hotkey opened nothing" }
+
+# Switch Windows (#263, ADR 0040): the default extension lists the open
+# windows as Alt+Tab does -- with their titles, their applications' names
+# and icons, in z-order with the front application's window first -- and
+# Enter brings the chosen one to the front, restoring it if it is
+# minimized. The phase opens a Notepad of its own, on a file the smoke
+# makes so the window's title says which window it is; Pane's window
+# opens over it, so Notepad is the front application and its window is
+# the first row, selected, and one Enter switches to it. Pane's window
+# closed as the switch happened: the open-pane hotkey brings it back,
+# and typing in the command's search field filters by title, so the
+# second switch finds the window by what is typed. A data folder of its
+# own.
+$data = Join-Path $OutDir "switch-windows-data"
+if (Test-Path $data) { Remove-Item -Recurse -Force $data }
+$env:PANE_DATA_DIR = $data
+$notes = Join-Path $OutDir "switch-me.txt"
+Set-Content -Path $notes -Value "switch to me"
+$notepad = Start-Process notepad -PassThru -ArgumentList @("`"$notes`"")
+for ($i = 0; $i -lt 100 -and $notepad.MainWindowHandle -eq 0; $i++) {
+    Start-Sleep -Milliseconds 100; $notepad.Refresh()
+}
+if ($notepad.MainWindowHandle -eq 0) { throw "the smoke's Notepad window did not appear" }
+$process = Start-Pane "stderr-switch-windows.log" @("--install", "target/guests/packages/switch-windows")
+Send "{ENTER}"; Start-Sleep -Seconds 2   # Install; Switch Windows is selected
+Send "switch"; Start-Sleep -Seconds 2
+Send "{ENTER}"; Start-Sleep -Seconds 2   # the open windows, Notepad's first, selected
+Capture "610-switch-listed.png"
+Check "610-switch-listed.png" "selected" 3000   # a window's row is selected
+Send "{ENTER}"; Start-Sleep -Seconds 1   # switch to the selected window
+$switched = $false
+for ($i = 0; $i -lt 150; $i++) {
+    if ([Win]::GetForegroundWindow() -eq $notepad.MainWindowHandle) { $switched = $true; break }
+    Start-Sleep -Milliseconds 100
+}
+if (-not $switched) { throw "Switch Windows did not bring the smoke's window to the front" }
+Capture "612-switch-in-front.png"   # evidence only: Notepad is in front, Pane hidden
+# The open-pane hotkey brings the launcher back over Notepad, whose
+# window is the front application's again; typing filters the list by
+# title before the second switch.
+Send "^% "; Start-Sleep -Seconds 2
+Send "switch"; Start-Sleep -Seconds 2
+Send "{ENTER}"; Start-Sleep -Seconds 2
+Send "switch-me"; Start-Sleep -Seconds 2   # the command's search field filters by title
+Capture "613-switch-filtered.png"
+Check "613-switch-filtered.png" "selected" 3000   # the filtered window's row, selected
+Send "{ENTER}"; Start-Sleep -Seconds 1
+$switched = $false
+for ($i = 0; $i -lt 150; $i++) {
+    if ([Win]::GetForegroundWindow() -eq $notepad.MainWindowHandle) { $switched = $true; break }
+    Start-Sleep -Milliseconds 100
+}
+if (-not $switched) { throw "the filtered window did not come to the front" }
+$shots = "610-switch-listed", "612-switch-in-front" | ForEach-Object { Join-Path $OutDir "$_.png" }
+python "$PSScriptRoot/check_screenshot.py" --distinct @shots
+if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: switching changed nothing on screen" }
+[void]$notepad.CloseMainWindow()
 Stop-Pane $process
 
 # Pausing a broken extension: the settings sample's last item, Crash, crashes
@@ -1130,7 +1283,10 @@ Send "{ENTER}"; Start-Sleep -Seconds 2   # open Helper sample
 Send "{DOWN}"; Start-Sleep -Milliseconds 120; Send "{ENTER}"; Start-Sleep -Seconds 2   # Echo after waiting
 if (-not (Helpers-Running)) { throw "the waiting helper is not running" }
 Capture "94-helper-before-quit.png"
-Check "94-helper-before-quit.png" "progress"   # "Running…"
+# The footer's "Running…" text is gone (#248): waited-for work is the late
+# loading bar under the search field's rule, and a command's list has no
+# rule, so there is nothing to check in the picture — the helper process
+# check above is the state check.
 $alive = Get-ChildItem -Recurse -Filter "pane-echo.alive" $packages | Select-Object -First 1
 if (-not $alive) { throw "the waiting helper does not beat" }
 if (-not $process.CloseMainWindow()) { throw "Pane's window did not take the close request" }
@@ -1427,7 +1583,10 @@ Send "{ENTER}"; Start-Sleep -Seconds 2   # open Helper sample
 Send "{DOWN}"; Start-Sleep -Milliseconds 120; Send "{ENTER}"; Start-Sleep -Seconds 2   # Echo after waiting
 if (-not (Helpers-Running)) { throw "the waiting helper is not running" }
 Capture "201-runtime-helper-waiting.png"
-Check "201-runtime-helper-waiting.png" "progress"   # "Running…"
+# The footer's "Running…" text is gone (#248): waited-for work is the late
+# loading bar under the search field's rule, and a command's list has no
+# rule, so there is nothing to check in the picture — the helper process
+# check above is the state check.
 $alive = Get-ChildItem -Recurse -Filter "pane-echo.alive" $packages | Select-Object -First 1
 if (-not $alive) { throw "the waiting helper does not beat" }
 Inject-Fault "crash"
@@ -1686,23 +1845,20 @@ try {
     # #49: the update Pane applies by itself. A 0.2.0 of the sample is
     # published into the registry this phase serves (it reads its folder on
     # request, so publishing is dropping the tarball in), and Pane is
-    # stopped and started again: the first check, a second after the start,
-    # finds the newer version and replaces the installed copy - unpinned,
-    # and nothing of it running, so the safe boundary is at once - saying
-    # so in the status line. The new copy's command runs as the old one did.
+    # stopped and started again: the first check, a minute after the start
+    # (#256), finds the newer version and replaces the installed copy -
+    # unpinned, and nothing of it running, so the safe boundary is at once
+    # - quietly, its say the record it writes and the new copy's code. The
+    # new copy's command runs as the old one did.
     python "$PSScriptRoot/npm_publish.py" "target/guests/npm/pane-samples-greeter-0.1.0.tgz" "0.2.0"
     Stop-Pane $process
     $process = Start-Pane "stderr-npm.log"
-    # The check a second after the start, then the download and the apply:
-    # poll until the status line says the update landed, whenever that is,
-    # so a slow runner is waited for rather than slept past.
-    for ($i = 0; $i -lt 120; $i++) {
-        Capture "267-npm-updated-automatically.png"
-        python "$PSScriptRoot/check_screenshot.py" (Join-Path $OutDir "267-npm-updated-automatically.png") "success"
-        if ($LASTEXITCODE -eq 0) { break }
-        Start-Sleep -Milliseconds 500
-    }
-    Check "267-npm-updated-automatically.png" "success"   # "Updated Greeter from npm to 0.2.0"
+    # The check a minute after the start, then the download and the apply:
+    # wait for the record to say the update landed, whenever that is, so a
+    # slow runner is waited for rather than slept past; the capture shows
+    # the quiet window after it landed.
+    Wait-Record (Join-Path $env:PANE_DATA_DIR "extensions/installed.json") '"npmVersion": "0.2.0"' 180
+    Capture "267-npm-updated-automatically.png"
     Send "{ENTER}"; Start-Sleep -Seconds 3   # open Greeter from npm, the new copy
     Send "{ENTER}"; Start-Sleep -Seconds 2   # "Say hello"
     Capture "268-npm-new-copy-ran.png"
@@ -1802,8 +1958,9 @@ if ((Test-Path $downloads) -and (Get-ChildItem $downloads)) { throw "a Git downl
 # own from its tracked release branch -- `--install` naming the branch, so
 # the copy is tracked, not pinned -- with its command run; the branch then
 # moves to a 0.2.0 (repository_server.py move-sample) while Pane is
-# stopped, and the check a second after the restart replaces the installed
-# copy by itself, the new code running. Nothing reaches the network.
+# stopped, and the check a minute after the restart (#256) replaces the
+# installed copy by itself, quietly, the new code running. Nothing reaches
+# the network.
 $updateData = Join-Path $OutDir "git-update-data"
 if (Test-Path $updateData) { Remove-Item -Recurse -Force $updateData }
 $env:PANE_DATA_DIR = $updateData
@@ -1827,11 +1984,16 @@ try {
     Check "306-git-tracked-installed.png" "success"   # "Installed Greeter from Git"
     python "$PSScriptRoot/repository_server.py" move-sample (Join-Path $repositories "greeter-tracked") 0.2.0
     if ($LASTEXITCODE -ne 0) { throw "the tracked branch did not move" }
+    $moved = (python "$PSScriptRoot/repository_server.py" commit (Join-Path $repositories "greeter-tracked") release)
+    if ($LASTEXITCODE -ne 0) { throw "the moved branch's commit was not found" }
     Stop-Pane $process
     $process = Start-Pane "stderr-git-update.log"
-    # The check a second after the start, then the fetch and the apply:
-    # capture until the status line says the update landed.
-    Capture-Until "307-git-updated-automatically.png" "success" 60   # "Updated Greeter from Git to 0.2.0"
+    # The check a minute after the start, then the fetch and the apply:
+    # wait for the record to name the moved branch's commit, whenever that
+    # is (the update is quiet, its say the record and the new copy's
+    # code); the capture shows the quiet window after it landed.
+    Wait-Record (Join-Path $updateData "extensions/installed.json") $moved 180
+    Capture "307-git-updated-automatically.png"
     Send "{ENTER}"; Start-Sleep -Seconds 3   # open Greeter from Git, the new copy
     Send "{ENTER}"; Start-Sleep -Seconds 2   # "Say hello"
     Capture "308-git-new-copy-ran.png"
@@ -1848,8 +2010,8 @@ try {
     }
     Stop-Process -Id $server2.Id -ErrorAction SilentlyContinue
 }
-$moved = (python "$PSScriptRoot/repository_server.py" commit (Join-Path $repositories "greeter-tracked") release)
-if ($LASTEXITCODE -ne 0) { throw "the moved branch's commit was not found" }
+# The record was waited for above, before the new copy ran; the checks
+# name it in full.
 $record = Join-Path $updateData "extensions/installed.json"
 $fromGit = @((Get-Content -Raw $record | ConvertFrom-Json).packages | Where-Object { $_.git })
 if ($fromGit.Count -ne 1) { throw "not one package from Git recorded: $($fromGit.Count)" }
@@ -1859,11 +2021,12 @@ if ($fromGit[0].pinned) { throw "the tracked branch recorded as pinned" }
 $downloads = Join-Path $updateData "extensions/downloads"
 if ((Test-Path $downloads) -and (Get-ChildItem $downloads)) { throw "a Git download was left" }
 
-# File search (#29, #175): Files, a default extension (its data folder is
-# this phase's own), answers from Pane's file index, which covers the home
+# File search (#29, #175): the Rust files sample (the same contract the
+# Files default extension holds; its data folder is this phase's own),
+# answers from Pane's file index, which covers the home
 # folder; the smoke names a fixture folder for it to cover instead in
 # PANE_TEST_FILE_INDEX_HOME (a debug build's hook, which also keeps the index
-# in the data folder). Installing Files starts the index, and showing the
+# in the data folder). Installing it starts the index, and showing the
 # window lets its first walk start. The fixture folder's
 # path has spaces, and a file in it has non-ASCII letters too; typing "plan"
 # lists that file under "Files", selected, and Enter (Open, the file's first action, #150)
@@ -1891,10 +2054,10 @@ $openLog = Join-Path $OutDir "opened-file.txt"
 if (Test-Path $openLog) { Remove-Item -Force $openLog }
 $env:PANE_TEST_FILE_INDEX_HOME = (Resolve-Path -LiteralPath $filesFolder).Path
 $env:PANE_TEST_OPEN_FILE_LOG = $openLog
-$process = Start-Pane "stderr-files.log" @("--install", "target/guests/packages/files")
+$process = Start-Pane "stderr-files.log" @("--install", "target/guests/packages/sample-files")
 Send "{ENTER}"; Start-Sleep -Seconds 3   # Install; the index walks the fixture
 Capture "220-files-installed.png"
-Check "220-files-installed.png" "success"   # "Installed Files"
+Check "220-files-installed.png" "success"   # "Installed Rust files sample"
 # The install lands on a blank root search, where Escape hides the
 # launcher (release run 37698693722's frame 221 was the desktop): the
 # return to root key keeps it.
@@ -2022,30 +2185,47 @@ try {
     if (-not $service.HasExited) { Stop-Process -Id $service.Id }
 }
 
-# Installing Pane and acquiring its calculator (#51): the package
-# `cargo xtask package-windows --dev` builds is installed on a clean
+# Installing Pane and setting its default extensions up (#51, #278): the
+# package `cargo xtask package-windows --dev` builds is installed on a clean
 # machine — a fresh user profile (LOCALAPPDATA and APPDATA pointing into
 # the smoke's own output folder, so the install, Pane's data and the
 # shortcut touch nothing of the runner's user) and a PATH that holds
 # nothing at all, so no Rust, Node, npm, Git or compiler can be reached —
-# and Pane, started from what the install script installed, acquires its
+# and Pane, started from what the install script installed, fetches its
 # default extensions (the five of #60; no sample is one, #162) from the
-# artifact source this smoke serves on 127.0.0.1
-# (scripts/artifact_server.py, the payloads `cargo xtask package-windows`
-# assembled; nothing reaches the network or Pane's published downloads).
-# The calculator answers "6*7" with 42, with no developer tool anywhere.
-# The package is the development profile, because only a
-# development build takes its artifact source from PANE_ARTIFACTS; a
-# release build uses Pane's published downloads, which no controlled
-# source may replace. (The program files are removed again at the end of
-# the phase: the uploaded evidence is the screenshots and records, not the
-# program.)
+# commits this release pins: their repositories, cloned at those commits
+# from their real addresses on GitHub (the smoke's own setup on the
+# runner) and served on 127.0.0.1 over Git's smart
+# HTTP protocol (scripts/repository_server.py; the Pane under test
+# reaches no network address and no real Git host), named by the pins
+# file the development build reads through PANE_DEFAULTS. The clones hold
+# the release revisions' built components, so the first setup installs
+# exactly what a release installs; the calculator answers "6*7" with 42,
+# with no developer tool anywhere. The package is the development
+# profile, because only a development build takes its pins from
+# PANE_DEFAULTS; a release build uses the committed pins, which no
+# controlled source may replace. (The program files are removed again at
+# the end of the phase: the uploaded evidence is the screenshots and
+# records, not the program.)
 # The task's own output goes to CI's log, as the smoke's other cargo runs'
 # do (the runner's console), not to a file of the smoke's.
 cargo xtask package-windows --dev
 if ($LASTEXITCODE -ne 0) { throw "the package was not built" }
 $package = Get-ChildItem "target/dist/pane-*-windows-*-dev.zip" | Select-Object -First 1
 if (-not $package) { throw "the package was not built" }
+# The default extensions' repositories, cloned at the commits the
+# committed pins name and served from this computer for the rest of the
+# smoke: the phases that check first setup point PANE_DEFAULTS at the
+# pins naming them.
+$DefaultRepositories = Join-Path $OutDir "default-repositories"
+if (Test-Path $DefaultRepositories) { Remove-Item -Recurse -Force $DefaultRepositories }
+New-Item -ItemType Directory -Force -Path $DefaultRepositories | Out-Null
+$defaultsPortFile = Join-Path $OutDir "default-repository-server.port"
+if (Test-Path $defaultsPortFile) { Remove-Item -Force $defaultsPortFile }
+$defaultsServer = Start-Process python -PassThru -NoNewWindow `
+    -ArgumentList @("`"$PSScriptRoot/repository_server.py`"", "serve", "`"$DefaultRepositories`"", "`"$defaultsPortFile`"") `
+    -RedirectStandardError (Join-Path $OutDir "default-repository-server.log")
+$DefaultPins = Join-Path $OutDir "default-pins.json"
 # Not $PROFILE: PowerShell fills that variable with the user's own
 # profile script's path.
 $cleanProfile = Join-Path $OutDir "clean-profile"
@@ -2066,6 +2246,10 @@ try {
     # Generous: a slow runner may take seconds to start Python.
     for ($i = 0; $i -lt 600 -and -not (Test-Path $portFile) -and -not $server.HasExited; $i++) { Start-Sleep -Milliseconds 100 }
     if (-not (Test-Path $portFile)) { throw "the local artifact source did not start (see artifact-server.log)" }
+    for ($i = 0; $i -lt 600 -and -not (Test-Path $defaultsPortFile) -and -not $defaultsServer.HasExited; $i++) { Start-Sleep -Milliseconds 100 }
+    if (-not (Test-Path $defaultsPortFile)) { throw "the default extensions' repository server did not start (see default-repository-server.log)" }
+    python "$PSScriptRoot/repository_server.py" clone-defaults "crates/pane/defaults.json" "$DefaultRepositories" "$DefaultPins" "http://127.0.0.1:$((Get-Content $defaultsPortFile).Trim())/"
+    if ($LASTEXITCODE -ne 0) { throw "the default extensions' repositories were not cloned" }
     Expand-Archive -Path $package.FullName -DestinationPath $unpack
     $env:LOCALAPPDATA = Join-Path $cleanProfile "Local"
     $env:APPDATA = Join-Path $cleanProfile "Roaming"
@@ -2091,14 +2275,15 @@ try {
     $tools = Get-Command cargo, rustc, node, npm, git, cc, clang, make -ErrorAction SilentlyContinue
     if ($tools) { throw "the clean machine still reaches a development tool" }
     $env:PANE_ARTIFACTS = "http://127.0.0.1:$((Get-Content $portFile).Trim())/"
+    $env:PANE_DEFAULTS = $DefaultPins
     $process = Start-Pane "stderr-installed.log" @() $installed
     $env:PATH = $realPath
     $extensions = Join-Path $install "data\extensions"
-    # Generous: a slow runner may take a while to check every payload's
+    # Generous: a slow runner may take a while to check every revision's
     # components (120 s each).
     if ($process.HasExited) { throw "the installed Pane exited during setup" }
     # The default extensions (#60): all five, in every build; no sample
-    # is acquired (#162).
+    # is set up (#162).
     foreach ($default in "calculator", "applications", "quicklinks", "files", "clipboard-history") {
         Wait-For (Join-Path $extensions "installed.json") ('"default": "' + $default + '"') $true 1200
     }
@@ -2112,9 +2297,12 @@ try {
     Capture "502-calculator-copied.png"
     Check "502-calculator-copied.png" "success"   # "Copied 42 to the clipboard"
     if (Select-String -Quiet -SimpleMatch '"default": "helper-sample"' (Join-Path $extensions "installed.json")) {
-        throw "a sample was acquired as a default extension"
+        throw "a sample was set up as a default extension"
     }
-    if ((Get-ChildItem (Join-Path $extensions "acquired\calculator")).Count -ne 1) { throw "the calculator's payload is not cached" }
+    # Each default's record keeps the Git source it was fetched from: the
+    # repository, the pin's release tag, its commit and that it is pinned.
+    python "$PSScriptRoot/check_git_record.py" --defaults $DefaultPins (Join-Path $extensions "installed.json")
+    if ($LASTEXITCODE -ne 0) { throw "a default's record does not keep its Git source" }
     $downloads = Join-Path $extensions "downloads"
     if ((Test-Path $downloads) -and (Get-ChildItem $downloads)) { throw "downloads were left behind" }
     $shots = "500-installed-root", "501-calculator-answer" | ForEach-Object { Join-Path $OutDir "$_.png" }
@@ -2127,7 +2315,12 @@ try {
     Remove-Item -Force (Join-Path $unpack "pane\pane.exe")
 } finally {
     Stop-Process -Id $server.Id -ErrorAction SilentlyContinue
+    # The default extensions' repository server keeps serving: the
+    # clipboard and update phases below set the installed Panes up from
+    # the same repositories, and the last of them stops it.
     Remove-Item Env:PANE_ARTIFACTS -ErrorAction SilentlyContinue
+    Remove-Item Env:PANE_DEFAULTS -ErrorAction SilentlyContinue
+    $env:PANE_DEFAULTS = $NoDefaultPins
     $env:PATH = $realPath
     $env:APPDATA = $realAppData
     $env:LOCALAPPDATA = $realLocal
@@ -2136,9 +2329,9 @@ try {
 # Clipboard history (#35, #166, #167): Pane's own Clipboard History
 # records what is copied from the first start, with nothing to turn on.
 # Only the registered default extension does (a copy installed from its
-# folder starts off and shows the generic list), so this phase acquires
-# the default set from the artifact source the #51 phase built, served on
-# 127.0.0.1 as there, with the smoke's own build; Files' index covers an
+# folder starts off and shows the generic list), so this phase sets
+# the default set up from the pinned repositories the #51 phase serves,
+# with the smoke's own build; Files' index covers an
 # empty folder of the smoke's (PANE_TEST_FILE_INDEX_HOME), not the
 # runner's home. The text this smoke copies is kept, except text marked as
 # a password manager marks it (ExcludeClipboardContentFromMonitorProcessing,
@@ -2160,18 +2353,12 @@ if (Test-Path $data) { Remove-Item -Recurse -Force $data }
 $env:PANE_DATA_DIR = $data
 $registry = Join-Path $data "extensions/installed.json"
 $history = Join-Path $data "extensions/clipboard-history.json"
+$extensions = Join-Path $data "extensions"
 $clipboardHome = Join-Path $OutDir "clipboard-home"
 if (Test-Path $clipboardHome) { Remove-Item -Recurse -Force $clipboardHome }
 New-Item -ItemType Directory -Force -Path $clipboardHome | Out-Null
 $env:PANE_TEST_FILE_INDEX_HOME = (Resolve-Path $clipboardHome).Path
-$portFile = Join-Path $OutDir "clipboard-artifact-server.port"
-if (Test-Path $portFile) { Remove-Item -Force $portFile }
-$server = Start-Process python -PassThru -NoNewWindow `
-    -ArgumentList @("`"$PSScriptRoot/artifact_server.py`"", "target/dist/artifacts", "`"$portFile`"") `
-    -RedirectStandardError (Join-Path $OutDir "clipboard-artifact-server.log")
-for ($i = 0; $i -lt 600 -and -not (Test-Path $portFile) -and -not $server.HasExited; $i++) { Start-Sleep -Milliseconds 100 }
-if (-not (Test-Path $portFile)) { throw "the clipboard phase's artifact source did not start (see clipboard-artifact-server.log)" }
-$env:PANE_ARTIFACTS = "http://127.0.0.1:$((Get-Content $portFile).Trim())/"
+$env:PANE_DEFAULTS = $DefaultPins
 Add-Type @"
 using System; using System.Runtime.InteropServices; using System.Text; using System.Threading;
 public static class PaneClip {
@@ -2247,17 +2434,28 @@ function Copy-Text($text, $marker) { [PaneClip]::SetText($text, $marker); Start-
 # Puts the file at $path on the clipboard, as File Explorer's Copy does
 # (CF_HDROP).
 function Copy-File($path) { [PaneClip]::SetFiles($path); Start-Sleep -Milliseconds 500 }
-# The kept texts, newest first, as clipboard-history.json holds them.
+# The kept texts, newest first, as clipboard-history.json holds them. The
+# file holds each encrypted (#130), so clipboard_history.py decrypts them,
+# as the same Windows user.
 function Kept-Texts {
-    if (-not (Test-Path $history)) { return @() }
-    $file = Get-Content -Raw $history | ConvertFrom-Json
-    # {"version": 1, "packages": {<identity>: {"items": [...newest first]}}}
-    $items = foreach ($package in $file.packages.PSObject.Properties) { $package.Value.items }
-    return @($items | ForEach-Object { $_.text })
+    $joined = (python "$PSScriptRoot/clipboard_history.py" texts $extensions) -join ""
+    if ($LASTEXITCODE -ne 0) { throw "could not read the clipboard history" }
+    if ($joined -eq "") { return @() }
+    return @($joined -split ",")
 }
 function Not-Kept($text) {
     Start-Sleep -Seconds 2
     if ((Kept-Texts) -contains $text) { throw "$text was kept" }
+}
+# Waits until a kept text holds $text ($present) or none does (-not
+# $present), for 10 seconds.
+function Wait-Kept($text, [bool]$present) {
+    for ($i = 0; $i -lt 100; $i++) {
+        $found = [bool](Kept-Texts | Where-Object { $_.Contains($text) })
+        if ($found -eq $present) { return }
+        Start-Sleep -Milliseconds 100
+    }
+    throw "${text} is not $(if ($present) { 'kept' } else { 'gone' })"
 }
 # Opens Pane's Clipboard History from wherever the launcher is: its split
 # view, the field ("Type to filter entries…") holding the keyboard.
@@ -2277,7 +2475,7 @@ function History-Action($label) {
 $process = $null
 try {
     $process = Start-Pane "stderr-clipboard.log"
-    # The default set (#60), acquired at this first start.
+    # The default set (#60), set up at this first start.
     foreach ($default in "calculator", "applications", "quicklinks", "files", "clipboard-history") {
         Wait-For $registry ('"default": "' + $default + '"') $true 1200
     }
@@ -2287,21 +2485,21 @@ try {
     Copy-Text "pane-smoke-no-history" "CanIncludeInClipboardHistory"
     Copy-Text "pane-smoke-no-cloud" "CanUploadToCloudClipboard"
     Copy-Text "pane-smoke-second" $null
-    Wait-For $history "pane-smoke-second" $true
+    Wait-Kept "pane-smoke-second" $true
     if (((Kept-Texts) -join ",") -ne "pane-smoke-second,pane-smoke-kept") { throw "kept: $(Kept-Texts)" }
     Open-History
     Capture "280-clipboard-recording.png"
     Check "280-clipboard-recording.png" "hint"   # the split view: Today, the two records, the field's placeholder
     History-Action "Pause Recording"
-    Wait-For $history '"capture": "paused"' $true
+    Wait-For $history '"capture":"paused"' $true
     Capture-Until "281-clipboard-paused.png" "success" 10   # its toast: "Recording paused"
     Copy-Text "pane-smoke-paused" $null
     Not-Kept "pane-smoke-paused"
     Open-History
     History-Action "Resume Recording"
-    Wait-For $history '"capture": "on"' $true
+    Wait-For $history '"capture":"on"' $true
     Copy-Text "pane-smoke-resumed" $null
-    Wait-For $history "pane-smoke-resumed" $true
+    Wait-Kept "pane-smoke-resumed" $true
     Open-History
     Capture "282-clipboard-kept.png"   # evidence only: the three records, newest first
     Send "pane-smoke-second"; Start-Sleep -Seconds 1   # the filter leaves that record, selected
@@ -2330,11 +2528,11 @@ try {
     Wait-For $registry '"disabled": true' $false
     Close-Settings
     Copy-Text "pane-smoke-enabled" $null
-    Wait-For $history "pane-smoke-enabled" $true
+    Wait-Kept "pane-smoke-enabled" $true
     Stop-Pane $process
     $process = Start-Pane "stderr-clipboard-restarted.log"
     Copy-Text "pane-smoke-after-restart" $null
-    Wait-For $history "pane-smoke-after-restart" $true
+    Wait-Kept "pane-smoke-after-restart" $true
     Open-History
     Capture "285-clipboard-after-restart.png"
     Check "285-clipboard-after-restart.png" "hint"   # kept again after the restart
@@ -2345,8 +2543,10 @@ try {
     $expected = "pane-smoke-after-restart,pane-smoke-enabled,pane-smoke-second,pane-smoke-resumed,pane-smoke-kept"
     if (((Kept-Texts) -join ",") -ne $expected) { throw "kept: $(Kept-Texts)" }
     foreach ($never in "secret", "no-history", "no-cloud", "paused", "disabled", "restarted-disabled") {
-        if (Select-String -Quiet -SimpleMatch "pane-smoke-$never" $history) { throw "pane-smoke-$never was kept" }
+        if ((Kept-Texts) -contains "pane-smoke-$never") { throw "pane-smoke-$never was kept" }
     }
+    # Kept encrypted (#130): no copied text is in the file as it is.
+    if (Select-String -Quiet -SimpleMatch "pane-smoke-" $history) { throw "a copied text is in clipboard-history.json as it is" }
 
     # Clipboard history expiry and deletion (#36, #166), on the history just
     # kept. With Pane stopped, the smoke makes pane-smoke-kept 8 days old
@@ -2359,7 +2559,6 @@ try {
     # (#167); and Clear History, once confirmed, deletes every record while
     # recording goes on, so a later copy is kept. Deleting never changes
     # what is on the clipboard.
-    $extensions = Join-Path $data "extensions"
     function History-Field($name) { (python "$PSScriptRoot/clipboard_history.py" field $extensions $name) -join "" }
     # The kept texts, newest first, joined by commas ("" when none).
     function Kept-Joined { (python "$PSScriptRoot/clipboard_history.py" texts $extensions) -join "" }
@@ -2376,36 +2575,36 @@ try {
     $onClipboard = [PaneClip]::GetText()
     Send "pane-smoke-second"; Start-Sleep -Seconds 1   # the filter leaves that record, selected
     History-Action "Delete Entry"
-    Wait-For $history "pane-smoke-second" $false
+    Wait-Kept "pane-smoke-second" $false
     Capture-Until "401-clipboard-item-deleted.png" "success" 10   # its toast: "Deleted the kept item"
     if ((Kept-Joined) -ne "pane-smoke-after-restart,pane-smoke-enabled,pane-smoke-resumed") { throw "kept: $(Kept-Joined)" }
     if ([PaneClip]::GetText() -ne $onClipboard) { throw "deleting a record changed the clipboard" }
     Open-History
     History-Action "1 Hour"   # Keep History For: 1 Hour
-    Wait-For $history '"retentionSeconds": 3600' $true
+    Wait-For $history '"retentionSeconds":3600' $true
     Capture-Until "402-clipboard-retention-changed.png" "success" 10   # its toast: "History is kept for 1 hour; deleted 1 kept item older"
     if ((Kept-Joined) -ne "pane-smoke-after-restart,pane-smoke-resumed") { throw "kept: $(Kept-Joined)" }
     $copiedFile = Join-Path $clipboardHome "pane-smoke-file.txt"
     Set-Content -Encoding ASCII -LiteralPath $copiedFile "a file the smoke copies"
     Copy-File (Resolve-Path -LiteralPath $copiedFile).Path
-    Wait-For $history "pane-smoke-file.txt" $true
-    if (-not (Select-String -Quiet -SimpleMatch '"files"' $history)) { throw "the copied file was not kept as a file" }
+    Wait-Kept "pane-smoke-file.txt" $true
+    if (-not ((python "$PSScriptRoot/clipboard_history.py" files $extensions) -join "").Contains("pane-smoke-file.txt")) { throw "the copied file was not kept as a file" }
     Open-History
     Send "pane-smoke-file"; Start-Sleep -Seconds 1   # the filter leaves the file's record, selected
     Capture "403-clipboard-file.png"   # evidence only: the record, the file's icon and its preview
     Copy-Text "pane-smoke-final" $null
-    Wait-For $history "pane-smoke-final" $true
+    Wait-Kept "pane-smoke-final" $true
     Open-History
     History-Action "Clear History"   # asks first
     Capture "404-clipboard-clear-asked.png"   # evidence only: "Clear Clipboard History?"
     Send "{ENTER}"   # Clear History
-    Wait-For $history "pane-smoke-final" $false; Start-Sleep -Seconds 1
+    Wait-Kept "pane-smoke-final" $false; Start-Sleep -Seconds 1
     Capture "405-clipboard-cleared.png"
     if ((Kept-Joined) -ne "") { throw "kept: $(Kept-Joined)" }
     if ((History-Field "capture") -ne "on") { throw "history is $(History-Field 'capture') after Clear History" }
     if ([PaneClip]::GetText() -ne "pane-smoke-final") { throw "deleting history changed the clipboard" }
     Copy-Text "pane-smoke-after-clear" $null
-    Wait-For $history "pane-smoke-after-clear" $true
+    Wait-Kept "pane-smoke-after-clear" $true
     $shots = "400-clipboard-expired", "401-clipboard-item-deleted", "402-clipboard-retention-changed", "403-clipboard-file", "405-clipboard-cleared" | ForEach-Object { Join-Path $OutDir "$_.png" }
     python "$PSScriptRoot/check_screenshot.py" --distinct @shots
     if ($LASTEXITCODE -ne 0) { throw "screenshot check failed: clipboard history expiry and deletion changed nothing" }
@@ -2417,6 +2616,9 @@ try {
         Stop-Process -Id $process.Id -ErrorAction SilentlyContinue
         $process.WaitForExit()
     }
+    # The default extensions' repository server keeps serving the update
+    # phase below; this phase's Pane is the last one started with its
+    # pins, but the update phase's installs the same defaults.
     Stop-Process -Id $server.Id -ErrorAction SilentlyContinue
     Remove-Item Env:PANE_ARTIFACTS -ErrorAction SilentlyContinue
     Remove-Item Env:PANE_TEST_FILE_INDEX_HOME -ErrorAction SilentlyContinue
@@ -2441,9 +2643,9 @@ try {
 # old one renamed pane.exe.old, removed on a later start — so the new
 # version is used the next time Pane starts (Pane never restarts itself).
 # The new Pane, started again, reports 99.0.0, with the old version's
-# data (the calculator acquired at first setup) and the extension the
-# user disabled (Clipboard History) kept, and with nothing of the update
-# left in the install folder.
+# data (the calculator set up at first setup, from the pinned
+# repositories) and the extension the user disabled (Clipboard History)
+# kept, and with nothing of the update left in the install folder.
 cargo xtask package-windows --dev --package-version 99.0.0
 if ($LASTEXITCODE -ne 0) { throw "the update package was not built" }
 $older = Get-ChildItem "target/dist/pane-0.1.0-windows-*-dev.zip" | Select-Object -First 1
@@ -2487,23 +2689,24 @@ try {
     New-Item -ItemType Directory -Force -Path $cleanBin | Out-Null
     $env:PATH = $cleanBin
     $env:PANE_ARTIFACTS = "http://127.0.0.1:$((Get-Content $portFile).Trim())/"
+    $env:PANE_DEFAULTS = $DefaultPins
     $process = Start-Pane "update-stderr-0.1.0.log" @() $installed
     $env:PATH = $realPath
-    # First setup: the default extensions are acquired (one index read
-    # per payload), and Pane's own check reads the index once more.
+    # First setup fetches the pinned commits from the repositories (no
+    # request reaches the artifact source for them), and Pane's own check
+    # reads the index once — its request is the first.
     if ($process.HasExited) { throw "the installed Pane exited during setup" }
     # The default set (#60).
-    foreach ($default in "calculator", "applications", "quicklinks", "files", "clipboard-history") {
+    foreach ($default in "calculator", "applications", "quicklinks", "files", "clipboard-history", "run", "switch-windows") {
         Wait-For $registry ('"default": "' + $default + '"') $true 1200
     }
-    # The check has read the index (its request is the third): the offer
-    # is in root search. The status line tells what it found; nothing has
-    # been downloaded.
+    # The check has read the index: the offer is in root search. The
+    # status line tells what it found; nothing has been downloaded.
     for ($i = 0; $i -lt 100; $i++) {
-        if ((Select-String -SimpleMatch "pane-defaults.json" $serverLog).Count -ge 3) { break }
+        if ((Select-String -SimpleMatch "pane-defaults.json" $serverLog).Count -ge 1) { break }
         Start-Sleep -Milliseconds 100
     }
-    if ((Select-String -SimpleMatch "pane-defaults.json" $serverLog).Count -lt 3) { throw "Pane never checked for its own update" }
+    if ((Select-String -SimpleMatch "pane-defaults.json" $serverLog).Count -lt 1) { throw "Pane never checked for its own update" }
     Start-Sleep -Seconds 2
     Capture "600-notification.png"
     Check "600-notification.png" "success"   # "Pane 99.0.0 is available" (or the setup's own outcome)
@@ -2594,7 +2797,10 @@ try {
     Remove-Item -Force $installed
 } finally {
     Stop-Process -Id $server.Id -ErrorAction SilentlyContinue
+    Stop-Process -Id $defaultsServer.Id -ErrorAction SilentlyContinue
     Remove-Item Env:PANE_ARTIFACTS -ErrorAction SilentlyContinue
+    Remove-Item Env:PANE_DEFAULTS -ErrorAction SilentlyContinue
+    $env:PANE_DEFAULTS = $NoDefaultPins
     $env:PATH = $realPath
     $env:APPDATA = $realAppData
     $env:LOCALAPPDATA = $realLocal

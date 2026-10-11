@@ -8,10 +8,12 @@ mod arguments;
 mod atomic;
 pub mod autostart;
 pub mod changes;
+pub mod check;
 pub mod clipboard;
 pub mod defaults;
 mod dependencies;
 pub mod develop;
+pub mod diagnostics;
 pub mod downloads;
 mod dropdown;
 mod extension_data;
@@ -19,6 +21,7 @@ pub mod extension_log;
 pub mod feedback;
 pub mod file_index;
 pub mod files;
+pub mod game_mode;
 mod generation;
 pub mod git;
 mod helpers;
@@ -31,8 +34,10 @@ pub mod keyboard;
 mod launch;
 mod launcher;
 mod links;
+pub mod local_channel;
 pub mod npm;
 mod operations;
+pub mod pack;
 mod packages;
 #[cfg(test)]
 mod peak_memory;
@@ -40,13 +45,21 @@ pub mod placement;
 mod platform;
 mod preferences;
 mod programs;
+mod protection;
 mod registrations;
+pub mod run;
 mod runtime;
+pub mod schema;
 mod search;
+mod source_map;
+pub mod switch_windows;
 pub mod system;
+pub mod system_commands;
 pub mod system_icons;
+pub mod templates;
 mod threads;
 pub mod tray;
+mod typed_folder;
 mod util;
 mod waiting;
 #[cfg(windows)]
@@ -60,10 +73,11 @@ pub use feedback::{
     ConfirmAnswer, Confirmation, Hud, NextShowing, PopToRoot, ShownToast, Toast, ToastAction,
     ToastSlot, ToastStyle, WindowControl, WindowPresence,
 };
+pub use game_mode::GameMode;
 pub use helpers::runner::{MAX_HELPER_INPUT, MAX_HELPER_OUTPUT};
 pub use host_settings::{
     BackgroundEffect, EscapeBehavior, HostSettings, MaterialPreference, NavigationBindings,
-    OpeningMonitor, PinnedLayout, Reopening, ThemePreference, WindowMode,
+    OpeningMonitor, PinnedLayout, Reopening, SearchSensitivity, ThemePreference, WindowMode,
 };
 #[doc(hidden)]
 pub use http::HttpLimits;
@@ -72,23 +86,26 @@ pub use launch::{LaunchRecord, LaunchSource, LaunchType};
 pub use launcher::clipboard_view;
 pub use launcher::search_files;
 pub use launcher::{
-    AliasOutcome, ApplicationUpdate, BuildFailure, Capability, CapabilityProvider,
-    CommandPreferences, CommandRegistration, ComputedAnswer, CustomViewSnapshot, Development,
-    ExtensionDetails, ExtensionMark, ExtensionOperation, ExtensionWait, FixAction, FormField,
-    FormView, HotkeyOutcome, ItemAction, ItemActions, Launcher, LauncherView, ListPresentation,
+    AliasFlow, AliasOutcome, ApplicationUpdate, ArgumentFields, BuildFailure, Capability,
+    CapabilityProvider, CommandPreferences, CommandRegistration, ComputedAnswer,
+    CustomViewSnapshot, DISMISS_NOTICE, Development, ExtensionDetails, ExtensionMark,
+    ExtensionOperation, ExtensionWait, FixAction, FolderAsk, FormField, FormView, HotkeyOutcome,
+    ItemAction, ItemActions, Launcher, LauncherView, ListPresentation, LogNotice,
     MANAGE_EXTENSIONS, OpenSubmenu, OperationKind, PackagePreferences, PinTarget, PreferenceField,
     PreferencesTarget, Presentation, ProvidedCapability, Question, QuickSlot, RequirementCycle,
     RequirementFix, ResultAction, ResultActionItem, ResultActions, Row, RowKind, RowPresentation,
     Screen, Section, SelectedAction, SettingsTarget, SetupHeader, ShortcutCatalog, ShortcutCommand,
-    ShortcutGroup, SlotChange, Status, SubmenuState, Unavailable, UnboundShortcut,
-    UnmetRequirement, UpdateHold, answer_sections, root_sections,
+    ShortcutGroup, SlotChange, Status, SubmenuState, UNEXPECTED_QUIT, Unavailable, UnboundShortcut,
+    UnmetRequirement, UpdateHold, UpdateResult, UpdateResults, UpdateResultsAction,
+    answer_sections, root_sections,
 };
 pub use links::LinkOpener;
 pub use operations::{MAX_CALL_DEPTH, MAX_OPERATION_JSON};
 pub use packages::{
-    CommandMode, EXTENSION_API, InstalledPackage, ListedCommand, MANIFEST_FILE, MANIFEST_VERSION,
-    MAX_SCHEDULE_SECONDS, MIN_SCHEDULE_SECONDS, Manifest, ManifestCommand, ManifestHelper,
-    ManifestOperation, ManifestSchedule, PackageError, PackageIdentity, RetainedData, SavedData,
+    CommandMatches, CommandMode, CommandWhen, EXTENSION_API, InstalledPackage, ListedCommand,
+    MANIFEST_FILE, MANIFEST_VERSION, MAX_KEYWORDS, MAX_SCHEDULE_SECONDS, MIN_SCHEDULE_SECONDS,
+    Manifest, ManifestCommand, ManifestHelper, ManifestOperation, ManifestSchedule, PackageError,
+    PackageIdentity, RetainedData, SavedData,
 };
 #[doc(hidden)]
 pub use pane_build::process_tree;
@@ -101,6 +118,9 @@ pub use programs::runner::{MAX_PROGRAM_OUTPUT, SearchPath};
 pub use runtime::Fault;
 #[doc(hidden)]
 pub use runtime::Limits;
+#[cfg(debug_assertions)]
+#[doc(hidden)]
+pub use runtime::Timers;
 #[cfg(debug_assertions)]
 #[doc(hidden)]
 pub use runtime::memory_peak;

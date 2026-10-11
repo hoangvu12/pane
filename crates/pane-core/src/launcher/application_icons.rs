@@ -12,8 +12,9 @@
 //! row on screen ahead of the background refresh.
 //!
 //! The applications listed by the commands' kept results are the ones the
-//! cache refreshes after each start; a command disabled or replaced takes
-//! its applications out of that refresh with its results.
+//! cache refreshes after each start (extracting only an icon missing,
+//! changed or old); a command disabled or replaced takes its applications
+//! out of that refresh with its results.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -102,20 +103,35 @@ pub(super) fn shown(state: &State, id: &str) -> Icon {
 
 /// The application icon of the root row with id `row` (`<command
 /// id>:<result id>`, as a quick slot names an indexed result), when the
-/// kept result with that id opens an installed application.
+/// kept result with that id opens an installed application: its kept
+/// image, or — not there yet or failed — the reference itself with the
+/// placeholder standing in for it, the shape the window draws an icon
+/// that has not loaded in (its fallback), so the placeholder shows in the
+/// icon's place rather than as an icon of its own.
 pub(super) fn of_row(state: &State, row: &str) -> Option<Icon> {
     state
         .indexes
         .results()
         .find(|result| result.row.id == row)
         .and_then(|result| match &result.entry {
-            Entry::OpenApplication { id, .. } => Some(shown(state, id)),
+            Entry::OpenApplication { id, .. } => {
+                let shown = shown(state, id);
+                Some(if matches!(&shown.source, IconSource::Image { .. }) {
+                    shown
+                } else {
+                    Icon {
+                        fallback: Some(Box::new(shown)),
+                        ..Icon::new(IconSource::Application(id.clone()))
+                    }
+                })
+            }
             _ => None,
         })
 }
 
 /// Tells the cache which applications the commands' kept results list
-/// now: their icons are refreshed in the background, the others' no more.
+/// now: their icons are refreshed in the background when missing, changed
+/// or old, the others' no more.
 pub(super) fn listed(state: &State) {
     let Some(cache) = &state.application_icons.cache else {
         return;

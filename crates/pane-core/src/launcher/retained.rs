@@ -18,6 +18,7 @@
 //! its package's again and nothing is deleted.
 
 use std::future::Future;
+use std::time::Instant;
 
 use super::off_thread;
 use super::{Changing, Entry, Launcher, LauncherView, Question, Row, Screen, State, Status};
@@ -133,7 +134,9 @@ impl Launcher {
         if !state.claim(&identity, Changing::DeletingRetained) {
             return None;
         }
-        state.view.status = Status::Running;
+        state.view.status = Status::Running {
+            since: Instant::now(),
+        };
         Some(retained)
     }
 
@@ -255,13 +258,14 @@ pub(super) fn rows(retained: &[RetainedData], data: &ExtensionData) -> (Vec<Row>
     if retained.is_empty() {
         return (Vec::new(), Vec::new());
     }
-    // Each kind's file is read once for every row.
+    // Each kind's file is read once for every row; each row says how many
+    // of its identity's values cannot be read on this computer (#130).
     let kept = data.kept_now(&DataKind::ALL);
     retained
         .iter()
         .map(|retained| {
             let kept = kept
-                .describe(&retained.identity)
+                .describe_unreadable(&retained.identity)
                 .unwrap_or_else(|| "nothing".into());
             let row = Row {
                 id: format!("delete-retained:{}", retained.identity.key()),
