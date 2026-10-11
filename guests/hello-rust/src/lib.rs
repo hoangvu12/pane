@@ -23,7 +23,8 @@ async fn act(id: &str) -> Result<(), String> {
             show_toast(Toast::success(GREETING));
             Ok(())
         }
-        other => Err(format!("unknown item: {other}"))}
+        other => Err(format!("unknown item: {other}")),
+    }
 }
 
 impl Command for Hello {
@@ -32,5 +33,4 @@ impl Command for Hello {
     async fn render() -> Result<List, String> {
         Ok(List::new("Hello").item(Item::new("hello", "Say hello").on_action(|| act("hello"))))
     }
-
 }

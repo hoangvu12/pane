@@ -2,7 +2,7 @@
 //! `form` node whose children are the author's own layout — the fields
 //! anywhere in it — and whose submission is an action. A submission
 //! collects the form's fields' values and runs the listener
-//! [`Cx::form_listener`] names, told them all keyed by the fields' keys;
+//! [`crate::view::Cx::form_listener`] names, told them all keyed by the fields' keys;
 //! Pane draws the tree the listener's view answers with, so validation
 //! errors are the fields' `error` in it.
 //!
@@ -46,7 +46,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 
 use crate::view::{
-    Cx, FormListener, IntoNode, Listener, Node, NodeKind, ValueListener, divider, link, markdown,
+    FormListener, IntoNode, Listener, Node, NodeKind, ValueListener, divider,
 };
 
 /// The values a form was submitted with (#241): each field's, keyed by
@@ -139,7 +139,7 @@ impl FormValues {
                 None => break,
             };
             let skipped = rest.trim_start();
-            if let Some(text) = skipped.strip_prefix('"') {
+            if skipped.starts_with('"') {
                 let end = match skipped[1..].find('"') {
                     Some(end) => end + 1,
                     None => break,
@@ -386,7 +386,7 @@ pub fn folder_picker(key: impl Into<String>) -> FolderPicker {
 /// The description between a form's fields: `markdown`, as the `markdown`
 /// component draws it.
 pub fn description(markdown: impl Into<String>) -> crate::view::Markdown {
-    markdown(markdown)
+    crate::view::markdown(markdown)
 }
 
 /// The separator between a form's fields: a hairline rule, as the
@@ -398,7 +398,7 @@ pub fn separator() -> crate::view::Divider {
 /// The link between a form's fields: `label`, pressed running
 /// `on_click` (see [`crate::view::link`]).
 pub fn link(label: impl Into<String>, on_click: Listener) -> crate::view::Link {
-    link(label).on_click(on_click)
+    crate::view::link(label).on_click(on_click)
 }
 
 /// The field `kind` node, keyed `key`.
@@ -770,7 +770,7 @@ impl TagPicker {
     /// A change of the chosen tags runs `listener`, told them all.
     pub fn on_change(mut self, listener: Listener) -> TagPicker {
         if let NodeKind::TagPicker(picker) = &mut self.0.kind {
-            picker.on_click = Some(listener);
+            picker.on_change = Some(listener);
         }
         self
     }

@@ -191,9 +191,7 @@ impl View for Calling {
                 .into_answer();
         }
         if self.pending.is_some() {
-            return pane_extension::view::loading(pane_extension::view::text(
-                "Calling the other extension…",
-            ));
+            return pane_extension::view::text("Calling the other extension…").into_answer();
         }
         form_of(self, submit, String::new()).into_answer()
     }

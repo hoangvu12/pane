@@ -1,7 +1,7 @@
 //! Pane's timer sample in Rust: a clock whose screen changes by itself —
 //! the view asks Pane to render it again after every second
 //! (`refresh-after-ms`, #236) — with its caption arriving as pending data
-//! shown first as a loading state (`Pending` and `loading`), whose arrival
+//! shown first as a loading state (`Pending`), whose arrival
 //! asks for a drawing itself (#243): it is shown the moment it lands, with
 //! no timer to wait for. The behaviour matches the JavaScript and
 //! TypeScript samples (`sample-timer-js`, `sample-timer-ts`): the same
@@ -13,7 +13,7 @@ use core::time::Duration;
 
 use pane_extension::alloc::{format, string::String};
 use pane_extension::view::{
-    Cx, IntoAnswer, IntoNode, Pending, Space, TextLevel, TextStyle, View, column, loading, text,
+    Cx, IntoAnswer, IntoNode, Pending, Space, TextLevel, TextStyle, View, column, text,
 };
 use pane_extension::{Command, LaunchRecord};
 
@@ -47,7 +47,7 @@ impl View for Timer {
             }
             // The loading state: shown at once; the caption's arrival
             // asks for the drawing that replaces it.
-            None => loading(text(LOADING).level(TextLevel::Secondary)),
+            None => text(LOADING).level(TextLevel::Secondary).into_answer(),
         }
     }
 }
