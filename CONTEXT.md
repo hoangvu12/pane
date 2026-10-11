@@ -321,7 +321,7 @@ A Git repository or folder whose root lists several extension packages, each in 
 _Avoid_: Monorepo, bundle, extension pack, marketplace
 
 **Extension id**:
-The name a collection gives one of its extensions, unique within the collection and kept across its releases; with the repository, it forms that extension's package identity.
+The name a collection gives one of its extensions, unique within the collection and kept across its releases; with the repository, it forms that extension's package identity. A collection may rename one — its index's `renamed` map naming the old id's new one, or `null` for one it removed (ADR 0044): an old id resolves to the extension's current one wherever an id is resolved, and an installed copy keeps the id it was installed with, its updates following the map to the current id's files.
 _Avoid_: Slug, path (an extension's folder can move; its id stays)
 
 **Source-only package**:

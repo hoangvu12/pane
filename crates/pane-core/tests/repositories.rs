@@ -184,6 +184,29 @@ impl Dirs {
         }
     }
 
+    /// The controlled collection, served as `tools`, whose release branch
+    /// holds a second release, `v0.2.0`, that renamed its extension
+    /// `clock` to `time` (#310, ADR 0044): that revision's index lists
+    /// `time` at `extensions/time` with `clock` mapped to it, so an
+    /// address — or a dependency's source — naming the old id resolves
+    /// to the current extension, which installs under its current id.
+    /// `main` and the release `v0.1.0` are as [`Dirs::collection`]'s, the
+    /// two releases standing side by side as an evolving collection's do.
+    fn renamed(&self) -> String {
+        let (repo, url) = self.repo("tools");
+        repo.commit(
+            &collection_files(&guests(), INDEX, false),
+            "Clock 0.1.0 source",
+        );
+        repo.git(&["switch", "--quiet", "-c", "release"]);
+        repo.commit(&collection_files(&guests(), INDEX, true), "Release 0.1.0");
+        repo.tag("v0.1.0");
+        repo.commit(&renamed_collection_files(&guests()), "Rename clock to time");
+        repo.tag("v0.2.0");
+        repo.git(&["switch", "--quiet", "main"]);
+        url
+    }
+
     /// The identity of the repository served as `name`.
     fn identity(&self, name: &str) -> String {
         let host = self.server.url().trim_start_matches("http://");
@@ -303,6 +326,35 @@ fn write_collection(folder: &Path, files: Vec<(&'static str, Vec<u8>)>) {
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(path, contents).unwrap();
     }
+}
+
+/// The files of a collection whose index renamed its extension `clock`
+/// to `time` (ADR 0044, #310), as [`Dirs::renamed`] commits them: the
+/// index listing `time` at `extensions/time` with `clock` mapped to it,
+/// and the Git sample's package — titled "Clock from Git", as `clock`'s
+/// was: a renamed id keeps the extension — under that folder, with its
+/// built component. A local collection that renamed one is written from
+/// the same files ([`write_collection`]).
+fn renamed_collection_files(guests: &Path) -> Vec<(&'static str, Vec<u8>)> {
+    let sample = guests.join("git/greeter");
+    let read = |file: &str| {
+        fs::read(sample.join(file)).unwrap_or_else(|error| {
+            panic!("{}: {error}; run `cargo xtask guests`", sample.display())
+        })
+    };
+    let manifest = String::from_utf8(read("pane.json"))
+        .unwrap()
+        .replace("Greeter from Git", "Clock from Git");
+    let index = r#"{ "extensions": [ { "id": "time", "path": "extensions/time" } ],
+        "renamed": { "clock": "time" } }"#;
+    vec![
+        ("pane-collection.json", index.as_bytes().to_vec()),
+        ("extensions/time/pane.json", manifest.into_bytes()),
+        (
+            "extensions/time/dist/git_greeter.wasm",
+            read("dist/git_greeter.wasm"),
+        ),
+    ]
 }
 
 fn has(details: &[String], line: &str) -> bool {
@@ -1736,6 +1788,148 @@ fn a_local_dependency_naming_one_extension_of_a_collection_installs_it() {
     assert_eq!(
         caller["dependencies"][0],
         json!({ "id": "greeter", "local": format!("{}#clock", resolved.display()) })
+    );
+    assert_eq!(
+        run(
+            &launcher,
+            "Greet through dependencies",
+            "Greet through the required greeter"
+        ),
+        Status::Result("Hello, Pane, from the Git repository".into())
+    );
+}
+
+// ------------------------------------------- renames and removals (#310)
+
+/// An address naming an old id a collection renamed resolves to the
+/// current extension (ADR 0044, #310): the preview shows the extension
+/// under its current id, and installing installs it under that id — the
+/// old id names the same extension, not a package of its own.
+#[test]
+fn an_old_id_a_collection_renamed_installs_the_current_extension() {
+    let dirs = Dirs::new();
+    let url = dirs.renamed();
+    let launcher = dirs.launcher();
+    let asked = format!("{url}#clock@refs/tags/v0.2.0");
+
+    // The preview resolves the old id through the index's `renamed` map:
+    // the extension is shown under its current id, its files read from
+    // the current id's folder.
+    block_on(launcher.preview_git(&asked));
+    assert_eq!(launcher.view().title, "Clock from Git");
+    let details = details(&launcher);
+    let expected = [
+        format!(
+            "Source: Git repository {}#time",
+            &dirs.identity("tools")[4..]
+        ),
+        "Extension: time, one of the extensions its collection lists".into(),
+        "Revision: tag v0.2.0, which you named: installing pins it to that revision".into(),
+    ];
+    for line in &expected {
+        assert!(has(&details, line), "{line:?} not in {details:#?}");
+    }
+    assert_eq!(titles(&launcher), ["Install"]);
+    assert!(launcher.packages().is_empty());
+
+    block_on(launcher.activate_selected());
+    assert_eq!(
+        launcher.view().status,
+        Status::Result("Installed Clock from Git".into())
+    );
+    assert_eq!(installed(&launcher), ["Clock from Git"]);
+    let package = &launcher.packages()[0];
+    assert_eq!(package.identity.extension_id(), Some("time"));
+    // The record names the current id beside the Git source fields; the
+    // old id named the same extension, so no `clock` package exists.
+    let record = dirs.collection_record("tools", "time");
+    assert_eq!(record["gitExtension"], "time");
+    assert_eq!(record["gitRef"], "refs/tags/v0.2.0");
+    assert!(
+        launcher
+            .packages()
+            .iter()
+            .all(|package| package.identity.extension_id() != Some("clock"))
+    );
+    assert_eq!(
+        run(&launcher, "Clock from Git", "Say hello"),
+        Status::Result(HELLO.into())
+    );
+    dirs.wait_for_no_downloads();
+}
+
+/// A dependency's source naming an old id a collection renamed resolves
+/// to the current extension (ADR 0044, #310): the dependency installs
+/// under its current id, and the dependent's resolved record names the
+/// identity it got, so a call through the dependency reaches it.
+#[test]
+fn a_dependency_naming_an_old_id_installs_the_current_extension() {
+    let dirs = Dirs::new();
+    let url = dirs.renamed();
+    let source = format!("git:{url}#clock@refs/tags/v0.2.0");
+    let folder = dirs.caller(&format!(
+        r#"{{ "id": "greeter", "source": "{source}",
+            "operations": [{{ "id": "greet", "version": 1 }}] }}"#
+    ));
+    let launcher = dirs.launcher();
+
+    block_on(launcher.preview_package(&folder));
+    let details = details(&launcher);
+    assert!(
+        has(
+            &details,
+            &format!("Requires: Clock from Git, installed with it from {source}")
+        ),
+        "{details:#?}"
+    );
+    block_on(launcher.activate_selected());
+    assert_eq!(installed(&launcher), ["Clock from Git", "Caller"]);
+    let record = dirs.collection_record("tools", "time");
+    assert_eq!(record["gitExtension"], "time");
+    // The dependency is recorded by the identity the resolution got, with
+    // the current id, and a call through it reaches the extension.
+    let caller = dirs.local_record(&folder);
+    assert_eq!(
+        caller["dependencies"][0],
+        json!({ "id": "greeter", "git": format!("{}#time", &dirs.identity("tools")[4..]) })
+    );
+    assert_eq!(
+        run(
+            &launcher,
+            "Greet through dependencies",
+            "Greet through the required greeter"
+        ),
+        Status::Result("Hello, Pane, from the Git repository".into())
+    );
+    dirs.wait_for_no_downloads();
+}
+
+/// A local dependency's source naming an old id resolves the same way
+/// (ADR 0044, #310): the collection's folder is read where the source
+/// names it, the `renamed` map followed to the current id.
+#[test]
+fn a_local_dependency_naming_an_old_id_installs_the_current_extension() {
+    let dirs = Dirs::new();
+    let tools = dirs.sources.path().join("tools");
+    write_collection(&tools, renamed_collection_files(&guests()));
+    let resolved = PackageIdentity::local(&tools)
+        .unwrap()
+        .local_folder()
+        .unwrap()
+        .to_path_buf();
+    let folder = dirs.caller(
+        r#"{ "id": "greeter", "source": "local:../tools#clock",
+            "operations": [{ "id": "greet", "version": 1 }] }"#,
+    );
+    let launcher = dirs.launcher();
+
+    block_on(launcher.preview_package(&folder));
+    block_on(launcher.activate_selected());
+    assert_eq!(installed(&launcher), ["Clock from Git", "Caller"]);
+    let caller = dirs.local_record(&folder);
+    assert_eq!(
+        caller["dependencies"][0],
+        json!({ "id": "greeter", "local": format!("{}#time", resolved.display()) })
     );
     assert_eq!(
         run(

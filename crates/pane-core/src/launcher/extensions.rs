@@ -766,9 +766,12 @@ impl Launcher {
     /// keeps the branch, tag or commit it is installed from). One
     /// extension of a collection installed from its own release tag is
     /// previewed at its newest release above the version installed, which
-    /// its Update pins (ADR 0044). `None` for a package with no source to
-    /// check: a folder's (reload it instead) and a default extension's
-    /// (Pane updates those itself).
+    /// its Update pins (ADR 0044); where the revision its id resolves
+    /// through renamed the id, the preview shows the extension under its
+    /// current one (#310), and it is the updater's pass that follows the
+    /// rename onto the installed copy, keeping its identity.
+    /// `None` for a package with no source to check: a folder's (reload it
+    /// instead) and a default extension's (Pane updates those itself).
     pub fn check_for_update(
         &self,
         identity: &PackageIdentity,

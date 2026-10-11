@@ -639,12 +639,30 @@ fn tools_files(clock_path: &str, clock: &str, timers: &str, api: &str) -> Vec<(S
             {{ "id": "clock", "path": "{clock_path}" }},
             {{ "id": "timers", "path": "extensions/timers" }} ] }}"#
     );
-    let mut files = vec![("pane-collection.json".to_owned(), index.into_bytes())];
-    for (id, path, version) in [
-        ("clock", clock_path, clock),
-        ("timers", "extensions/timers", timers),
-    ] {
-        let title = if id == "clock" { "Clock" } else { "Timers" };
+    tools_files_as(
+        &index,
+        &[
+            ("clock", clock_path, "Clock", clock),
+            ("timers", "extensions/timers", "Timers", timers),
+        ],
+        api,
+    )
+}
+
+/// The files of the collection the tests serve as `tools` whose root
+/// holds `index` as its `pane-collection.json`, listing each extension
+/// `extensions` names — its id, its folder, its title and its version —
+/// the settings sample's package under its folder, asking for the API
+/// version `api`, with its built component: the fixture of every test
+/// whose collection differs from [`tools_files`]'s, one that renames an
+/// extension's id or no longer lists it (#310, ADR 0044).
+fn tools_files_as(
+    index: &str,
+    extensions: &[(&str, &str, &str, &str)],
+    api: &str,
+) -> Vec<(String, Vec<u8>)> {
+    let mut files = vec![("pane-collection.json".to_owned(), index.as_bytes().to_vec())];
+    for (id, path, title, version) in extensions {
         let manifest = format!(
             r#"{{ "manifestVersion": 1, "title": "{title}", "version": "{version}",
                  "apiVersion": "{api}",
@@ -1750,8 +1768,143 @@ fn a_tracked_reference_moving_the_extension_s_folder_updates_it_by_itself() {
     dirs.wait_for_no_downloads();
 }
 
+/// One extension of a collection whose newer release renames its id
+/// (ADR 0044, #310): the update follows the `renamed` map to the
+/// extension's current id — taking the newer revision's files from the
+/// new id's folder — and the installed copy's identity is kept, as a
+/// moved folder's is: the same package, the id it was installed with.
 #[test]
-fn a_release_whose_index_no_longer_lists_the_extension_is_refused() {
+fn a_renamed_id_is_followed_on_update_keeping_the_installed_identity() {
+    let dirs = Dirs::new();
+    let launcher = dirs.launcher();
+    let tools = dirs.collection("tools");
+    block_on(launcher.install_git(&format!("{}#clock@refs/tags/clock/v0.1.0", tools.url)));
+    assert_eq!(
+        run_extension(&launcher, &tools.url, "clock"),
+        Status::Result("Saved the casual greeting".into())
+    );
+    to_root(&launcher);
+
+    // clock's newer release renames it to `time`, its folder moving with
+    // the id: the release is still tagged clock/v0.2.0 — the id the
+    // installed copy's check lists — and its index maps `clock` to
+    // `time`, listed at the folder the renamed extension lives in.
+    let index = r#"{ "extensions": [
+        { "id": "time", "path": "extensions/time" },
+        { "id": "timers", "path": "extensions/timers" } ],
+        "renamed": { "clock": "time" } }"#;
+    let files = tools_files_as(
+        index,
+        &[
+            ("time", "extensions/time", "Clock", "0.2.0"),
+            ("timers", "extensions/timers", "Timers", "1.0.0"),
+        ],
+        "0.1",
+    );
+    let released = release_extension(&tools.repo, &files, "clock", "0.2.0");
+    dirs.check(&launcher);
+
+    // The update followed the rename: it took the newer revision's files
+    // from `time`'s folder — the new copy runs, at the renamed extension's
+    // version — and the record keeps the installed identity, the id it
+    // was installed with, as a moved folder's is.
+    let record = dirs.extension_record("tools", "clock");
+    assert_eq!(
+        record["git"],
+        format!("{}#clock", dirs.git_identity("tools")).as_str()
+    );
+    assert_eq!(record["gitRef"], "refs/tags/clock/v0.2.0");
+    assert_eq!(record["gitCommit"], released.as_str());
+    assert_eq!(record["pinned"], serde_json::json!(true));
+    assert_eq!(record["gitExtension"], "clock");
+    assert_eq!(
+        run_extension(&launcher, &tools.url, "clock"),
+        Status::Result("Saved the casual greeting".into())
+    );
+    assert_eq!(
+        launcher
+            .packages()
+            .into_iter()
+            .find(|package| package.identity == extension_identity(&tools.url, "clock"))
+            .and_then(|package| package.version()),
+        Some("0.2.0".to_owned())
+    );
+    // The row says the old and the new commit, as a Git package's does.
+    let recorded = launcher.update_results();
+    assert_eq!(recorded.updated.len(), 1, "{recorded:#?}");
+    assert_eq!(recorded.updated[0].title, "Clock");
+    assert_eq!(
+        recorded.updated[0].detail,
+        format!(
+            "{} → {}",
+            short_commit(&tools.clock),
+            short_commit(&released)
+        )
+    );
+
+    // Check for Update resolves the old id through the rename the same
+    // way: the preview shows the extension under its current id — the
+    // current id's package not being installed, it offers Install —
+    // while the installed copy is updated by following the rename, as
+    // this pass did.
+    block_on(
+        launcher
+            .check_for_update(&extension_identity(&tools.url, "clock"))
+            .expect("a source to check"),
+    );
+    assert_eq!(launcher.view().title, "Clock");
+    let details = launcher.view().details().to_vec();
+    assert!(has(
+        &details,
+        "Extension: time, one of the extensions its collection lists"
+    ));
+    assert_eq!(titles(&launcher), ["Install"]);
+    to_root(&launcher);
+    dirs.wait_for_no_downloads();
+
+    // A tracked reference is followed through the rename the same way
+    // (the read through the index is shared, ADR 0044): one installed
+    // from the collection's default branch updates from the renamed
+    // id's folder, keeping its identity.
+    let branch = dirs.collection("branch");
+    block_on(launcher.install_git(&format!("{}#clock", branch.url)));
+    let files = tools_files_as(
+        index,
+        &[
+            ("time", "extensions/time", "Clock", "0.3.0"),
+            ("timers", "extensions/timers", "Timers", "1.0.0"),
+        ],
+        "0.1",
+    );
+    let moved = branch
+        .repo
+        .commit(&borrowed(&files), "Rename clock to time");
+    dirs.check(&launcher);
+    let record = dirs.extension_record("branch", "clock");
+    assert_eq!(
+        record["git"],
+        format!("{}#clock", dirs.git_identity("branch")).as_str()
+    );
+    assert_eq!(record.get("gitRef"), None);
+    assert_eq!(record["gitCommit"], moved.as_str());
+    assert_eq!(record["gitExtension"], "clock");
+    assert_eq!(
+        launcher
+            .packages()
+            .into_iter()
+            .find(|package| package.identity == extension_identity(&branch.url, "clock"))
+            .and_then(|package| package.version()),
+        Some("0.3.0".to_owned())
+    );
+    dirs.wait_for_no_downloads();
+}
+
+/// One extension of a collection whose newer revision's index no longer
+/// lists it (ADR 0044, #310): reported in the update results as a notice
+/// — not a fault, nothing to retry — and the installed copy keeps running
+/// its code; Pane never uninstalls one silently.
+#[test]
+fn a_removed_extension_is_reported_and_keeps_running() {
     let dirs = Dirs::new();
     let launcher = dirs.launcher();
     let tools = dirs.collection("tools");
@@ -1763,28 +1916,86 @@ fn a_release_whose_index_no_longer_lists_the_extension_is_refused() {
     to_root(&launcher);
 
     // clock's newer release drops it from the index (an author splitting
-    // the collection, say): the revision is not installed and the
-    // extension keeps running its installed code — following a rename,
-    // or reporting the removal, is #310's.
+    // the collection, say).
     let index = r#"{ "extensions": [ { "id": "timers", "path": "extensions/timers" } ] }"#;
-    let mut files = tools_files("extensions/clock", "0.2.0", "1.0.0", "0.1");
-    for (path, contents) in &mut files {
-        if path == "pane-collection.json" {
-            *contents = index.as_bytes().to_vec();
-        }
-    }
+    let files = tools_files_as(
+        index,
+        &[("timers", "extensions/timers", "Timers", "1.0.0")],
+        "0.1",
+    );
+    release_extension(&tools.repo, &files, "clock", "0.2.0");
+    dirs.check(&launcher);
+
+    // A notice, not a fault: the record holds it in its own group, nothing
+    // failed and nothing was updated, and the row offers neither Retry
+    // nor Update Now (there is nothing to retry) — opening the
+    // extension's page, as any row's entry does, is all it offers.
+    let identity = extension_identity(&tools.url, "clock");
+    let recorded = launcher.update_results();
+    assert_eq!(recorded.removed.len(), 1, "{recorded:#?}");
+    assert_eq!(recorded.removed[0].identity, identity);
+    assert_eq!(recorded.removed[0].title, "Clock");
+    assert_eq!(
+        recorded.removed[0].detail,
+        "The collection no longer offers this extension. It keeps running its installed code."
+    );
+    assert!(recorded.failed.is_empty() && recorded.updated.is_empty());
+    assert_eq!(
+        launcher.update_results_row_actions(&identity.key()),
+        Vec::new()
+    );
+
+    // The installed copy is as it was, and keeps running.
+    assert_eq!(dirs.extension_commit("tools", "clock"), tools.clock);
+    assert_eq!(
+        run_extension(&launcher, &tools.url, "clock"),
+        Status::Result("Saved the casual greeting".into())
+    );
+    to_root(&launcher);
+
+    // A pass the user asked for ends with the notice in its summary, and
+    // records it as the background pass did.
+    block_on(launcher.check_extension_updates());
+    let toast = launcher.toast().expect("the ending toast");
+    assert_eq!(
+        (toast.toast.style, toast.toast.title.as_str()),
+        (ToastStyle::Success, "1 extension no longer offered")
+    );
+    assert_eq!(launcher.update_results().removed.len(), 1);
+    dirs.wait_for_no_downloads();
+}
+
+/// An id the newer revision's index maps to `null`, one its collection
+/// removed (ADR 0044, #310): the same notice as an id simply gone — the
+/// row says the collection no longer offers the extension — and the
+/// installed copy keeps running.
+#[test]
+fn a_rename_to_null_is_reported_as_a_removed_extension_is() {
+    let dirs = Dirs::new();
+    let launcher = dirs.launcher();
+    let tools = dirs.collection("tools");
+    block_on(launcher.install_git(&format!("{}#clock@refs/tags/clock/v0.1.0", tools.url)));
+    to_root(&launcher);
+
+    // clock's newer release retires it: the index maps it to `null`.
+    let index = r#"{ "extensions": [ { "id": "timers", "path": "extensions/timers" } ],
+        "renamed": { "clock": null } }"#;
+    let files = tools_files_as(
+        index,
+        &[("timers", "extensions/timers", "Timers", "1.0.0")],
+        "0.1",
+    );
     release_extension(&tools.repo, &files, "clock", "0.2.0");
     dirs.check(&launcher);
 
     let recorded = launcher.update_results();
-    assert_eq!(recorded.failed.len(), 1, "{recorded:#?}");
-    let detail = &recorded.failed[0].detail;
-    assert!(
-        detail.starts_with("It was not updated: Tag clock/v0.2.0 (commit ")
-            && detail.contains("lists no extension `clock` in its pane-collection.json")
-            && detail.ends_with("It keeps running its installed code."),
-        "{detail}"
+    assert_eq!(recorded.removed.len(), 1, "{recorded:#?}");
+    assert_eq!(recorded.removed[0].title, "Clock");
+    assert_eq!(
+        recorded.removed[0].detail,
+        "The collection no longer offers this extension. It keeps running its installed code."
     );
+    assert!(recorded.failed.is_empty() && recorded.updated.is_empty());
     assert_eq!(dirs.extension_commit("tools", "clock"), tools.clock);
     assert_eq!(
         run_extension(&launcher, &tools.url, "clock"),

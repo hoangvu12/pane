@@ -229,15 +229,19 @@ release exists, the tag's commit is fetched and checked as an install
 checks a package, read through the collection's index so an extension
 whose folder moved within it still updates, and the extension is pinned
 to that tag's commit — the update is its own, never moving another
-extension of the collection. A revision whose index no longer lists the
-id is a Failed row ("It was not updated: Tag clock/v0.2.0 (commit …) of
-the Git repository … lists no extension `clock` in its
-pane-collection.json; It keeps running its installed code") and the
-extension keeps running its installed code; following a rename, or
-reporting a removal, is a later ticket. Check for Update on its page
-previews that one extension by its repository and id, at its newest
-release above the version installed — the ordinary preview, whose
-Update keeps or changes the recorded reference as a Git package's does.
+extension of the collection. Where the index no longer lists the id as
+an extension, the `renamed` map decides (ADR 0044, #310): one naming the
+id's new one is followed — the newer revision's files are read from the
+new id's folder, the installed copy's identity kept, as a moved
+folder's — and an id that is gone, or mapped to `null`, is reported in
+the update results as a notice ("The collection no longer offers this
+extension. It keeps running its installed code."), a row with no Retry,
+whose installed copy keeps running, never uninstalled silently. Check
+for Update on its page previews that one extension by its repository
+and id, at its newest release above the version installed — the
+ordinary preview, whose Update keeps or changes the recorded reference
+as a Git package's does; a renamed id resolves through the map, so the
+preview shows the extension under its current id.
 
 **Which packages update** (as [npm's](npm.md#which-packages-update)):
 an installed Git package that is tracked — installed from the default
