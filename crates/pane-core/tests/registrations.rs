@@ -38,7 +38,7 @@ use rows::{manage, select_title, to_root};
 fn said(status: Status) -> String {
     match status {
         Status::Result(text) | Status::Error(text) | Status::Progress(text) => text,
-        Status::Idle | Status::Running => String::new(),
+        Status::Idle | Status::Running { .. } => String::new(),
     }
 }
 

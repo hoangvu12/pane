@@ -197,18 +197,6 @@ pub(super) fn rows(state: &State) -> (Vec<RootResult>, HashMap<String, ItemLook>
     (results, looks)
 }
 
-/// The opening of the dynamic command whose row id is `id` (held by a
-/// quick slot, an alias or a hotkey), launched from `source`: its launch
-/// record names the item. `None` when no such item is registered.
-pub(super) fn opening_of(state: &State, id: &str, source: LaunchSource) -> Option<Opening> {
-    let RootResult { entry, .. } = pinned_by_id(state, id)?;
-    let Entry::Open(mut opening) = entry else {
-        return None;
-    };
-    opening.launch.source = source;
-    Some(opening)
-}
-
 /// The root search row of the dynamic item `item` under the command with
 /// id `command`, as the registry holds it now: what a quick slot, an
 /// alias or a hotkey resolves to. `None` when none is registered: the
