@@ -823,7 +823,7 @@ struct State {
     /// window's loading bar shows for it too (#248; see
     /// [`Launcher::pending_since`]). `None` while the query is blank,
     /// every provider has answered, or root search is not on screen.
-    root_search_since: Option<Instant>
+    root_search_since: Option<Instant>,
     /// The folders granted to packages and their listings, shared with the
     /// runtime; `None` without a runtime.
     files: Option<FileAccess>,
