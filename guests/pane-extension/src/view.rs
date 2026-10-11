@@ -322,29 +322,29 @@ enum Run<V> {
 #[derive(Debug)]
 pub struct Node {
     pub(crate) kind: NodeKind,
-    style: Style,
+    pub(crate) style: Style,
     /// Where in a `stack` this node is placed; `None` for the stack's own
     /// placement. Nowhere else is it read.
-    place: Option<Place>,
+    pub(crate) place: Option<Place>,
     /// How far this node sits from its place in a `stack`.
-    offset: Option<(Length, Length)>,
+    pub(crate) offset: Option<(Length, Length)>,
     pub(crate) key: Option<String>,
-    name: Option<String>,
-    /// What names the view, when this node is the tree's root: shown where
+    pub(crate) name: Option<String>,
+    /// What names the view, when this node's the tree's root: shown where
     /// a screen's title is. Ignored on any other node.
     pub(crate) navigation_title: Option<String>,
-    requires: Option<u64>,
-    fallback: Option<Box<Node>>,
-    children: Vec<Node>,
+    pub(crate) requires: Option<u64>,
+    pub(crate) fallback: Option<Box<Node>>,
+    pub(crate) children: Vec<Node>,
     /// Whether the node asks for the keyboard (see [`Node::focus`]).
     pub(crate) focus: bool,
     /// The listener a focus of this node runs, it taking the keyboard.
-    on_focus: Option<Listener>,
+    pub(crate) on_focus: Option<Listener>,
     /// The listener a blur of this node runs, it losing the keyboard.
-    on_blur: Option<Listener>,
+    pub(crate) on_blur: Option<Listener>,
     /// The listener a key pressed while this node is focused runs, told
     /// the key as a key sequence spells it.
-    on_key: Option<ValueListener>,
+    pub(crate) on_key: Option<ValueListener>,
 }
 
 impl Node {
@@ -566,36 +566,36 @@ pub struct Padding {
 /// is set until an author sets it.
 #[derive(Clone, Debug, Default)]
 pub struct Style {
-    sizing: Sizing,
-    surface: Surface,
-    hover: Option<Surface>,
-    pressed: Option<Surface>,
+    pub(crate) sizing: Sizing,
+    pub(crate) surface: Surface,
+    pub(crate) hover: Option<Surface>,
+    pub(crate) pressed: Option<Surface>,
 }
 
 /// How a node takes space: its grow, shrink, basis, sizes and aspect
 /// ratio.
 #[derive(Clone, Debug, Default)]
 pub struct Sizing {
-    grow: Option<f32>,
-    shrink: Option<f32>,
-    basis: Option<Length>,
-    width: Option<Length>,
-    height: Option<Length>,
-    min_width: Option<Length>,
-    max_width: Option<Length>,
-    min_height: Option<Length>,
-    max_height: Option<Length>,
-    aspect_ratio: Option<f32>,
+    pub(crate) grow: Option<f32>,
+    pub(crate) shrink: Option<f32>,
+    pub(crate) basis: Option<Length>,
+    pub(crate) width: Option<Length>,
+    pub(crate) height: Option<Length>,
+    pub(crate) min_width: Option<Length>,
+    pub(crate) max_width: Option<Length>,
+    pub(crate) min_height: Option<Length>,
+    pub(crate) max_height: Option<Length>,
+    pub(crate) aspect_ratio: Option<f32>,
 }
 
 /// The surface a node draws: its background, border, corner radius and
 /// opacity. A variant of it restates any of them.
 #[derive(Clone, Debug, Default)]
 pub struct Surface {
-    background: Option<Paint>,
-    border: Option<Border>,
-    radius: Option<Radius>,
-    opacity: Option<f32>,
+    pub(crate) background: Option<Paint>,
+    pub(crate) border: Option<Border>,
+    pub(crate) radius: Option<Radius>,
+    pub(crate) opacity: Option<f32>,
 }
 
 /// The border a node draws: how wide, and in which colour. Either alone
@@ -1838,6 +1838,9 @@ macro_rules! builder {
 }
 
 pub(crate) use builder;
+// Form's builders live in their own module: the macro this one expands to
+// must be in scope there too.
+pub(crate) use styled;
 
 /// A column: children below each other.
 pub fn column() -> Container {
@@ -3358,7 +3361,7 @@ impl TextBuilder {
             let content = match &mut text.content {
                 TextContent::Plain(plain) => {
                     let plain = plain.clone();
-                    TextContent::Spans(vec![
+                    TextContent::Spans(alloc::vec![
                         Span {
                             text: plain,
                             style: text.style,
@@ -4362,7 +4365,7 @@ fn write_node(tree: &mut String, node: &Node) -> Result<(), String> {
                 },
             )?;
         }
-        NodeKind::Spacer | NodeKind::Loading { .. } => {}
+        NodeKind::Spacer => {}
         NodeKind::Text(text) => match &text.content {
             TextContent::Plain(content) => {
                 tree.push_str(",\"text\":");
