@@ -27,7 +27,7 @@ use super::looks;
 use super::quick_slots::PinTarget;
 use super::{Entry, Opening, RootResult, Row, State, Unavailable};
 use crate::launch::{LaunchRecord, LaunchSource};
-use crate::packages::{InstalledPackage, paused_reason};
+use crate::packages::{CommandMatches, CommandWhen, InstalledPackage, paused_reason};
 use crate::registrations::{self, RegistrationOf};
 use crate::runtime::ItemLook;
 use crate::search::Keys;
@@ -161,6 +161,11 @@ fn row(
                 command: registration.id.clone(),
                 item: item.item.id.clone(),
             }),
+            // A dynamic item has no entry of its own to say: it is listed
+            // while it is registered, whatever is typed, and matched by
+            // its title.
+            when: CommandWhen::Always,
+            matches: CommandMatches::Title,
         },
         item.item.look.clone(),
     ))

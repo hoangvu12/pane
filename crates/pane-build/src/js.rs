@@ -867,8 +867,9 @@ mod tests {
             "{entry}"
         );
         assert!(
-            entry
-                .contains("export const service = adaptProvider(extension.service, [\"runCycle\"]);"),
+            entry.contains(
+                "export const service = adaptProvider(extension.service, [\"runCycle\"]);"
+            ),
             "{entry}"
         );
         assert!(!entry.contains("indexedResults"), "{entry}");

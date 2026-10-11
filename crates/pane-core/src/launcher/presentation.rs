@@ -255,8 +255,16 @@ pub(super) fn row_presentation(state: &State, index: usize) -> RowPresentation {
                 .active_alias(&row.id)
                 .map(str::to_owned),
             hotkey: state.bindings.registered_of(&row.id),
-            matched: title_matches(&row.title, query),
-            answer: answer(state, row, entry, query),
+            // The query whose list the rows shown are (#201): the field's own
+            // query runs ahead while the list is held, and the previous list
+            // keeps its matches.
+            matched: title_matches(
+                &row.title,
+                row.subtitle.as_deref(),
+                state.published.as_str(),
+                state.sensitivity,
+            ),
+            answer: answer(state, row, entry),
             icon: look
                 .icon
                 .as_ref()
