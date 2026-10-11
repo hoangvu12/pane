@@ -162,7 +162,9 @@ enum Search {
         /// and the results are drawn the moment they land.
         pending: Pending<SearchOutcome>,
         /// The details a result's press fetches, on their way.
-        opening: Option<Pending<String>>,
+        /// The details a result's press fetches, on their way, or why
+        /// they failed.
+        opening: Option<Pending<Result<String, String>>>,
     },
     /// The service address, pushed above the list: a text field and a
     /// Save button (the modern replacement for the typed form the List
@@ -212,7 +214,10 @@ impl View for Search {
                     .and_then(|opening| opening.ready().cloned());
                 if let Some(done) = opened {
                     *opening = None;
-                    show_toast(Toast::success(done));
+                    match done {
+                        Ok(details) => show_toast(Toast::success(details)),
+                        Err(why) => show_toast(Toast::failure(why)),
+                    }
                 }
                 // A blank text: nothing is searched, nothing listed.
                 if query.trim().is_empty() {

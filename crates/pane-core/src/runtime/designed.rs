@@ -1670,6 +1670,7 @@ fn node(wire: WireNode, depth: usize, nodes: &mut usize) -> Result<Node, ReadErr
                 field: field_props(&wire)?,
             }),
             "segmented" => NodeKind::Segmented(segmented(&wire)?),
+            "select" => NodeKind::Select(select(&wire)?),
             "slider" => NodeKind::Slider(slider(&wire)?),
             "progress" => NodeKind::Progress(Progress {
                 value: number(&wire, "value")?.ok_or(unreadable("a progress node has no value"))?,
@@ -1777,7 +1778,7 @@ fn text(wire: &WireNode) -> Result<Text, ReadError> {
         (None, Some(Value::Array(spans))) => TextContent::Spans(
             spans
                 .iter()
-                .map(|span| span_of(span))
+                .map(span_of)
                 .collect::<Result<Vec<Span>, ReadError>>()?,
         ),
         (None, None) => return Err(unreadable("a text node has no text")),
@@ -2496,14 +2497,14 @@ fn canvas_op(value: &Value) -> Result<Option<CanvasOp>, ReadError> {
             height: at("height")?,
             radius: optional_measure(fields, "radius")?,
             fill: paint("fill")?,
-            stroke: paint("stroke")?.is_some().then(|| stroked()).transpose()?,
+            stroke: paint("stroke")?.is_some().then(stroked).transpose()?,
         },
         "circle" => CanvasOp::Circle {
             x: at("x")?,
             y: at("y")?,
             radius: size("radius")?,
             fill: paint("fill")?,
-            stroke: paint("stroke")?.is_some().then(|| stroked()).transpose()?,
+            stroke: paint("stroke")?.is_some().then(stroked).transpose()?,
         },
         "move" => CanvasOp::Move {
             x: at("x")?,
@@ -2929,10 +2930,10 @@ fn length_of(value: &Value, name: &str) -> Result<Length, ReadError> {
             if let Some((top, bottom)) = text.split_once('/') {
                 if let (Ok(top), Ok(bottom)) =
                     (top.trim().parse::<f32>(), bottom.trim().parse::<f32>())
+                    && top >= 0.
+                    && bottom > 0.
                 {
-                    if top >= 0. && bottom > 0. {
-                        return Ok(Length::Fraction(Finite((top / bottom).clamp(0., 1.))));
-                    }
+                    return Ok(Length::Fraction(Finite((top / bottom).clamp(0., 1.))));
                 }
                 return Err(over("is not a fraction of the parent".into()));
             }
@@ -3605,7 +3606,7 @@ mod tests {
         };
         assert_eq!(spans.len(), 3);
         assert_eq!(spans[1].on_press, Some(3));
-        assert_eq!(spans[2].code, true);
+        assert!(spans[2].code);
         let NodeKind::Button(save) = &nodes[1].kind else {
             panic!("a button");
         };

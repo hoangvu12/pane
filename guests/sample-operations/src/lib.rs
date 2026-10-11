@@ -19,7 +19,9 @@
 
 use core::cell::RefCell;
 
-use pane_extension::alloc::{format, string::String, string::ToString, vec, vec::Vec};
+use pane_extension::alloc::{
+    borrow::ToOwned, format, string::String, string::ToString, vec, vec::Vec,
+};
 use pane_extension::form::{self, FormValues};
 use pane_extension::operations::call;
 use pane_extension::view::{Cx, IntoAnswer, Pending, View};

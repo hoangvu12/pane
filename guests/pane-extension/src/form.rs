@@ -253,42 +253,64 @@ crate::view::builder!(Form);
 /// under its key.
 pub struct TextField(pub(crate) Node);
 
+crate::view::builder!(TextField);
+
 /// A form's password field: a single line of text, concealed while it is
 /// typed.
 pub struct PasswordField(pub(crate) Node);
+
+crate::view::builder!(PasswordField);
 
 /// A form's text area: several lines of text, its Enter inserting a
 /// newline (Ctrl+Enter submits the form).
 pub struct TextArea(pub(crate) Node);
 
+crate::view::builder!(TextArea);
+
 /// A form's checkbox: on or off.
 pub struct Checkbox(pub(crate) Node);
 
+crate::view::builder!(Checkbox);
+
 /// A form's toggle: on or off, drawn as the switch it is.
 pub struct Toggle(pub(crate) Node);
+
+crate::view::builder!(Toggle);
 
 /// A form's date field: a date typed or stepped with the arrow keys, its
 /// value "YYYY-MM-DD".
 pub struct DatePicker(pub(crate) Node);
 
+crate::view::builder!(DatePicker);
+
 /// A form's date and time field: typed or stepped with the arrow keys,
 /// its value "YYYY-MM-DD HH:MM".
 pub struct DateTimePicker(pub(crate) Node);
+
+crate::view::builder!(DateTimePicker);
 
 /// A form's dropdown: exactly one of its options, searched as the user
 /// types into its popup — by Pane, or by the extension through
 /// [`Dropdown::on_search_text`] when it says the search is its own.
 pub struct Dropdown(pub(crate) Node);
 
+crate::view::builder!(Dropdown);
+
 /// A form's tag picker: several of its options, chosen as chips.
 pub struct TagPicker(pub(crate) Node);
+
+crate::view::builder!(TagPicker);
 
 /// A form's file picker: a path typed or chosen with the system's dialog.
 pub struct FilePicker(pub(crate) Node);
 
+crate::view::builder!(FilePicker);
+
 /// A form's folder picker: a path typed or chosen with the system's
 /// dialog.
 pub struct FolderPicker(pub(crate) Node);
+
+crate::view::builder!(FolderPicker);
 
 /// One text field, keyed `key`: the id its value is in a submission.
 pub fn text_field(key: impl Into<String>) -> TextField {

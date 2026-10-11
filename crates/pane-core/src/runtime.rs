@@ -309,6 +309,13 @@ type SharedHostFunctions = Arc<Mutex<Option<Arc<dyn HostFunctions>>>>;
 /// nothing.
 type SharedViewAsks = Arc<Mutex<Option<Arc<dyn Fn(u64) + Send + Sync>>>>;
 /// What measures text for a designed view's canvases
+/// (`pane:extension/view.measure-text`, #242): told a text and the JSON a
+/// canvas text operation names, the width and height it occupies. The
+/// window's fonts, which the pane crate owns; see
+/// [`Runtime::set_text_measures`].
+pub type TextMeasures = Arc<dyn Fn(&str, &str) -> (f32, f32) + Send + Sync>;
+
+/// What measures text for a designed view's canvases
 /// (`pane:extension/view.measure-text`, #242): the window's fonts, which
 /// the pane crate owns, handed to the runtime. Installed by the launcher
 /// before any call; `None` until then, answering no extent.
@@ -1592,10 +1599,7 @@ impl Runtime {
     /// the fonts the view is drawn with, which the window owns. Until then
     /// a measurement answers no extent (0 x 0), which a guest drawing from
     /// it sees as no text laid out.
-    pub(crate) fn set_text_measures(
-        &self,
-        measures: Arc<dyn Fn(&str, &str) -> (f32, f32) + Send + Sync>,
-    ) {
+    pub(crate) fn set_text_measures(&self, measures: TextMeasures) {
         *lock(&self.shared.text_measures) = Some(measures);
     }
 

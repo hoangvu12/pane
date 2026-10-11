@@ -9,7 +9,8 @@ use pane_extension::alloc::{format, string::String, vec, vec::Vec};
 use pane_extension::commands::{self, CommandRef, LaunchRecord, LaunchType};
 use pane_extension::feedback::{Toast, show_toast};
 use pane_extension::view::{
-    CanvasEvent, CanvasRole, Container, Cx, Draw, Length, Paint, TextStyle, View, canvas, column,
+    CanvasEvent, CanvasRole, Container, Cx, Draw, IntoAnswer, Length, Paint, TextStyle, View,
+    canvas, column,
 };
 use pane_extension::{Color, Command, Icon, Item, List};
 

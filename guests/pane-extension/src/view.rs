@@ -2205,16 +2205,17 @@ pub fn section(title: impl Into<String>) -> Section {
     })))
 }
 
-/// One item of a List, titled `title` (#240): the List document's
-/// vocabulary — a subtitle, keywords, an icon, accessories and the
-/// actions that activate it — and the detail pane's content when it is
+/// One item of a List, keyed `key` (#240): the item's identity — what
+/// the selection names and the detail pane is built for — with the List
+/// document's vocabulary on its builder (its [`Item::title`] the first
+/// line of the row, a subtitle, keywords, an icon, accessories and the
+/// actions that activate it), and the detail pane's content when it is
 /// selected. Its children are its own row subtree, drawn in the place of
 /// the standard row while Pane still selects and activates it.
-pub fn item(title: impl Into<String>) -> Item {
-    Item(Node::of(NodeKind::ListItem(ListItem {
-        title: title.into(),
-        ..ListItem::default()
-    })))
+pub fn item(key: impl Into<String>) -> Item {
+    let mut node = Node::of(NodeKind::ListItem(ListItem::default()));
+    node.key = Some(key.into());
+    Item(node)
 }
 
 /// One cell of a Grid (#240): an image, a colour or a subtree, with a
@@ -2466,6 +2467,12 @@ impl Section {
 }
 
 impl Item {
+    /// The item's first line, its title.
+    pub fn title(mut self, title: impl Into<String>) -> Item {
+        self.0.item_mut().title = title.into();
+        self
+    }
+
     /// The item's second line, under its title.
     pub fn subtitle(mut self, subtitle: impl Into<String>) -> Item {
         self.0.item_mut().subtitle = Some(subtitle.into());
@@ -2636,7 +2643,7 @@ fn fit_name(fit: Fit) -> &'static str {
 
 /// The payload the icon and icon-tile kinds read.
 #[derive(Debug)]
-struct IconNodePayload {
+pub struct IconNodePayload {
     icon: Icon,
     size: Option<IconSize>,
 }
@@ -2646,7 +2653,7 @@ struct IconNodePayload {
 /// children (the sections, the items or cells, the dropdown, the empty
 /// view) arrive as nodes.
 #[derive(Debug, Default)]
-pub(crate) struct ListNode {
+pub struct ListNode {
     /// The search field's placeholder.
     pub(crate) search_placeholder: Option<String>,
     /// The search text the view sets: the field's value, which wins while
@@ -2679,7 +2686,7 @@ pub(crate) struct ListNode {
 /// The payload the list-section kind reads: a group of items under its
 /// title and subtitle.
 #[derive(Debug, Default)]
-pub(crate) struct SectionNode {
+pub struct SectionNode {
     pub(crate) title: Option<String>,
     pub(crate) subtitle: Option<String>,
     /// How many columns the section's cells sit in (a Grid's), 1–8.
@@ -2697,7 +2704,7 @@ pub(crate) struct SectionNode {
 /// icon, accessories and the actions that activate it — and the detail
 /// pane's content when the item is selected.
 #[derive(Debug, Default)]
-pub(crate) struct ListItem {
+pub struct ListItem {
     pub(crate) title: String,
     pub(crate) subtitle: Option<String>,
     /// Its icon, tooltips and accessories (`crate::icon`).
@@ -2736,7 +2743,7 @@ impl ListAction {
 /// The payload the grid-item kind reads: its title and subtitle, and the
 /// image, colour or subtree it shows.
 #[derive(Debug, Default)]
-pub(crate) struct GridItem {
+pub struct GridItem {
     pub(crate) title: Option<String>,
     pub(crate) subtitle: Option<String>,
     pub(crate) image: Option<Icon>,
@@ -2749,7 +2756,7 @@ pub(crate) struct GridItem {
 /// The payload the list-dropdown kind reads: its items and the one
 /// chosen, changed by the user's choice.
 #[derive(Debug, Default)]
-pub(crate) struct DropdownNode {
+pub struct DropdownNode {
     /// The id of the item chosen.
     pub(crate) value: Option<String>,
     /// The dropdown's placeholder, shown while no choice is made.
@@ -2785,14 +2792,14 @@ impl DropdownItem {
 
 /// The payload the tag and badge kinds read.
 #[derive(Debug)]
-pub(crate) struct TagPayload {
+pub struct TagPayload {
     pub(crate) text: String,
     pub(crate) color: Option<Paint>,
 }
 
 /// The payload the toggle and checkbox kinds read.
 #[derive(Debug)]
-pub(crate) struct TogglePayload {
+pub struct TogglePayload {
     pub(crate) on: bool,
     pub(crate) on_click: Option<Listener>,
     pub(crate) label: Option<String>,
@@ -2802,7 +2809,7 @@ pub(crate) struct TogglePayload {
 
 /// The payload the segmented and select kinds read.
 #[derive(Debug)]
-pub(crate) struct SegmentedPayload {
+pub struct SegmentedPayload {
     pub(crate) options: Vec<Choice>,
     pub(crate) value: Option<String>,
     pub(crate) on_click: Option<Listener>,
@@ -2821,20 +2828,20 @@ pub(crate) struct SegmentedPayload {
 
 /// The payload the section-header kind reads.
 #[derive(Debug)]
-pub(crate) struct SectionHeaderPayload {
+pub struct SectionHeaderPayload {
     title: String,
     note: Option<String>,
 }
 
 /// The payload the metadata-list kind reads.
 #[derive(Debug)]
-pub(crate) struct MetadataListPayload {
+pub struct MetadataListPayload {
     items: Vec<MetadataItem>,
 }
 
 /// The payload the empty-state kind reads.
 #[derive(Debug)]
-pub(crate) struct EmptyStatePayload {
+pub struct EmptyStatePayload {
     title: String,
     description: Option<String>,
     icon: Option<Icon>,
@@ -2854,7 +2861,7 @@ pub(crate) struct FieldPayload {
 
 /// The payload the text-input, password-input and text-area kinds read.
 #[derive(Debug, Default)]
-pub(crate) struct TextInputPayload {
+pub struct TextInputPayload {
     pub(crate) value: String,
     /// The value the field starts from when the view names none of its
     /// own: a form field's `default` (#241).
@@ -2910,7 +2917,7 @@ impl Default for TogglePayload {
 /// The payload the `form` kind reads (#241): its submission, and what its
 /// submit button says.
 #[derive(Debug, Default)]
-pub(crate) struct FormPayload {
+pub struct FormPayload {
     /// The listener a submission runs, told every field's value.
     pub(crate) on_submit: Option<FormListener>,
     pub(crate) submit_label: Option<String>,
@@ -2918,7 +2925,7 @@ pub(crate) struct FormPayload {
 
 /// The payload the date-picker and date-time-picker kinds read.
 #[derive(Debug, Default)]
-pub(crate) struct DatePayload {
+pub struct DatePayload {
     /// The field's value ("YYYY-MM-DD" or "YYYY-MM-DD HH:MM").
     pub(crate) value: String,
     /// The value the field starts from when the view names none of its
@@ -2932,7 +2939,7 @@ pub(crate) struct DatePayload {
 
 /// The payload the tag-picker kind reads.
 #[derive(Debug, Default)]
-pub(crate) struct TagPickerPayload {
+pub struct TagPickerPayload {
     /// The tags chosen, by their options' values.
     pub(crate) tags: Vec<String>,
     /// The tags offered.
@@ -2947,7 +2954,7 @@ pub(crate) struct TagPickerPayload {
 
 /// The payload the file-picker and folder-picker kinds read.
 #[derive(Debug, Default)]
-pub(crate) struct PathPayload {
+pub struct PathPayload {
     /// The paths chosen.
     pub(crate) paths: Vec<String>,
     /// The path the picker starts from when the view names none of its

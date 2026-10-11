@@ -905,10 +905,10 @@ impl LauncherWindow {
             return;
         }
         let key = (!key.is_empty()).then_some(key);
-        if handler == DesignedHandler::Change {
-            if let Some(named) = key.as_deref() {
-                self.note_sent(named, payload_value(&payload));
-            }
+        if handler == DesignedHandler::Change
+            && let Some(named) = key.as_deref()
+        {
+            self.note_sent(named, payload_value(&payload));
         }
         let pending = self.launcher.send_designed_seen(
             handler,
@@ -1044,12 +1044,11 @@ impl LauncherWindow {
         window: &mut gpui::Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(controls) = self.designed.as_mut() {
-            if let Some(entry) = controls.state.get_mut(path) {
-                if let Held::Field { events, .. } = &mut entry.held {
-                    events.armed = false;
-                }
-            }
+        if let Some(controls) = self.designed.as_mut()
+            && let Some(entry) = controls.state.get_mut(path)
+            && let Held::Field { events, .. } = &mut entry.held
+        {
+            events.armed = false;
         }
         self.flush_designed_input(path, window, cx);
     }
@@ -1063,12 +1062,11 @@ impl LauncherWindow {
         window: &mut gpui::Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(controls) = self.designed.as_mut() {
-            if let Some(entry) = controls.state.get_mut(path) {
-                if let Held::Field { events, .. } = &mut entry.held {
-                    events.in_flight = false;
-                }
-            }
+        if let Some(controls) = self.designed.as_mut()
+            && let Some(entry) = controls.state.get_mut(path)
+            && let Held::Field { events, .. } = &mut entry.held
+        {
+            events.in_flight = false;
         }
         self.sync_screen(window, cx);
         cx.notify();

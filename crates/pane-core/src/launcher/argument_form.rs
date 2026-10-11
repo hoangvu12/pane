@@ -355,7 +355,7 @@ impl Launcher {
                 .iter()
                 .find(|(key, _)| *key == argument.name)
                 .map(|(_, value)| value.as_str());
-            if value.is_none_or(|value| arguments::blank(value))
+            if value.is_none_or(arguments::blank)
                 && pane_form::mark_error(&mut shown.tree, &argument.name, MISSING)
             {
                 missing = Some(format!("{}: {MISSING}", argument.label()));
