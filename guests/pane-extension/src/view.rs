@@ -1838,6 +1838,9 @@ macro_rules! builder {
 }
 
 pub(crate) use builder;
+// Form's builders live in their own module: the macro this one expands to
+// must be in scope there too.
+pub(crate) use styled;
 
 /// A column: children below each other.
 pub fn column() -> Container {
@@ -3358,7 +3361,7 @@ impl TextBuilder {
             let content = match &mut text.content {
                 TextContent::Plain(plain) => {
                     let plain = plain.clone();
-                    TextContent::Spans(vec![
+                    TextContent::Spans(alloc::vec![
                         Span {
                             text: plain,
                             style: text.style,
