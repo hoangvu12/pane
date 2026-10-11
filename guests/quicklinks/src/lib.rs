@@ -24,13 +24,7 @@ mod transfer;
 
 use core::cell::RefCell;
 
-use pane_extension::alloc::{
-    borrow::ToOwned,
-    format,
-    string::String,
-    vec,
-    vec::Vec,
-};
+use pane_extension::alloc::{borrow::ToOwned, format, string::String, vec, vec::Vec};
 use pane_extension::commands::{self, CommandRef, LaunchType};
 use pane_extension::feedback::{self, Confirmation, Toast, ToastStyle};
 use pane_extension::form::{self, FormValues};
@@ -231,8 +225,7 @@ impl View for QuicklinkForm {
                     .default_value(self.open_with.borrow().clone())
                     .error(error(OPEN_WITH)),
             );
-        view.navigation_title(self.title.clone());
-        view.into_answer()
+        view.navigation_title(self.title.clone()).into_answer()
     }
 }
 

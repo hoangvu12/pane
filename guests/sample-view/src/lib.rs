@@ -85,13 +85,13 @@ impl View for Screen {
             };
         }
         if matches!(self.which, Which::List) {
-            return self.list_tree(cx);
+            return self.list_tree(cx).into_answer();
         }
         if matches!(self.which, Which::Grid) {
-            return self.grid_tree(cx);
+            return self.grid_tree(cx).into_answer();
         }
         if matches!(self.which, Which::Detail) {
-            return self.detail_tree(cx);
+            return self.detail_tree(cx).into_answer();
         }
         if matches!(self.which, Which::Counter) {
             return column()
@@ -284,6 +284,9 @@ impl Screen {
             notes: RefCell::new("two lines".into()),
             swapped: Cell::new(false),
             loading: Pending::loading(async { String::new() }),
+            list_loading: Cell::new(false),
+            pages: Cell::new(0),
+            pinned: Cell::new(false),
         }
     }
 
@@ -572,8 +575,9 @@ impl Command for Sample {
             "detail" => Which::Detail,
             _ => return Err("this command opens no designed view".into()),
         };
+        let loading = matches!(which, Which::Loading);
         let mut screen = Screen::opening(which);
-        if matches!(which, Which::Loading) {
+        if loading {
             screen.loading = Pending::loading(load());
         }
         Ok(screen)
