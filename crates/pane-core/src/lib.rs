@@ -105,6 +105,7 @@ pub use programs::runner::{MAX_PROGRAM_OUTPUT, SearchPath};
 pub use runtime::Fault;
 #[doc(hidden)]
 pub use runtime::Limits;
+pub use runtime::TextMeasures;
 #[cfg(debug_assertions)]
 #[doc(hidden)]
 pub use runtime::Timers;

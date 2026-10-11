@@ -200,6 +200,10 @@ impl CommandRegistration {
 
 /// Which screen the launcher shows, with what only that screen has.
 #[derive(Clone, Debug, PartialEq)]
+// The designed view's snapshot is the largest variant, carried whole: the
+// screen is cloned on every change, and a box would touch every match in
+// both crates for the parser's sake.
+#[allow(clippy::large_enum_variant)]
 pub enum Screen {
     /// Root search: the root results matching `query`, the text typed into
     /// it, best match first, or every root result when it is empty.
@@ -1713,10 +1717,7 @@ impl Launcher {
     /// canvases (`pane:extension/view.measure-text`, #242): the fonts the
     /// window drew the view with, which the pane crate owns. Until a
     /// window installs one, a measurement answers no extent.
-    pub fn set_text_measures(
-        &self,
-        measures: std::sync::Arc<dyn Fn(&str, &str) -> (f32, f32) + Send + Sync>,
-    ) {
+    pub fn set_text_measures(&self, measures: crate::TextMeasures) {
         if let Ok(runtime) = &self.runtime {
             runtime.set_text_measures(measures);
         }

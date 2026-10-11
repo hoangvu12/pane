@@ -85,16 +85,14 @@ impl DesignedControls {
             keys: None,
         };
         let opened = controls.reconcile(tree, render, window, cx);
-        if !opened.asked {
-            if let Some(first) = opened.first {
-                let handle = controls
-                    .state
-                    .get(&first)
-                    .and_then(|state| state.focus_handle());
-                if let Some(handle) = handle {
-                    window.focus(&handle, cx);
-                }
-            }
+        if !opened.asked
+            && let Some(first) = opened.first
+            && let Some(handle) = controls
+                .state
+                .get(&first)
+                .and_then(|state| state.focus_handle())
+        {
+            window.focus(&handle, cx);
         }
         controls
     }
@@ -319,11 +317,12 @@ impl DesignedControls {
         // ask moves the focus there again, while an unchanged one leaves
         // the focus wherever the user moved it.
         let asked = node.focus;
-        if asked && !self.state.get(path).is_some_and(|entry| entry.asked) {
-            if let Some(handle) = self.state.get(path).and_then(|entry| entry.focus_handle()) {
-                window.focus(&handle, cx);
-                walk.asked = true;
-            }
+        if asked
+            && !self.state.get(path).is_some_and(|entry| entry.asked)
+            && let Some(handle) = self.state.get(path).and_then(|entry| entry.focus_handle())
+        {
+            window.focus(&handle, cx);
+            walk.asked = true;
         }
         if let Some(entry) = self.state.get_mut(path) {
             entry.asked = asked;

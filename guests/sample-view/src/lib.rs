@@ -19,7 +19,7 @@
 use core::cell::{Cell, RefCell};
 use core::future::Future;
 
-use pane_extension::alloc::string::String;
+use pane_extension::alloc::{borrow::ToOwned, format, string::String};
 use pane_extension::icon::Accessory;
 use pane_extension::icon::Tone as Colour;
 use pane_extension::view::{

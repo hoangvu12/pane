@@ -339,7 +339,7 @@ impl Launcher {
                 state.view = view;
                 // The List or Grid the view's tree names is presented, its
                 // rows filling the view (#240).
-                self.present_designed_list(&mut *state);
+                self.present_designed_list(&mut state);
                 // The first render's own ask schedules the view's refresh
                 // (see `refresh`).
                 self.view_refresh_asked(rendered.refresh_after_ms);
@@ -364,10 +364,8 @@ impl Launcher {
         if let Ok(runtime) = self.runtime() {
             runtime.note_canvas_size(view, key, width, height);
         }
-        let mut state = self.lock();
-        let Some(stack) = state.designed_view.as_ref() else {
-            return None;
-        };
+        let state = self.lock();
+        let stack = state.designed_view.as_ref()?;
         if stack.top().id != view {
             return None;
         }
@@ -402,7 +400,7 @@ impl Launcher {
         form: Option<&str>,
         values: Vec<(String, FormValue)>,
     ) -> impl Future<Output = ()> + Send + 'static {
-        let mut state = self.lock();
+        let state = self.lock();
         let form = state
             .designed_view
             .as_ref()
@@ -521,7 +519,7 @@ impl Launcher {
             let dropped = held
                 .as_ref()
                 .map(|(event, _)| (event.key.as_str(), event.render));
-            self.note_dropped_event(&mut state, handler, dropped, *why);
+            self.note_dropped_event(&mut state, handler, dropped, why);
         }
         let sent = match (held, self.runtime()) {
             (Some((event, None)), Ok(runtime)) => {
@@ -752,7 +750,6 @@ impl Launcher {
                         &mut top.tree,
                     );
                     let tree = top.tree.clone();
-                    drop(top);
                     let shown = stack.shown();
                     (shown.0, shown.1, tree, owner, loading)
                 };
@@ -1325,9 +1322,10 @@ fn form_of(tree: &DesignedTree, key: Option<&str>) -> Option<(u32, String)> {
         let own = match &node.kind {
             NodeKind::Form(form) => {
                 let form_key = node.key.clone().unwrap_or_else(|| "form".to_owned());
-                let matches = key.is_none_or(|wanted| wanted == form_key);
-                if matches && form.on_submit.is_some() {
-                    return Some((form.on_submit.expect("checked above"), form_key));
+                if key.is_none_or(|wanted| wanted == form_key)
+                    && let Some(on_submit) = form.on_submit
+                {
+                    return Some((on_submit, form_key));
                 }
                 Some(form_key)
             }
@@ -1359,10 +1357,10 @@ fn remembered_of(tree: &DesignedTree, values: &[(String, FormValue)]) -> Vec<(St
             NodeKind::Form(_) => node.key.as_deref().unwrap_or("form"),
             _ => form,
         };
-        if let (Some(key), true) = (&node.key, field_remember(node)) {
-            if let Some((_, value)) = values.iter().find(|(named, _)| named == key) {
-                into.push((format!("pane-form/{form}/{key}"), value.clone()));
-            }
+        if let (Some(key), true) = (&node.key, field_remember(node))
+            && let Some((_, value)) = values.iter().find(|(named, _)| named == key)
+        {
+            into.push((format!("pane-form/{form}/{key}"), value.clone()));
         }
         if let Some(fallback) = &node.fallback {
             at(fallback, form, values, into);

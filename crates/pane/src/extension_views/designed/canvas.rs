@@ -1151,14 +1151,13 @@ impl LauncherWindow {
         window: &mut Window,
         cx: &mut gpui::Context<Self>,
     ) {
-        if let Some(controls) = self.designed.as_mut() {
-            if let Some(entry) = controls.state.get_mut(path) {
-                if let Held::Canvas { drag, .. } = &mut entry.held {
-                    let mut drag = drag.borrow_mut();
-                    drag.pressed = true;
-                    drag.last = at;
-                }
-            }
+        if let Some(controls) = self.designed.as_mut()
+            && let Some(entry) = controls.state.get_mut(path)
+            && let Held::Canvas { drag, .. } = &mut entry.held
+        {
+            let mut drag = drag.borrow_mut();
+            drag.pressed = true;
+            drag.last = at;
         }
         let key = self.canvas_key(path);
         if let Some(down) = handlers.on_pointer_down {

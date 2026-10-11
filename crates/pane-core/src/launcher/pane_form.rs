@@ -500,37 +500,3 @@ pub(super) fn form_submit_of(tree: &DesignedTree) -> Option<String> {
     }
     at(&tree.root)
 }
-
-/// The value the field keyed `key` of `tree`'s form holds now, as the
-/// submission's fallback reads it — the window's collection is the
-/// authority, the tree what a control that has not changed holds. `None`
-/// when the tree holds no such field.
-pub(super) fn field_value(tree: &DesignedTree, key: &str) -> Option<String> {
-    fn at(node: &Node, key: &str) -> Option<String> {
-        if node.key.as_deref() == Some(key) {
-            return match &node.kind {
-                NodeKind::TextInput(input) | NodeKind::PasswordInput(input) => {
-                    Some(input.value.clone())
-                }
-                NodeKind::Select(select) => select.value.clone(),
-                NodeKind::Checkbox(checkbox) => Some(checkbox.checked.to_string()),
-                NodeKind::TextArea(area) => Some(area.value.clone()),
-                NodeKind::DatePicker(date) | NodeKind::DateTimePicker(date) => {
-                    Some(date.value.clone())
-                }
-                NodeKind::TagPicker(picker) => Some(picker.tags.join(",")),
-                NodeKind::FilePicker(picker) | NodeKind::FolderPicker(picker) => {
-                    Some(picker.paths.first().cloned().unwrap_or_default())
-                }
-                _ => None,
-            };
-        }
-        if let Some(fallback) = &node.fallback
-            && let Some(value) = at(fallback, key)
-        {
-            return Some(value);
-        }
-        node.children.iter().find_map(|child| at(child, key))
-    }
-    at(&tree.root, key)
-}

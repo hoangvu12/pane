@@ -8,7 +8,7 @@
 #![no_std]
 
 use pane_extension::alloc::string::ToString as _;
-use pane_extension::alloc::{format, string::String};
+use pane_extension::alloc::{borrow::ToOwned, format, string::String};
 use pane_extension::view::{
     Cx, IntoNode, Space, TextLevel, TextStyle, View, button, column, row, text,
 };

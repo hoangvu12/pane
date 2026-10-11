@@ -323,9 +323,7 @@ impl Launcher {
             let Screen::DesignedView(snapshot) = &state.view.screen else {
                 return None;
             };
-            let Some(stack) = state.designed_view.as_mut() else {
-                return None;
-            };
+            let stack = state.designed_view.as_mut()?;
             let Some((node, list)) = first_list(&snapshot.tree) else {
                 // No list on this tree: the screen is the tree's alone.
                 return None;
