@@ -81,7 +81,7 @@ impl View for Screen {
                     .child(text("Loaded").style(TextStyle::Title))
                     .child(text(what.as_str()).level(TextLevel::Secondary))
                     .into_answer(),
-                None => loading(text("Loading…").level(TextLevel::Secondary)),
+                None => text("Loading…").level(TextLevel::Secondary).into_answer(),
             };
         }
         if matches!(self.which, Which::List) {
@@ -150,13 +150,16 @@ impl View for Screen {
                         row()
                             .gap(Space::S)
                             .children([
-                                icon(Icon::builtin("star")).size(IconSize::L),
+                                icon(Icon::builtin("star"))
+                                    .size(IconSize::L)
+                                    .into_node(),
                                 // A raw blue, corrected for contrast.
-                                icon(Icon::builtin("bell").tint(Color::Raw("#88ccff".into()))),
-                                keycap("ctrl"),
-                                key_sequence(["ctrl", "shift", "p"]),
-                                tag("beta").color(Colour::Blue),
-                                badge("3"),
+                                icon(Icon::builtin("bell").tint(Color::Raw("#88ccff".into())))
+                                    .into_node(),
+                                keycap("ctrl").into_node(),
+                                key_sequence(["ctrl", "shift", "p"]).into_node(),
+                                tag("beta").color(Colour::Blue).into_node(),
+                                badge("3").into_node(),
                             ])
                             .name("Marks"),
                     )
@@ -254,8 +257,11 @@ impl View for Screen {
                                 .hover(
                                     pane_extension::view::Surface::default()
                                         .background(Paint::Color(Color::Tone(Colour::Accent))),
-                                ),
-                            link("A link").on_click(cx.listener(|_: &mut Self| {})),
+                                )
+                                .into_node(),
+                            link("A link")
+                                .on_click(cx.listener(|_: &mut Self| {}))
+                                .into_node(),
                         ]),
                     )
                     .child(row().gap(Space::S).children([
@@ -470,13 +476,13 @@ impl Screen {
                             .key("warm-0")
                             .title("Amber")
                             .subtitle("A colour cell")
-                            .color(Paint::from(Color::hex(0xffb300)))
+                            .color(Paint::from(Color::hex("#ffb300")))
                             .on_press(cx.listener(|_: &mut Self| {})),
                         cell()
                             .key("warm-1")
                             .title("Coral")
                             .subtitle("A colour cell")
-                            .color(Paint::from(Color::hex(0xff7043)))
+                            .color(Paint::from(Color::hex("#ff7043")))
                             .on_press(cx.listener(|_: &mut Self| {})),
                         cell()
                             .key("warm-2")
@@ -496,13 +502,13 @@ impl Screen {
                             .key("cool-0")
                             .title("Indigo")
                             .subtitle("A colour cell")
-                            .color(Paint::from(Color::hex(0x3d5afe)))
+                            .color(Paint::from(Color::hex("#3d5afe")))
                             .on_press(cx.listener(|_: &mut Self| {})),
                         cell()
                             .key("cool-1")
                             .title("Teal")
                             .subtitle("A colour cell")
-                            .color(Paint::from(Color::hex(0x00897b)))
+                            .color(Paint::from(Color::hex("#00897b")))
                             .on_press(cx.listener(|_: &mut Self| {})),
                         cell()
                             .key("cool-2")

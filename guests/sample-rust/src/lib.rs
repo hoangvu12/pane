@@ -14,8 +14,8 @@ use pane_extension::feedback::{Toast, show_toast};
 use pane_extension::form;
 use pane_extension::root::{RootAction, RootResult};
 use pane_extension::view::{
-    Answer, CanvasEvent, CanvasRole, Cx, Draw, IntoAnswer, Length, Paint, TextMeasure, TextStyle,
-    View, canvas, column, measure_text,
+    Answer, CanvasEvent, CanvasRole, Cx, Draw, IntoAnswer, IntoNode, Length, Paint, TextMeasure,
+    TextStyle, View, canvas, column, measure_text,
 };
 use pane_extension::{Color, Command, Item, List, Platform, choice};
 
@@ -92,6 +92,8 @@ impl Greeting {
         let error = self.error.borrow().clone();
         let answered = self.answered.borrow().clone();
         let choice = |value: &str, label: &str| choice(value).label(label);
+        // Every field is a builder of its own type, so the list holds the
+        // nodes they build.
         let fields = || {
             vec![
                 form::text_field("name")
@@ -99,11 +101,14 @@ impl Greeting {
                     .placeholder("Ada Lovelace")
                     .remember()
                     .error(error.clone().map(str::to_owned).unwrap_or_default())
-                    .auto_focus(),
-                form::password_field("secret").title("Secret"),
-                form::text_area("notes").title("Notes"),
-                form::date_picker("day").title("Day"),
-                form::date_time_picker("at").title("At"),
+                    .auto_focus()
+                    .into_node(),
+                form::password_field("secret")
+                    .title("Secret")
+                    .into_node(),
+                form::text_area("notes").title("Notes").into_node(),
+                form::date_picker("day").title("Day").into_node(),
+                form::date_time_picker("at").title("At").into_node(),
                 form::dropdown("greeting")
                     .title("Greeting")
                     .options([
@@ -111,18 +116,25 @@ impl Greeting {
                         choice("morning", "Good morning").section("Warm"),
                         choice("welcome", "Welcome").section("Warm"),
                     ])
-                    .default_value("hello"),
-                form::tag_picker("tags").title("Tags").options([
-                    choice("friend", "Friend"),
-                    choice("colleague", "Colleague"),
-                    choice("family", "Family"),
-                ]),
-                form::file_picker("file").title("File"),
+                    .default_value("hello")
+                    .into_node(),
+                form::tag_picker("tags")
+                    .title("Tags")
+                    .options([
+                        choice("friend", "Friend"),
+                        choice("colleague", "Colleague"),
+                        choice("family", "Family"),
+                    ])
+                    .into_node(),
+                form::file_picker("file").title("File").into_node(),
                 form::folder_picker("folder")
                     .title("Folder")
-                    .allow_multiple(),
-                form::checkbox("updates").label("Send updates"),
-                form::toggle("quiet").label("Quiet mode"),
+                    .allow_multiple()
+                    .into_node(),
+                form::checkbox("updates")
+                    .label("Send updates")
+                    .into_node(),
+                form::toggle("quiet").label("Quiet mode").into_node(),
             ]
         };
         let mut view = form::Form::new()

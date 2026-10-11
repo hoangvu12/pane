@@ -14,9 +14,6 @@ use alloc::vec::Vec;
 
 wit_bindgen::generate!({ path: "wit", world: "extension" });
 
-use alloc::string::String;
-use alloc::vec::Vec;
-
 use exports::pane::extension::command::{
     FieldValue, FormError, Guest, GuestView, LaunchRecord, Outcome, Rendered, UiEvent, View,
 };

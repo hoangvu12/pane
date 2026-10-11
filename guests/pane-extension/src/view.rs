@@ -268,7 +268,7 @@ impl<V: View> Cx<'_, V> {
 /// A named listener of the tree: what [`Cx::listener`], [`Cx::push`],
 /// [`Cx::replace`], [`Cx::pop`] and their kinds answer, handed to
 /// [`Button::on_click`] and its kind.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Listener(u32);
 
 /// A named listener of the tree that the event's text reaches: what
@@ -316,25 +316,28 @@ enum Run<V> {
 /// One node of the tree: a layout primitive or UI component, with the
 /// style every node carries and the properties its own kind reads. Built
 /// with the constructors of this module, and given its identity with
-/// [`Node::key`].
+/// [`Node::key`]. The `kind`, `key`, `navigation_title` and `focus`
+/// fields are `pub(crate)`: `crate::form`'s field builders read and
+/// change them on the nodes this module hands them.
+#[derive(Debug)]
 pub struct Node {
-    kind: NodeKind,
+    pub(crate) kind: NodeKind,
     style: Style,
     /// Where in a `stack` this node is placed; `None` for the stack's own
     /// placement. Nowhere else is it read.
     place: Option<Place>,
     /// How far this node sits from its place in a `stack`.
     offset: Option<(Length, Length)>,
-    key: Option<String>,
+    pub(crate) key: Option<String>,
     name: Option<String>,
     /// What names the view, when this node is the tree's root: shown where
     /// a screen's title is. Ignored on any other node.
-    navigation_title: Option<String>,
+    pub(crate) navigation_title: Option<String>,
     requires: Option<u64>,
     fallback: Option<Box<Node>>,
     children: Vec<Node>,
     /// Whether the node asks for the keyboard (see [`Node::focus`]).
-    focus: bool,
+    pub(crate) focus: bool,
     /// The listener a focus of this node runs, it taking the keyboard.
     on_focus: Option<Listener>,
     /// The listener a blur of this node runs, it losing the keyboard.
@@ -720,7 +723,7 @@ pub enum TextContent {
 
 /// One span of a text: a run of its content, styled, and a link when it
 /// carries an `on_click` listener.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Span {
     text: String,
     style: Option<TextStyle>,
@@ -1245,8 +1248,8 @@ impl TextMeasure {
     /// operation names.
     fn json(&self) -> String {
         let mut style = String::new();
-        if let Some(style) = self.style.map(text_style_name) {
-            let _ = write!(style, "\"style\":\"{style}\",");
+        if let Some(name) = self.style.map(text_style_name) {
+            let _ = write!(style, "\"style\":\"{name}\",");
         }
         if let Some(size) = self.size {
             let _ = write!(style, "\"size\":{size},");
@@ -1573,24 +1576,11 @@ impl IntoAnswer for Answer {
     }
 }
 
-/// A view's loading state (#236): `tree` is shown at once, and the data
-/// it waits for asks for the drawing that replaces it itself when it
-/// lands ([`Pending`], #243) — so the answer asks Pane for no refresh,
-/// unlike an interval's ask, whose work runs in its render instead. What
-/// `tree` draws is the author's; a text naming what is loading is the
-/// usual one.
-pub fn loading(tree: impl IntoNode) -> Answer {
-    Answer {
-        node: tree.into_node(),
-        refresh: None,
-        error: None,
-    }
-}
-
 /// Data a view is still waiting for, shown as a loading state until it
 /// arrives (#236): [`Pending::loading`] holds the work, and each render
 /// reads it through [`Pending::ready`] — `None` while the work has not
-/// answered, so the view renders its loading state ([`loading`]), and its
+/// answered, so the view renders its loading state (a plain tree, the
+/// answer's own), and its
 /// answer from then on. The work keeps running between Pane's calls
 /// (#243): the first `ready` that finds it pending starts it as a task of
 /// the render's own, which Pane drives while a view of the command is
@@ -2452,15 +2442,6 @@ impl Section {
         self
     }
 
-    /// The section's cells' width over their height (a Grid's).
-    pub fn aspect_ratio(mut self, ratio: f32) -> Section {
-        match &mut self.0.kind {
-            NodeKind::ListSection(section) => section.aspect_ratio = Some(ratio),
-            _ => unreachable!("a section node"),
-        }
-        self
-    }
-
     /// How the section's images fit their cells (a Grid's).
     pub fn fit(mut self, fit: Fit) -> Section {
         match &mut self.0.kind {
@@ -2537,7 +2518,7 @@ impl Item {
     /// shows its detail — built for the selected item through the render
     /// context's `selected`.
     pub fn detail(mut self, detail: impl IntoNode) -> Item {
-        self.0.item_mut().detail = Some(detail.into_node());
+        self.0.item_mut().detail = Some(Box::new(detail.into_node()));
         self
     }
 }
@@ -2807,7 +2788,7 @@ pub(crate) struct TagPayload {
 }
 
 /// The payload the toggle and checkbox kinds read.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub(crate) struct TogglePayload {
     pub(crate) on: bool,
     pub(crate) on_click: Option<Listener>,
@@ -4423,7 +4404,7 @@ fn write_node(tree: &mut String, node: &Node) -> Result<(), String> {
             }
             if let Some(icon) = icon {
                 tree.push_str(",\"icon\":");
-                icon::write_icon(tree, icon)?;
+                icon::write_icon(tree, icon);
             }
             if let Some(keys) = keys {
                 tree.push_str(",\"keys\":[");
@@ -4461,7 +4442,7 @@ fn write_node(tree: &mut String, node: &Node) -> Result<(), String> {
         }
         NodeKind::Icon(icon) | NodeKind::IconTile(icon) => {
             tree.push_str(",\"icon\":");
-            icon::write_icon(tree, &icon.icon)?;
+            icon::write_icon(tree, &icon.icon);
             if let Some(size) = icon.size {
                 tree.push_str(",\"size\":");
                 write_size(tree, size)?;
@@ -4469,10 +4450,10 @@ fn write_node(tree: &mut String, node: &Node) -> Result<(), String> {
         }
         NodeKind::Image { image, size, fit } => {
             tree.push_str(",\"image\":");
-            icon::write_icon(tree, image)?;
+            icon::write_icon(tree, image);
             if let Some(size) = size {
                 tree.push_str(",\"size\":");
-                write_size(tree, size)?;
+                write_size(tree, *size)?;
             }
             tree.push_str(",\"fit\":");
             string(
@@ -4493,7 +4474,7 @@ fn write_node(tree: &mut String, node: &Node) -> Result<(), String> {
             }
             if let Some(icon) = &row.icon {
                 tree.push_str(",\"icon\":");
-                icon::write_icon(tree, icon)?;
+                icon::write_icon(tree, icon);
             }
             if !row.accessories.is_empty() {
                 tree.push_str(",\"accessories\":[");
@@ -4716,7 +4697,7 @@ fn write_node(tree: &mut String, node: &Node) -> Result<(), String> {
             }
             if let Some(icon) = &empty.icon {
                 tree.push_str(",\"icon\":");
-                icon::write_icon(tree, icon)?;
+                icon::write_icon(tree, icon);
             }
         }
         NodeKind::TextInput(input) | NodeKind::PasswordInput(input) | NodeKind::TextArea(input) => {
@@ -4969,7 +4950,7 @@ fn write_node(tree: &mut String, node: &Node) -> Result<(), String> {
             }
             if let Some(image) = &item.image {
                 tree.push_str(",\"image\":");
-                icon::write_icon(tree, image)?;
+                icon::write_icon(tree, image);
             }
             if let Some(color) = &item.color {
                 tree.push_str(",\"color\":");
@@ -5667,7 +5648,7 @@ fn write_paint(tree: &mut String, paint: &Paint) -> Result<(), String> {
         Color::Raw(raw) => string(tree, raw),
     };
     match paint {
-        Paint::Color(color) => color(tree, color),
+        Paint::Color(held) => color(tree, held),
         Paint::Pair { light, dark } => {
             tree.push_str("{\"light\":");
             color(tree, light)?;
