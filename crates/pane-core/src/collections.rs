@@ -225,7 +225,10 @@ pub(crate) fn parse(text: &str) -> Result<Collection, String> {
             current = next.to_owned();
         }
     }
-    Ok(Collection { extensions, renamed })
+    Ok(Collection {
+        extensions,
+        renamed,
+    })
 }
 
 /// The index as `pane-collection.json` writes it. A field it does not know

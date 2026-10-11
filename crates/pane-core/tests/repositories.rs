@@ -202,19 +202,24 @@ impl Dirs {
     /// to the current extension, which installs under its current id.
     /// `main` and the release `v0.1.0` are as [`Dirs::collection`]'s, the
     /// two releases standing side by side as an evolving collection's do.
-    fn renamed(&self) -> String {
+    fn renamed(&self) -> Tools {
         let (repo, url) = self.repo("tools");
-        repo.commit(
+        let source = repo.commit(
             &collection_files(&guests(), INDEX, false),
             "Clock 0.1.0 source",
         );
         repo.git(&["switch", "--quiet", "-c", "release"]);
-        repo.commit(&collection_files(&guests(), INDEX, true), "Release 0.1.0");
+        let release = repo.commit(&collection_files(&guests(), INDEX, true), "Release 0.1.0");
         repo.tag("v0.1.0");
         repo.commit(&renamed_collection_files(&guests()), "Rename clock to time");
         repo.tag("v0.2.0");
         repo.git(&["switch", "--quiet", "main"]);
-        url
+        Tools {
+            repo,
+            url,
+            source,
+            release,
+        }
     }
 
     /// The identity of the repository served as `name`.
@@ -1818,7 +1823,7 @@ fn a_local_dependency_naming_one_extension_of_a_collection_installs_it() {
 #[test]
 fn an_old_id_a_collection_renamed_installs_the_current_extension() {
     let dirs = Dirs::new();
-    let url = dirs.renamed();
+    let url = dirs.renamed().url;
     let launcher = dirs.launcher();
     let asked = format!("{url}#clock@refs/tags/v0.2.0");
 
@@ -1875,7 +1880,7 @@ fn an_old_id_a_collection_renamed_installs_the_current_extension() {
 #[test]
 fn a_dependency_naming_an_old_id_installs_the_current_extension() {
     let dirs = Dirs::new();
-    let url = dirs.renamed();
+    let url = dirs.renamed().url;
     let source = format!("git:{url}#clock@refs/tags/v0.2.0");
     let folder = dirs.caller(&format!(
         r#"{{ "id": "greeter", "source": "{source}",
@@ -2620,6 +2625,57 @@ fn one_extension_installed_by_its_id_from_a_filter_capable_server() {
         launcher.view().status,
         Status::Result("Installed Clock from Git".into())
     );
+    assert_eq!(
+        run(&launcher, "Clock from Git", "Say hello"),
+        Status::Result(HELLO.into())
+    );
+    launcher.back();
+    dirs.wait_for_no_downloads();
+}
+
+/// An old id a collection renamed resolves on a filter-capable server as
+/// on one that allows no filter (#310, #311): the partial fetch resolves
+/// the id through the index's `renamed` map before it asks for any blob,
+/// so the blobs it asks for are the current id's folder's, and the
+/// extension previews and installs under its current id, as a whole
+/// fetch of the same revision resolves it.
+#[test]
+fn an_old_id_a_collection_renamed_resolves_on_a_filter_capable_server() {
+    let dirs = Dirs::new();
+    let tools = dirs.renamed();
+    tools.repo.allow_filter();
+    let launcher = dirs.launcher();
+
+    block_on(launcher.preview_git(&format!("{}#clock@refs/tags/v0.2.0", tools.url)));
+    assert_eq!(launcher.view().title, "Clock from Git");
+    let details = details(&launcher);
+    assert!(has(
+        &details,
+        "Extension: time, one of the extensions its collection lists"
+    ));
+    assert_eq!(titles(&launcher), ["Install"]);
+    // The rename was resolved before anything was fetched: the blobs
+    // asked for are the current id's folder's, and the only ones.
+    let wants = |path: &str| blob_of(&tools.repo, "v0.2.0", path);
+    let fetches = dirs.server.fetches();
+    assert_eq!(fetches.len(), 3, "{fetches:?}");
+    assert!(fetches[0].iter().any(|line| line == "filter blob:none"));
+    assert_eq!(
+        wants_of(&fetches[1]),
+        vec![format!("want {}", wants("pane-collection.json"))]
+    );
+    let mut time: Vec<String> = ["pane.json", "dist/git_greeter.wasm"]
+        .iter()
+        .map(|file| format!("want {}", wants(&format!("extensions/time/{file}"))))
+        .collect();
+    time.sort();
+    assert_eq!(wants_of(&fetches[2]), time);
+    block_on(launcher.activate_selected());
+    assert_eq!(
+        launcher.view().status,
+        Status::Result("Installed Clock from Git".into())
+    );
+    assert_eq!(launcher.packages()[0].identity.extension_id(), Some("time"));
     assert_eq!(
         run(&launcher, "Clock from Git", "Say hello"),
         Status::Result(HELLO.into())

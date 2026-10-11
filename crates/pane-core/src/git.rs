@@ -2296,7 +2296,13 @@ fn fetch_partial(
     let mut written = Written::new(limits);
     match spec.extension.as_deref() {
         Some(id) => {
-            if let Some(extension) = collection.find(id) {
+            // An old id the `renamed` map names resolves to the
+            // extension's current folder, as the read path resolves one
+            // (#310); an id the collection no longer offers resolves to
+            // none, and the read path refuses it as it does on a server
+            // without the filter.
+            if let Some(resolved) = collection.resolve(id) {
+                let extension = resolved.extension;
                 let mut blobs = Vec::new();
                 if let Some(tree) = folder_at(&trees, &root, &extension.path, limits)? {
                     gather_subtree(

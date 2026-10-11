@@ -135,14 +135,16 @@ own release tag [updates by itself](#updating-by-itself) to the newest
 release above the version installed, pinned to that tag's commit; one on
 a tracked reference updates as any Git package does, the newer revision
 read through the collection's index, so an extension whose folder moved
-within it still updates, keeping its identity. A revision whose index no
-longer lists the id is refused — following a rename, or reporting a
-removal, is a later ticket — and the extension keeps running its
-installed code.
+within it still updates, keeping its identity. An id the newer index
+renames is followed, the identity kept, and an id it no longer offers is
+reported in the update results as a notice, the extension keeping running
+its installed code — never uninstalled silently.
 
-Naming a collection without an id, by address or by a picked folder, is
-explained as a collection whose extension must be named; the list to choose
-from comes with a later ticket. A `#<id>` on a one-extension repository is
+Naming a collection without an id, by address or by a picked folder,
+opens the choice: the collection's extensions are listed — each package's
+own icon, title, description and version — and the user ticks some or all
+to install, each one installed as a package of its own. A `#<id>` on a
+one-extension repository is
 refused. A local folder takes `#<id>` the same way
 (`pane --install <folder>#<id>`; the part after the last `#` is the id),
 with the identity `local:<folder>#<id>`, and a dependency's `git:` or
