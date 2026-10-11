@@ -38,7 +38,6 @@ impl Command for Greeter {
                 .on_action(|| act("greet")),
         ))
     }
-
 }
 
 /// The operation the package publishes: `greet`.

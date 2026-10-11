@@ -98,16 +98,19 @@ fn relay(text: Option<&str>) -> Result<String, String> {
             let (name, value) = word.split_once('=').unwrap_or((word, ""));
             ArgumentValue {
                 name: name.into(),
-                value: value.into()}
+                value: value.into(),
+            }
         })
         .collect();
     let target = CommandRef {
         source: None,
-        command: command.into()};
+        command: command.into(),
+    };
     commands::launch(&target, launch_type, &arguments, None)?;
     Ok(match launch_type {
         LaunchType::Background => format!("Relayed {command} in the background"),
-        LaunchType::UserInitiated => format!("Relayed {command}")})
+        LaunchType::UserInitiated => format!("Relayed {command}"),
+    })
 }
 
 impl Command for Arguments {
@@ -118,7 +121,8 @@ impl Command for Arguments {
             "greet" => greet(&launch),
             "stamp" => stamp(&launch),
             "relay" => relay(launch.fallback_text.as_deref()),
-            other => Err(format!("unknown command: {other}"))}?;
+            other => Err(format!("unknown command: {other}")),
+        }?;
         // Nobody is there to see a background launch's toast.
         if launch.launch_type != LaunchType::Background {
             show_toast(Toast::success(done));

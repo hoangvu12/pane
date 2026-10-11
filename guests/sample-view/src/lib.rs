@@ -20,16 +20,16 @@ use core::cell::{Cell, RefCell};
 use core::future::Future;
 
 use pane_extension::alloc::string::String;
-use pane_extension::icon::Tone as Colour;
 use pane_extension::icon::Accessory;
+use pane_extension::icon::Tone as Colour;
 use pane_extension::view::{
-    Cx, Color, DropdownItem, Fit, Icon, IconSize, IntoAnswer, IntoNode, Length, ListAction,
-    Paint, Pending, Place, Radius, Space, TextLevel, TextStyle, Tone, View, badge, button, card,
-    cell, checkbox, choice, column, detail, divider, dropdown, empty_state, grid, icon, icon_tile,
-    image, item, key_sequence, keycap, link, list, loading, markdown, metadata_list, metadata,
-    metadata_separator, metadata_tags, password_input, progress, rich_row, row, scroll,
-    section, section_header, segmented, select, slider, spacer, span, spans, stack, tag, text,
-    text_area, text_input, toggle,
+    Color, Cx, DropdownItem, Fit, Icon, IconSize, IntoAnswer, IntoNode, Length, ListAction, Paint,
+    Pending, Place, Radius, Space, TextLevel, TextStyle, Tone, View, badge, button, card, cell,
+    checkbox, choice, column, detail, divider, dropdown, empty_state, grid, icon, icon_tile, image,
+    item, key_sequence, keycap, link, list, loading, markdown, metadata, metadata_list,
+    metadata_separator, metadata_tags, password_input, progress, rich_row, row, scroll, section,
+    section_header, segmented, select, slider, spacer, span, spans, stack, tag, text, text_area,
+    text_input, toggle,
 };
 use pane_extension::{Command, LaunchRecord};
 
@@ -81,7 +81,8 @@ impl View for Screen {
                     .child(text("Loaded").style(TextStyle::Title))
                     .child(text(what.as_str()).level(TextLevel::Secondary))
                     .into_answer(),
-                None => loading(text("Loading…").level(TextLevel::Secondary))};
+                None => loading(text("Loading…").level(TextLevel::Secondary)),
+            };
         }
         if matches!(self.which, Which::List) {
             return self.list_tree(cx);
@@ -115,138 +116,137 @@ impl View for Screen {
                 )
                 .into_answer();
         }
-        scroll().key("gallery").grow(1.).child(
-            column()
-                .gap(Space::L)
-                .child(
-                    text("The UI component set")
-                        .style(TextStyle::Heading)
-                        .level(TextLevel::Primary),
-                )
-                .child(
-                    // A stack: a badge over an icon tile, placed.
-                    stack()
-                        .align(Place::TopEnd)
-                        .child(icon_tile(Icon::builtin("layers")))
-                        .child(
-                            badge("4")
-                                .place(Place::BottomEnd)
-                                .offset(Length::Px(4.), Length::Px(4.)),
-                        ),
-                )
-                .child(
-                    // A text with spans, one a link.
-                    spans([
-                        span("Accept the "),
-                        span("terms").on_click(cx.listener(|_: &mut Self| {})),
-                        span(" before continuing.").code(),
-                    ]),
-                )
-                .child(
-                    row()
-                        .gap(Space::S)
-                        .children([
-                            icon(Icon::builtin("star")).size(IconSize::L),
-                            // A raw blue, corrected for contrast.
-                            icon(Icon::builtin("bell").tint(Color::Raw("#88ccff".into()))),
-                            keycap("ctrl"),
-                            key_sequence(["ctrl", "shift", "p"]),
-                            tag("beta").color(Colour::Blue),
-                            badge("3"),
-                        ])
-                        .name("Marks"),
-                )
-                .child(
-                    card().gap(Space::S).child(
-                        rich_row("Pane")
-                            .subtitle("A tree Pane renders")
-                            .icon(Icon::builtin("layers"))
-                            .tag("new")
-                            .on_click(cx.listener(|_: &mut Self| {})),
-                    ),
-                )
-                .child(
-                    // Controls, one of them live.
-                    column()
-                        .gap(Space::S)
-                        .child(section_header("Controls").note("Every one focusable"))
-                        .child(
-                            toggle(self.on.get())
-                                .label("Dark mode")
-                                .on_click(cx.listener(|this: &mut Self| {
-                                    this.on.set(!this.on.get());
-                                })),
-                        )
-                        .child(
-                            checkbox(self.on.get())
-                                .label("Remember")
-                                .on_click(cx.listener(|this: &mut Self| {
-                                    this.on.set(!this.on.get());
-                                })),
-                        )
-                        .child(
-                            segmented([
-                                choice("daily").label("Daily"),
-                                choice("weekly").label("Weekly"),
+        scroll()
+            .key("gallery")
+            .grow(1.)
+            .child(
+                column()
+                    .gap(Space::L)
+                    .child(
+                        text("The UI component set")
+                            .style(TextStyle::Heading)
+                            .level(TextLevel::Primary),
+                    )
+                    .child(
+                        // A stack: a badge over an icon tile, placed.
+                        stack()
+                            .align(Place::TopEnd)
+                            .child(icon_tile(Icon::builtin("layers")))
+                            .child(
+                                badge("4")
+                                    .place(Place::BottomEnd)
+                                    .offset(Length::Px(4.), Length::Px(4.)),
+                            ),
+                    )
+                    .child(
+                        // A text with spans, one a link.
+                        spans([
+                            span("Accept the "),
+                            span("terms").on_click(cx.listener(|_: &mut Self| {})),
+                            span(" before continuing.").code(),
+                        ]),
+                    )
+                    .child(
+                        row()
+                            .gap(Space::S)
+                            .children([
+                                icon(Icon::builtin("star")).size(IconSize::L),
+                                // A raw blue, corrected for contrast.
+                                icon(Icon::builtin("bell").tint(Color::Raw("#88ccff".into()))),
+                                keycap("ctrl"),
+                                key_sequence(["ctrl", "shift", "p"]),
+                                tag("beta").color(Colour::Blue),
+                                badge("3"),
                             ])
-                            .value("daily")
-                            .label("Digest")
-                            .on_click(cx.listener(|_: &mut Self| {})),
-                        )
-                        .child(
-                            select([
-                                choice("daily").label("Daily"),
-                                choice("weekly").label("Weekly"),
-                            ])
-                            .value("daily")
-                            .label("Pick")
-                            .on_click(cx.listener(|_: &mut Self| {})),
-                        )
-                        .child(
-                            slider(0.4)
-                                .label("Volume")
+                            .name("Marks"),
+                    )
+                    .child(
+                        card().gap(Space::S).child(
+                            rich_row("Pane")
+                                .subtitle("A tree Pane renders")
+                                .icon(Icon::builtin("layers"))
+                                .tag("new")
                                 .on_click(cx.listener(|_: &mut Self| {})),
-                        )
-                        .child(progress(0.7).label("Installed"))
-                        .child(loading().label("Checking")),
-                )
-                .child(self.fields(cx))
-                .child(password_input().label("Secret"))
-                .child(
-                    // Markdown.
-                    markdown(concat!(
-                        "# Markdown\n\n",
-                        "Some *prose*, `code` and [a link](https://pane.dev).\n\n",
-                        "- [x] drawn\n- [ ] still to do\n"
-                    )),
-                )
-                .child(
-                    metadata_list([
+                        ),
+                    )
+                    .child(
+                        // Controls, one of them live.
+                        column()
+                            .gap(Space::S)
+                            .child(section_header("Controls").note("Every one focusable"))
+                            .child(
+                                toggle(self.on.get())
+                                    .label("Dark mode")
+                                    .on_click(cx.listener(|this: &mut Self| {
+                                        this.on.set(!this.on.get());
+                                    })),
+                            )
+                            .child(
+                                checkbox(self.on.get())
+                                    .label("Remember")
+                                    .on_click(cx.listener(|this: &mut Self| {
+                                        this.on.set(!this.on.get());
+                                    })),
+                            )
+                            .child(
+                                segmented([
+                                    choice("daily").label("Daily"),
+                                    choice("weekly").label("Weekly"),
+                                ])
+                                .value("daily")
+                                .label("Digest")
+                                .on_click(cx.listener(|_: &mut Self| {})),
+                            )
+                            .child(
+                                select([
+                                    choice("daily").label("Daily"),
+                                    choice("weekly").label("Weekly"),
+                                ])
+                                .value("daily")
+                                .label("Pick")
+                                .on_click(cx.listener(|_: &mut Self| {})),
+                            )
+                            .child(
+                                slider(0.4)
+                                    .label("Volume")
+                                    .on_click(cx.listener(|_: &mut Self| {})),
+                            )
+                            .child(progress(0.7).label("Installed"))
+                            .child(loading().label("Checking")),
+                    )
+                    .child(self.fields(cx))
+                    .child(password_input().label("Secret"))
+                    .child(
+                        // Markdown.
+                        markdown(concat!(
+                            "# Markdown\n\n",
+                            "Some *prose*, `code` and [a link](https://pane.dev).\n\n",
+                            "- [x] drawn\n- [ ] still to do\n"
+                        )),
+                    )
+                    .child(metadata_list([
                         metadata("Author", "Vu").on_click(cx.listener(|_: &mut Self| {})),
                         metadata_tags("Tags", ["one", "two"]),
                         metadata_separator(),
                         metadata("Kind", "sample"),
-                    ]),
-                )
-                .child(
-                    empty_state("Nothing here")
-                        .description("The gallery is over")
-                        .icon(Icon::builtin("search-minus"))
-                        .action(button("Start over").on_click(cx.listener(|_: &mut Self| {}))),
-                )
-                .child(
-                    // An image, with a placeholder while it stands in.
-                    image(Icon::builtin("image"))
-                        .size(IconSize::Xl)
-                        .fit(Fit::Cover)
-                        .placeholder(text("Loading…").level(TextLevel::Tertiary)),
-                )
-                .child(
-                    // Raw values: a surface with a variant, a tone, a
-                    // corrected colour and an exact one.
-                    row()
-                        .gap(Space::S)
-                        .children([
+                    ]))
+                    .child(
+                        empty_state("Nothing here")
+                            .description("The gallery is over")
+                            .icon(Icon::builtin("search-minus"))
+                            .action(button("Start over").on_click(cx.listener(|_: &mut Self| {}))),
+                    )
+                    .child(
+                        // An image, with a placeholder while it stands in.
+                        image(Icon::builtin("image"))
+                            .size(IconSize::Xl)
+                            .fit(Fit::Cover)
+                            .placeholder(text("Loading…").level(TextLevel::Tertiary)),
+                    )
+                    .child(
+                        // Raw values: a surface with a variant, a tone, a
+                        // corrected colour and an exact one.
+                        row().gap(Space::S).children([
                             text("Surface")
                                 .level(TextLevel::Secondary)
                                 .background(Paint::Color(Color::Tone(Colour::Danger)))
@@ -257,19 +257,15 @@ impl View for Screen {
                                 ),
                             link("A link").on_click(cx.listener(|_: &mut Self| {})),
                         ]),
-                )
-                .child(
-                    row()
-                        .gap(Space::S)
-                        .children([
-                            text("Corrected").color(Color::Raw("#88ccff".into())),
-                            text("Exact").color(Paint::Exact(Color::Raw("#ff6363".into()))),
-                        ]),
-                )
-                .child(divider())
-                .child(spacer()),
-        )
-        .into_answer()
+                    )
+                    .child(row().gap(Space::S).children([
+                        text("Corrected").color(Color::Raw("#88ccff".into())),
+                        text("Exact").color(Paint::Exact(Color::Raw("#ff6363".into()))),
+                    ]))
+                    .child(divider())
+                    .child(spacer()),
+            )
+            .into_answer()
     }
 }
 
@@ -283,7 +279,8 @@ impl Screen {
             name: RefCell::new("typed".into()),
             notes: RefCell::new("two lines".into()),
             swapped: Cell::new(false),
-            loading: Pending::loading(async { String::new() })}
+            loading: Pending::loading(async { String::new() }),
+        }
     }
 
     /// The gallery's fields, live and keyed (#238): the name field hears
@@ -316,17 +313,15 @@ impl Screen {
             .gap(Space::S)
             .child(section_header("Fields").note("Live, keyed"))
             .children(fields)
-            .child(
-                row().gap(Space::S).children([
-                    button("Clear").on_click(cx.listener(|this: &mut Self| {
-                        *this.name.borrow_mut() = String::new();
-                        *this.notes.borrow_mut() = String::new();
-                    })),
-                    button("Reorder").on_click(cx.listener(|this: &mut Self| {
-                        this.swapped.set(!this.swapped.get());
-                    })),
-                ]),
-            )
+            .child(row().gap(Space::S).children([
+                button("Clear").on_click(cx.listener(|this: &mut Self| {
+                    *this.name.borrow_mut() = String::new();
+                    *this.notes.borrow_mut() = String::new();
+                })),
+                button("Reorder").on_click(cx.listener(|this: &mut Self| {
+                    this.swapped.set(!this.swapped.get());
+                })),
+            ]))
             .child(text(format!("Echo: {}", self.name.borrow().as_str())))
     }
 }
@@ -431,29 +426,25 @@ impl Screen {
                     )),
             );
         if !self.pinned.get() {
-            list = list.child(
-                section("More")
-                    .subtitle("A page at a time")
-                    .children((0..self.pages.get() * 6).map(|at| {
-                        item(format!("more-{at}"))
-                            .title(format!("More {at}"))
-                            .subtitle("One page of a longer list")
-                            .keyword("page")
-                            .on_press(cx.listener(|_: &mut Self| {}))
-                    })),
-            );
+            list = list.child(section("More").subtitle("A page at a time").children(
+                (0..self.pages.get() * 6).map(|at| {
+                    item(format!("more-{at}"))
+                        .title(format!("More {at}"))
+                        .subtitle("One page of a longer list")
+                        .keyword("page")
+                        .on_press(cx.listener(|_: &mut Self| {}))
+                }),
+            ));
         } else {
-            list = list.child(
-                section("Pinned").child(note(
-                    cx,
-                    "pinned",
-                    "Pinned note",
-                    "The one that is pinned",
-                    "kept",
-                    "pinned",
-                    Colour::Yellow,
-                )),
-            );
+            list = list.child(section("Pinned").child(note(
+                cx,
+                "pinned",
+                "Pinned note",
+                "The one that is pinned",
+                "kept",
+                "pinned",
+                Colour::Yellow,
+            )));
         }
         list.child(
             empty_state("No notes")
@@ -567,10 +558,7 @@ pane_extension::export!(Sample);
 impl Command for Sample {
     type DesignedView = Screen;
 
-    async fn open_designed_view(
-        command: String,
-        _launch: LaunchRecord,
-    ) -> Result<Screen, String> {
+    async fn open_designed_view(command: String, _launch: LaunchRecord) -> Result<Screen, String> {
         let which = match command.as_str() {
             "sample" => Which::Counter,
             "components" => Which::Components,

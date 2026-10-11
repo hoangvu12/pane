@@ -124,10 +124,7 @@ async fn outcome(id: &str) -> Result<String, String> {
 impl Command for Packages {
     type DesignedView = Search;
 
-    async fn open_designed_view(
-        command: String,
-        _launch: LaunchRecord,
-    ) -> Result<Search, String> {
+    async fn open_designed_view(command: String, _launch: LaunchRecord) -> Result<Search, String> {
         if command != COMMAND {
             return Err(format!("unknown command: {command}"));
         }
@@ -184,8 +181,7 @@ struct SearchOutcome {
 
 /// Searches `query` with the service, as the view's List asks for it.
 async fn search(query: String) -> SearchOutcome {
-    let found: Result<Found, String> =
-        fetch(&format!("/search?q={}", encode(&query))).await;
+    let found: Result<Found, String> = fetch(&format!("/search?q={}", encode(&query))).await;
     match found {
         Ok(found) => SearchOutcome {
             results: found.results,
@@ -211,9 +207,9 @@ impl View for Search {
             } => {
                 // A result's details arrived: shown in a toast, the state
                 // cleared.
-                let opened = opening.as_mut().and_then(|opening| {
-                    opening.ready().cloned()
-                });
+                let opened = opening
+                    .as_mut()
+                    .and_then(|opening| opening.ready().cloned());
                 if let Some(done) = opened {
                     *opening = None;
                     show_toast(Toast::success(done));
@@ -239,19 +235,16 @@ impl View for Search {
                 }
                 // The loading state: while a search runs for a text, and
                 // before the first one answers.
-                let running =
-                    !query.trim().is_empty() && results.is_empty() && failed.is_none();
+                let running = !query.trim().is_empty() && results.is_empty() && failed.is_none();
                 let mut list = list()
                     .navigation_title("Package search")
                     .search_placeholder("Search the registry…")
                     .is_loading(running)
-                    .on_search_text(cx.value_listener(
-                        |this: &mut Self, text: &str| {
-                            if let Search::Rows { query, .. } = this {
-                                *query = text.to_owned();
-                            }
-                        },
-                    ));
+                    .on_search_text(cx.value_listener(|this: &mut Self, text: &str| {
+                        if let Search::Rows { query, .. } = this {
+                            *query = text.to_owned();
+                        }
+                    }));
                 for result in results.iter() {
                     let id = format!("package:{}", result.name);
                     list = list.child(
@@ -277,18 +270,16 @@ impl View for Search {
                             "Results come from the service as you type; Enter shows a \
                              package's details",
                         )
-                        .child(
-                            button("Service address").on_click(cx.push(|this| {
-                                let held = match this {
-                                    Search::Rows { query, .. } => query.clone(),
-                                    _ => String::new(),
-                                };
-                                let _ = held;
-                                Search::Address {
-                                    address: service().unwrap_or_default(),
-                                }
-                            })),
-                        ),
+                        .child(button("Service address").on_click(cx.push(|this| {
+                            let held = match this {
+                                Search::Rows { query, .. } => query.clone(),
+                                _ => String::new(),
+                            };
+                            let _ = held;
+                            Search::Address {
+                                address: service().unwrap_or_default(),
+                            }
+                        }))),
                     );
                 }
                 list.into_answer()
@@ -307,16 +298,14 @@ impl View for Search {
                             }
                         })),
                 )
-                .child(
-                    button("Save").on_click(cx.pop_with(|this| match this {
-                        Search::Address { address } => {
-                            let address = address.trim().trim_end_matches('/').to_owned();
-                            let _ = settings::set(SERVICE, &address);
-                            format!("Searching {address} from now on")
-                        }
-                        _ => String::new(),
-                    })),
-                )
+                .child(button("Save").on_click(cx.pop_with(|this| match this {
+                    Search::Address { address } => {
+                        let address = address.trim().trim_end_matches('/').to_owned();
+                        let _ = settings::set(SERVICE, &address);
+                        format!("Searching {address} from now on")
+                    }
+                    _ => String::new(),
+                })))
                 .into_answer(),
         }
     }

@@ -6,8 +6,8 @@
 use core::cell::Cell;
 
 use pane_extension::alloc::{format, string::String, vec, vec::Vec};
-use pane_extension::feedback::{Toast, show_toast};
 use pane_extension::commands::{self, CommandRef, LaunchRecord, LaunchType};
+use pane_extension::feedback::{Toast, show_toast};
 use pane_extension::view::{
     CanvasEvent, CanvasRole, Container, Cx, Draw, Length, Paint, TextStyle, View, canvas, column,
 };
@@ -85,7 +85,8 @@ async fn outcome(id: &str) -> Result<String, String> {
             core::hint::black_box(&block);
             Ok("allocated past the cap".into())
         }
-        _ => Ok("fine".into())}
+        _ => Ok("fine".into()),
+    }
 }
 
 /// A designed view that counts the events it handled, refuses "left" and
@@ -183,9 +184,7 @@ impl Command for Faulty {
             // A form item of the typed form's shape, which the tree's
             // reading ignores now that a form is a designed view (#241):
             // activating it runs its action like any item's.
-            item("form").on_action(|| async {
-                Err("the guest refused the form".into())
-            }),
+            item("form").on_action(|| async { Err("the guest refused the form".into()) }),
             // Declares no operating system, so it is unavailable on every
             // system; activating it runs nothing.
             item("nowhere").on_action(|| async { Ok(()) }).platforms([]),
@@ -211,10 +210,7 @@ impl Command for Faulty {
         run(&id).await
     }
 
-    async fn open_designed_view(
-        command: String,
-        _launch: LaunchRecord,
-    ) -> Result<Counter, String> {
+    async fn open_designed_view(command: String, _launch: LaunchRecord) -> Result<Counter, String> {
         if command != "counter" {
             return Err("the guest refused the view".into());
         }
@@ -239,14 +235,16 @@ impl pane_extension::root::Guest for Faulty {
                 id: "file".into(),
                 title: "A local file".into(),
                 subtitle: None,
-                action: pane_extension::root::RootAction::OpenUrl("file:///etc/hosts".into())}]),
+                action: pane_extension::root::RootAction::OpenUrl("file:///etc/hosts".into()),
+            }]),
             // Files it names by a path of its own, not an id Pane gave it:
             // Pane must list and open neither.
             "forged file" => Ok(vec![pane_extension::root::RootResult {
                 id: "forged".into(),
                 title: "hosts".into(),
                 subtitle: None,
-                action: pane_extension::root::RootAction::OpenFile("/etc/hosts".into())}]),
+                action: pane_extension::root::RootAction::OpenFile("/etc/hosts".into()),
+            }]),
             // Each file of its granted folder under a harmless title: Pane
             // must show the file's own name instead.
             "spoof" => match pane_extension::files::list_folder()? {
@@ -257,9 +255,11 @@ impl pane_extension::root::Guest for Faulty {
                         id: file.relative,
                         title: "harmless.txt".into(),
                         subtitle: Some("File in Documents".into()),
-                        action: pane_extension::root::RootAction::OpenFile(file.id)})
+                        action: pane_extension::root::RootAction::OpenFile(file.id),
+                    })
                     .collect()),
-                _ => Ok(Vec::new())},
+                _ => Ok(Vec::new()),
+            },
             "trap" => panic!("trap requested"),
             "0 + 0" => {
                 let mut sum = 0u64;
@@ -270,8 +270,10 @@ impl pane_extension::root::Guest for Faulty {
                     id: "slow".into(),
                     title: "Slow answer".into(),
                     subtitle: Some(format!("after {sum} steps")),
-                    action: pane_extension::root::RootAction::Copy("slow".into())}])
+                    action: pane_extension::root::RootAction::Copy("slow".into()),
+                }])
             }
-            _ => Ok(Vec::new())}
+            _ => Ok(Vec::new()),
+        }
     }
 }

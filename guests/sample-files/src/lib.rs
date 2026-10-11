@@ -43,7 +43,8 @@ impl Command for Sample {
             IndexState::Off => "off",
             IndexState::Building => "being built",
             IndexState::Current => "current",
-            IndexState::Stopped => "stopped"};
+            IndexState::Stopped => "stopped",
+        };
         Ok(
             List::new("Rust files sample").item(Item::new("status", "What is searched").subtitle(
                 format!(
@@ -63,7 +64,8 @@ impl pane_extension::root::Guest for Sample {
                 title: entry.name,
                 id: entry.path,
                 subtitle: None,
-                action: RootAction::OpenFile(entry.id)})
+                action: RootAction::OpenFile(entry.id),
+            })
             .collect())
     }
 }

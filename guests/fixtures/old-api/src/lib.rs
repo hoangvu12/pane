@@ -68,7 +68,9 @@ impl Guest for OldApi {
                 id: "x".into(),
                 title: "x".into(),
                 subtitle: None,
-                form: None}]})
+                form: None,
+            }],
+        })
     }
 
     async fn run_action(item_id: String) -> Result<String, String> {

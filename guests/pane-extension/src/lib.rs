@@ -52,17 +52,17 @@ wit_bindgen::generate!({
 pub use exports::pane::extension::command::Platform;
 pub use list::{Action, Command, Item, List, Modifier, Shortcut, Submenu};
 pub mod form;
-pub use form::{FormValues, FormValue};
+pub use form::{FormValue, FormValues};
 pub mod view;
+pub use pane::extension::commands::{LaunchRecord, LaunchSource, LaunchType};
+/// The designed view type of a command that opens none: `type DesignedView
+/// = view::NoDesignedView;` in its [`Command`] implementation.
+pub use view::NoDesignedView;
 pub use view::{
     Align, Answer, CanvasBuilder, CanvasEvent, CanvasListener, CanvasRole, Cap, Cx, Draw,
     IntoAnswer, IntoNode, Join, Justify, Listener, Node, Paint, Pending, Space, TextLevel,
     TextMeasure, TextStyle, View, button, canvas, choice, column, loading, row, text,
 };
-/// The designed view type of a command that opens none: `type DesignedView
-/// = view::NoDesignedView;` in its [`Command`] implementation.
-pub use view::NoDesignedView;
-pub use pane::extension::commands::{LaunchRecord, LaunchSource, LaunchType};
 
 pub mod actions;
 pub mod feedback;
@@ -163,7 +163,8 @@ pub mod commands {
     use core::cell::RefCell;
 
     pub use crate::pane::extension::commands::{
-        ArgumentValue, CommandRef, LaunchRecord, LaunchSource, LaunchType, launch, set_subtitle};
+        ArgumentValue, CommandRef, LaunchRecord, LaunchSource, LaunchType, launch, set_subtitle,
+    };
 
     /// The launch record of the call in progress.
     struct Current(RefCell<Option<LaunchRecord>>);
@@ -189,7 +190,8 @@ pub mod commands {
             arguments: alloc::vec::Vec::new(),
             fallback_text: None,
             context: None,
-            command: alloc::string::String::new()})
+            command: alloc::string::String::new(),
+        })
     }
 
     /// Notes the record Pane passed to the call in progress.
@@ -201,7 +203,8 @@ pub mod commands {
     pub fn launch_type_name(launch_type: LaunchType) -> &'static str {
         match launch_type {
             LaunchType::UserInitiated => "user-initiated",
-            LaunchType::Background => "background"}
+            LaunchType::Background => "background",
+        }
     }
 
     /// `source` as `wit/commands.wit` names it, such as "root-search".
@@ -213,7 +216,8 @@ pub mod commands {
             LaunchSource::Hotkey => "hotkey",
             LaunchSource::QuickSlot => "quick-slot",
             LaunchSource::Command => "command",
-            LaunchSource::Schedule => "schedule"}
+            LaunchSource::Schedule => "schedule",
+        }
     }
 }
 
@@ -240,7 +244,8 @@ impl operations::CallErrorKind {
             Unavailable => "unavailable",
             Failed => "failed",
             Crashed => "crashed",
-            Refused => "refused"}
+            Refused => "refused",
+        }
     }
 }
 
@@ -328,7 +333,8 @@ pub mod clipboard_history {
 
     pub use pane::extension::clipboard_history::{
         Capture, Entry, HistoryStatus, clear, copy, delete_items, entries, set_capture,
-        set_excluded, set_retention, status, turn_off_and_clear};
+        set_excluded, set_retention, status, turn_off_and_clear,
+    };
 }
 
 /// Native helpers (`pane:extension/helpers`): prebuilt programs the
@@ -351,7 +357,8 @@ pub mod helpers {
                 HelperErrorKind::NotFound => "not-found",
                 HelperErrorKind::Unavailable => "unavailable",
                 HelperErrorKind::Failed => "failed",
-                HelperErrorKind::Refused => "refused"}
+                HelperErrorKind::Refused => "refused",
+            }
         }
     }
 }
@@ -372,7 +379,8 @@ pub mod files {
         default_bindings_module: "pane_extension::files"});
 
     pub use pane::extension::files::{
-        FolderListing, FolderState, FoundFile, ScanLimits, limits, list_folder};
+        FolderListing, FolderState, FoundFile, ScanLimits, limits, list_folder,
+    };
 }
 
 /// Pane's file index (`pane:extension/file-index`): the names of the files
@@ -395,7 +403,8 @@ pub mod file_index {
 
     pub use pane::extension::file_index::{
         Category, EntryKind, FileEntry, IndexState, IndexStatus, SearchOptions, Sort, search,
-        status};
+        status,
+    };
 
     impl SearchOptions {
         /// The first `limit` entries by relevance, of any kind.
@@ -405,7 +414,8 @@ pub mod file_index {
                 category: None,
                 sort: Sort::Relevance,
                 limit,
-                offset: 0}
+                offset: 0,
+            }
         }
     }
 }
@@ -436,7 +446,8 @@ pub mod indexed {
         default_bindings_module: "pane_extension::indexed"});
 
     pub use exports::pane::extension::indexed_results::{
-        Guest, IndexedAction, IndexedResult, OpenTarget};
+        Guest, IndexedAction, IndexedResult, OpenTarget,
+    };
 }
 
 /// A continuing service a command runs while its package's code may run

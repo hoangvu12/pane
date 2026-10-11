@@ -59,8 +59,10 @@ async fn greeting(item_id: &str) -> Result<String, String> {
                  sample to use it"
                     .into(),
             ),
-            Err(error) => Err(error.explain())},
-        _ => Err(format!("unknown item: {item_id}"))}
+            Err(error) => Err(error.explain()),
+        },
+        _ => Err(format!("unknown item: {item_id}")),
+    }
 }
 
 /// An item whose action is [`act`] with its id.

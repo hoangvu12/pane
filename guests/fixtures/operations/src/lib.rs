@@ -26,9 +26,7 @@ use futures::FutureExt;
 use pane_extension::alloc::{format, string::String, string::ToString, vec::Vec};
 use pane_extension::feedback::{Toast, show_toast};
 use pane_extension::operations::call;
-use pane_extension::{
-    Command, Item, List, publish, settings,
-};
+use pane_extension::{Command, Item, List, publish, settings};
 use serde_json::{Value, json};
 
 struct Fixture;
@@ -94,7 +92,8 @@ fn sources() -> Result<Value, String> {
 fn source(sources: &Value, name: &str) -> String {
     match sources.get(name).and_then(Value::as_str) {
         Some(source) => source.into(),
-        None => name.into()}
+        None => name.into(),
+    }
 }
 
 /// `forward`'s input for a chain from `p<from>` to `p9`, which echoes.
@@ -157,7 +156,8 @@ async fn outcome(item_id: &str) -> Result<String, String> {
         }
         // p1 forwards to p2, and so on to p9.
         "Call a chain of nine" => chain(&sources, 1).to_string(),
-        _ => input.into()};
+        _ => input.into(),
+    };
     match title {
         "Spin, then save and call b's remember" => {
             spin()?;
@@ -206,7 +206,6 @@ impl Command for Fixture {
             .map(|(title, ..)| Item::new(title, title).on_action(move || act(title)));
         Ok(List::new("Operations fixture").items(items))
     }
-
 }
 
 impl publish::Guest for Fixture {
@@ -233,6 +232,7 @@ impl publish::Guest for Fixture {
                 Ok("true".into())
             }
             "secret" => Ok(r#""the secret""#.into()),
-            other => Err(format!("unknown operation: {other}"))}
+            other => Err(format!("unknown operation: {other}")),
+        }
     }
 }

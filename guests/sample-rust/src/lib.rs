@@ -9,10 +9,10 @@
 use core::cell::{Cell, RefCell};
 
 use pane_extension::alloc::{format, string::String, vec, vec::Vec};
+use pane_extension::commands::{self, CommandRef, LaunchRecord, LaunchType};
 use pane_extension::feedback::{Toast, show_toast};
 use pane_extension::form;
 use pane_extension::root::{RootAction, RootResult};
-use pane_extension::commands::{self, CommandRef, LaunchType, LaunchRecord};
 use pane_extension::view::{
     Answer, CanvasEvent, CanvasRole, Cx, Draw, IntoAnswer, Length, Paint, TextMeasure, TextStyle,
     View, canvas, column, measure_text,
@@ -25,7 +25,8 @@ pane_extension::export!(Sample);
 /// Settings the "validate" item checks; the port is out of range on purpose.
 struct Settings {
     name: &'static str,
-    port: u32}
+    port: u32,
+}
 
 impl Settings {
     fn validate(&self) -> Result<(), &'static str> {
@@ -56,7 +57,8 @@ struct Greeting {
     /// The name the last submission answered with, shown as the answer.
     answered: RefCell<String>,
     /// Why the last submission was refused, on the name's field.
-    error: RefCell<Option<&'static str>>}
+    error: RefCell<Option<&'static str>>,
+}
 
 impl Greeting {
     /// The form's tree, as the command's view renders it: the listeners the
@@ -110,15 +112,15 @@ impl Greeting {
                         choice("welcome", "Welcome").section("Warm"),
                     ])
                     .default_value("hello"),
-                form::tag_picker("tags")
-                    .title("Tags")
-                    .options([
-                        choice("friend", "Friend"),
-                        choice("colleague", "Colleague"),
-                        choice("family", "Family"),
-                    ]),
+                form::tag_picker("tags").title("Tags").options([
+                    choice("friend", "Friend"),
+                    choice("colleague", "Colleague"),
+                    choice("family", "Family"),
+                ]),
                 form::file_picker("file").title("File"),
-                form::folder_picker("folder").title("Folder").allow_multiple(),
+                form::folder_picker("folder")
+                    .title("Folder")
+                    .allow_multiple(),
                 form::checkbox("updates").label("Send updates"),
                 form::toggle("quiet").label("Quiet mode"),
             ]
@@ -172,7 +174,8 @@ const ROWS: i32 = SHADES.len() as i32;
 struct ColorPicker {
     column: Cell<i32>,
     row: Cell<i32>,
-    dragging: Cell<bool>}
+    dragging: Cell<bool>,
+}
 
 impl ColorPicker {
     fn new() -> ColorPicker {
@@ -180,12 +183,14 @@ impl ColorPicker {
         ColorPicker {
             column: Cell::new(5),
             row: Cell::new(1),
-            dragging: Cell::new(false)}
+            dragging: Cell::new(false),
+        }
     }
 
     /// Chooses the swatch nearest to `x`, `y`.
     fn choose(&self, x: f32, y: f32) {
-        self.column.set((x as i32).div_euclid(STEP).clamp(0, COLUMNS - 1));
+        self.column
+            .set((x as i32).div_euclid(STEP).clamp(0, COLUMNS - 1));
         self.row.set((y as i32).div_euclid(STEP).clamp(0, ROWS - 1));
     }
 
@@ -236,27 +241,29 @@ impl ColorPicker {
                 ..TextMeasure::default()
             },
         );
-        let mut ops = vec![Draw::rect(
-            (column * STEP) as f32,
-            (row * STEP) as f32,
-            STEP as f32,
-            STEP as f32,
-        )
-        .filled(frame())];
+        let mut ops = vec![
+            Draw::rect(
+                (column * STEP) as f32,
+                (row * STEP) as f32,
+                STEP as f32,
+                STEP as f32,
+            )
+            .filled(frame()),
+        ];
         for (x, (_, column)) in (0..).zip(COLORS) {
             for (y, fill) in (0..).zip(column) {
-                ops.push(Draw::rect(
-                    (x * STEP + 2) as f32,
-                    (y * STEP + 2) as f32,
-                    SWATCH as f32,
-                    SWATCH as f32,
-                )
-                .filled(swatch(fill)));
+                ops.push(
+                    Draw::rect(
+                        (x * STEP + 2) as f32,
+                        (y * STEP + 2) as f32,
+                        SWATCH as f32,
+                        SWATCH as f32,
+                    )
+                    .filled(swatch(fill)),
+                );
             }
         }
-        ops.push(
-            Draw::rect((COLUMNS * STEP + 12) as f32, 2., 64., 64.).filled(swatch(chosen)),
-        );
+        ops.push(Draw::rect((COLUMNS * STEP + 12) as f32, 2., 64., 64.).filled(swatch(chosen)));
         ops.push(
             Draw::text(code)
                 .at((COLUMNS * STEP + 12) as f32, 68. + measured.1)
@@ -332,8 +339,8 @@ impl ColorPicker {
             CanvasEvent::PointerMove { x, y } => (x, y, false),
             _ => return,
         };
-        let on_grid = (0..COLUMNS * STEP).contains(&(x as i32))
-            && (0..ROWS * STEP).contains(&(y as i32));
+        let on_grid =
+            (0..COLUMNS * STEP).contains(&(x as i32)) && (0..ROWS * STEP).contains(&(y as i32));
         if pressed {
             // Only a press on the grid chooses a swatch and starts a drag.
             if on_grid {
@@ -392,7 +399,8 @@ async fn outcome(id: &str) -> Result<String, String> {
         "validate" => {
             let settings = Settings {
                 name: "Pane",
-                port: 70000};
+                port: 70000,
+            };
             settings
                 .validate()
                 .map_err(|problem| format!("Invalid settings: {problem}"))?;
@@ -408,7 +416,8 @@ async fn outcome(id: &str) -> Result<String, String> {
         }
         "windows-only" => Ok("Ran the Windows-only action in the Rust guest".into()),
         "not-windows" => Ok("Ran the macOS and Linux action in the Rust guest".into()),
-        other => Err(format!("unknown item: {other}"))}
+        other => Err(format!("unknown item: {other}")),
+    }
 }
 
 impl Command for Sample {
@@ -503,7 +512,8 @@ impl pane_extension::root::Guest for Sample {
                 id: "website".into(),
                 title: "Pane's website".into(),
                 subtitle: Some("Opened by the Rust guest".into()),
-                action: RootAction::OpenUrl(WEBSITE.into())}]);
+                action: RootAction::OpenUrl(WEBSITE.into()),
+            }]);
         }
         let text = query.strip_prefix("reverse ").unwrap_or_default().trim();
         if text.is_empty() {
@@ -514,6 +524,7 @@ impl pane_extension::root::Guest for Sample {
             id: "reversed".into(),
             title: reversed.clone(),
             subtitle: Some("Reversed by the Rust guest".into()),
-            action: RootAction::Copy(reversed)}])
+            action: RootAction::Copy(reversed),
+        }])
     }
 }

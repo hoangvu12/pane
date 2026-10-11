@@ -121,7 +121,10 @@ impl FormValues {
         // value that follows it. The scanner is deliberately small: the
         // payload is Pane's own, its shape fixed.
         let rest = rest.trim_start().trim_start_matches(':').trim_start();
-        let Some(body) = rest.strip_prefix('{').and_then(|body| body.strip_suffix('}')) else {
+        let Some(body) = rest
+            .strip_prefix('{')
+            .and_then(|body| body.strip_suffix('}'))
+        else {
             return FormValues { values };
         };
         let mut rest = body;
@@ -205,7 +208,9 @@ pub struct Form(Node);
 impl Form {
     /// A form with no fields and no submit listener yet.
     pub fn new() -> Form {
-        Form(Node::of(NodeKind::Form(crate::view::FormPayload::default())))
+        Form(Node::of(
+            NodeKind::Form(crate::view::FormPayload::default()),
+        ))
     }
 
     /// The submit button's label; "Submit" when none is given.
@@ -287,9 +292,10 @@ pub struct FolderPicker(pub(crate) Node);
 
 /// One text field, keyed `key`: the id its value is in a submission.
 pub fn text_field(key: impl Into<String>) -> TextField {
-    TextField(field(NodeKind::TextInput(
-        crate::view::TextInputPayload::default(),
-    ), key))
+    TextField(field(
+        NodeKind::TextInput(crate::view::TextInputPayload::default()),
+        key,
+    ))
 }
 
 /// One password field, keyed `key` (see [`text_field`]).
@@ -452,7 +458,6 @@ macro_rules! fielded {
         }
     };
 }
-
 
 fielded!(TextField, NodeKind::TextInput(input) => input);
 fielded!(PasswordField, NodeKind::PasswordInput(input) => input);

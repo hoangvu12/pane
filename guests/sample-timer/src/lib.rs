@@ -13,7 +13,8 @@ use core::time::Duration;
 
 use pane_extension::alloc::{format, string::String};
 use pane_extension::view::{
-    Cx, IntoAnswer, IntoNode, Pending, Space, TextLevel, TextStyle, View, column, loading, text};
+    Cx, IntoAnswer, IntoNode, Pending, Space, TextLevel, TextStyle, View, column, loading, text,
+};
 use pane_extension::{Command, LaunchRecord};
 
 /// What the timer says while its caption is still loading.
@@ -23,7 +24,8 @@ const LOADING: &str = "Loading…";
 /// seconds passed since, one per refresh.
 struct Timer {
     caption: Pending<String>,
-    elapsed: Cell<u32>}
+    elapsed: Cell<u32>,
+}
 
 impl View for Timer {
     fn render(&mut self, cx: &mut Cx<Self>) -> impl IntoAnswer {
@@ -39,14 +41,14 @@ impl View for Timer {
                     .gap(Space::M)
                     .child(text(caption.as_str()).level(TextLevel::Secondary))
                     .child(
-                        text(format!("Elapsed: {}s", self.elapsed.get()))
-                            .style(TextStyle::Title),
+                        text(format!("Elapsed: {}s", self.elapsed.get())).style(TextStyle::Title),
                     )
                     .refresh_after(Duration::from_secs(1))
             }
             // The loading state: shown at once; the caption's arrival
             // asks for the drawing that replaces it.
-            None => loading(text(LOADING).level(TextLevel::Secondary))}
+            None => loading(text(LOADING).level(TextLevel::Secondary)),
+        }
     }
 }
 
@@ -68,12 +70,10 @@ pane_extension::export!(Sample);
 impl Command for Sample {
     type DesignedView = Timer;
 
-    async fn open_designed_view(
-        _command: String,
-        _launch: LaunchRecord,
-    ) -> Result<Timer, String> {
+    async fn open_designed_view(_command: String, _launch: LaunchRecord) -> Result<Timer, String> {
         Ok(Timer {
             caption: Pending::loading(load_caption()),
-            elapsed: Cell::new(0)})
+            elapsed: Cell::new(0),
+        })
     }
 }

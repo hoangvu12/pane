@@ -76,12 +76,11 @@ use pane_extension::actions;
 use pane_extension::alloc::{format, string::String, vec::Vec};
 use pane_extension::commands::{CommandRef, LaunchType, launch, set_subtitle};
 use pane_extension::feedback::{
-    Confirmation, ShownToast, Toast, ToastAction, ToastStyle, confirm, show_hud, show_toast};
+    Confirmation, ShownToast, Toast, ToastAction, ToastStyle, confirm, show_hud, show_toast,
+};
 use pane_extension::system::{self, Clip, HostSystem, SystemError};
 use pane_extension::window::{PopToRootType, clear_search, close, pop_to_root};
-use pane_extension::{
-    Action, Command, Item, LaunchRecord, List, Modifier, Shortcut, Submenu,
-};
+use pane_extension::{Action, Command, Item, LaunchRecord, List, Modifier, Shortcut, Submenu};
 
 use Modifier::{Cmd, Ctrl, Shift};
 
@@ -189,7 +188,8 @@ async fn close_and_ask() -> Result<(), String> {
 fn own(command: &str) -> CommandRef {
     CommandRef {
         source: None,
-        command: command.into()}
+        command: command.into(),
+    }
 }
 
 /// The action titled `title` of the item titled `item` that answers `said`
@@ -267,7 +267,8 @@ struct Places {
     file: &'static str,
     folder: &'static str,
     application: &'static str,
-    trash: [&'static str; 2]}
+    trash: [&'static str; 2],
+}
 
 fn places() -> Places {
     match system::running_on() {
@@ -278,7 +279,8 @@ fn places() -> Places {
             trash: [
                 r"C:\pane-sample\Delete me.txt",
                 r"C:\pane-sample\Keep me.txt",
-            ]},
+            ],
+        },
         HostSystem::Macos => Places {
             file: "/etc/hosts",
             folder: "/Applications",
@@ -286,7 +288,8 @@ fn places() -> Places {
             trash: [
                 "/tmp/pane-sample/Delete me.txt",
                 "/tmp/pane-sample/Keep me.txt",
-            ]},
+            ],
+        },
         HostSystem::Linux | HostSystem::Other => Places {
             file: "/etc/hosts",
             folder: "/tmp",
@@ -294,7 +297,9 @@ fn places() -> Places {
             trash: [
                 "/tmp/pane-sample/Delete me.txt",
                 "/tmp/pane-sample/Keep me.txt",
-            ]}}
+            ],
+        },
+    }
 }
 
 /// The "System" item's action titled `title`, which runs `function` and
@@ -312,7 +317,8 @@ fn read_clipboard() -> Result<(), String> {
     let said = match system::read_clipboard()? {
         Some(Clip::Text(text)) => format!("Clipboard: text “{text}”"),
         Some(Clip::File(path)) => format!("Clipboard: file {path}"),
-        None => "Clipboard: empty".into()};
+        None => "Clipboard: empty".into(),
+    };
     show_toast(Toast::success(said));
     Ok(())
 }
@@ -420,7 +426,8 @@ fn encode(text: &str) -> String {
             | b'\''
             | b'('
             | b')' => encoded.push(byte as char),
-            other => encoded.push_str(&format!("%{other:02X}"))}
+            other => encoded.push_str(&format!("%{other:02X}")),
+        }
     }
     encoded
 }
@@ -430,7 +437,8 @@ fn encode(text: &str) -> String {
 fn paste_title() -> String {
     match system::front_application() {
         Ok(Some(front)) => format!("Paste to {}", front.name),
-        _ => "Paste to Active App".into()}
+        _ => "Paste to Active App".into(),
+    }
 }
 
 /// "Paste": the standard Paste, the front application and the selected
@@ -450,7 +458,8 @@ fn paste_item() -> Item {
                         not_available(&why);
                         Ok(())
                     }
-                    Err(SystemError::Failed(why)) => Err(why)}
+                    Err(SystemError::Failed(why)) => Err(why),
+                }
             }),
             Action::new("Front Application", || async {
                 match system::front_application() {
@@ -470,7 +479,8 @@ fn paste_item() -> Item {
                         not_available(&why);
                         Ok(())
                     }
-                    Err(SystemError::Failed(why)) => Err(why)}
+                    Err(SystemError::Failed(why)) => Err(why),
+                }
             }),
             Action::new("Search Selection", || async {
                 match system::selected_text() {
@@ -487,7 +497,8 @@ fn paste_item() -> Item {
                         not_available(&why);
                         Ok(())
                     }
-                    Err(SystemError::Failed(why)) => Err(why)}
+                    Err(SystemError::Failed(why)) => Err(why),
+                }
             }),
         ])
 }
@@ -576,7 +587,8 @@ impl Command for Actions {
                                 shown.update(uploaded());
                                 Ok(())
                             }
-                            None => Err("Nothing is uploading".into())}
+                            None => Err("Nothing is uploading".into()),
+                        }
                     }),
                     Action::new("Upload", || async {
                         start_upload().update(uploaded());
@@ -641,6 +653,7 @@ impl Command for Actions {
                 }
                 Ok(())
             }
-            other => Err(format!("`{other}` opens a screen"))}
+            other => Err(format!("`{other}` opens a screen")),
+        }
     }
 }
