@@ -59,11 +59,15 @@ pub(in crate::launcher) enum Request {
     /// installs each ticked extension from the revision it fetched, so
     /// however many are chosen, the revision is fetched once. `origin`
     /// records where it was fetched from, as a Git package's does, and
-    /// `id` names the extension in the collection's index.
+    /// `id` names the extension in the collection's index. Where the
+    /// server filters (#311), `partial` is the fetch that holds the
+    /// revision's trees and fetches the extensions' files as they are
+    /// chosen; `None` where the whole revision was fetched.
     FetchedExtension {
         download: std::sync::Arc<crate::downloads::Download>,
         origin: crate::git::GitOrigin,
         id: String,
+        partial: Option<std::sync::Arc<crate::git::PartialFetch>>,
     },
     /// A default extension's revision, from its repository at the commit
     /// its release tag points to — first setup's acquisition of a pin
@@ -137,11 +141,22 @@ impl Sources {
                 download,
                 origin,
                 id,
-            } => SourcePackage::read_git_revision(
-                download.clone(),
-                origin.clone(),
-                Some(id.as_str()),
-            ),
+                partial,
+            } => {
+                // Where the revision was fetched without its file contents
+                // (a collection from a server that filters, #311), the
+                // extension's files are fetched before it is read: the
+                // choice's own preview of one extension reads it before
+                // anything is chosen, and a run's installs find them
+                // already there, fetched together in one fetch. The
+                // origin as the fetch stands carries the LFS pointers
+                // found as its blobs were written.
+                let origin = match partial {
+                    Some(partial) => partial.ensure_extension(id).map_err(PackageError::Git)?,
+                    None => origin.clone(),
+                };
+                SourcePackage::read_git_revision(download.clone(), origin, Some(id.as_str()))
+            }
             Request::Default(pin) => self.fetch_default(pin),
         }
     }
@@ -195,8 +210,11 @@ impl Sources {
                     ));
                 };
                 let fetched = git_source::fetch(spec, downloads).map_err(PackageError::Git)?;
-                let git_source::Fetched { download, origin } = fetched;
-                let download = std::sync::Arc::new(download);
+                let git_source::Fetched {
+                    download,
+                    origin,
+                    partial,
+                } = fetched;
                 let revision = format!(
                     "{} (commit {}) of the Git repository {}",
                     origin.revision.describe(),
@@ -222,6 +240,7 @@ impl Sources {
                         Ok(ChoiceRead::Choice(choice::Listed::git(
                             download,
                             &origin,
+                            partial,
                             &collection,
                         )))
                     }

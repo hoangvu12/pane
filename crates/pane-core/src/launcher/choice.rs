@@ -26,7 +26,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use super::install::{self, Request};
-use super::{Entry, Launcher, LauncherView, Pending, Row, Screen, State, Status, first_index};
+use super::{
+    Entry, Launcher, LauncherView, Pending, Row, Screen, State, Status, first_index, off_thread,
+};
 use crate::git::GitOrigin;
 use crate::icons::Icon;
 use crate::platform;
@@ -104,23 +106,43 @@ pub(in crate::launcher) enum Source {
     Folder(PathBuf),
     /// The revision Pane fetched from Git and holds while the choice is
     /// open: each extension read from it with its Git identity and origin
-    /// (ADR 0044), never fetched again.
+    /// (ADR 0044), never fetched again. Where the server filters (#311),
+    /// `partial` is the fetch the revision was fetched in parts by: the
+    /// files of the extensions chosen are fetched from it, into the same
+    /// download; `None` where the whole revision was fetched.
     Fetched {
         download: Arc<crate::downloads::Download>,
         origin: GitOrigin,
+        partial: Option<Arc<crate::git::PartialFetch>>,
     },
 }
 
 impl Source {
+    /// The partial fetch the revision was fetched in parts by, where the
+    /// server filters (#311): the files of the extensions chosen from the
+    /// revision are fetched from it; `None` where the whole revision was
+    /// fetched, and for a local folder.
+    fn partial(&self) -> Option<&Arc<crate::git::PartialFetch>> {
+        match self {
+            Source::Folder(_) => None,
+            Source::Fetched { partial, .. } => partial.as_ref(),
+        }
+    }
+
     /// The request that reads and installs the extension `id`: as the
     /// choice's own preview and the run's installs name it.
     fn request(&self, id: &str) -> Request {
         match self {
             Source::Folder(folder) => Request::Collection(folder.clone(), id.to_owned()),
-            Source::Fetched { download, origin } => Request::FetchedExtension {
+            Source::Fetched {
+                download,
+                origin,
+                partial,
+            } => Request::FetchedExtension {
                 download: download.clone(),
                 origin: origin.clone(),
                 id: id.to_owned(),
+                partial: partial.clone(),
             },
         }
     }
@@ -148,10 +170,13 @@ impl Listed {
     /// The collection `collection` at the root of the revision Pane
     /// fetched from Git and holds (`download`), as the choice lists it.
     /// `origin` is where the revision was fetched from, recorded with each
-    /// extension installed from it.
+    /// extension installed from it, and `partial` is the fetch it was
+    /// fetched in parts by, where the server filters (#311): the files of
+    /// the extensions chosen are fetched from it, into the same download.
     pub(in crate::launcher) fn git(
         download: Arc<crate::downloads::Download>,
         origin: &GitOrigin,
+        partial: Option<Arc<crate::git::PartialFetch>>,
         collection: &crate::collections::Collection,
     ) -> Listed {
         let repository = origin.repository.name();
@@ -163,6 +188,7 @@ impl Listed {
             source: Source::Fetched {
                 download,
                 origin: origin.clone(),
+                partial,
             },
             title: repository.to_owned(),
             details,
@@ -454,14 +480,41 @@ impl Launcher {
         else {
             return;
         };
-        for id in &ids {
-            let request = source.request(id);
-            match self
-                .install_choice_extension(epoch, &store, id, &request)
+        // Where the revision was fetched without its file contents (a
+        // collection from a server that filters, #311), the ticked
+        // extensions' files are fetched together before the run reads any
+        // of them: one fetch serves every extension chosen from the same
+        // revision (ADR 0044). A failure of that one fetch is what each
+        // ticked extension is refused with — reading one would only find
+        // its files missing, which would say source-only — and the rest
+        // of the run is not reached.
+        let mut refused = None;
+        if let Some(partial) = source.partial() {
+            let wanted = ids.clone();
+            let partial = partial.clone();
+            refused = off_thread(move || partial.fetch_extensions(&wanted))
                 .await
-            {
-                Step::Installed => self.note_choice(epoch, id, ChoiceOutcome::Installed),
-                Step::Refused(why) => self.note_choice(epoch, id, ChoiceOutcome::Refused(why)),
+                .err();
+        }
+        match refused {
+            Some(why) => {
+                for id in &ids {
+                    self.note_choice(epoch, id, ChoiceOutcome::Refused(why.clone()));
+                }
+            }
+            None => {
+                for id in &ids {
+                    let request = source.request(id);
+                    match self
+                        .install_choice_extension(epoch, &store, id, &request)
+                        .await
+                    {
+                        Step::Installed => self.note_choice(epoch, id, ChoiceOutcome::Installed),
+                        Step::Refused(why) => {
+                            self.note_choice(epoch, id, ChoiceOutcome::Refused(why))
+                        }
+                    }
+                }
             }
         }
         // The ending: the choice lists what was installed and what was

@@ -335,6 +335,29 @@ one; the tests and smokes serve their repositories that way
 of them reaches the network. Those servers, not Pane, run `git upload-pack`,
 with none of the user's Git configuration.
 
+Where the server advertises the partial-clone filter (`uploadpack.allowFilter`,
+as GitHub's and GitLab's servers do) and the revision holds a collection
+([#311](https://github.com/pane-app/pane/issues/311),
+[ADR 0044](adr/0044-a-git-repository-holds-one-extension-or-a-collection.md)),
+the fetch is made in parts: the commit and its trees are fetched with
+`filter blob:none`, without any file contents, then the blobs are fetched
+naming them by their ids (`want <blob id>`, the same lazy fetch Git's own
+partial clones make of missing objects). First the collection's listing —
+the index, each extension's manifest, and the icon a manifest names — so
+the choice shows each extension's own details; then, as the user chooses,
+one fetch for every extension chosen from the same revision together (the
+revision is never fetched twice, and an install by its id fetches its one
+extension's folder whole at once). The trees are walked in memory to find
+the chosen extensions' folders, and every object in every pack is checked
+against its id as any pack's is; a wanted blob the server does not send is
+refused, not skipped. The limits still bound what is taken: each pack on
+its own (64 MiB, 20,000 objects), and the files and folders written — the
+listing's and the chosen extensions' together — under the one budget of
+files and folders and their size. A server that advertises no filter, and
+a repository that is one extension rather than a collection, are fetched
+whole as above; looking for the index first costs such a repository one
+small extra fetch of its trees.
+
 ### Trying a real host by hand
 
 No check reaches a real Git host; a contributor can try one by hand, with a
@@ -391,7 +414,14 @@ yet.
   install refused and choosing it again offering Update), every way an
   index is refused, a component outside the extension's folder explained as
   source-only, the local-folder form, and a dependency's `git:` and `local:`
-  sources naming one extension of a collection.
+  sources naming one extension of a collection. Since #311, a server that
+  allows the partial-clone filter serves the choice and the chosen
+  extensions' files only — the fetches it was sent checked against the
+  repository's object ids — a server that allows none is fetched whole, an
+  install by id from a filtering server takes only that extension's
+  folder, a one-extension repository from one is fetched whole as ever, a
+  collection's refusals say the same from either, and a component stored
+  with Git LFS is refused as one.
 - [`crates/pane/tests/repositories.rs`](../crates/pane/tests/repositories.rs):
   the form, the source-only explanation, preview, Install in view below whole Git lines and the
   command running in the native window at Pane's size; one extension of a
@@ -436,7 +466,10 @@ yet.
   allow fetching an unadvertised commit id refuses a commit named by its id
   (GitHub, GitLab and Git's own server allow it).
 - The pack and its objects are held in memory while the revision is written
-  (at most 64 MiB and 256 MiB).
+  (at most 64 MiB and 256 MiB); a collection fetched in parts holds its
+  trees while the choice is open, and each of its packs is bounded on its
+  own, with the files written under one budget across them
+  ([The client](#the-client)).
 - Only github.com, gitlab.com, bitbucket.org and codeberg.org fold the
   path's case; another host that ignores case (a self-hosted GitLab, say)
   makes `Owner/Repo` and `owner/repo` two packages.
