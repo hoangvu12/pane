@@ -29,6 +29,7 @@
 
 use std::future::Future;
 use std::path::PathBuf;
+use std::time::Instant;
 
 use super::{
     Changing, Entry, Launcher, LauncherView, Question, Row, Screen, State, Status, dependents,
@@ -234,7 +235,9 @@ impl Launcher {
         } else {
             self.refresh(state);
         }
-        state.view.status = Status::Running;
+        state.view.status = Status::Running {
+            since: Instant::now(),
+        };
         Some(Uninstall { removed, saved })
     }
 
@@ -331,6 +334,8 @@ impl Launcher {
             let forget_subtitles = self.forget_subtitles_of(&mut self.lock(), identity);
             let forget_confirmations = self.forget_confirmations_of(&mut self.lock(), identity);
             let forget_arguments = self.forget_arguments_of(&mut self.lock(), identity);
+            let forget_learned = self.forget_learned_of(&mut self.lock(), identity);
+            let forget_history = self.forget_history_of(&mut self.lock(), identity);
             let files = self.lock().files.clone();
             let data = installation.data.clone();
             let store = installation.store.clone();
@@ -356,6 +361,14 @@ impl Launcher {
                     problems.push(format!(
                         "could not forget its remembered arguments: {error}"
                     ));
+                }
+                if let Some(Err(error)) = forget_learned.map(|forget| forget()) {
+                    problems.push(format!(
+                        "could not forget what root search learned: {error}"
+                    ));
+                }
+                if let Some(Err(error)) = forget_history.map(|forget| forget()) {
+                    problems.push(format!("could not forget the search history: {error}"));
                 }
                 // The folder it was granted is Pane's record, not its data:
                 // it goes whether or not data is kept, for every package

@@ -451,7 +451,7 @@ fn status_tone(status: &Status, theme: &Theme) -> Option<(SharedString, Hsla)> {
         Status::Progress(work) => Some((work.into(), theme.warning)),
         Status::Result(answer) => Some((answer.into(), theme.success)),
         Status::Error(message) => Some((message.into(), theme.danger)),
-        Status::Running => Some(("Running…".into(), theme.warning)),
+        Status::Running { .. } => Some(("Running…".into(), theme.warning)),
     }
 }
 
@@ -1166,6 +1166,17 @@ fn group_page(
                 .truncate()
                 .into_any_element(),
         ];
+        // What the package does, under its title as the extension's own
+        // page shows it (#224): one line, cut like the source line.
+        if let Some(description) = package.description() {
+            lines.push(
+                controls::field_description(description.to_owned(), theme.text_muted, theme)
+                    .truncate()
+                    .id(("extension-item-description", index))
+                    .debug_selector(|| "extension-item-description".into())
+                    .into_any_element(),
+            );
+        }
         // One of Pane's own, said after where it comes from (#280).
         if this.launcher.extension_is_official(&package.identity) {
             let selector = format!("extension-item-official-{title}");

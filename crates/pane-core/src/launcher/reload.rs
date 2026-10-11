@@ -19,6 +19,7 @@
 
 use std::future::Future;
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 
 use super::{Changing, Launcher, State, Status, off_thread, owner, pausing};
 use crate::packages::{PackageError, PackageIdentity, Pause, PauseCause};
@@ -120,7 +121,9 @@ impl Launcher {
         if !state.claim(&identity, Changing::Reloading) {
             return None;
         }
-        state.view.status = Status::Running;
+        state.view.status = Status::Running {
+            since: Instant::now(),
+        };
         Some(Reload {
             identity,
             attempt,
@@ -253,6 +256,16 @@ impl Launcher {
                 }
                 // The pause is on record before the outcome is shown.
                 self.records_written().await;
+                // A package Pane is developing shows the failure as the
+                // error overlay (see `error_overlay`) over what the
+                // launcher is showing — the command the reload closed for
+                // root search included — with a row that starts it again;
+                // the pause and its details stay as they are. Not being
+                // developed, the status line below is the presentation.
+                {
+                    let mut state = self.lock();
+                    self.show_failed_start_overlay(&mut state, &identity, &error);
+                }
                 let failed = match attempt {
                     Attempt::Reload => format!("Reloaded {title}, but it failed to start"),
                     Attempt::Retry => format!("{title} failed to start again"),
