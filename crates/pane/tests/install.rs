@@ -23,6 +23,8 @@ mod packages;
 
 use packages::package;
 
+const CREATE_ROW: &str = "Create Extension…";
+const IMPORT_ROW: &str = "Import Extension…";
 const INSTALL_ROW: &str = "Install extension from folder…";
 const NPM_ROW: &str = "Install extension from npm…";
 const GIT_ROW: &str = "Install extension from Git…";
@@ -47,6 +49,34 @@ fn titles(view: &LauncherView) -> Vec<&str> {
     view.rows.iter().map(|row| row.title.as_str()).collect()
 }
 
+/// Moves the selection to the root row titled `title`, with the down key:
+/// the blank query's order (#199) collates Pane's own rows among the
+/// commands, so the row is found by its title, never its place.
+fn select_row(
+    window: &Entity<LauncherWindow>,
+    cx: &mut VisualTestContext,
+    title: &str,
+) -> LauncherView {
+    let view = settle(window, cx);
+    let index = view
+        .rows
+        .iter()
+        .position(|row| row.title == title)
+        .unwrap_or_else(|| panic!("the {title} row is listed"));
+    for _ in 0..index {
+        cx.simulate_keystrokes("down");
+    }
+    assert_eq!(
+        settle(window, cx)
+            .selected
+            .and_then(|selected| view.rows.get(selected))
+            .map(|row| row.title.as_str()),
+        Some(title),
+        "the down keys selected the {title} row"
+    );
+    view
+}
+
 /// Previews the package in `folder` in the window, as the folder Settings'
 /// picker chose is previewed (#168), or as `pane --install` names one.
 fn choose_folder(
@@ -69,7 +99,14 @@ fn a_chosen_package_is_previewed_installed_and_run(cx: &mut TestAppContext) {
     let (window, cx) = open(cx, &data);
     assert_eq!(
         titles(&settle(&window, cx)),
-        [INSTALL_ROW, NPM_ROW, GIT_ROW, SETTINGS_ROW]
+        [
+            CREATE_ROW,
+            IMPORT_ROW,
+            INSTALL_ROW,
+            GIT_ROW,
+            NPM_ROW,
+            SETTINGS_ROW
+        ]
     );
 
     let view = choose_folder(&window, cx, Some(folder));
@@ -90,12 +127,14 @@ fn a_chosen_package_is_previewed_installed_and_run(cx: &mut TestAppContext) {
     assert_eq!(
         titles(&view),
         [
-            "Say hello",
-            INSTALL_ROW,
-            NPM_ROW,
-            GIT_ROW,
             CHECK_ROW,
+            CREATE_ROW,
+            IMPORT_ROW,
+            INSTALL_ROW,
+            GIT_ROW,
+            NPM_ROW,
             MANAGE_ROW,
+            "Say hello",
             SETTINGS_ROW
         ]
     );
@@ -205,7 +244,14 @@ fn an_unsupported_folder_is_explained_and_escape_returns_to_root(cx: &mut TestAp
     cx.simulate_keystrokes("escape");
     assert_eq!(
         titles(&settle(&window, cx)),
-        [INSTALL_ROW, NPM_ROW, GIT_ROW, SETTINGS_ROW]
+        [
+            CREATE_ROW,
+            IMPORT_ROW,
+            INSTALL_ROW,
+            GIT_ROW,
+            NPM_ROW,
+            SETTINGS_ROW
+        ]
     );
 }
 
@@ -219,12 +265,14 @@ fn an_installed_package_is_disabled_and_enabled_from_the_extension_list(cx: &mut
     assert_eq!(
         titles(&settle(&window, cx)),
         [
-            "Say hello",
-            INSTALL_ROW,
-            NPM_ROW,
-            GIT_ROW,
             CHECK_ROW,
+            CREATE_ROW,
+            IMPORT_ROW,
+            INSTALL_ROW,
+            GIT_ROW,
+            NPM_ROW,
             MANAGE_ROW,
+            "Say hello",
             SETTINGS_ROW
         ]
     );
@@ -265,10 +313,12 @@ fn an_installed_package_is_disabled_and_enabled_from_the_extension_list(cx: &mut
     assert_eq!(
         titles(&settle(&window, cx)),
         [
-            INSTALL_ROW,
-            NPM_ROW,
-            GIT_ROW,
             CHECK_ROW,
+            CREATE_ROW,
+            IMPORT_ROW,
+            INSTALL_ROW,
+            GIT_ROW,
+            NPM_ROW,
             MANAGE_ROW,
             SETTINGS_ROW
         ]
@@ -284,12 +334,14 @@ fn an_installed_package_is_disabled_and_enabled_from_the_extension_list(cx: &mut
     assert_eq!(
         titles(&settle(&window, cx)),
         [
-            "Say hello",
-            INSTALL_ROW,
-            NPM_ROW,
-            GIT_ROW,
             CHECK_ROW,
+            CREATE_ROW,
+            IMPORT_ROW,
+            INSTALL_ROW,
+            GIT_ROW,
+            NPM_ROW,
             MANAGE_ROW,
+            "Say hello",
             SETTINGS_ROW
         ]
     );
@@ -359,9 +411,12 @@ fn an_installed_package_is_reloaded_from_the_extension_list(cx: &mut TestAppCont
     assert_eq!(view.status, Status::Result("Reloaded Hello".into()));
     assert!(cx.debug_bounds("status-result").is_some());
 
-    // Pane stayed open; the command now runs the new code.
+    // Pane stayed open; the command now runs the new code. The blank
+    // query's order (#199) collates Pane's own rows among the commands,
+    // so "Say hello" is reached by its title, not its place.
     cx.simulate_keystrokes("escape");
     settle(&window, cx);
+    select_row(&window, cx, "Say hello");
     cx.simulate_keystrokes("enter");
     assert_eq!(settle(&window, cx).title, "JavaScript sample");
     cx.simulate_keystrokes("enter");
@@ -659,7 +714,14 @@ fn an_installed_package_is_uninstalled_after_choosing_what_to_keep(cx: &mut Test
     cx.simulate_keystrokes("escape");
     assert_eq!(
         titles(&settle(&window, cx)),
-        [INSTALL_ROW, NPM_ROW, GIT_ROW, SETTINGS_ROW]
+        [
+            CREATE_ROW,
+            IMPORT_ROW,
+            INSTALL_ROW,
+            GIT_ROW,
+            NPM_ROW,
+            SETTINGS_ROW
+        ]
     );
     assert!(folder.join("pane.json").exists(), "the source is kept");
 }
@@ -738,7 +800,14 @@ fn retained_data_is_deleted_from_the_extension_list_after_confirming(cx: &mut Te
     cx.simulate_keystrokes("escape");
     assert_eq!(
         titles(&settle(&window, cx)),
-        [INSTALL_ROW, NPM_ROW, GIT_ROW, SETTINGS_ROW]
+        [
+            CREATE_ROW,
+            IMPORT_ROW,
+            INSTALL_ROW,
+            GIT_ROW,
+            NPM_ROW,
+            SETTINGS_ROW
+        ]
     );
     assert!(folder.join("pane.json").exists(), "the source is kept");
 }
