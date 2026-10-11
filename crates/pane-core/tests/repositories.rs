@@ -2260,7 +2260,7 @@ fn a_filter_capable_server_serves_the_choice_and_the_chosen_files_only() {
     select_title(&launcher, "Timers from Git");
     block_on(launcher.activate_selected());
     assert_eq!(launcher.view().title, "Timers from Git");
-    let details = details(&launcher);
+    let lines = self::details(&launcher);
     for line in [
         format!(
             "Source: Git repository {}#timers",
@@ -2271,7 +2271,7 @@ fn a_filter_capable_server_serves_the_choice_and_the_chosen_files_only() {
         "Commands: Timers from Git".into(),
         "Operations: greet (version 1)".into(),
     ] {
-        assert!(has(&details, &line), "{line:?} not in {details:#?}");
+        assert!(has(&lines, &line), "{line:?} not in {lines:#?}");
     }
     launcher.back();
     let fetches = dirs.server.fetches();

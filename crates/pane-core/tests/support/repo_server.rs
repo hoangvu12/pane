@@ -643,7 +643,7 @@ fn arguments_of(body: &[u8]) -> Vec<String> {
                     break;
                 };
                 if past {
-                    arguments.push(String::from_utf8_lossy(line).trim_end().into_owned());
+                    arguments.push(String::from_utf8_lossy(line).trim_end().to_owned());
                 }
                 at += length;
             }
