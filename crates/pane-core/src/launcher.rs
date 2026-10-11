@@ -814,6 +814,23 @@ struct State {
     /// dropping it, when root search is left, cancels those still pending
     /// (see [`State::next_screen`]).
     search_alive: Option<tokio::sync::oneshot::Sender<()>>,
+    /// The calls of the search the current one replaced (#202): kept
+    /// until this search needs the runtime — it is about to ask — so a
+    /// call that answers within the quiet period keeps its instance for
+    /// the queries after it, and one that has not is cancelled then, not
+    /// at each keystroke. Dropped with [`State::search_alive`] when root
+    /// search is left.
+    superseded: Option<tokio::sync::oneshot::Sender<()>>,
+    /// The rows of root search that are not the query's computed results,
+    /// ranked once per query and spliced around them (#202): `None`
+    /// until a query's list is first built. Kept while the query and what
+    /// they were ranked from (see [`State::statics`]) stand still.
+    ranked: Option<Ranked>,
+    /// The generation of what root search's static rows are ranked from —
+    /// the commands, the results supplied ahead of the query, the aliases,
+    /// the sensitivity — bumped wherever any of them changes, so the rows
+    /// kept for a query are ranked again then (#202).
+    statics: u64,
     /// How many times root search has ranked its static rows: a diagnostic
     /// for tests (#202), read through [`Launcher::root_rankings`].
     rankings: u64,
@@ -1124,6 +1141,15 @@ impl State {
     fn next_screen(&mut self) {
         self.screen_epoch += 1;
         self.search_alive = None;
+        // The search the current one had replaced is cancelled with it:
+        // leaving root search, nothing needs the runtime any more (#202).
+        self.superseded = None;
+        // The query's list is neither held nor merged any more (#201): its
+        // providers' calls are cancelled, and whatever is shown next
+        // builds its own list.
+        self.holding = None;
+        self.merge = None;
+        self.staged.clear();
         // Root search's inline argument values belong to the search that
         // is left (#205).
         self.arguments = argument_fields::Typed::default();
