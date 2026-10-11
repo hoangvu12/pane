@@ -53,6 +53,7 @@ impl Command for Sample {
             )),
         )
     }
+}
 
 impl pane_extension::root::Guest for Sample {
     async fn results_for(query: String) -> Result<Vec<RootResult>, String> {

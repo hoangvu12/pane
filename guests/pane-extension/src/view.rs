@@ -90,7 +90,8 @@ use core::sync::atomic::{AtomicU64, Ordering};
 use core::time::Duration;
 
 use crate::exports::pane::extension::command as wit;
-use crate::icon::{self, Color, Icon};
+use crate::icon;
+pub use crate::icon::{Color, Icon};
 use crate::pane::extension::view::measure_text as wit_measure_text;
 use crate::pane::extension::view::ask_to_render;
 use wit::{GuestView, Outcome, Rendered, UiEvent};
@@ -253,6 +254,14 @@ impl<V: View> Cx<'_, V> {
     /// once per interval and never twice for one drawing.
     pub fn refreshed(&self) -> bool {
         self.refreshed
+    }
+
+    /// The selected item's key of the view's List or Grid, as the render's
+    /// context names it (#240); `None` when it says none. The detail pane's
+    /// content is built for the selected item alone, so an item's `detail`
+    /// is built only when its key is this one.
+    pub fn selected(&self) -> Option<&str> {
+        self.selected.as_deref()
     }
 }
 
@@ -681,8 +690,9 @@ pub enum Orientation {
 }
 
 /// How an image fits the box it is given.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Fit {
+    #[default]
     Contain,
     Cover,
     Fill,
@@ -719,13 +729,6 @@ pub struct Span {
     on_click: Option<Listener>,
 }
 
-/// One icon or image node: the icon it draws, and how big.
-#[derive(Debug, Default)]
-pub(crate) struct IconNodePayload {
-    pub(crate) icon: Option<Icon>,
-    pub(crate) size: Option<IconSize>,
-}
-
 /// A rich row: the launcher's own result row as a component.
 #[derive(Debug, Default)]
 pub struct RichRow {
@@ -754,20 +757,7 @@ pub struct Choice {
     pub(crate) section: Option<String>,
 }
 
-/// A section header: a title over a group, with an optional note.
-#[derive(Debug)]
-pub struct SectionHeader {
-    title: String,
-    note: Option<String>,
-}
-
-/// A metadata list: rows of a label and its value, link or tags.
-#[derive(Debug, Default)]
-pub struct MetadataList {
-    items: Vec<MetadataItem>,
-}
-
-/// One row of a metadata list.
+/// One row of a metadata list: a label and its value, link or tags.
 #[derive(Debug, Default)]
 pub struct MetadataItem {
     label: Option<String>,
@@ -775,35 +765,6 @@ pub struct MetadataItem {
     on_click: Option<Listener>,
     tags: Vec<String>,
     separator: bool,
-}
-
-/// An empty state: an icon, a title and a description, with the node's
-/// children as its actions.
-#[derive(Debug)]
-pub struct EmptyState {
-    title: String,
-    description: Option<String>,
-    icon: Option<Icon>,
-}
-
-/// One text input, password field or text area: its value and
-/// placeholder. Editing state that survives a re-render arrives with the
-/// next component set; until then the value the tree names is drawn, and
-/// a commit tells the extension it.
-#[derive(Debug, Default)]
-pub struct TextInput {
-    value: String,
-    /// The value the field starts from when the view names none of its
-    /// own: a form field's `default` (#241).
-    pub(crate) default: Option<String>,
-    placeholder: Option<String>,
-    pub(crate) on_input: Option<ValueListener>,
-    pub(crate) on_change: Option<ValueListener>,
-    /// The least time between this field's input events.
-    pub(crate) throttle: Option<Duration>,
-    label: Option<String>,
-    /// What the field says around its control as a form field (#241).
-    pub(crate) field: FieldPayload,
 }
 
 /// What a canvas node holds (#242): its drawing operations, what it is to
@@ -848,9 +809,11 @@ pub enum CanvasRole {
 
 /// The handlers a canvas's input names, each the listener its tree runs
 /// when that input happens. Keys ride the node's own `on_key` as every
-/// focusable node's do; `on_increment` and `on_decrement` are the semantic
-/// handlers the up and down arrows run, `on_activate` the one Space runs,
-/// so a control-like canvas needs no key parsing.
+/// focusable node's do; `on_increment`, `on_decrement` and `on_activate`
+/// are the semantic handlers the up and down arrows and Space run — told
+/// nothing — so a control-like canvas needs no key parsing, while the
+/// pointer, wheel and resize handlers are told the event that reached
+/// them (`Cx::canvas_listener`).
 #[derive(Debug, Default)]
 pub struct CanvasHandlers {
     /// The up arrow.
@@ -860,24 +823,24 @@ pub struct CanvasHandlers {
     /// Space.
     pub on_activate: Option<Listener>,
     /// The primary button pressed over the canvas.
-    pub on_pointer_down: Option<Listener>,
+    pub on_pointer_down: Option<CanvasListener>,
     /// That button released.
-    pub on_pointer_up: Option<Listener>,
+    pub on_pointer_up: Option<CanvasListener>,
     /// The pointer moved while that button is held — a drag, coalesced to
     /// the latest while one is in flight.
-    pub on_pointer_move: Option<Listener>,
+    pub on_pointer_move: Option<CanvasListener>,
     /// The pointer entering the canvas's hover.
-    pub on_pointer_enter: Option<Listener>,
+    pub on_pointer_enter: Option<CanvasListener>,
     /// The pointer leaving it.
-    pub on_pointer_leave: Option<Listener>,
+    pub on_pointer_leave: Option<CanvasListener>,
     /// The wheel turned over the canvas.
-    pub on_wheel: Option<Listener>,
+    pub on_wheel: Option<CanvasListener>,
     /// The primary button pressed twice over the canvas.
-    pub on_double_click: Option<Listener>,
+    pub on_double_click: Option<CanvasListener>,
     /// The secondary button pressed over the canvas.
-    pub on_secondary: Option<Listener>,
+    pub on_secondary: Option<CanvasListener>,
     /// The canvas's size changing.
-    pub on_resize: Option<Listener>,
+    pub on_resize: Option<CanvasListener>,
 }
 
 /// One drawing operation of a canvas: what it paints, or how it moves the
@@ -1502,6 +1465,7 @@ pub trait IntoNode {
         Answer {
             node: self.into_node(),
             refresh: Some(Refresh::After(after)),
+            error: None,
         }
     }
 }
@@ -1917,9 +1881,7 @@ pub fn loading() -> Loading {
 pub fn canvas() -> CanvasBuilder {
     CanvasBuilder(Node::of(NodeKind::Canvas(CanvasNode {
         ops: Vec::new(),
-        role: None,
-        label: None,
-        value: None,
+        a11y: CanvasA11y::default(),
         handlers: CanvasHandlers::default(),
     })))
 }
@@ -2182,11 +2144,7 @@ pub fn empty_state(title: impl Into<String>) -> EmptyState {
 pub fn text_input(value: impl Into<String>) -> TextInput {
     TextInput(Node::of(NodeKind::TextInput(TextInputPayload {
         value: value.into(),
-        placeholder: None,
-        on_input: None,
-        on_change: None,
-        throttle: None,
-        label: None,
+        ..TextInputPayload::default()
     })))
 }
 
@@ -2679,6 +2637,148 @@ struct IconNodePayload {
     size: Option<IconSize>,
 }
 
+/// The payload the list and grid kinds read (#240): the List's own
+/// properties — its search field and selection Pane owns — while its
+/// children (the sections, the items or cells, the dropdown, the empty
+/// view) arrive as nodes.
+#[derive(Debug, Default)]
+pub(crate) struct ListNode {
+    /// The search field's placeholder.
+    pub(crate) search_placeholder: Option<String>,
+    /// The search text the view sets: the field's value, which wins while
+    /// the user has not typed a newer one.
+    pub(crate) search_text: Option<String>,
+    /// The item the view selects, by its key.
+    pub(crate) selected_key: Option<String>,
+    /// The loading state: the loading bar, drawn once loading has run past
+    /// its threshold (300 ms).
+    pub(crate) is_loading: bool,
+    /// Whether the detail pane shows beside the items.
+    pub(crate) is_showing_detail: bool,
+    /// Whether more items follow the ones shown, whose loading the list
+    /// asks for as the selection nears the end.
+    pub(crate) has_more: bool,
+    /// How many items a page holds; clamped to 1–100.
+    pub(crate) page_size: Option<u64>,
+    /// The listener the search text runs on its every change, when the view
+    /// handles the search itself — the list is then not filtered by Pane
+    /// and the events are throttled.
+    pub(crate) on_search_text: Option<ValueListener>,
+    /// The listener the selection's change runs, told the selected item's
+    /// key.
+    pub(crate) on_selection_change: Option<ValueListener>,
+    /// The listener the load of the next page runs, as the selection nears
+    /// the end of what is shown.
+    pub(crate) on_load_more: Option<Listener>,
+}
+
+/// The payload the list-section kind reads: a group of items under its
+/// title and subtitle.
+#[derive(Debug, Default)]
+pub(crate) struct SectionNode {
+    pub(crate) title: Option<String>,
+    pub(crate) subtitle: Option<String>,
+    /// How many columns the section's cells sit in (a Grid's), 1–8.
+    pub(crate) columns: Option<u64>,
+    /// The cells' width over their height (a Grid's).
+    pub(crate) aspect_ratio: Option<f32>,
+    /// How the section's images fit their cells (a Grid's).
+    pub(crate) fit: Fit,
+    /// Whether the cells sit inset from the grid's edges (a Grid's).
+    pub(crate) inset: bool,
+}
+
+/// The payload the list-item kind reads (#240): the List document's
+/// vocabulary on the designed tree — a title, a subtitle, keywords, an
+/// icon, accessories and the actions that activate it — and the detail
+/// pane's content when the item is selected.
+#[derive(Debug, Default)]
+pub(crate) struct ListItem {
+    pub(crate) title: String,
+    pub(crate) subtitle: Option<String>,
+    /// Its icon, tooltips and accessories (`crate::icon`).
+    pub(crate) look: crate::icon::Look,
+    /// Words the search matches as the subtitle is.
+    pub(crate) keywords: Vec<String>,
+    /// The listener that activates the item (its primary action).
+    pub(crate) on_press: Option<Listener>,
+    /// Its further actions in order: the second is the item's secondary
+    /// action, Ctrl+Enter.
+    pub(crate) actions: Vec<ListAction>,
+    /// The detail pane's content when this item is selected and the list
+    /// shows its detail.
+    pub(crate) detail: Option<Box<Node>>,
+}
+
+/// One of a List item's actions: what the footer calls it, and the
+/// listener that runs it.
+#[derive(Debug)]
+pub struct ListAction {
+    title: Option<String>,
+    on_press: Listener,
+}
+
+impl ListAction {
+    /// An action titled `title` that runs `listener` when it is chosen
+    /// (the item's secondary action when it is its second).
+    pub fn new(title: impl Into<String>, on_press: Listener) -> ListAction {
+        ListAction {
+            title: Some(title.into()),
+            on_press,
+        }
+    }
+}
+
+/// The payload the grid-item kind reads: its title and subtitle, and the
+/// image, colour or subtree it shows.
+#[derive(Debug, Default)]
+pub(crate) struct GridItem {
+    pub(crate) title: Option<String>,
+    pub(crate) subtitle: Option<String>,
+    pub(crate) image: Option<Icon>,
+    /// A colour the cell fills with.
+    pub(crate) color: Option<Paint>,
+    /// The listener that activates the cell.
+    pub(crate) on_press: Option<Listener>,
+}
+
+/// The payload the list-dropdown kind reads: its items and the one
+/// chosen, changed by the user's choice.
+#[derive(Debug, Default)]
+pub(crate) struct DropdownNode {
+    /// The id of the item chosen.
+    pub(crate) value: Option<String>,
+    /// The dropdown's placeholder, shown while no choice is made.
+    pub(crate) placeholder: Option<String>,
+    /// The listener the choice's change runs, told the chosen item's id.
+    pub(crate) on_change: Option<ValueListener>,
+    pub(crate) items: Vec<DropdownItem>,
+}
+
+/// One item of a List's search-bar dropdown, named `value` and drawn as
+/// `label` when one is given.
+#[derive(Debug)]
+pub struct DropdownItem {
+    value: String,
+    label: Option<String>,
+}
+
+impl DropdownItem {
+    /// An item named `value`.
+    pub fn new(value: impl Into<String>) -> DropdownItem {
+        DropdownItem {
+            value: value.into(),
+            label: None,
+        }
+    }
+
+    /// What is drawn for this item.
+    pub fn label(mut self, label: impl Into<String>) -> DropdownItem {
+        self.label = Some(label.into());
+        self
+    }
+}
+
 /// The payload the tag and badge kinds read.
 #[derive(Debug)]
 pub(crate) struct TagPayload {
@@ -2988,6 +3088,119 @@ builder!(EmptyState);
 builder!(TextInput);
 builder!(CanvasBuilder);
 
+impl CanvasBuilder {
+    /// The canvas node of a canvas builder, changed.
+    fn canvas_mut(&mut self) -> &mut CanvasNode {
+        match &mut self.0.kind {
+            NodeKind::Canvas(canvas) => canvas,
+            _ => unreachable!("a canvas node"),
+        }
+    }
+
+    /// The operations it paints, in order (later ones over earlier ones).
+    pub fn ops(mut self, ops: impl IntoIterator<Item = Draw>) -> CanvasBuilder {
+        let canvas = self.canvas_mut();
+        canvas.ops.clear();
+        canvas.ops.extend(ops);
+        self
+    }
+
+    /// What kind of control the canvas is to assistive technology; a
+    /// generic one when none is given.
+    pub fn role(mut self, role: CanvasRole) -> CanvasBuilder {
+        self.canvas_mut().a11y.role = Some(role);
+        self
+    }
+
+    /// What names the canvas to assistive technology.
+    pub fn label(mut self, label: impl Into<String>) -> CanvasBuilder {
+        self.canvas_mut().a11y.label = Some(label.into());
+        self
+    }
+
+    /// What the canvas currently holds, as a colour well names its chosen
+    /// colour.
+    pub fn value(mut self, value: impl Into<String>) -> CanvasBuilder {
+        self.canvas_mut().a11y.value = Some(value.into());
+        self
+    }
+
+    /// The up arrow runs `listener`, the semantic handler a control-like
+    /// canvas needs no key parsing for.
+    pub fn on_increment(mut self, listener: Listener) -> CanvasBuilder {
+        self.canvas_mut().handlers.on_increment = Some(listener);
+        self
+    }
+
+    /// The down arrow runs `listener` (see [`CanvasBuilder::on_increment`]).
+    pub fn on_decrement(mut self, listener: Listener) -> CanvasBuilder {
+        self.canvas_mut().handlers.on_decrement = Some(listener);
+        self
+    }
+
+    /// Space runs `listener` (see [`CanvasBuilder::on_increment`]).
+    pub fn on_activate(mut self, listener: Listener) -> CanvasBuilder {
+        self.canvas_mut().handlers.on_activate = Some(listener);
+        self
+    }
+
+    /// The primary button pressed over the canvas runs `listener`.
+    pub fn on_pointer_down(mut self, listener: CanvasListener) -> CanvasBuilder {
+        self.canvas_mut().handlers.on_pointer_down = Some(listener);
+        self
+    }
+
+    /// That button released runs `listener`.
+    pub fn on_pointer_up(mut self, listener: CanvasListener) -> CanvasBuilder {
+        self.canvas_mut().handlers.on_pointer_up = Some(listener);
+        self
+    }
+
+    /// The pointer moved while that button is held — a drag, coalesced to
+    /// the latest while one is in flight — runs `listener`.
+    pub fn on_pointer_move(mut self, listener: CanvasListener) -> CanvasBuilder {
+        self.canvas_mut().handlers.on_pointer_move = Some(listener);
+        self
+    }
+
+    /// The pointer entering the canvas's hover runs `listener`.
+    pub fn on_pointer_enter(mut self, listener: CanvasListener) -> CanvasBuilder {
+        self.canvas_mut().handlers.on_pointer_enter = Some(listener);
+        self
+    }
+
+    /// The pointer leaving the canvas's hover runs `listener`.
+    pub fn on_pointer_leave(mut self, listener: CanvasListener) -> CanvasBuilder {
+        self.canvas_mut().handlers.on_pointer_leave = Some(listener);
+        self
+    }
+
+    /// The wheel turned over the canvas runs `listener`.
+    pub fn on_wheel(mut self, listener: CanvasListener) -> CanvasBuilder {
+        self.canvas_mut().handlers.on_wheel = Some(listener);
+        self
+    }
+
+    /// The primary button pressed twice over the canvas runs `listener`.
+    pub fn on_double_click(mut self, listener: CanvasListener) -> CanvasBuilder {
+        self.canvas_mut().handlers.on_double_click = Some(listener);
+        self
+    }
+
+    /// The secondary button pressed over the canvas runs `listener`.
+    pub fn on_secondary(mut self, listener: CanvasListener) -> CanvasBuilder {
+        self.canvas_mut().handlers.on_secondary = Some(listener);
+        self
+    }
+
+    /// The canvas's size changing runs `listener`, told the size it was
+    /// laid out at.
+    pub fn on_resize(mut self, listener: CanvasListener) -> CanvasBuilder {
+        self.canvas_mut().handlers.on_resize = Some(listener);
+        self
+    }
+}
+
 /// The properties of a column, a row or a card, as it is built.
 macro_rules! lays_out {
     ($builder:ident) => {
@@ -3283,6 +3496,13 @@ impl IconNode {
 }
 
 impl Image {
+    /// The node drawn while this image loads or cannot be read, after any
+    /// it already has: its children are its placeholder.
+    pub fn placeholder(mut self, placeholder: impl IntoNode) -> Image {
+        self.0.children.push(placeholder.into_node());
+        self
+    }
+
     /// How big this image is.
     pub fn size(mut self, size: IconSize) -> Image {
         if let NodeKind::Image { size: own, .. } = &mut self.0.kind {
@@ -3535,6 +3755,12 @@ impl MetadataItem {
 }
 
 impl EmptyState {
+    /// One action of this state's, after its children: a button usually.
+    pub fn action(mut self, action: impl IntoNode) -> EmptyState {
+        self.0.children.push(action.into_node());
+        self
+    }
+
     /// This state's description.
     pub fn description(mut self, description: impl Into<String>) -> EmptyState {
         if let NodeKind::EmptyState(empty) = &mut self.0.kind {
@@ -4318,7 +4544,6 @@ fn write_node(tree: &mut String, node: &Node) -> Result<(), String> {
                 tree.push_str(",\"onChange\":");
                 let _ = write!(tree, "{id}");
             }
-        }
             write_field(tree, &toggle.field)?;
         }
         NodeKind::Segmented(control) | NodeKind::Select(control) => {
@@ -4471,7 +4696,9 @@ fn write_node(tree: &mut String, node: &Node) -> Result<(), String> {
                 icon::write_icon(tree, icon)?;
             }
         }
-        NodeKind::TextInput(input) | NodeKind::PasswordInput(input) | NodeKind::TextArea(input) => {
+        NodeKind::TextInput(input)
+        | NodeKind::PasswordInput(input)
+        | NodeKind::TextArea(input) => {
             tree.push_str(",\"value\":");
             string(tree, &input.value)?;
             if let Some(default) = &input.default {
@@ -4529,17 +4756,73 @@ fn write_node(tree: &mut String, node: &Node) -> Result<(), String> {
             write_field(tree, &date.field)?;
         }
         NodeKind::TagPicker(picker) => {
-            tree.push_str(",\"tags\":[");
-            for (index, tag) in picker.tags.iter().enumerate() {
-                if index > 0 {
-                    tree.push(',');
+            if !picker.tags.is_empty() {
+                tree.push_str(",\"tags\":[");
+                for (index, tag) in picker.tags.iter().enumerate() {
+                    if index > 0 {
+                        tree.push(',');
+                    }
+                    string(tree, tag)?;
                 }
-                string(tree, tag)?;
+                tree.push(']');
             }
-            tree.push(']');
+            if !picker.default.is_empty() {
+                tree.push_str(",\"default\":[");
+                for (index, tag) in picker.default.iter().enumerate() {
+                    if index > 0 {
+                        tree.push(',');
+                    }
+                    string(tree, tag)?;
+                }
+                tree.push(']');
+            }
+            if !picker.options.is_empty() {
+                tree.push_str(",\"options\":[");
+                for (index, option) in picker.options.iter().enumerate() {
+                    if index > 0 {
+                        tree.push(',');
+                    }
+                    tree.push('{');
+                    tree.push_str("\"value\":");
+                    string(tree, &option.value)?;
+                    if let Some(label) = &option.label {
+                        tree.push_str(",\"label\":");
+                        string(tree, label)?;
+                    }
+                    if let Some(section) = &option.section {
+                        tree.push_str(",\"section\":");
+                        string(tree, section)?;
+                    }
+                    tree.push('}');
+                }
+                tree.push(']');
+            }
+            if let Some(Listener(id)) = &picker.on_change {
+                tree.push_str(",\"onChange\":");
+                let _ = write!(tree, "{id}");
+            }
             write_field(tree, &picker.field)?;
         }
         NodeKind::FilePicker(picker) | NodeKind::FolderPicker(picker) => {
+            if !picker.paths.is_empty() {
+                tree.push_str(",\"value\":");
+                if picker.paths.len() == 1 {
+                    string(tree, &picker.paths[0])?;
+                } else {
+                    tree.push('[');
+                    for (index, path) in picker.paths.iter().enumerate() {
+                        if index > 0 {
+                            tree.push(',');
+                        }
+                        string(tree, path)?;
+                    }
+                    tree.push(']');
+                }
+            }
+            if let Some(default) = &picker.default {
+                tree.push_str(",\"default\":");
+                string(tree, default)?;
+            }
             tree.push_str(",\"multiple\":");
             let _ = write!(tree, "{}", picker.multiple);
             write_field(tree, &picker.field)?;
@@ -4642,7 +4925,7 @@ fn write_node(tree: &mut String, node: &Node) -> Result<(), String> {
                         string(tree, title)?;
                         tree.push(',');
                     }
-                    let Listener(id) = action.on_press;
+                    let Listener(id) = &action.on_press;
                     tree.push_str("\"onPress\":");
                     let _ = write!(tree, "{id}");
                     tree.push('}');
@@ -4707,6 +4990,88 @@ fn write_node(tree: &mut String, node: &Node) -> Result<(), String> {
                 tree.push(']');
             }
         }
+        NodeKind::Canvas(canvas) => {
+            if !canvas.ops.is_empty() {
+                tree.push_str(",\"ops\":[");
+                for (index, op) in canvas.ops.iter().enumerate() {
+                    if index > 0 {
+                        tree.push(',');
+                    }
+                    write_draw(tree, op)?;
+                }
+                tree.push(']');
+            }
+            if let Some(role) = canvas.a11y.role {
+                tree.push_str(",\"role\":");
+                string(
+                    tree,
+                    match role {
+                        CanvasRole::ColorWell => "color-well",
+                        CanvasRole::Slider => "slider",
+                        CanvasRole::Image => "image",
+                        CanvasRole::Figure => "figure",
+                        CanvasRole::Group => "group",
+                        CanvasRole::Generic => "generic",
+                    },
+                )?;
+            }
+            if let Some(label) = &canvas.a11y.label {
+                tree.push_str(",\"label\":");
+                string(tree, label)?;
+            }
+            if let Some(value) = &canvas.a11y.value {
+                tree.push_str(",\"value\":");
+                string(tree, value)?;
+            }
+            if let Some(Listener(id)) = canvas.handlers.on_increment {
+                tree.push_str(",\"onIncrement\":");
+                let _ = write!(tree, "{id}");
+            }
+            if let Some(Listener(id)) = canvas.handlers.on_decrement {
+                tree.push_str(",\"onDecrement\":");
+                let _ = write!(tree, "{id}");
+            }
+            if let Some(Listener(id)) = canvas.handlers.on_activate {
+                tree.push_str(",\"onActivate\":");
+                let _ = write!(tree, "{id}");
+            }
+            if let Some(CanvasListener(id)) = canvas.handlers.on_pointer_down {
+                tree.push_str(",\"onPointerDown\":");
+                let _ = write!(tree, "{id}");
+            }
+            if let Some(CanvasListener(id)) = canvas.handlers.on_pointer_up {
+                tree.push_str(",\"onPointerUp\":");
+                let _ = write!(tree, "{id}");
+            }
+            if let Some(CanvasListener(id)) = canvas.handlers.on_pointer_move {
+                tree.push_str(",\"onPointerMove\":");
+                let _ = write!(tree, "{id}");
+            }
+            if let Some(CanvasListener(id)) = canvas.handlers.on_pointer_enter {
+                tree.push_str(",\"onPointerEnter\":");
+                let _ = write!(tree, "{id}");
+            }
+            if let Some(CanvasListener(id)) = canvas.handlers.on_pointer_leave {
+                tree.push_str(",\"onPointerLeave\":");
+                let _ = write!(tree, "{id}");
+            }
+            if let Some(CanvasListener(id)) = canvas.handlers.on_wheel {
+                tree.push_str(",\"onWheel\":");
+                let _ = write!(tree, "{id}");
+            }
+            if let Some(CanvasListener(id)) = canvas.handlers.on_double_click {
+                tree.push_str(",\"onDoubleClick\":");
+                let _ = write!(tree, "{id}");
+            }
+            if let Some(CanvasListener(id)) = canvas.handlers.on_secondary {
+                tree.push_str(",\"onSecondary\":");
+                let _ = write!(tree, "{id}");
+            }
+            if let Some(CanvasListener(id)) = canvas.handlers.on_resize {
+                tree.push_str(",\"onResize\":");
+                let _ = write!(tree, "{id}");
+            }
+        }
         NodeKind::Detail(_) => {}
     }
     if !node.children.is_empty() {
@@ -4769,6 +5134,13 @@ fn kind_of(node: &Node) -> &'static str {
         NodeKind::TagPicker(_) => "tag-picker",
         NodeKind::FilePicker(_) => "file-picker",
         NodeKind::FolderPicker(_) => "folder-picker",
+        NodeKind::List(_) => "list",
+        NodeKind::Grid(_) => "grid",
+        NodeKind::ListSection(_) => "list-section",
+        NodeKind::ListItem(_) => "list-item",
+        NodeKind::GridItem(_) => "grid-item",
+        NodeKind::ListDropdown(_) => "list-dropdown",
+        NodeKind::Detail(_) => "detail",
     }
 }
 

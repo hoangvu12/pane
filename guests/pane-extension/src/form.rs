@@ -355,7 +355,7 @@ pub fn dropdown(key: impl Into<String>) -> Dropdown {
 /// [`TagPicker::default_value`] says otherwise.
 pub fn tag_picker(key: impl Into<String>) -> TagPicker {
     TagPicker(field(
-        NodeKind::TagPicker(crate::view::TagPayload::default()),
+        NodeKind::TagPicker(crate::view::TagPickerPayload::default()),
         key,
     ))
 }
@@ -752,7 +752,10 @@ impl TagPicker {
 
     /// The tag picker's default: the tags (their options' values) it
     /// starts from.
-    pub fn default_value(mut self, values: impl IntoIterator<Item = impl Into<String>>) -> TagPicker {
+    pub fn default_value(
+        mut self,
+        values: impl IntoIterator<Item = impl Into<String>>,
+    ) -> TagPicker {
         if let NodeKind::TagPicker(picker) = &mut self.0.kind {
             picker.default = values.into_iter().map(Into::into).collect();
         }

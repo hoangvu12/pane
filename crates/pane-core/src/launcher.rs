@@ -89,7 +89,7 @@ use crate::runtime::{
     RootResult as ComputedResult, Runtime, View, ViewId, WeakRuntime,
 };
 use crate::search::{self, Keys, Query};
-pub use pane_form::{PaneFieldKind, PaneForm, PaneFormField, PathPick};
+pub use pane_form::{PaneForm, PaneFormField};
 
 mod dependents;
 mod developing;

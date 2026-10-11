@@ -34,7 +34,7 @@ use crate::ui::tokens;
 use super::components::{self, FieldKind};
 use super::reconcile::Held;
 use super::tree::Draw;
-use super::{AREA_CONTEXT, DATE_CONTEXT, PATHS_CONTEXT, SubmitForm, TAGS_CONTEXT};
+use super::{DATE_CONTEXT, PATHS_CONTEXT, TAGS_CONTEXT};
 
 /// One field's chrome: its title over `control`, and the note and error
 /// under it — the Settings board's field family, as the typed form's

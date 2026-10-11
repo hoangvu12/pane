@@ -20,6 +20,7 @@ mod crash_record;
 mod default_icons;
 mod designed_canvas;
 mod designed_components;
+mod designed_forms;
 mod designed_inputs;
 mod designed_views;
 mod develop;

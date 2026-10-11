@@ -16,6 +16,4 @@ impl Command for RefusingView {
     async fn render() -> Result<List, String> {
         Err("sign in first".into())
     }
-
-    }
 }

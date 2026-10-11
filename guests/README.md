@@ -871,7 +871,7 @@ index is off, being built (with how many entries it has `found`), current or
 stopped, and why. The path is the extension's to show and copy; Pane opens
 only by the id, which it checks again first (it still exists, is the kind
 indexed, is not a link, is still in the folders file search covers). An
-`open-file` result or a command search result's `file` gives the id; Pane
+`open-file` result gives the id; Pane
 shows the entry's own name, its folder and the system's icon in the row,
 and gives it its [file actions](../docs/files.md#the-file-actions): Enter
 opens a document or a folder, and shows a program in the file manager
@@ -928,8 +928,7 @@ command never names or sees a path: `list-folder()` answers that no folder
 is granted, that Pane is listing it (Pane asks the command again once it is
 done, so answer no files for now), or the listing Pane keeps for this visit
 of root search, whose files have an `id` and a `relative` path. An
-`open-file` result gives the `id`, and so does a command search result's
-`file` (a command that sets `"search": true` too, as Search Files does);
+`open-file` result gives the `id`;
 Pane shows the file's own name and folder in the row, whatever the result's
 title says, drops an id it did not give, and gives the file its own
 [file actions](../docs/files.md#the-file-actions): Open (Enter), Show in
@@ -945,18 +944,6 @@ results root search finds by title. File search itself uses
 for a package that wants an exhaustive listing of one folder the user
 chooses (the test fixture [`fixtures/folder-files`](fixtures/folder-files)
 is what Files was before).
-
-In a command's own search field, the result names the file in `file`:
-
-```rust
-use pane_extension::search::SearchResult;
-
-SearchResult { id: file.relative.clone(), title: file.relative, subtitle: None, file: Some(file.id) }
-```
-
-```ts
-({ id: file.relative, title: file.relative, file: file.id })
-```
 
 Rust (`pane_extension::files`):
 

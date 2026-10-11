@@ -543,14 +543,13 @@ impl Screen {
                 ),
             )
             .child(
-                metadata_list()
-                    .child(metadata("Version", "0.1.0"))
-                    .child(metadata_tags("Tags", ["designed", "tree"]))
-                    .child(metadata_separator())
-                    .child(
-                        metadata("Repository", "pane")
-                            .on_click(cx.listener(|_: &mut Self| {})),
-                    ),
+                metadata_list([
+                    metadata("Version", "0.1.0"),
+                    metadata_tags("Tags", ["designed", "tree"]),
+                    metadata_separator(),
+                    metadata("Repository", "pane")
+                        .on_click(cx.listener(|_: &mut Self| {})),
+                ]),
             )
             .child(
                 row()

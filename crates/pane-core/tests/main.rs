@@ -30,6 +30,7 @@ mod confirmations;
 mod credentials;
 mod dependencies;
 mod designed_cost;
+mod designed_forms;
 mod designed_inputs;
 mod designed_views;
 mod develop;
