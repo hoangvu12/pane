@@ -103,9 +103,7 @@ impl Greeting {
                     .error(error.clone().map(str::to_owned).unwrap_or_default())
                     .auto_focus()
                     .into_node(),
-                form::password_field("secret")
-                    .title("Secret")
-                    .into_node(),
+                form::password_field("secret").title("Secret").into_node(),
                 form::text_area("notes").title("Notes").into_node(),
                 form::date_picker("day").title("Day").into_node(),
                 form::date_time_picker("at").title("At").into_node(),
@@ -131,9 +129,7 @@ impl Greeting {
                     .title("Folder")
                     .allow_multiple()
                     .into_node(),
-                form::checkbox("updates")
-                    .label("Send updates")
-                    .into_node(),
+                form::checkbox("updates").label("Send updates").into_node(),
                 form::toggle("quiet").label("Quiet mode").into_node(),
             ]
         };

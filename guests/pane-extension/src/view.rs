@@ -322,7 +322,7 @@ enum Run<V> {
 #[derive(Debug)]
 pub struct Node {
     pub(crate) kind: NodeKind,
-    style: Style,
+    pub(crate) style: Style,
     /// Where in a `stack` this node is placed; `None` for the stack's own
     /// placement. Nowhere else is it read.
     place: Option<Place>,
@@ -4365,7 +4365,7 @@ fn write_node(tree: &mut String, node: &Node) -> Result<(), String> {
                 },
             )?;
         }
-        NodeKind::Spacer | NodeKind::Loading { .. } => {}
+        NodeKind::Spacer => {}
         NodeKind::Text(text) => match &text.content {
             TextContent::Plain(content) => {
                 tree.push_str(",\"text\":");

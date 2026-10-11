@@ -150,9 +150,7 @@ impl View for Screen {
                         row()
                             .gap(Space::S)
                             .children([
-                                icon(Icon::builtin("star"))
-                                    .size(IconSize::L)
-                                    .into_node(),
+                                icon(Icon::builtin("star")).size(IconSize::L).into_node(),
                                 // A raw blue, corrected for contrast.
                                 icon(Icon::builtin("bell").tint(Color::Raw("#88ccff".into())))
                                     .into_node(),
